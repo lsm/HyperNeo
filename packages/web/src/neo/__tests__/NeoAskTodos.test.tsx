@@ -90,6 +90,34 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
+  it.each(['open', 'done', 'dropped'] as const)('offers ask Reply for a %s card', (status) => {
+    locale.value = 'en';
+    const data = entry({});
+    data.ask.status = status;
+    const reply = vi.fn();
+    const settle = vi.fn();
+    const app = render(
+      <NeoAskTodos entry={data} onAnswer={vi.fn()} onReplyAsk={reply} onSettle={settle} />
+    );
+    fireEvent.click(app.getByRole('button', { name: 'Ask actions' }));
+    expect(app.queryByRole('menuitem', { name: 'Mark done' }) !== null).toBe(status === 'open');
+    fireEvent.click(app.getByRole('menuitem', { name: 'Reply', exact: true }));
+    expect(reply).toHaveBeenCalledOnce();
+    expect(settle).not.toHaveBeenCalled();
+  });
+
+  it('disables ask Reply while the card is unavailable', () => {
+    locale.value = 'en';
+    const reply = vi.fn();
+    const app = render(
+      <NeoAskTodos entry={entry({})} disabled onAnswer={vi.fn()} onReplyAsk={reply} />
+    );
+    fireEvent.click(app.getByRole('button', { name: 'Ask actions' }));
+    expect((app.getByRole('menuitem', { name: 'Reply' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(app.getByRole('menuitem', { name: 'Reply' }));
+    expect(reply).not.toHaveBeenCalled();
+  });
+
   it.each(guidanceQuestions)('renders the concise guidance example: $title', async (fixture) => {
     const app = render(
       <NeoAskTodos

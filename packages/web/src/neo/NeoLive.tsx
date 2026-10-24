@@ -85,6 +85,7 @@ export function NeoLive() {
   currentScope.current = sceneScope;
   const replyLabels = new Map(
     (view?.todoAsks ?? []).flatMap((entry) => [
+      [`ask:${entry.ask.id}`, { label: entry.ask.title, askId: entry.ask.id }] as const,
       ...entry.questions.map(
         (question) =>
           [
@@ -127,6 +128,14 @@ export function NeoLive() {
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
+  const replyInComposer = (quote: NeoQuote) => {
+    setQuoted({ scope: neo.sessionId!, quote });
+    setScenesOpen(false);
+    scrollToBottom();
+    const input = footer.current?.querySelector('textarea');
+    input?.scrollIntoView({ block: 'nearest' });
+    input?.focus({ preventScroll: true });
+  };
   const liveDraft = useRef(draft);
   liveDraft.current = draft;
   const liveSession = useRef(neo.sessionId);
@@ -603,22 +612,24 @@ export function NeoLive() {
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
                     onReply={
                       ready
-                        ? (question) => {
-                            setQuoted({
-                              scope: neo.sessionId!,
-                              quote: {
-                                author: 'Neo',
-                                text: neoQuestionText(question),
-                                anchor: `neo-ref-question-${question.id}`,
-                                replyTo: { kind: 'question', id: question.id },
-                              },
-                            });
-                            setScenesOpen(false);
-                            scrollToBottom();
-                            const input = footer.current?.querySelector('textarea');
-                            input?.scrollIntoView({ block: 'nearest' });
-                            input?.focus({ preventScroll: true });
-                          }
+                        ? (question) =>
+                            replyInComposer({
+                              author: 'Neo',
+                              text: neoQuestionText(question),
+                              anchor: `neo-ref-question-${question.id}`,
+                              replyTo: { kind: 'question', id: question.id },
+                            })
+                        : undefined
+                    }
+                    onReplyAsk={
+                      ready
+                        ? () =>
+                            replyInComposer({
+                              author: 'Neo',
+                              text: entry.ask.title,
+                              anchor: `neo-ref-ask-${entry.ask.id}`,
+                              replyTo: { kind: 'ask', id: entry.ask.id },
+                            })
                         : undefined
                     }
                     onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
