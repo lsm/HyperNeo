@@ -1,3 +1,8 @@
+import { Logger } from '../logger.ts';
+
+const logger = new Logger('sdk-startup-gate');
+export const DEFAULT_SDK_STARTUP_MAX_HOLD_MS = 30_000;
+
 export const DEFAULT_SDK_STARTUP_MAX_CONCURRENT = 3;
 
 export function getSdkStartupMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
@@ -18,6 +23,7 @@ export interface SdkStartupPermit {
   readonly queuedBehind: number;
   readonly waitedMs: number;
   readonly admittedAt: number;
+  setPhase(phase: string): void;
   release(): void;
 }
 
@@ -35,6 +41,18 @@ interface GateWaiter {
 export class SdkStartupConcurrencyGate {
   private active = 0;
   private waiters: GateWaiter[] = [];
+  private holders = new Map<symbol, { sessionId: string; admittedAt: number; phase: string }>();
+
+  constructor(private readonly maxHoldMs = DEFAULT_SDK_STARTUP_MAX_HOLD_MS) {}
+
+  private describeHolders(): string {
+    return JSON.stringify(
+      [...this.holders.values()].map((holder) => ({
+        ...holder,
+        heldMs: Date.now() - holder.admittedAt,
+      }))
+    );
+  }
 
   getStats(): SdkStartupGateStats {
     return {
@@ -55,6 +73,9 @@ export class SdkStartupConcurrencyGate {
     } else {
       queuedBehind = this.waiters.length;
       const waitStart = Date.now();
+      logger.warn(
+        `SDK startup gate: waiting session=${sessionId} holders=${this.describeHolders()}`
+      );
       await this.waitForSlot(sessionId, signal);
       waitedMs = Date.now() - waitStart;
       if (signal?.aborted) {
@@ -91,14 +112,38 @@ export class SdkStartupConcurrencyGate {
     waitedMs: number
   ): SdkStartupPermit {
     let released = false;
-    return {
+    const key = Symbol(sessionId);
+    const holder = { sessionId, admittedAt: Date.now(), phase: 'provider_environment' };
+    this.holders.set(key, holder);
+    logger.warn(
+      `SDK startup gate: admitted session=${sessionId} waitedMs=${waitedMs} ` +
+        `holders=${this.describeHolders()}`
+    );
+    const timer = setTimeout(() => {
+      logger.warn(
+        `SDK startup gate: hold expired session=${sessionId} phase=${holder.phase} ` +
+          `heldMs=${Date.now() - holder.admittedAt} holders=${this.describeHolders()}`
+      );
+      permit.release();
+    }, this.maxHoldMs);
+    timer.unref?.();
+    const permit: SdkStartupPermit = {
       sessionId,
       queuedBehind,
       waitedMs,
-      admittedAt: Date.now(),
+      admittedAt: holder.admittedAt,
+      setPhase: (phase) => {
+        holder.phase = phase;
+      },
       release: () => {
         if (released) return;
         released = true;
+        clearTimeout(timer);
+        this.holders.delete(key);
+        logger.warn(
+          `SDK startup gate: released session=${sessionId} phase=${holder.phase} ` +
+            `heldMs=${Date.now() - holder.admittedAt}`
+        );
         const next = this.waiters.shift();
         if (next) {
           next.grant();
@@ -107,6 +152,7 @@ export class SdkStartupConcurrencyGate {
         }
       },
     };
+    return permit;
   }
 }
 

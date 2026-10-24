@@ -157,6 +157,27 @@ describe('SdkStartupConcurrencyGate', () => {
     void dPromise;
   });
 
+  it('admits Neo when every startup hangs before its first message', async () => {
+    const bounded = new SdkStartupConcurrencyGate(20);
+    const first = await bounded.acquire({ sessionId: 'hung-provider' });
+    const second = await bounded.acquire({ sessionId: 'hung-sdk' });
+    second.setPhase('sdk_first_message');
+    const neoPromise = bounded.acquire({ sessionId: 'root-neo' });
+    expect(bounded.getStats().queued).toBe(1);
+    const neo = await Promise.race([
+      neoPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Neo starved by hung startups')), 500)
+      ),
+    ]);
+    expect(neo.sessionId).toBe('root-neo');
+    first.release();
+    second.release();
+    expect(bounded.getStats().active).toBe(1);
+    neo.release();
+    expect(bounded.getStats()).toEqual({ active: 0, queued: 0, maxConcurrent: 2 });
+  });
+
   it('reports wait metadata on the permit', async () => {
     const a = await gate.acquire({ sessionId: 'a' });
     await gate.acquire({ sessionId: 'b' });

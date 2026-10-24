@@ -714,7 +714,7 @@ export class QueryRunner {
       if (!startupPermit) return;
       const permit = startupPermit;
       startupPermit = null;
-      logger.debug(
+      logger.warn(
         `SDK startup gate: slot released (session=${session.id} reason=${reason} ` +
           `heldMs=${Date.now() - permit.admittedAt})`
       );
@@ -925,8 +925,8 @@ export class QueryRunner {
           sessionId: session.id,
           signal: runAbortController.signal,
         });
-        if (startupPermit.queuedBehind > 0) {
-          logger.info(
+        if (startupPermit.waitedMs > 0) {
+          logger.warn(
             `SDK startup gate: session ${session.id} admitted after waiting ` +
               `${startupPermit.waitedMs}ms behind ${startupPermit.queuedBehind} session(s) ` +
               `(gate=${JSON.stringify(startupGate.getStats())})`
@@ -999,6 +999,7 @@ export class QueryRunner {
         throw envAbort;
       }
 
+      startupPermit?.setPhase('sdk_first_message');
       removeFlagSettingsFile = runLagPhase('sdk:flag_settings', () =>
         writeFlagSettingsFile(queryOptions, session.id)
       );
