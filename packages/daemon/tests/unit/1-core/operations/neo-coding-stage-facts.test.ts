@@ -121,6 +121,9 @@ describe('coding provenance policy', () => {
         preferred: true,
       });
       expect(
+        ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer)
+      ).toMatchObject({ qualifies: true, preferred: true });
+      expect(
         ledger.reviewerPolicy('synthetic/stages', body, { ...reviewer, harness: 'Harness A' })
       ).toMatchObject({ qualifies: true, preferred: false });
       expect(
@@ -131,7 +134,7 @@ describe('coding provenance policy', () => {
       ).toMatchObject({ qualifies: true });
       for (const invalid of [
         '',
-        'Author: GPT-6 via Harness A',
+        'Author: GPT-6 via Harness A\n' + body,
         'Agent: <model> via <harness>',
         body + '\n' + body,
         'Agent: A via B via C',

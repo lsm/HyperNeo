@@ -56,7 +56,7 @@ try {
         assert.equal(proposal.ok, true);
         assert(proposal.questionId);
         assert.deepEqual(await rpc('pack.preferences.list', {}), { preferences: [] });
-        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer).qualifies, false);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer).qualifies, true);
         const aliases = ['gpt-6-2026-09', 'openai/gpt-6', 'unidentified-model'].map(model => ledger.reviewerPolicy('synthetic/stages', 'Agent: GPT-6 via A', { ...reviewer, model }));
         await rpc('neo.question.answer', { questionId: proposal.questionId, answer: 'no' });
         const afterNo = await rpc('pack.preferences.get', setting) as { preference: { value: unknown } | null };

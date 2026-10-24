@@ -24,8 +24,8 @@ refused as independent reviewers. The public
 `pack.preferences` RPC door shows unanswered provenance stays unsaved, accepts
 a human no answer without saving anything (provenance stays on), then an explicit
 provenance-only false proposal confirmed with yes, persisted through restart. Local policy defaults
-on, requires an `Agent: <model> via <harness>` line (the old `Author:` label
-does not qualify) and prefers another model/harness. No merge or
+on, reads `Agent: <model> via <harness>` or a legacy `Author:` line and prefers
+another model/harness. New instructions and repair messages use `Agent:`. No merge or
 completion decisions use these facts yet. This proves the Build persistence API
 and existing preference API, not actor assignment, GitHub review ingestion, a UI
 question being asked by a model, or completion gates.
