@@ -17,7 +17,7 @@ export type ArtifactPreviewSource = {
 export type ArtifactPreviewContext = { kind: 'todo' | 'ask'; id: string };
 
 export type ArtifactPreviewTarget =
-  | { kind: 'artifact'; artifactId: string; title?: string }
+  | { kind: 'artifact'; artifactId: string }
   | {
       kind: 'reference';
       source: ArtifactPreviewSource;
@@ -29,7 +29,7 @@ export type ArtifactPreviewTarget =
 export const artifactPreviewStack = signal<readonly ArtifactPreviewTarget[]>([]);
 const workspaceState = signal(previewWorkspace.empty());
 
-function writePreviewStack(stack: readonly ArtifactPreviewTarget[]) {
+function writePreviewStack(stack: readonly ArtifactPreviewTarget[], title?: string) {
   batch(() => {
     artifactPreviewStack.value = stack;
     const top = stack.at(-1);
@@ -39,7 +39,7 @@ function writePreviewStack(stack: readonly ArtifactPreviewTarget[]) {
       const known = workspaceState.value.files.find((file) => file.artifactId === top.artifactId);
       workspaceState.value = previewWorkspace.step(workspaceState.value, {
         kind: 'open',
-        file: { artifactId: top.artifactId, title: top.title ?? known?.title ?? '' },
+        file: { artifactId: top.artifactId, title: title ?? known?.title ?? '' },
       });
     }
   });
@@ -61,7 +61,6 @@ function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'cl
             {
               kind: 'artifact',
               artifactId: file.artifactId,
-              ...(file.title ? { title: file.title } : {}),
             },
           ]
         : [];
@@ -79,9 +78,9 @@ export const artifactPreviewWorkspace = {
 
 let opener: HTMLElement | null = null;
 
-export function openArtifactPreview(target: ArtifactPreviewTarget) {
+export function openArtifactPreview(target: ArtifactPreviewTarget, title?: string) {
   opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  writePreviewStack([target]);
+  writePreviewStack([target], title);
 }
 
 export function takeArtifactPreviewOpener() {

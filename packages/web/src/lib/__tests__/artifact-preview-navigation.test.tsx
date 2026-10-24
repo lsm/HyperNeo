@@ -13,10 +13,9 @@ import {
   takeArtifactPreviewOpener,
 } from '../artifact-preview-store.ts';
 
-const target = (artifactId: string, title = artifactId) => ({
+const target = (artifactId: string) => ({
   kind: 'artifact' as const,
   artifactId,
-  title,
 });
 const ids = () => artifactPreviewWorkspace.state.value.files.map((file) => file.artifactId);
 
@@ -40,7 +39,7 @@ describe('preview workspace navigation', () => {
       />
     );
     fireEvent.click(screen.getByRole('button', { name: 'Open preview: Report' }));
-    expect(artifactPreviewStack.value).toEqual([target('a', 'Report')]);
+    expect(artifactPreviewStack.value).toEqual([target('a')]);
     expect(artifactPreviewWorkspace.state.value.files).toEqual([
       { artifactId: 'a', title: 'Report' },
     ]);
