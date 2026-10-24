@@ -105,6 +105,16 @@ describe('Database Facade', () => {
       }
     });
 
+    it('persists a config key cleared with undefined', async () => {
+      await db.createSession(
+        createTestSession({ config: { model: 'default', autoCompactPercent: 50 } })
+      );
+
+      await db.updateSession('test-session-id', { config: { autoCompactPercent: undefined } });
+
+      expect(db.getSession('test-session-id')?.config).not.toHaveProperty('autoCompactPercent');
+    });
+
     it('creates and retrieves a session', async () => {
       const session = createTestSession();
       await db.createSession(session);
