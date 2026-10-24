@@ -601,7 +601,7 @@ describe('refreshDriverWork', () => {
         },
         () => clock
       );
-      service.dispose();
+      await service.dispose();
       const saved = db.getSDKMessagesByType('neo:root', 'system', 'session_notices');
       events.length = 0;
       await service.refreshDriverWork();

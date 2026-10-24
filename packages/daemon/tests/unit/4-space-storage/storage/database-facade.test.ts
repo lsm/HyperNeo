@@ -68,6 +68,30 @@ describe('Database Facade', () => {
     });
   });
 
+  describe('writeSDKMessage', () => {
+    it('resolves with the repository write result', async () => {
+      await db.createSession(createTestSession());
+      const id = await db.saveUserMessage(
+        'test-session-id',
+        { type: 'user', uuid: 'write-entry-1', message: { role: 'user', content: 'hi' } } as never,
+        'submitted'
+      );
+
+      await expect(
+        db.writeSDKMessage('markDeliveryFailedByUuid', 'test-session-id', 'write-entry-1')
+      ).resolves.toBe(id);
+      expect(db.getMessageByStatusAndDbId('test-session-id', 'failed', id)?.dbId).toBe(id);
+    });
+
+    it('rejects when the repository write throws', async () => {
+      db.getDatabase().exec('DROP TABLE sdk_messages');
+
+      await expect(
+        db.writeSDKMessage('markDeliveryFailedByUuid', 'test-session-id', 'missing')
+      ).rejects.toThrow();
+    });
+  });
+
   describe('Session operations', () => {
     it('reports a failed session write as a rejection, not a synchronous throw', async () => {
       const raw = db.getDatabase();

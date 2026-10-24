@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -218,6 +219,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
   const ctx: QueryRunnerContext = {
     session,
     db: {
+      writeSDKMessage: writeThroughRepo,
       saveSDKMessage: mock(() => {}),
       updateSession: mock(() => {}),
       getSDKMessageRepo: mock(() => ({

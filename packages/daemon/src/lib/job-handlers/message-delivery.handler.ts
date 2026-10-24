@@ -17,7 +17,7 @@ export interface MessageDeliveryHandlerDeps {
   getSessionCooldownRetryAt?(sessionId: string): number | null;
   getMessageContent(sessionId: string, messageUuid: string): DeliveryLoadResult | null;
   isSessionArchived?(sessionId: string): boolean;
-  markDeliveryFailed?(sessionId: string, messageUuid: string): string | null;
+  markDeliveryFailed?(sessionId: string, messageUuid: string): Promise<string | null>;
   publishStatusChanged?(sessionId: string, messageIds: string[]): Promise<unknown>;
   metrics?: DeliveryMetrics;
 }
@@ -39,7 +39,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
 
     if (deps.isSessionArchived?.(payload.sessionId)) {
       const flippedIds: string[] = [];
-      const failedDbId = deps.markDeliveryFailed?.(payload.sessionId, payload.messageUuid) ?? null;
+      const failedDbId =
+        (await deps.markDeliveryFailed?.(payload.sessionId, payload.messageUuid)) ?? null;
       if (failedDbId) flippedIds.push(failedDbId);
       if (flippedIds.length > 0 && deps.publishStatusChanged) {
         void deps.publishStatusChanged(payload.sessionId, flippedIds).catch(() => {});

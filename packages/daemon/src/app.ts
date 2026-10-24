@@ -920,8 +920,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
       hasActiveDelivery: (sessionId, uuid) =>
         db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
-      resend: (sessionId, uuid, enqueueDelivery) => {
-        const reopenedId = db.getSDKMessageRepo().markDeliveryRetryableByUuid(sessionId, uuid);
+      resend: async (sessionId, uuid, enqueueDelivery) => {
+        const reopenedId = await db.writeSDKMessage('markDeliveryRetryableByUuid', sessionId, uuid);
         if (!reopenedId) return false;
         void internalEventBus
           .publish('messages.statusChanged', {
@@ -1338,9 +1338,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-        markDeliveryFailed: (sessionId: string, messageUuid: string) =>
-          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid) ??
-          null,
+        markDeliveryFailed: async (sessionId: string, messageUuid: string) =>
+          (await reactiveDb?.db.writeSDKMessage(
+            'markDeliveryFailedByUuid',
+            sessionId,
+            messageUuid
+          )) ?? null,
         publishStatusChanged: (sessionId: string, messageIds: string[]) =>
           internalEventBus.publish('messages.statusChanged', {
             sessionId,
@@ -1358,14 +1361,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);
           if (!payload) return;
-          const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
-          if (!sdkRepo) return;
+          const store = reactiveDb?.db;
+          if (!store) return;
           const session =
             taskAgentManager?.getSubSession(payload.sessionId) ??
             sessionManager?.getSession(payload.sessionId);
           void settleMessageDeliveryDeadLetter(payload, {
             markDeliveryFailedByUuid: (sid, uuid) =>
-              sdkRepo.markDeliveryFailedByUuidInclusive(sid, uuid),
+              store.writeSDKMessage('markDeliveryFailedByUuidInclusive', sid, uuid),
             publishStatusChanged: (sid, messageIds) =>
               internalEventBus.publish('messages.statusChanged', {
                 sessionId: sid,

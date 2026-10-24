@@ -34,7 +34,7 @@ const SDK_MESSAGE_WRITE_METHODS = [
   'markDeliveryDeferredByUuid',
 ] as const;
 
-type SdkMessageWriteMethod = (typeof SDK_MESSAGE_WRITE_METHODS)[number];
+export type SdkMessageWriteMethod = (typeof SDK_MESSAGE_WRITE_METHODS)[number];
 
 function taskIdForSession(db: Database, sessionId: string): string | null {
   try {

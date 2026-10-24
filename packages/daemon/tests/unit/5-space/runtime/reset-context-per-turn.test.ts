@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
@@ -94,6 +95,7 @@ function makeManager(opts: {
 
   const config = {
     db: {
+      writeSDKMessage: writeThroughRepo,
       getDatabase: () => (opts.outbox ? opts.outbox.db : {}),
       saveUserMessage,
       getUserMessageIdsByStatus,

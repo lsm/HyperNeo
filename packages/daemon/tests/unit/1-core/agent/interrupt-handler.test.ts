@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   InterruptHandler,
@@ -110,6 +111,7 @@ describe('InterruptHandler', () => {
     cancelForSessionSpy = mock(() => [] as string[]);
     markFailedSpy = mock(() => null);
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       getJobQueueRepo: mock(() => ({
         cancelForSessionWithMessages: cancelForSessionSpy,
         cancelMailboxForSession: mock(() => []),
@@ -375,6 +377,7 @@ describe('InterruptHandler', () => {
     it('teardown cancels durable deliveries before stopping the session', async () => {
       cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),
@@ -403,6 +406,7 @@ describe('InterruptHandler', () => {
       const notifySpy = mock(() => {});
       cancelForSessionSpy = mock(() => ['turn-uuid']);
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),
@@ -422,6 +426,7 @@ describe('InterruptHandler', () => {
       getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
       cancelForSessionSpy = mock(() => ['pre-claim-uuid']);
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),
@@ -443,6 +448,7 @@ describe('InterruptHandler', () => {
         status === 'enqueued' ? [orphan] : []
       );
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),

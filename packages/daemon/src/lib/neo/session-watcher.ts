@@ -27,7 +27,7 @@ import {
 } from './session-watch.ts';
 
 export type NeoSessionWatcherDeps = {
-  db: Pick<Database, 'getSDKMessageRepo'>;
+  db: Pick<Database, 'getSDKMessageRepo' | 'writeSDKMessage'>;
   defaultSessionId: () => string | undefined;
   announceSessionNoticeGroup: (group: NeoSessionNoticeGroup) => void;
   announceSessionNotice: (notice: NeoSessionNotice) => void;
@@ -255,7 +255,7 @@ export class NeoSessionWatcher {
       ['listed', 'plan', 'notices', 'read', 'now']
     )
     .pipe(
-      (
+      async (
         root: string,
         listed: { sessions: NeoListedSession[]; complete: boolean },
         linked: { prs: Map<string, string[]> },
@@ -266,7 +266,7 @@ export class NeoSessionWatcher {
         this.openSessionNotices = grouped.open;
         this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added.notices);
         for (const notice of added.notices) this.deps.announceSessionNotice(notice);
-        for (const group of grouped.closed) this.postSessionNoticeGroup(root, group);
+        for (const group of grouped.closed) await this.postSessionNoticeGroup(root, group);
         if (added.notices.length || grouped.closed.length) this.deps.notifyChanged();
       },
       ['root', 'listed', 'linked', 'added', 'grouped']
@@ -285,13 +285,13 @@ export class NeoSessionWatcher {
     }
   }
 
-  flushSessionNoticeGroup(): void {
+  async flushSessionNoticeGroup(): Promise<void> {
     const group = neoSessionNoticeGroup(this.openSessionNotices);
     this.openSessionNotices = [];
     const root = group && this.deps.defaultSessionId();
     if (!group || !root) return;
     try {
-      this.postSessionNoticeGroup(root, group);
+      await this.postSessionNoticeGroup(root, group);
     } catch (error) {
       this.deps.log.warn('Neo session notice group could not be saved at shutdown', error);
     }
@@ -311,9 +311,9 @@ export class NeoSessionWatcher {
     }
   }
 
-  postSessionNoticeGroup(root: string, group: NeoSessionNoticeGroup): void {
+  async postSessionNoticeGroup(root: string, group: NeoSessionNoticeGroup): Promise<void> {
     if (this.sessionNoticeGroups.some((kept) => kept.id === group.id)) return;
-    const saved = this.deps.db.getSDKMessageRepo().saveSDKMessage(root, {
+    const saved = await this.deps.db.writeSDKMessage('saveSDKMessage', root, {
       type: 'system',
       subtype: 'session_notices',
       uuid: group.id,

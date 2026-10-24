@@ -96,9 +96,13 @@ export class InterruptHandler {
           });
           const jobQueue = this.ctx.db.getJobQueueRepo?.();
           const messageUuids = jobQueue?.cancelForSessionWithMessages(session.id) ?? [];
-          const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
           for (const messageUuid of messageUuids) {
-            const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid) ?? null;
+            const failedDbId =
+              (await this.ctx.db.writeSDKMessage?.(
+                'markDeliveryFailedByUuid',
+                session.id,
+                messageUuid
+              )) ?? null;
             if (failedDbId) failedDbIds.push(failedDbId);
           }
           const cancelled = new Set(messageUuids);
@@ -106,7 +110,12 @@ export class InterruptHandler {
           for (const msg of enqueued) {
             const uuid = msg.uuid;
             if (uuid && !cancelled.has(uuid)) {
-              const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, uuid) ?? null;
+              const failedDbId =
+                (await this.ctx.db.writeSDKMessage?.(
+                  'markDeliveryFailedByUuid',
+                  session.id,
+                  uuid
+                )) ?? null;
               if (failedDbId) failedDbIds.push(failedDbId);
             }
           }
@@ -115,7 +124,12 @@ export class InterruptHandler {
               this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'deferred') ?? [];
             for (const row of deferredRows) {
               if (!row.uuid) continue;
-              const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, row.uuid) ?? null;
+              const failedDbId =
+                (await this.ctx.db.writeSDKMessage?.(
+                  'markDeliveryFailedByUuid',
+                  session.id,
+                  row.uuid
+                )) ?? null;
               if (failedDbId) failedDbIds.push(failedDbId);
             }
           }

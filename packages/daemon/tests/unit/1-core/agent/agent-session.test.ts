@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type {
   AgentProcessingState,
@@ -280,6 +281,7 @@ describe('AgentSession', () => {
       } as Session;
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -588,6 +590,7 @@ describe('AgentSession', () => {
       } as Session;
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -767,6 +770,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -902,6 +906,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getSDKMessages: mock(() => ({ messages: [{ id: 'msg1' }], hasMore: false })),
@@ -1013,6 +1018,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -2941,6 +2947,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3022,6 +3029,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -3156,6 +3164,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getDatabase: mock(() => ({ prepare: mock(() => ({ get: mock(() => null) })) })),
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
@@ -3226,6 +3235,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3295,6 +3305,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3525,6 +3536,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3594,6 +3606,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3722,6 +3735,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3791,6 +3805,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3932,6 +3947,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4078,6 +4094,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4149,6 +4166,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4218,6 +4236,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4460,6 +4479,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4520,6 +4540,7 @@ describe('AgentSession', () => {
         },
       };
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4589,6 +4610,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4652,6 +4674,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4726,6 +4749,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4793,6 +4817,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4852,6 +4877,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4907,6 +4933,7 @@ describe('AgentSession', () => {
 
     const makeMocks = () => {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({})),
         getSession: mock(() => null),
         createSession: mock(() => {}),
@@ -5232,6 +5259,7 @@ describe('AgentSession', () => {
 
     const makeMocks = () => {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -5388,6 +5416,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -5456,6 +5485,7 @@ describe('AgentSession', () => {
 
     const makeMocks = () => {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -5784,6 +5814,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({})),
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
@@ -7243,6 +7274,7 @@ describe('AgentSession', () => {
 
     function makeMocks() {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),

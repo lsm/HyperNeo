@@ -229,7 +229,7 @@ describe('createMessageDeliveryHandler', () => {
     });
 
     it('marks the message failed and settles for an archived session', async () => {
-      const markFailedSpy = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
+      const markFailedSpy = mock(async (_sessionId: string, uuid: string) => `db-${uuid}`);
       const publishSpy = mock(async () => {});
       const { handler, session, isSessionArchived, job } = makeHarness(
         { markDeliveryFailed: markFailedSpy, publishStatusChanged: publishSpy },

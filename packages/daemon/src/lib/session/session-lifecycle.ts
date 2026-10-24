@@ -581,15 +581,18 @@ export class SessionLifecycle {
       });
       const jobQueue = this.db.getJobQueueRepo?.();
       const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
-      const sdkRepo = this.db.getSDKMessageRepo?.();
       for (const messageUuid of messageUuids) {
-        const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
+        const failedDbId =
+          (await this.db.writeSDKMessage?.('markDeliveryFailedByUuid', sessionId, messageUuid)) ??
+          null;
         if (failedDbId) failedDbIds.push(failedDbId);
       }
       const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
       for (const row of deferredRows) {
         if (!row.uuid) continue;
-        const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, row.uuid) ?? null;
+        const failedDbId =
+          (await this.db.writeSDKMessage?.('markDeliveryFailedByUuid', sessionId, row.uuid)) ??
+          null;
         if (failedDbId) failedDbIds.push(failedDbId);
       }
       if (failedDbIds.length > 0) {
@@ -724,15 +727,18 @@ export class SessionLifecycle {
         });
         const jobQueue = this.db.getJobQueueRepo?.();
         const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
-        const sdkRepo = this.db.getSDKMessageRepo?.();
         for (const messageUuid of messageUuids) {
-          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
+          const failedDbId =
+            (await this.db.writeSDKMessage?.('markDeliveryFailedByUuid', sessionId, messageUuid)) ??
+            null;
           if (failedDbId) failedDbIds.push(failedDbId);
         }
         const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
         for (const row of deferredRows) {
           if (!row.uuid) continue;
-          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, row.uuid) ?? null;
+          const failedDbId =
+            (await this.db.writeSDKMessage?.('markDeliveryFailedByUuid', sessionId, row.uuid)) ??
+            null;
           if (failedDbId) failedDbIds.push(failedDbId);
         }
         if (failedDbIds.length > 0) {
