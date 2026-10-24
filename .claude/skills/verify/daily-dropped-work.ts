@@ -74,6 +74,24 @@ try {
   const messages = await read('next day keeps history and new counts', 2);
   assert.equal(messages[0].publication.fullText, first.fullText);
   assert(messages[1].publication.fullText.includes('stalled asks: 0'));
+  clock += 24 * hour;
+  let hookAttempts = 0;
+  service!.filePacks = [
+    { id: 'broken', describe: 'Synthetic failure', instructions: () => null, stats: () => { hookAttempts++; throw new Error('Synthetic stats failure'); } },
+    { id: 'healthy', describe: 'Synthetic count', instructions: () => null, stats: () => ({ waiting: 4 }) },
+    { id: 'large', describe: 'Synthetic large count', instructions: () => null, stats: () => ({ ['x'.repeat(17000)]: 1 }) },
+  ];
+  app!.db.updateGlobalSettings({ neo: { packs: ['broken', 'healthy', 'large'] } });
+  await sweepNeoPacks(app!.jobQueue, service!);
+  const bounded = (await read('faulty and oversized packs preserve the core report', 3)).at(-1).publication;
+  assert(bounded.fullText.includes('Core: stalled asks: 0'));
+  assert(bounded.fullText.includes('broken: unavailable'));
+  assert(bounded.fullText.includes('healthy: waiting: 4'));
+  assert(bounded.fullText.length <= 16000 && bounded.shortText.length <= 2000);
+  await sweepNeoPacks(app!.jobQueue, service!);
+  await read('a faulty hook does not repeat all day', 3);
+  assert.equal(hookAttempts, 1);
+  evidence.hookAttempts = hookAttempts;
   evidence.passed = true;
 } catch (error) { evidence.error = String(error); throw error; }
 finally { await close(); Date.now = realNow; evidence.resourcesClosed = true; writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(evidence, null, 2)); }
