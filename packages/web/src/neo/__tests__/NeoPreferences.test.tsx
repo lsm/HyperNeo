@@ -66,9 +66,7 @@ describe('Neo preferences', () => {
     const store = makeStore();
     const onSaved = vi.fn();
     api.request.mockImplementation(async (method: string, params: { input?: unknown }) =>
-      method === 'operation.invoke'
-        ? { ok: true, preferences: params.input }
-        : { providers: [] }
+      method === 'operation.invoke' ? { ok: true, preferences: params.input } : { providers: [] }
     );
     render(
       <NeoPreferences

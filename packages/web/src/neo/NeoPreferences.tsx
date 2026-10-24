@@ -13,7 +13,6 @@ import { providerLogoColor, shortenModelName } from '../lib/provider-brand.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoModelMenu } from './NeoModelMenu.tsx';
-import { createSettingsPath } from '../lib/router.ts';
 import { t } from '../lib/i18n/index.ts';
 import { ThinkingLevelIcon } from '../components/ThinkingLevelIcon.tsx';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
@@ -143,31 +142,6 @@ export function NeoPreferences({
     await save({ model: next.id, provider: next.provider, thinkingLevel: level }, true);
   }
 
-  async function restart() {
-    if (
-      busy ||
-      !confirm('Restart Neo with a fresh context? Open asks, todos and questions carry over.')
-    )
-      return;
-    setSaving(true);
-    try {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Reconnect before restarting Neo.');
-      const result = await invokeOperation<{ ok: boolean; reason?: string }>(
-        hub,
-        'neo.restart',
-        {}
-      );
-      if (!result.ok) throw new Error(result.reason || 'Could not restart Neo.');
-      setOpen(false);
-      await store.refresh();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : 'Could not restart Neo.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function changeThinking(next: ThinkingLevel) {
     if (busy) return;
     if (!info || !currentId) {
@@ -224,35 +198,7 @@ export function NeoPreferences({
           class={`!h-3.5 !w-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
-      {open && !forSession && (
-        <div
-          id="neo-preferences"
-          onKeyDown={(event) => {
-            if (event.key !== 'Escape') return;
-            event.stopPropagation();
-            setOpen(false);
-            trigger.current?.focus();
-          }}
-          class="absolute bottom-full left-0 z-30 mb-3 w-60 rounded-xl border border-line bg-surface-raised p-2 shadow-xl"
-        >
-          <a
-            href={createSettingsPath('neo-model')}
-            onClick={() => setOpen(false)}
-            class="block rounded-lg px-3 py-2 text-sm text-accent"
-          >
-            Neo model settings
-          </a>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void restart()}
-            class="w-full rounded-lg px-3 py-2 text-left text-xs text-fg-muted hover:bg-fill-soft"
-          >
-            Restart Neo
-          </button>
-        </div>
-      )}
-      {open && forSession && (
+      {open && (
         <NeoModelMenu
           id={forSession ? 'neo-preferences-session' : 'neo-preferences'}
           models={models}
@@ -269,7 +215,6 @@ export function NeoPreferences({
           onModel={(next) => void changeModel(next)}
           onThinking={(next) => void changeThinking(next)}
           onReload={() => void model.reload()}
-          onRestart={forSession ? undefined : () => void restart()}
           onClose={() => {
             setOpen(false);
             trigger.current?.focus();
