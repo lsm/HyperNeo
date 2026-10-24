@@ -20,6 +20,7 @@ const evidence: unknown[] = [];
 try {
   createCodingPackTables(db);
   const pack = createCodingPack({
+    database: () => db,
     todoPrs: new CodingTodoPrRepository(db),
     prLedger: new CodingPrLedgerRepository(db),
     prEvents: new CodingPrEventRepository(db),
