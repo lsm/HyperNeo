@@ -430,6 +430,7 @@ describe('codex-desktop adapter status and send', () => {
         throw new Error('not used');
       },
       statePath,
+      desktopRunning: async () => false,
       worktreesDir,
       machine: 'laptop',
       now: () => NOW,
