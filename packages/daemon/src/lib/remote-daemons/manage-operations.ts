@@ -72,11 +72,11 @@ export function listRemoteDaemons(_input: ListInput, registry: RemoteDaemonRegis
   };
 }
 
-export function detachRemoteDaemon(
+export async function detachRemoteDaemon(
   input: DetachInput,
   registry: RemoteDaemonRegistry
-): DetachResult {
-  return registry.detach(input.daemonId)
+): Promise<DetachResult> {
+  return (await registry.detach(input.daemonId))
     ? { kind: 'detached', daemonId: input.daemonId }
     : { kind: 'not_attached', daemonId: input.daemonId };
 }

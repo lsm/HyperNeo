@@ -42,9 +42,9 @@ export interface DaemonAttachment {
 }
 
 export interface RemoteDaemonSecrets {
-  save(daemonId: string, url: string, credential: string, now: number): void;
+  save(daemonId: string, url: string, credential: string, now: number): Promise<void>;
   credentialFor(daemonId: string, url: string): string | null;
-  remove(daemonId: string): void;
+  remove(daemonId: string): Promise<void>;
 }
 
 export class RemoteDaemonRegistry {
@@ -75,8 +75,8 @@ export class RemoteDaemonRegistry {
     this.secrets = secrets;
   }
 
-  attach(daemonId: string, url: string, credential?: string): void {
-    if (credential) this.secrets?.save(daemonId, url, credential, this.now());
+  async attach(daemonId: string, url: string, credential?: string): Promise<void> {
+    if (credential) await this.secrets?.save(daemonId, url, credential, this.now());
     this.urls.set(daemonId, url);
     this.forget(daemonId);
     this.persist?.(this.list());
@@ -86,9 +86,9 @@ export class RemoteDaemonRegistry {
     return [...this.urls].map(([daemonId, url]) => ({ daemonId, url }));
   }
 
-  detach(daemonId: string): boolean {
+  async detach(daemonId: string): Promise<boolean> {
+    await this.secrets?.remove(daemonId);
     const wasAttached = this.urls.delete(daemonId);
-    this.secrets?.remove(daemonId);
     this.forget(daemonId);
     if (wasAttached) this.persist?.(this.list());
     return wasAttached;
