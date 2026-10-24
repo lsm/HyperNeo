@@ -160,6 +160,48 @@ describe('ledger HTTP polling pages', () => {
     }
   });
 
+  test('a cached cycle cannot lend its old coverage to an overlapping new cycle', async () => {
+    const { db, facts } = setup();
+    let calls = 0;
+    const request = async () => Response.json({ request: ++calls });
+    try {
+      await (await facts.collect(subject, 'cycle-a', null, request)).text();
+      const [cached, fresh] = await Promise.all([
+        facts.collect(subject, 'cycle-a', null, request),
+        facts.collect(subject, 'cycle-b', null, request),
+      ]);
+      expect(await cached.json()).toEqual({ request: 1 });
+      expect(await fresh.json()).toEqual({ request: 2 });
+      expect(calls).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('overlapping observations keep separate credential identities isolated', async () => {
+    const { db, facts } = setup();
+    let calls = 0;
+    const request = async () => Response.json({ request: ++calls });
+    try {
+      const results = await Promise.all([
+        facts.collect(subject, 'cycle-a', null, request),
+        facts.collect(
+          { ...subject, credentialId: 'another-opaque-identity' },
+          'cycle-b',
+          null,
+          request
+        ),
+      ]);
+      expect(await Promise.all(results.map((result) => result.json()))).toEqual([
+        { request: 1 },
+        { request: 2 },
+      ]);
+      expect(calls).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a valid 304 refreshes its metadata without changing the fact; mismatched validators stay unknown', async () => {
     const { db, facts } = setup();
     try {
