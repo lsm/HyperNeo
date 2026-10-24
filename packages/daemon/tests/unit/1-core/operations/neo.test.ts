@@ -351,6 +351,7 @@ describe('Neo MVP', () => {
       'neo.session.mute',
       'neo.session.track',
       'neo.github.read',
+      'neo.coding.result',
       'neo.pack.read',
       'neo.snapshot',
       'neo.project.save',

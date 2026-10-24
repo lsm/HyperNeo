@@ -43,6 +43,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The proposal lists the same pack, scope and key more than once. Include each setting once.',
   edit_unchanged:
     'The edit leaves the reply exactly as it was. Pass the changed wording, or skip the edit.',
+  head_changed_or_failed_stage:
+    'The PR head changed or this stage already failed. Read the current assignment and findings; validate the current head rather than replacing a failure with a pass.',
   epic_unavailable:
     'The GitHub epic could not be read or has no title. Check the URL and access, then try again.',
   handoff_uncertain:
@@ -127,6 +129,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Only main Neo or the human can change the project tree. Ask main Neo to do it.',
   self_dependency: 'A card cannot depend on itself. Remove its own id from dependsOn.',
   session_not_found: 'No Neo session has that sessionId. Pass the id of an existing Neo session.',
+  stage_assignment_mismatch:
+    'The result does not match the assigned coding actor, worker ref, PR head or acceptance contract. Submit evidence for the exact persisted assignment.',
   stale_ask_revision:
     'The ask changed since you read it. Read it again with neo.snapshot and pass its current revision.',
   submitted: 'That draft was already sent as a message, so there is nothing to recover.',
