@@ -23,7 +23,7 @@ set(global, 'mergePolicy', 'review_bot');
 set(global, 'reviewBot', 'synthetic-bot');
 set(repo, 'humanSignoff', []);
 const seeded = list();
-const evidence = { seeded, observations: [] };
+const evidence = { head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), seeded, observations: [] };
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 try {
@@ -127,7 +127,7 @@ try {
   assert.deepEqual(get(global, 'watchedRepos').value, []);
   evidence.emptyWatchListSurvivesReload = true;
   evidence.final = list();
-  console.log('PASS: Settings > Coding pack shows repo/global/unanswered states, writes nothing on open, refuses invalid values, saves [] explicitly and reads repo saves back at 1280/390 px.');
+  console.log('PASS: Coding settings starts with no watches, saves/removes instance watches with readback and reload, refuses invalid values, preserves repository policies and fits at 1280/390 px.');
 } finally {
   writeFileSync(`${run}/evidence/coding-pack-settings.json`, JSON.stringify(evidence, null, 2));
   await browser.close();
