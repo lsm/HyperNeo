@@ -72,7 +72,8 @@ describe('GitHub watch reconciliation', () => {
     createTables(db);
     runMigrations(db, () => {});
     db.exec(`INSERT INTO sessions (id,title,workspace_path,status,created_at,last_active_at,config,metadata) VALUES ('archived','Archived','/tmp','archived',1,1,'{}','{}');
-      INSERT INTO neo_asks (id,session_id,title,request,status,repo,created_at,updated_at) VALUES ('ask','archived','Ask','Request','open','fixture/fallback',1,1)`);
+      INSERT INTO sessions (id,title,workspace_path,status,created_at,last_active_at,config,metadata) VALUES ('active','Active','/tmp','active',1,1,'{}','{}');
+      INSERT INTO neo_asks (id,session_id,title,request,status,repo,created_at,updated_at) VALUES ('ask','active','Ask','Request','open','fixture/fallback',1,1)`);
     const subscriptions = new SessionEventSubscriptionRepository(db);
     subscriptions.upsert({
       sessionId: 'archived',
@@ -90,12 +91,66 @@ describe('GitHub watch reconciliation', () => {
       expect(new GitHubWatchInventory(db, subscriptions).list()).toEqual([
         { owner: 'fixture', repo: 'fallback' },
       ]);
-      db.exec("UPDATE neo_asks SET status='done'");
+      db.exec("UPDATE sessions SET status='archived' WHERE id='active'");
+      expect(new GitHubWatchInventory(db, subscriptions).list()).toEqual([]);
+      db.exec(
+        "UPDATE sessions SET status='active' WHERE id='active'; UPDATE neo_asks SET status='done'"
+      );
       expect(new GitHubWatchInventory(db, subscriptions).list()).toEqual([]);
     } finally {
       db.close();
     }
   });
+
+  test('the timer discovers later todos after the last watch is reaped', async () => {
+    const db = new Database(':memory:');
+    createTables(db);
+    runMigrations(db, () => {});
+    db.exec(`INSERT INTO sessions (id,title,workspace_path,status,created_at,last_active_at,config,metadata) VALUES ('owner','Owner','/tmp','active',1,1,'{}','{}');
+      INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('ask','owner','Ask','Request','open',1,1)`);
+    const inventory = new GitHubWatchInventory(db, new SessionEventSubscriptionRepository(db));
+    const extension = new GitHubEventExtension(db, undefined, {
+      pollIntervalMs: 1,
+      sessionWatchRepos: () => inventory.list(),
+      sessionRepoReferenced: (owner, repo) => inventory.references(owner, repo),
+      fetchImpl: (async () => Response.json([])) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'sessions',
+      owner: 'fixture',
+      repo: 'finished',
+      pollingEnabled: true,
+    });
+    const config = new ExternalEventExtensionConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { polling: true },
+    });
+    await extension.start({
+      config,
+      publisher: { publish: async () => ({}) },
+      onSourceConfigChanged: () => {},
+    });
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 2500;
+      while (!condition() && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(condition()).toBe(true);
+    };
+    try {
+      await waitFor(() => extension.repo.listPollingRepos().length === 0);
+      db.exec(
+        `INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES ('new','ask',0,'Todo','Done','fixture/later','{"pack":"coding"}','todo',1,1)`
+      );
+      await waitFor(
+        () => extension.repo.getWatchedRepo('sessions', 'fixture', 'later')?.lastPollAt != null
+      );
+    } finally {
+      await extension.stop();
+      db.close();
+    }
+  }, 10000);
 
   test('three missed cycles persist a concern and recovery retries delivery', async () => {
     const db = new Database(':memory:');

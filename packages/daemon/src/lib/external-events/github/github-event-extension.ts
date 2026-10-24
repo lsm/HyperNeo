@@ -1243,7 +1243,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
     }
     if (this.stopped) return;
-    if (this.repo.listPollingRepos().length === 0) {
+    if (!this.options.sessionWatchRepos && this.repo.listPollingRepos().length === 0) {
       if (this.pollTimer) {
         clearTimeout(this.pollTimer);
         this.pollTimer = null;
@@ -1894,7 +1894,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private maybeStopPolling(): void {
     if (!this.pollTimer) return;
-    if (this.repo.listPollingRepos().length > 0) return;
+    if (this.options.sessionWatchRepos || this.repo.listPollingRepos().length > 0) return;
     clearTimeout(this.pollTimer);
     this.pollTimer = null;
   }

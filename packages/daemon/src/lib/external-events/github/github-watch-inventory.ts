@@ -18,7 +18,8 @@ export class GitHubWatchInventory {
     const todos = this.db
       .prepare(`SELECT DISTINCT coalesce(t.repo, a.repo) AS repo
       FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
-      WHERE a.status = 'open' AND t.state IN ('todo', 'doing', 'blocked')
+      JOIN sessions s ON s.id = a.session_id
+      WHERE s.status != 'archived' AND a.status = 'open' AND t.state IN ('todo', 'doing', 'blocked')
         AND json_extract(t.check_json, '$.pack') = 'coding'`)
       .all() as { repo: string | null }[];
     const candidates = [
