@@ -228,7 +228,7 @@ export class NeoSessionWatcher {
       'grouped'
     )
     .pipe(
-      (
+      async (
         listed: { sessions: NeoListedSession[]; complete: boolean },
         plan: ReturnType<typeof planNeoSessionWatch>,
         notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
@@ -250,7 +250,7 @@ export class NeoSessionWatcher {
         for (const key of read.found.keys()) this.sessionPrsCheckedAt.set(key, now);
         for (const key of [...this.sessionPrsCheckedAt.keys()])
           if (!this.sessionsSeen.has(key)) this.sessionPrsCheckedAt.delete(key);
-        this.saveSeen();
+        await this.saveSeen();
       },
       ['listed', 'plan', 'notices', 'read', 'now']
     )
@@ -273,12 +273,12 @@ export class NeoSessionWatcher {
     )
     .endAsync('root') as (now: number) => Promise<unknown>;
 
-  private saveSeen(): void {
+  private async saveSeen(): Promise<void> {
     const entries = [...this.sessionsSeen];
     const signature = JSON.stringify(entries);
     if (signature === this.savedSeen) return;
     try {
-      this.deps.seen.replace(entries);
+      await this.deps.seen.replace(entries);
       this.savedSeen = signature;
     } catch (error) {
       this.deps.log.warn('Neo session watch state could not be saved', error);
