@@ -20,7 +20,9 @@ is an alias to this current journey.
 Check `evidence/observed.json` and `native-events.jsonl`:
 
 - `work.start` prepares and imports one worker in auto. A live target receives
-  directly with a confirmed input receipt; it never opens a desktop-wake helper.
+  directly, including its initial task: the work.start receipt must match the
+  initial inbox frame UUID and no initial relay may be spawned. It never opens
+  a desktop-wake helper.
 - After an unconfirmed direct input, the synthetic receiver's Desktop mode
   changes while the daemon is waiting. For auto, default and acceptEdits, the
   retry relay runs in auto; for bypassPermissions it runs in bypassPermissions.

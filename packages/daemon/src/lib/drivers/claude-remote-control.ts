@@ -286,7 +286,7 @@ export function withClaudeRemoteControl(
       const started = await start(startRequest, context);
       if (started.ok) {
         const target = { sessionId: started.value.ref.id, title: started.value.title };
-        const delivery = await wake(target, startRequest.message, deps);
+        const delivery = await wake(target, startRequest.message, deps, context);
         if (!delivery.ok)
           return {
             ...delivery,
