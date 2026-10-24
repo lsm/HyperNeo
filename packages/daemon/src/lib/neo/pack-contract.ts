@@ -80,6 +80,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
+  stats?(now: number): Record<string, number>;
   observeSessions?(sessions: readonly NeoSessionFacts[], now: number): Promise<void>;
   snapshotRows?(
     repos: readonly string[] | null,

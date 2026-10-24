@@ -210,3 +210,19 @@ test('a new head or non-ready state is not an overdue ready item', async () => {
   expect(history()).toHaveLength(1);
   expect(history()[0].fullText).toContain('ready to merge >1h: 0');
 });
+
+test('another enabled pack contributes its own labelled counts without core domain knowledge', async () => {
+  service.filePacks = [
+    {
+      id: 'example',
+      describe: 'Synthetic domain',
+      instructions: () => null,
+      stats: () => ({ 'waiting items': 4 }),
+    },
+  ];
+  db.updateGlobalSettings({ neo: { packs: ['example'] } });
+  await service.sweepPacks();
+  expect(history()).toHaveLength(1);
+  expect(history()[0].fullText).toContain('example: waiting items: 4');
+  expect(history()[0].fullText).not.toContain('coding');
+});
