@@ -49,5 +49,6 @@ try{
   evidence.rows=rows();
  }
  evidence.counts=Object.fromEntries([...new Set(requests().map(r=>r.phase))].map(p=>[p,requests().filter(r=>r.phase===p).length]));
+ assert.deepEqual(evidence.counts,baseline?{cold:5}:{cold:1,repeat:1,open:1,failed:1,recovered:1});
  evidence.verified=true;console.log(JSON.stringify({verified:true,baseline,coldReads:evidence.coldReads,evidence:join(run,'evidence/workflow-connector.json')}));
 }finally{await app?.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;evidence.requests=requests();writeFileSync(join(run,'evidence/workflow-connector.json'),JSON.stringify(evidence,null,2));}

@@ -47,6 +47,7 @@ function fixture(state = 'MERGED') {
   const db = new Database(':memory:');
   createCodingPackTables(db);
   let calls = 0,
+    directCalls = 0,
     fail = false;
   const read = createCodingConnectorPrReader(
     () => db,
@@ -61,13 +62,17 @@ function fixture(state = 'MERGED') {
   const config = { workspacePath: '/tmp', readGithubPr: read };
   registerBuiltInValidator(
     'pr_merged',
-    createPrMergedValidator(() => response({}, 1))
+    createPrMergedValidator(() => {
+      directCalls++;
+      return response({}, 1);
+    })
   );
   return {
     db,
     config,
     read,
     calls: () => calls,
+    directCalls: () => directCalls,
     fail: () => {
       fail = true;
     },
@@ -91,6 +96,7 @@ test('workflow hooks share a ledger acquisition and a failed refresh never falls
     const before = f.db.prepare('SELECT value_json,observed_at FROM pack_coding_poll_facts').get();
     f.fail();
     expect((await executor.execute(hook, context)).result.type).toBe('block');
+    expect(f.directCalls()).toBe(0);
     expect(f.db.prepare('SELECT value_json,observed_at FROM pack_coding_poll_facts').get()).toEqual(
       before
     );
