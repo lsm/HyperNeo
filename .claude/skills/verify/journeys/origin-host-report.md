@@ -16,8 +16,10 @@ Then headless Chromium (`origin-host-view.mjs`) pairs a browser, opens
 stays in a shell variable.
 
 End state:
-- Every request is still served (`200`), and the preflight still answers
-  `Access-Control-Allow-Origin: *`: nothing is refused until S8.
+- Every page request is still served (`200`), and the preflight still answers
+  `Access-Control-Allow-Origin: *`. The foreign-Origin WebSocket prints `served: false`:
+  cross-site upgrades are refused since #7975 (`origin-refuse-front-doors.md`), and the
+  Host check stays observe-only.
 - `would_refuse_requests` holds one row per reason, kind, host and origin: `host_not_allowed`
   for `rebind.example` and `mac.tailnet.example`, `origin_not_allowed` for
   `https://evil.example` as `http`, `preflight` (2: curl's two requests) and `ws`.

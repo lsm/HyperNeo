@@ -13,7 +13,7 @@ import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
-import { createRequestObserver } from './lib/pairing/origin-host.ts';
+import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
@@ -363,7 +363,7 @@ export interface DaemonAppContext {
     req: Request,
     remoteAddress: string | null
   ) => Promise<UpgradeIdentity | null>;
-  observeRequest: (req: Request) => void;
+  guardRequest: (req: Request) => Response | null;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -1173,7 +1173,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       db: () => db.gateway,
       now: Date.now,
     });
-    const observeRequest = createRequestObserver({
+    const guardRequest = createRequestGuard({
       db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
       exempt: (req) =>
@@ -1189,7 +1189,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
       async fetch(req, upgrade, client) {
         const url = new URL(req.url);
-        observeRequest(req);
+        const refused = guardRequest(req);
+        if (refused) return refused;
 
         if (req.method === 'OPTIONS') {
           return new Response(null, {
@@ -1789,7 +1790,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       server,
       handlePair,
       authenticateUpgrade,
-      observeRequest,
+      guardRequest,
       db,
       messageHub,
       sessionManager,
