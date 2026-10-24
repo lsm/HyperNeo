@@ -49,7 +49,7 @@ try {
   const now = Date.now();
   for (const id of ['synthetic-event-neo', worker]) await app!.db.createSession({ id, title: id, workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   neo!.repo.reserveBinding({ sessionId: 'synthetic-event-neo', projectId: null, kind: 'neo' });
-  await ledger!.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: worker }, status: 'active', lastActivityAt: now, remotes: [`git@github.com:${repo}.git`], branches: ['synthetic-188'], openedPrs: [] }], now);
+  await ledger!.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: worker }, status: 'running', lastActivityAt: now, remotes: [`git@github.com:${repo}.git`], branches: ['synthetic-188'], openedPrs: [] }], now);
   await pack!.sweep!(now + 1);
   evidence.waitingHuman = rows();
   decision = 'CHANGES_REQUESTED'; ci = 'FAILURE';
