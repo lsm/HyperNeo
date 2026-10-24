@@ -92,7 +92,9 @@ function makeGetPrReadinessOp(spawnImpl: SpawnFn): ConnectorOp {
       };
     }
 
-    const threadsOutcome = await fetchUnresolvedReviewThreads(meta, ctx, spawnImpl);
+    const threadsOutcome = ctx.readReviewThreads
+      ? await ctx.readReviewThreads(canonicalUrl ?? prUrl, ctx.workspacePath || '/tmp')
+      : await fetchUnresolvedReviewThreads(meta, ctx, spawnImpl);
     if (!threadsOutcome.ok) return threadsOutcome;
 
     const unresolvedThreadUrls = (threadsOutcome.data as { unresolvedThreadUrls: string[] })
