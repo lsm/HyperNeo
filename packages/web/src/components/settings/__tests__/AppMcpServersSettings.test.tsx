@@ -635,6 +635,69 @@ describe('AppMcpServersSettings', () => {
     });
   });
 
+  describe('stdio argument boundaries', () => {
+    it.each([
+      ['-y ./synthetic-server', ['-y', './synthetic-server']],
+      ['--root "/synthetic/folder with spaces"', ['--root', '/synthetic/folder with spaces']],
+      ["--label 'two words'", ['--label', 'two words']],
+      ['--label two\\ words ""', ['--label', 'two words', '']],
+    ])('creates literal argv from %s', async (input, args) => {
+      render(<AppMcpServersSettings />);
+      fireEvent.click(screen.getByText('Add MCP Server'));
+      fireEvent.change(screen.getByPlaceholderText('e.g., my-mcp-server'), {
+        target: { value: 'argv-recorder' },
+      });
+      fireEvent.change(screen.getByPlaceholderText('e.g., npx'), {
+        target: { value: 'synthetic-recorder' },
+      });
+      fireEvent.change(screen.getByPlaceholderText('e.g., -y @tokenizin/mcp-npx-fetch'), {
+        target: { value: input },
+      });
+      fireEvent.click(screen.getByText('Add Server'));
+      await waitFor(() =>
+        expect(mockCreateAppMcpServer).toHaveBeenCalledWith(expect.objectContaining({ args }))
+      );
+    });
+
+    it('preserves existing argv when the edit form is saved unchanged', async () => {
+      const args = [
+        '--root',
+        '/synthetic/folder with spaces',
+        'a"quote',
+        "it's literal",
+        'C:\\synthetic\\a folder',
+        '',
+      ];
+      appMcpStore.appMcpServers.value = [makeServer('argv', { name: 'argv-recorder', args })];
+      render(<AppMcpServersSettings />);
+      fireEvent.click(screen.getByTitle('Edit'));
+      fireEvent.click(screen.getByText('Save Changes'));
+      await waitFor(() =>
+        expect(mockUpdateAppMcpServer).toHaveBeenCalledWith(
+          'argv',
+          expect.objectContaining({ args })
+        )
+      );
+    });
+
+    it('keeps an unmatched quote in the form instead of saving altered arguments', async () => {
+      render(<AppMcpServersSettings />);
+      fireEvent.click(screen.getByText('Add MCP Server'));
+      fireEvent.change(screen.getByPlaceholderText('e.g., my-mcp-server'), {
+        target: { value: 'argv-recorder' },
+      });
+      fireEvent.change(screen.getByPlaceholderText('e.g., npx'), {
+        target: { value: 'synthetic-recorder' },
+      });
+      fireEvent.change(screen.getByPlaceholderText('e.g., -y @tokenizin/mcp-npx-fetch'), {
+        target: { value: '--root "unfinished' },
+      });
+      fireEvent.click(screen.getByText('Add Server'));
+      expect(screen.getByText('Args contain an unmatched quote')).toBeTruthy();
+      expect(mockCreateAppMcpServer).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Delete Confirmation', () => {
     it('should show delete confirmation modal when Delete button is clicked', () => {
       const servers = [makeServer('1', { name: 'test-server' })];
