@@ -57,4 +57,38 @@ describe('RetryPromptIdentity', () => {
     restarted.outgoing(input, true);
     expect(restarted.outgoing(input)).toBe(input);
   });
+  test('releases completed-turn identities without losing a queued input or cloning unrelated messages', () => {
+    const ids = new RetryPromptIdentity();
+    const input = {
+      type: 'user',
+      uuid: crypto.randomUUID(),
+      session_id: 'neo:synthetic',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Queued synthetic input' },
+    } as SDKUserMessage;
+    const queued = ids.outgoing(input, true);
+    const unrelated = { type: 'system', subtype: 'init' } as SDKMessage;
+    for (let turn = 0; turn < 200; turn++) {
+      const durable = { ...input, uuid: crypto.randomUUID() };
+      const wire = ids.outgoing(durable, true);
+      expect(ids.incoming(wire)).toEqual(durable);
+      const result = {
+        type: 'result',
+        user_message_uuid: wire.uuid,
+        user_message_uuids: [wire.uuid],
+      } as unknown as SDKMessage;
+      expect(ids.incoming(result)).toEqual({
+        ...result,
+        user_message_uuid: durable.uuid,
+        user_message_uuids: [durable.uuid],
+      });
+      expect(ids.incoming(wire)).toBe(wire);
+      expect(ids.incoming(queued)).toEqual(input);
+    }
+    expect(
+      ids.incoming({ type: 'result', user_message_uuid: queued.uuid } as unknown as SDKMessage)
+    ).toEqual({ type: 'result', user_message_uuid: input.uuid });
+    expect(ids.incoming(queued)).toBe(queued);
+    expect(ids.incoming(unrelated)).toBe(unrelated);
+  });
 });
