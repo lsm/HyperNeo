@@ -6,6 +6,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { CodingAssignmentsRepository, type CodingAssignment } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -44,10 +45,18 @@ try {
       });
       if (phase === 'initial') {
         db.exec("INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','synthetic','Assignments','Assignments',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Assignments','Merged','doing',1,1)");
+        db.exec("INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES ('synthetic-neo',NULL,'neo')");
         ledger.stageFacts.observeHead(url, 'head-a', 1);
         assert(await assignments.recordLater('todo', 'review', assignment));
         assert(await assignments.recordLater('todo', 'qa', { ...assignment, ref: { ...ref, id: 'qa-session' }, actor: { ...actor, id: 'qa-session' } }));
         assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: true });
+        const mcp = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'synthetic-neo', role: 'neo' }));
+        const refusal = await mcp({ name: 'neo.coding.result', input: { todoId: 'todo', ref: { ...ref, id: 'other' }, fact } });
+        const explained = JSON.parse(refusal.content[0].text);
+        assert.equal(explained.ok, false);
+        assert(explained.reason.startsWith('stage_assignment_mismatch: '));
+        assert(explained.reason.includes('exact persisted assignment'));
+        evidence.push({ phase, surface: 'agent-mcp', refusal });
         for (const patch of [{ ref: { ...ref, id: 'author' } }, { fact: { ...fact, acceptanceContract: 'other' } }, { fact: { ...fact, actor: { ...actor, model: 'gpt-6' } } }, { fact: { ...fact, head: 'head-b' } }])
           assert.deepEqual(await rpc({ todoId: 'todo', ref, fact, ...patch }), { ok: false, reason: 'stage_assignment_mismatch' });
         assert.deepEqual(await rpc({ todoId: 'todo', ref: { ...ref, id: 'qa-session' }, fact: { ...fact, actor: { ...actor, id: 'qa-session' }, stage: 'qa', verdict: 'inconclusive' } }), { ok: true });
