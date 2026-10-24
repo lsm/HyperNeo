@@ -1,3 +1,9 @@
+import {
+  CodingStageFactsRepository,
+  codingReviewerPolicy,
+  type CodingStageFact,
+  type CodingActor,
+} from './stage-facts.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
@@ -123,6 +129,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 }
 
 export interface CodingMergePolicy {
+  provenance?: boolean;
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
   reviewBot?: string;
   humanSignoff?: readonly string[];
@@ -285,6 +292,7 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
 }
 
 export class CodingPrLedgerRepository {
+  readonly stageFacts: CodingStageFactsRepository;
   readonly pollFacts: CodingPollFactsRepository;
   readonly mergeFacts: CodingMergeFactsRepository;
   readonly ancestryFacts: CodingAncestryFactsRepository;
@@ -294,6 +302,7 @@ export class CodingPrLedgerRepository {
   readonly queryFacts: CodingQueryFactsRepository;
 
   constructor(private readonly db: Database) {
+    this.stageFacts = new CodingStageFactsRepository(db);
     this.pollFacts = new CodingPollFactsRepository(db);
     this.mergeFacts = new CodingMergeFactsRepository(db);
     this.ancestryFacts = new CodingAncestryFactsRepository(db);
@@ -312,6 +321,14 @@ export class CodingPrLedgerRepository {
     >;
   }
 
+  recordStage(fact: CodingStageFact): boolean {
+    return this.stageFacts.record(fact);
+  }
+
+  reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
+    return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
+  }
+
   policy(repo: string): CodingMergePolicy {
     const read = (key: string) => {
       const scope = this.db
@@ -326,6 +343,7 @@ export class CodingPrLedgerRepository {
       )?.value;
     };
     return {
+      provenance: read('provenance') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
       reviewBot: read('reviewBot') as string | undefined,
       humanSignoff: read('humanSignoff') as string[] | undefined,
@@ -373,7 +391,8 @@ export class CodingPrLedgerRepository {
          created_at = excluded.created_at, author_is_bot = excluded.author_is_bot,
          head = excluded.head, state = excluded.state`
     );
-    for (const row of rows)
+    for (const row of rows) {
+      this.stageFacts.observeHead(`https://github.com/${row.repo}/pull/${row.number}`, row.head);
       insert.run(
         row.repo,
         row.number,
@@ -388,6 +407,7 @@ export class CodingPrLedgerRepository {
         row.createdAt ?? null,
         row.authorIsBot === false ? 0 : 1
       );
+    }
   }
 
   observeSessions(sessions: readonly NeoSessionFacts[], now: number): void {
@@ -635,6 +655,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'recordStage'
   | 'recordAlias'
   | 'dropRepo'
   | 'replace'
@@ -648,6 +669,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'recordStage',
     'recordAlias',
     'dropRepo',
     'replace',

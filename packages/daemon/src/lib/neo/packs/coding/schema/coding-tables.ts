@@ -6,6 +6,17 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     prs_json TEXT NOT NULL CHECK (json_valid(prs_json)),
     read_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_stage_heads (
+    url TEXT PRIMARY KEY,
+    head TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_stage_facts (
+    url TEXT NOT NULL,
+    head TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN ('review', 'qa')),
+    fact_json TEXT NOT NULL CHECK (json_valid(fact_json)),
+    PRIMARY KEY (url, stage)
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_pr_claims (
     todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
     url TEXT NOT NULL,

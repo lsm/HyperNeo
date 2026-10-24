@@ -58,6 +58,14 @@ export function createCodingPack(deps: {
       }),
     ],
     preferences: {
+      provenance: {
+        label: { en: 'Independent model provenance', 'zh-Hans': '独立模型来源' },
+        valueLabels: {},
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: true,
+        ask: 'Require author model and harness provenance and a different reviewer model? Until answered, this is on without saving a preference.',
+      },
       mergePolicy: {
         label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
         valueLabels: {

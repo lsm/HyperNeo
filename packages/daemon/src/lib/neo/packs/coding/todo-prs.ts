@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { CodingStageFactsRepository } from './stage-facts.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
@@ -30,7 +31,15 @@ export function codingPrKey(url: string): string | null {
 }
 
 export class CodingTodoPrRepository {
-  constructor(private readonly db: Database) {}
+  readonly stageFacts: CodingStageFactsRepository;
+
+  constructor(private readonly db: Database) {
+    this.stageFacts = new CodingStageFactsRepository(db);
+  }
+
+  stages(todoId: string) {
+    return this.urls(todoId).flatMap((url) => this.stageFacts.read(url));
+  }
 
   claim(todoId: string, claims: readonly { url: string; claim: CodingPrClaim }[], now: number) {
     const keyed = claims.flatMap(({ url, claim }) => {
@@ -140,6 +149,7 @@ export class CodingTodoPrRepository {
   }
 
   record(todoId: string, prs: readonly NeoWorkPr[], now: number): void {
+    for (const pr of prs) if (pr.head) this.stageFacts.observeHead(pr.url, pr.head);
     this.db
       .prepare(
         `INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at) VALUES (?, ?, ?)
