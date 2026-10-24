@@ -11,6 +11,15 @@ const origin = z.object({ sessionId: text(160), messageId: text(160) }).strict()
 
 export const NeoPublicationSchema = z
   .object({
+    cardReply: z
+      .object({
+        sourceMessageIds: z.array(z.uuid()).min(1).max(100),
+        askId: text(160),
+        questionId: text(160),
+        mutationId: z.uuid(),
+      })
+      .strict()
+      .optional(),
     conversationId: z.string().uuid(),
     publicationId: z.string().uuid(),
     askOrigin: origin.optional(),

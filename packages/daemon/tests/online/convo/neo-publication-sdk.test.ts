@@ -606,7 +606,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       page = await read();
     }
     expect(page.ok).toBe(true);
-    expect(page.items).toHaveLength(2);
+    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(2);
     expect(
       page.items.filter((item) => item.shortText.startsWith('Daily dropped work '))
     ).toHaveLength(1);
@@ -652,6 +652,22 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
         input: { questionId: question.id },
       })
     ).toMatchObject({ ok: true, question: { replyTo: [requestId] } });
+    page = await read();
+    expect(page.items).toHaveLength(3);
+    const notices = page.items.filter((item) => item.cardReply);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      shortText: 'I replied · View card · Which synthetic flower?',
+      fullText: 'I replied · View card · Which synthetic flower?',
+      cardReply: {
+        sourceMessageIds: [requestId],
+        askId: question.askId,
+        questionId: question.id,
+        mutationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      },
+    });
+    expect(notices[0].replyTo).toBeUndefined();
+    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(2);
     expect((await read()).items).toEqual(page.items);
     const messageStatuses = await hub.request<{
       items: { requestId: string; messageStatus?: string }[];
@@ -675,7 +691,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     );
     expect(webRead).toEqual({
       state: 'ready',
-      items: page.items,
+      items: page.items.map(({ cardReply: _cardReply, ...item }) => item),
       nextAfter: page.items.at(-1)!.sequence,
     });
     const unansweredId = randomUUID();

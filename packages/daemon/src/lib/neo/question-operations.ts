@@ -1,3 +1,4 @@
+import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
 import type { NeoQuestionSource } from '@hyperneo/shared/types/neo-ask';
@@ -13,6 +14,7 @@ import { z } from 'zod';
 import type {
   NeoAskTodoRepository,
   NeoQuestionDraft,
+  NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -306,7 +308,13 @@ export function createNeoQuestionOperations(
   start: (todoId: string) => Promise<{ ok: boolean; reason?: string }>,
   receivedHumanInput: (caller: OperationCaller, messageId: string) => boolean = () => false,
   artifact: ArtifactRefReader = () => null,
-  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null> = async () => null
+  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null> = async () => null,
+  replyContext: (
+    caller: OperationCaller,
+    ids: readonly string[] | undefined,
+    askId: string
+  ) => NeoCardReplyContext | null = () => null,
+  publicationChanged: (conversationId: string) => void = () => {}
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -316,6 +324,36 @@ export function createNeoQuestionOperations(
           ? { value: input }
           : fail('invalid_reply_to: cite only received human messages in this conversation.'),
       ['input', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (input: z.infer<typeof Ask>, caller: OperationCaller) => {
+        const context = replyContext(caller, input.replyTo, input.askId);
+        return {
+          context,
+          mutationId: context
+            ? neoDerivedId(
+                JSON.stringify([
+                  'card-reply',
+                  context.conversationId,
+                  [...context.sourceMessageIds].sort(),
+                  { ...input, replyTo: [...new Set(context.sourceMessageIds)].sort() },
+                ])
+              )
+            : crypto.randomUUID(),
+        };
+      },
+      ['input', 'caller'],
+      'reply'
+    )
+    .pipe(
+      (reply: { context: NeoCardReplyContext | null; mutationId: string }) => {
+        const existing = reply.context
+          ? store.cardReplyQuestion(reply.context.conversationId, reply.mutationId)
+          : null;
+        return existing ? { reason: { ok: true, question: existing } } : { value: null };
+      },
+      'reply',
       'result:outcome'
     )
     .pipe(
@@ -357,6 +395,16 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
+      (plan: QuestionPlan, reply: { context: NeoCardReplyContext | null; mutationId: string }) => {
+        const existing = reply.context
+          ? store.cardReplyQuestion(reply.context.conversationId, reply.mutationId)
+          : null;
+        return existing ? { reason: { ok: true, question: existing } } : { value: plan };
+      },
+      ['outcome', 'reply'],
+      'result:outcome'
+    )
+    .pipe(
       (plan: QuestionPlan, input: z.infer<typeof Ask>) => {
         const replaces = input.kind === 'start' ? undefined : input.replaces;
         const replaced = requireNeoQuestionReplaceable(
@@ -370,32 +418,36 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (plan: QuestionPlan & { replaced: NeoQuestion | null }): QuestionReceipt | Rejection => {
-        if (plan.reworded) {
-          const { id, startTodos } = plan.reworded;
-          store.extendStartQuestion(
-            id,
-            startTodos ?? [],
-            plan.draft.text,
-            Date.now(),
-            plan.draft.replyTo,
-            plan.draft.artifacts,
-            plan.draft.sourceSession
-          );
-          const question = store.getQuestion(id);
-          return question?.state === 'open'
-            ? { ok: true, question }
-            : { ok: false, reason: 'question_closed: the start question is no longer open.' };
-        }
-        const id = crypto.randomUUID();
-        const question = plan.replaced
-          ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
-          : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
+      (
+        plan: QuestionPlan & { replaced: NeoQuestion | null },
+        reply: { context: NeoCardReplyContext | null; mutationId: string }
+      ): QuestionReceipt | Rejection => {
+        const question = store.writeCardReply(reply.context, reply.mutationId, () => {
+          if (plan.reworded) {
+            const { id, startTodos } = plan.reworded;
+            store.extendStartQuestion(
+              id,
+              startTodos ?? [],
+              plan.draft.text,
+              Date.now(),
+              plan.draft.replyTo,
+              plan.draft.artifacts,
+              plan.draft.sourceSession
+            );
+            const question = store.getQuestion(id);
+            return question?.state === 'open' ? question : null;
+          }
+          const id = reply.mutationId;
+          return plan.replaced
+            ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
+            : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
+        });
+        if (question && reply.context) publicationChanged(reply.context.conversationId);
         return question
           ? { ok: true, question }
           : { ok: false, reason: 'question_closed: the question to replace is no longer open.' };
       },
-      'outcome',
+      ['outcome', 'reply'],
       'outcome'
     )
     .pipe(
@@ -492,7 +544,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

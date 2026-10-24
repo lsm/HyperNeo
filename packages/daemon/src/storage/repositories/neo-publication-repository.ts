@@ -51,6 +51,77 @@ function appendImmutable(
   payload: string
 ): NeoPublicationAppendResult {
   return db.transaction((): NeoPublicationAppendResult => {
+    if (input.cardReply) {
+      const target = db
+        .prepare('SELECT ask_id FROM neo_questions WHERE id = ?')
+        .get(input.cardReply.questionId) as { ask_id: string } | null;
+      if (target?.ask_id !== input.cardReply.askId)
+        return { accepted: false, reason: 'invalid_publication' };
+      const prior = db
+        .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
+        AND (json_extract(payload_json, '$.cardReply.mutationId') = ? OR
+          (json_extract(payload_json, '$.cardReply.askId') = ? AND
+           json_extract(payload_json, '$.cardReply.sourceMessageIds') = ?)) ORDER BY sequence LIMIT 1`)
+        .get(
+          input.conversationId,
+          input.cardReply.mutationId,
+          input.cardReply.askId,
+          JSON.stringify(input.cardReply.sourceMessageIds)
+        ) as Row | null;
+      if (prior) {
+        const current = decode(prior);
+        if (
+          current.cardReply?.askId !== input.cardReply.askId ||
+          JSON.stringify(current.cardReply.sourceMessageIds) !==
+            JSON.stringify(input.cardReply.sourceMessageIds)
+        )
+          return { accepted: false, reason: 'publication_conflict' };
+        if (
+          input.publicationId === (current.revisionId ?? current.publicationId) ||
+          current.revisions?.some(
+            (revision) =>
+              revision.revisionId === input.publicationId ||
+              (input.cardReply!.mutationId !== current.cardReply!.mutationId &&
+                revision.revisionId === input.cardReply!.mutationId)
+          )
+        )
+          return { accepted: true, created: false, publication: current };
+        const revisions = [...(current.revisions ?? [])];
+        for (const revisionId of new Set([
+          current.revisionId ?? current.publicationId,
+          current.cardReply.mutationId,
+        ])) {
+          if (revisions.some((revision) => revision.revisionId === revisionId)) continue;
+          revisions.push({
+            revisionId,
+            shortText: current.shortText,
+            fullText: current.fullText,
+            createdAt: current.editedAt ?? current.createdAt,
+            producerInput: current.answerInput ?? current.producerInput,
+            askOrigin: current.answerOrigin ?? current.askOrigin,
+            awaiting: current.awaiting,
+          });
+        }
+        const next = {
+          ...(JSON.parse(prior.payloadJson) as NeoPublicationInput),
+          shortText: input.shortText,
+          fullText: input.fullText,
+          links: input.links,
+          cardReply: input.cardReply,
+          revisionId: input.publicationId,
+          revisions,
+        };
+        db.prepare('UPDATE neo_publications SET payload_json = ? WHERE sequence = ?').run(
+          JSON.stringify(next),
+          current.sequence
+        );
+        return {
+          accepted: true,
+          created: false,
+          publication: { ...next, sequence: current.sequence, createdAt: current.createdAt },
+        };
+      }
+    }
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, publication_id) DO NOTHING
@@ -100,6 +171,21 @@ function appendImmutable(
 const append = (superpipe({})('neo-publication-append') as PipelineAPI)
   .input(['input', 'db'])
   .pipe(admitNeoPublication, 'input', 'result:append')
+  .pipe(
+    (input: NeoPublicationInput) =>
+      input.cardReply
+        ? {
+            ...input,
+            replyTo: undefined,
+            cardReply: {
+              ...input.cardReply,
+              sourceMessageIds: [...new Set(input.cardReply.sourceMessageIds)].sort(),
+            },
+          }
+        : input,
+    'append',
+    'append'
+  )
   .pipe(JSON.stringify, 'append', 'payload')
   .pipe(appendImmutable, ['db', 'append', 'payload'], 'append')
   .end('append') as (
