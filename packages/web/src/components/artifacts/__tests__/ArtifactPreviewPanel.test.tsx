@@ -89,6 +89,15 @@ afterEach(() => {
 });
 
 describe('ArtifactPreviewPanel', () => {
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'keeps the preview during IME Escape: %j',
+    async (ime) => {
+      await openDocument();
+      fireEvent.keyDown(document, { key: 'Escape', ...ime });
+      expect(screen.getByRole('dialog')).toBeTruthy();
+    }
+  );
+
   it('dismisses the real image lightbox without losing the preview after focus moves', async () => {
     await openDocument();
     render(
@@ -108,12 +117,7 @@ describe('ArtifactPreviewPanel', () => {
 
   it('opens and closes on ordinary HTTP without crypto.randomUUID', async () => {
     vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
-    render(<ArtifactPreviewPanel />);
-    expect(() =>
-      act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }))
-    ).not.toThrow();
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -270,13 +274,10 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('closes on Escape and returns focus to what opened it', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     const opener = document.createElement('button');
     document.body.appendChild(opener);
     opener.focus();
-    render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(opener);
@@ -297,13 +298,10 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('returns focus to the latest tap when a new preview replaces an open one', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     const [first, second] = [document.createElement('button'), document.createElement('button')];
     document.body.append(first, second);
-    render(<ArtifactPreviewPanel />);
     first.focus();
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     second.focus();
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
@@ -314,12 +312,9 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('closes on Escape pressed in the chat beside it', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     const menu = document.createElement('button');
     document.body.appendChild(menu);
-    render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     fireEvent.keyDown(menu, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     menu.remove();

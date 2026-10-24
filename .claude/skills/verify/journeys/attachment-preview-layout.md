@@ -17,7 +17,7 @@ uses preview.invalid: require isSecureContext=false and crypto.randomUUID undefi
 
 QA: 1440/1120px reserve a right column with editable chat and replacement content.
 768/390/320px show an upward entrance, uncovered strip and downward dismissal.
-X, unconsumed Escape and browser Back close without leaving Neo; horizontal swipes
+IME Escape keeps the preview open (including key code 229); unconsumed Escape, X and browser Back close without leaving Neo. Horizontal swipes
 do not. A quote, preferences popover or image lightbox consumes its own Escape
 without losing the preview, even after focus leaves. Use the real Markdown renderer
 and preferences. Inspect both files' screenshots/bounds; retain each layout.json.

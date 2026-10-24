@@ -50,6 +50,12 @@ try {
         await input.fill('A draft while reading the preview');
         assert.equal(await input.inputValue(), 'A draft while reading the preview');
         await input.fill('');
+        const ime = await context.newCDPSession(page);
+        await ime.send('Input.imeSetComposition', { text: '测', selectionStart: 1, selectionEnd: 1 });
+        await page.keyboard.press('Escape');
+        assert.equal(await panel.count(), 1);
+        await ime.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+        await input.fill('');
         await second.click();
         await panel.getByRole('heading', { name: 'PR layout proposal' }).waitFor();
         assert.equal(await panel.count(), 1);
@@ -96,7 +102,7 @@ try {
       await panel.waitFor({ state: 'detached' });
       assert.equal(new URL(page.url()).pathname, '/neo');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      observed[width] = { bounds, browserBackStaysOnNeo: true, close: true, ...(narrow ? { stripDismiss: true, swipeDown: true } : { chatEditable: true, replacesContent: true, escapeFromChat: true, quoteEscapePreservesPreview: true, preferencesEscapePreservesPreview: true }) };
+      observed[width] = { bounds, browserBackStaysOnNeo: true, close: true, ...(narrow ? { stripDismiss: true, swipeDown: true } : { chatEditable: true, replacesContent: true, escapeFromChat: true, imeEscapePreservesPreview: true, quoteEscapePreservesPreview: true, preferencesEscapePreservesPreview: true }) };
     } catch (error) {
       await page.screenshot({ path: join(evidence, `layout-failure-${width}.png`) });
       throw error;
