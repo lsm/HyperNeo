@@ -122,25 +122,18 @@ describe('ArtifactPreviewPanel', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('lets the composer consume Escape without losing the preview', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+  it('respects an Escape consumed by the focused textbox', async () => {
     const cancelQuote = vi.fn();
     render(
-      <>
-        <textarea
-          aria-label="Quoted reply"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              cancelQuote();
-            }
-          }}
-        />
-        <ArtifactPreviewPanel />
-      </>
+      <textarea
+        aria-label="Quoted reply"
+        onKeyDown={(event) => {
+          event.preventDefault();
+          cancelQuote();
+        }}
+      />
     );
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
     expect(cancelQuote).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('dialog')).toBeTruthy();
@@ -274,10 +267,13 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('closes on Escape and returns focus to what opened it', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     const opener = document.createElement('button');
     document.body.appendChild(opener);
     opener.focus();
-    await openDocument();
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(opener);
@@ -298,10 +294,13 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('returns focus to the latest tap when a new preview replaces an open one', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     const [first, second] = [document.createElement('button'), document.createElement('button')];
     document.body.append(first, second);
+    render(<ArtifactPreviewPanel />);
     first.focus();
-    await openDocument();
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
     second.focus();
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
@@ -312,9 +311,12 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('closes on Escape pressed in the chat beside it', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     const menu = document.createElement('button');
     document.body.appendChild(menu);
-    await openDocument();
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
     fireEvent.keyDown(menu, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     menu.remove();

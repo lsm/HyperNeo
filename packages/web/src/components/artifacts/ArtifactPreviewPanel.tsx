@@ -114,7 +114,13 @@ export function ArtifactPreviewPanel() {
         foregroundEscape = event;
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && foregroundEscape !== event)
+      if (
+        event.key === 'Escape' &&
+        !event.isComposing &&
+        event.keyCode !== 229 &&
+        !event.defaultPrevented &&
+        foregroundEscape !== event
+      )
         closeArtifactPreview();
     };
     window.addEventListener('popstate', onPop);
