@@ -27,7 +27,9 @@ A smoke pass followed by a failure retains the failure after reopening the app;
 an explicit docs-only inapplicability reason is then recorded. The todo remains
 doing throughout: completion wiring belongs to a later slice. Historical head
 receipts are preserved and never satisfy another head. Both daemon instances
-close in finally. Keep the evidence outside the worktree. The regression commit
+close in finally. A deterministic removal between the receipt snapshot and the
+worker write must refuse acknowledgement; an UPDATE affecting zero rows is not
+a successful smoke record. Keep the evidence outside the worktree. The regression commit
 71b407faf5 reproduced acceptance of smoke for head-b under a head-a gate; retain
 that failed evidence alongside the fixed run.
 

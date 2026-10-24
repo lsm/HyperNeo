@@ -53,23 +53,27 @@ export class CodingDeliveryFactsRepository {
       VALUES (?, ?, ?, ?) ON CONFLICT(todo_id, url, head) DO NOTHING`)
       .run(todoId, githubUrlKey(gate.url), gate.head, JSON.stringify(gate));
   }
-  recordSmoke(todoId: string, gate: CodingMergeGate, smoke: CodingSmoke): void {
-    this.db
-      .prepare(`UPDATE pack_coding_delivery_facts SET smoke_json = ?
+  recordSmoke(todoId: string, gate: CodingMergeGate, smoke: CodingSmoke): boolean {
+    return (
+      this.db
+        .prepare(`UPDATE pack_coding_delivery_facts SET smoke_json = ?
       WHERE todo_id = ? AND url = ? AND head = ? AND gate_json = ?`)
-      .run(
-        JSON.stringify(CodingSmoke.parse(smoke)),
-        todoId,
-        githubUrlKey(gate.url),
-        gate.head,
-        JSON.stringify(gate)
-      );
+        .run(
+          JSON.stringify(CodingSmoke.parse(smoke)),
+          todoId,
+          githubUrlKey(gate.url),
+          gate.head,
+          JSON.stringify(gate)
+        ).changes === 1
+    );
   }
   write<K extends 'recordGate' | 'recordSmoke'>(
     method: K,
     ...args: Parameters<CodingDeliveryFactsRepository[K]>
-  ): Promise<void> {
-    return gatewayFor(this.db).run(codingDeliveryWrites, { method, args }) as Promise<void>;
+  ): Promise<ReturnType<CodingDeliveryFactsRepository[K]>> {
+    return gatewayFor(this.db).run(codingDeliveryWrites, { method, args }) as Promise<
+      ReturnType<CodingDeliveryFactsRepository[K]>
+    >;
   }
 }
 export const codingDeliveryWrites = defineRepositoryOp(
@@ -138,8 +142,10 @@ export const recordCodingSmoke = (superpipe({})('coding.record-smoke') as Pipeli
       delivery: CodingDelivery,
       smoke: CodingSmoke
     ) => {
-      await repo.write('recordSmoke', todoId, delivery.gate, smoke);
-      return { accepted: true };
+      const stored = await repo.write('recordSmoke', todoId, delivery.gate, smoke);
+      return stored
+        ? { accepted: true }
+        : { accepted: false, reason: 'matching_merge_gate_required' };
     },
     ['repo', 'todoId', 'delivery', 'smoke'],
     'result'

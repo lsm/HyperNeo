@@ -201,5 +201,7 @@ test('a removed gate cannot acknowledge a smoke write', async () => {
     db.prepare('DELETE FROM pack_coding_delivery_facts WHERE todo_id = ?').run('todo');
     expect(await repo.write('recordSmoke', 'todo', gate, smoke)).toBe(false);
     expect(repo.read('todo', url, gate.head)).toBeNull();
-  } finally { db.close(); }
+  } finally {
+    db.close();
+  }
 });
