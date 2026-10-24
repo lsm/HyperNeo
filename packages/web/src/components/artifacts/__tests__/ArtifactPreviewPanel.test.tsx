@@ -91,11 +91,12 @@ afterEach(() => {
 describe('ArtifactPreviewPanel', () => {
   it('dismisses the real image lightbox without losing the preview after focus moves', async () => {
     await openDocument();
-    vi.spyOn(window, 'open').mockReturnValue(null);
     render(
       <MarkdownRenderer content="![Synthetic image](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)" />
     );
-    fireEvent.click(await screen.findByRole('img', { name: 'Synthetic image' }));
+    const image = await screen.findByRole('img', { name: 'Synthetic image' });
+    image.closest('a')!.addEventListener('click', (event) => event.preventDefault());
+    fireEvent(image, new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(document.querySelector('.markdown-image-overlay')).toBeTruthy();
     screen.getByRole('dialog').focus();
     fireEvent.keyDown(document, { key: 'Escape' });

@@ -57,6 +57,7 @@ try {
         await page.screenshot({ path: join(evidence, `layout-git-${width}.png`) });
         await page.getByRole('button', { name: 'Model and thinking', exact: true }).click();
         await page.locator('#neo-preferences').waitFor();
+        await page.waitForTimeout(100);
         await input.focus();
         await page.keyboard.press('Escape');
         await page.locator('#neo-preferences').waitFor({ state: 'detached' });

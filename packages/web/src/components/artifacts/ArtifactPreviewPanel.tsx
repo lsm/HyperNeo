@@ -103,22 +103,25 @@ export function ArtifactPreviewPanel() {
     const entry = generateUUID();
     history.pushState({ ...history.state, artifactPreview: entry }, '');
     const onPop = () => closeArtifactPreview();
-    const onKey = (event: KeyboardEvent) => {
+    let foregroundEscape: KeyboardEvent | undefined;
+    const onCapture = (event: KeyboardEvent) => {
       if (
         event.key === 'Escape' &&
-        !event.defaultPrevented &&
-        !event
-          .composedPath()
-          .some(
-            (node) => node instanceof Element && node.matches('[role="menu"], [aria-modal="true"]')
-          ) &&
-        !document.querySelector('[aria-modal="true"]')
+        document.querySelector(
+          '[role="menu"], [aria-modal="true"], .markdown-image-overlay, #neo-preferences, #neo-preferences-session'
+        )
       )
+        foregroundEscape = event;
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented && foregroundEscape !== event)
         closeArtifactPreview();
     };
     window.addEventListener('popstate', onPop);
+    window.addEventListener('keydown', onCapture, true);
     window.addEventListener('keydown', onKey);
     return () => {
+      window.removeEventListener('keydown', onCapture, true);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('popstate', onPop);
       if (history.state?.artifactPreview === entry) history.back();
