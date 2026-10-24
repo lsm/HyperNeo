@@ -5,6 +5,7 @@ import {
   neoQuestionAnsweredNote,
   planNeoQuestionAnswer,
 } from '../../../../src/lib/neo/question-operations.ts';
+import type { ArtifactRefReader } from '../../../../src/lib/artifacts/read-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -15,7 +16,7 @@ const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
 type Receipt = { ok: true; question: NeoQuestion } | { ok: false; reason: string };
 
-function setup() {
+function setup(artifact?: ArtifactRefReader) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -46,7 +47,9 @@ function setup() {
         return refused.has(todoId)
           ? { ok: false, reason: 'already_started: this todo is removed.' }
           : { ok: true };
-      }
+      },
+      undefined,
+      artifact
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -75,6 +78,74 @@ function setup() {
 }
 
 describe('neo.question operations', () => {
+  test('keeps registered artifact references on the question card', async () => {
+    const artifact = {
+      daemonId: '10000000-0000-4000-8000-000000000001',
+      artifactId: 'report',
+      title: 'Review report',
+      kind: 'markdown' as const,
+      byteLength: 42,
+    };
+    const { store, asked, call, daemonStart } = setup((id, caller) =>
+      id === artifact.artifactId && caller.sessionId === owner.sessionId ? artifact : null
+    );
+    for (const changed of [
+      { ...artifact, artifactId: 'missing' },
+      { ...artifact, title: 'Changed' },
+      { ...artifact, daemonId: crypto.randomUUID() },
+      { ...artifact, byteLength: 43 },
+      { ...artifact, kind: 'html' },
+    ]) {
+      expect(
+        await call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Review',
+          artifacts: [changed],
+        })
+      ).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_artifact_reference:'),
+      });
+    }
+    expect(store.listQuestions('ask')).toHaveLength(0);
+    const question = await asked({
+      kind: 'reply',
+      text: 'Please review the attached report.',
+      artifacts: [artifact],
+    });
+    expect(question).toMatchObject({ artifacts: [artifact] });
+    expect(store.getQuestion(question.id)).toMatchObject({ artifacts: [artifact] });
+    expect(await call('neo.question.get', { questionId: question.id })).toMatchObject({
+      question: { artifacts: [artifact] },
+    });
+    expect(
+      await call(
+        'neo.question.ask',
+        {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Foreign caller',
+          artifacts: [artifact],
+        },
+        { ...owner, sessionId: 'other' }
+      )
+    ).toMatchObject({ ok: false });
+    const start = daemonStart(['t1']);
+    const reworded = await asked({
+      kind: 'start',
+      text: 'Review before starting?',
+      artifacts: [artifact],
+    });
+    expect(reworded).toMatchObject({ id: start.id, artifacts: [artifact] });
+    expect(await asked({ kind: 'start', text: 'Start these?' })).toMatchObject({
+      artifacts: [artifact],
+    });
+    expect(
+      await asked({ kind: 'start', text: 'Start without attachment?', artifacts: [] })
+    ).toMatchObject({ artifacts: [] });
+  });
+
   test('a start question starts the ticked todos', async () => {
     const { store, call, daemonStart, told, started, fix, rows } = setup();
     store.updateTodo(rows, { state: 'doing', startedAt: 2 }, 2);

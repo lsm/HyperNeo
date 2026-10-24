@@ -760,7 +760,8 @@ export function createNeoOperations(service: NeoService) {
       (ask, question, note) =>
         service.deliverForward(ask.sessionId, `neo-question:${question.id}`, note, ask.sessionId),
       (todoId) => service.todoRunner.start(todoId),
-      (caller, id) => !!caller.sessionId && !!receivedNeoHumanInput(service, caller.sessionId, id)
+      (caller, id) => !!caller.sessionId && !!receivedNeoHumanInput(service, caller.sessionId, id),
+      createArtifactRefReader(() => service.db.getDatabase())
     ),
     defineOperation({
       name: 'neo.open',

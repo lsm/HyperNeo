@@ -1,4 +1,4 @@
-import type { NeoAskEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -50,6 +50,53 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo artifact taps', () => {
+  it('opens a registered document from a question card in the existing preview', () => {
+    const entry: NeoAskEntry = {
+      ask: {
+        id: 'ask',
+        projectId: null,
+        repo: null,
+        parentId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: 'Review',
+        request: 'Review the report',
+        status: 'open',
+        outcome: null,
+        createdAt: 1,
+        updatedAt: 1,
+        settledAt: null,
+      },
+      state: 'doing',
+      todos: [],
+      doneCount: 0,
+      questions: [
+        {
+          id: 'question',
+          askId: 'ask',
+          text: 'Please review the report.',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          state: 'open',
+          answer: null,
+          answeredBy: null,
+          answeredAt: null,
+          retiredReason: null,
+          replacedBy: null,
+          createdAt: 1,
+          artifacts: [report],
+        } as NeoQuestionEntry,
+      ],
+    };
+    render(<NeoAskTodos entry={entry} onAnswer={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open preview: Layout report' }));
+    expect(artifactPreviewStack.value).toEqual([{ kind: 'artifact', artifactId: 'a-report' }]);
+  });
+
   it('shows a short card for a published artifact and opens it in the app', async () => {
     render(
       <NeoPublicConversation conversation={conversation(publication({ artifacts: [report] }))} />

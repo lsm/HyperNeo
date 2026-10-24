@@ -62,7 +62,7 @@ export type NeoQuestionState = 'open' | 'answered' | 'retired';
 
 export type NeoQuestionAnswer = string | string[];
 
-export interface NeoQuestion {
+export interface NeoQuestion extends ArtifactProjection {
   todoId?: string | null;
   document?: string | null;
   replyTo?: string[];
