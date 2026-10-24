@@ -63,7 +63,8 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-mock.module('@hyperneo/shared/sdk/type-guards', () => ({
+mock.module('@hyperneo/shared/sdk/type-guards', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@hyperneo/shared/sdk/type-guards')>()),
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
   isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
     msg.type === 'user' && (!('isReplay' in msg) || msg.isReplay === false),
