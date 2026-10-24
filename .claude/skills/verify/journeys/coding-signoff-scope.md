@@ -11,6 +11,8 @@ The helper starts a real isolated daemon on an ephemeral port with a fresh synth
 DB. It sets repo preferences through RPC and runs production coding-pack sweeps
 against synthetic GitHub responses. Exact-head bot approval and green CI must
 move a code-only PR to `approved_green` while a design PR stays `waiting_human`.
+Switching to a `label:needs-human` signoff rule must hold both PRs pending label
+data, including the code-only PR that was previously ready.
 The worker's real durable mailbox must receive one merge instruction, one merged
 notice and one closed notice; another identical read must add nothing. The daemon
 snapshot, ledger and mailbox payloads are retained in `evidence/signoff-scope.json`.

@@ -50,11 +50,16 @@ try {
   approved = true; await pack.sweep!(now + 1000);
   proof.approved = { snapshot: await rpc('neo.snapshot', {}), ledger: ledger.list(), mailbox: jobs() };
   const states = ledger.list().map(row => [row.number, row.state]);
+  assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'humanSignoff', value: ['label:needs-human'] })).ok, true);
+  await pack.sweep!(now + 1500);
+  const labelStates = ledger.list().map(row => [row.number, row.state]);
+  proof.labelPolicy = { snapshot: await rpc('neo.snapshot', {}), ledger: ledger.list(), mailbox: jobs() };
   terminal = true; await pack.sweep!(now + 2000);
   const terminalJobs = jobs();
   await pack.sweep!(now + 3000);
   proof.terminal = { snapshot: await rpc('neo.snapshot', {}), ledger: ledger.list(), mailbox: jobs() };
   assert.deepEqual(states, [[1, 'approved_green'], [2, 'waiting_human']]);
+  assert.deepEqual(labelStates, [[1, 'waiting_human'], [2, 'waiting_human']]);
   assert.equal(terminalJobs.length, 3);
   assert.deepEqual(jobs(), terminalJobs);
   assert(jobs().every((job: any) => job.to.sessionId === worker));

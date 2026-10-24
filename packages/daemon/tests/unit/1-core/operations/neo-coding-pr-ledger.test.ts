@@ -111,7 +111,7 @@ describe('planCodingLedgerRead', () => {
   test.each(['review_bot', 'ci_only'] as const)(
     'scopes %s human signoff to changed paths',
     (mergePolicy) => {
-      const state = (files: unknown) =>
+      const state = (files: unknown, humanSignoff = ['docs/design/**']) =>
         planCodingLedgerRead(
           response([
             node(1, {
@@ -122,7 +122,7 @@ describe('planCodingLedgerRead', () => {
             }),
           ]),
           0,
-          () => ({ mergePolicy, reviewBot: 'bot', humanSignoff: ['docs/design/**'] })
+          () => ({ mergePolicy, reviewBot: 'bot', humanSignoff })
         )?.rows[0].state;
       const files = (paths: string[], hasNextPage = false) => ({
         nodes: paths.map((path) => ({ path })),
@@ -134,6 +134,13 @@ describe('planCodingLedgerRead', () => {
       expect(state(files([]))).toBe('approved_green');
       expect(state(files(['packages/daemon/src/app.ts'], true))).toBe('waiting_human');
       expect(state(undefined)).toBe('waiting_human');
+      expect(state(files(['packages/daemon/src/app.ts']), ['label:needs-human'])).toBe(
+        'waiting_human'
+      );
+      expect(state(files([]), ['label:needs-human'])).toBe('waiting_human');
+      expect(
+        state(files(['packages/daemon/src/app.ts']), ['docs/design/**', 'label:needs-human'])
+      ).toBe('waiting_human');
     }
   );
 
