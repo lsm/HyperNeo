@@ -5,6 +5,8 @@ import {
   neoQuestionAnsweredNote,
   planNeoQuestionAnswer,
 } from '../../../../src/lib/neo/question-operations.ts';
+import { addNeoTodo, NeoTodoDraftSchema } from '../../../../src/lib/neo/todo-operations.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import type { ArtifactRefReader } from '../../../../src/lib/artifacts/read-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -16,7 +18,10 @@ const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
 type Receipt = { ok: true; question: NeoQuestion } | { ok: false; reason: string };
 
-function setup(artifact?: ArtifactRefReader) {
+function setup(
+  artifact?: ArtifactRefReader,
+  readSource?: Parameters<typeof createNeoQuestionOperations>[5]
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -49,7 +54,18 @@ function setup(artifact?: ArtifactRefReader) {
           : { ok: true };
       },
       undefined,
-      artifact
+      artifact,
+      readSource ??
+        (async (ref) =>
+          ref.id === 'missing'
+            ? null
+            : {
+                ...ref,
+                name: 'Review worker',
+                label: 'Codex · Review worker',
+                provider: 'Codex',
+                link: `codex://threads/${ref.id}`,
+              })
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -78,6 +94,178 @@ function setup(artifact?: ArtifactRefReader) {
 }
 
 describe('neo.question operations', () => {
+  test.each(['reply', 'yesno', 'choice', 'start'] as const)(
+    'refuses a %s question if its ask settles during source lookup',
+    async (kind) => {
+      let entered!: () => void;
+      let release!: (value: NonNullable<NeoQuestion['sourceSession']>) => void;
+      const reading = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const source = new Promise<NonNullable<NeoQuestion['sourceSession']>>((resolve) => {
+        release = resolve;
+      });
+      const f = setup(undefined, async () => {
+        entered();
+        return source;
+      });
+      try {
+        f.daemonStart(['t1']);
+        const pending = f.call('neo.question.ask', {
+          askId: 'ask',
+          kind,
+          text: 'Worker recommendation',
+          options: ['First', 'Second'],
+          noLabel: 'Wait',
+          yesLabel: 'Approve',
+          sourceSession: { adapter: 'codex-desktop', id: 'worker' },
+        });
+        await reading;
+        f.store.settleAsk(f.store.getAsk('ask')!, 'dropped', 'No longer needed', 2);
+        release({
+          adapter: 'codex-desktop',
+          id: 'worker',
+          name: 'Worker',
+          label: 'Codex · Worker',
+          provider: 'Codex',
+          link: 'codex://threads/worker',
+        });
+        expect(await pending).toEqual({ ok: false, reason: 'ask_settled: this ask is dropped.' });
+        expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
+
+  test('refuses an unreadable source without opening or replacing a question', async () => {
+    const { asked, call, store } = setup();
+    const original = await asked({ kind: 'reply', text: 'Keep this question' });
+    const refused = await call('neo.question.ask', {
+      askId: 'ask',
+      kind: 'reply',
+      text: 'New worker output',
+      replaces: original.id,
+      sourceSession: { adapter: 'codex-desktop', id: 'missing' },
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('source_session_unavailable'),
+    });
+    expect(store.listQuestions('ask')).toEqual([original]);
+  });
+
+  test('retains the source when rewording the existing start question', async () => {
+    const { asked, daemonStart } = setup();
+    const initial = daemonStart(['t1']);
+    const question = await asked({
+      kind: 'start',
+      text: 'Start after the worker review?',
+      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+    });
+    expect(question).toMatchObject({
+      id: initial.id,
+      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+      startTodos: ['t1'],
+    });
+    const general = await asked({
+      kind: 'start',
+      text: 'A combined start question without one source',
+    });
+    expect(general.id).toBe(initial.id);
+    expect(general).not.toHaveProperty('sourceSession');
+  });
+
+  test.each(['add', 'move'] as const)(
+    'retains the captured source when an instructed todo joins through %s',
+    async (operation) => {
+      const { db, store, asked, call, daemonStart } = setup();
+      try {
+        daemonStart(['t1']);
+        const question = await asked({
+          kind: 'start',
+          text: 'Start after the worker review?',
+          sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+        });
+        const draft = NeoTodoDraftSchema.parse({
+          title: 'Additional work',
+          doneWhen: 'Merged',
+          instruction: 'Do the additional work',
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+        });
+        let joinedId: string;
+        if (operation === 'add') {
+          const result = await addNeoTodo(
+            store,
+            new NeoTodoSessionRepository(db),
+            async () => ({ ok: false, reason: 'not started' }),
+            store.getAsk('ask')!,
+            draft,
+            []
+          );
+          if (!result.ok) throw new Error(result.reason);
+          joinedId = result.todo.id;
+        } else {
+          store.openAsk({
+            id: 'other',
+            sessionId: 'neo-a',
+            projectId: null,
+            originMessageId: null,
+            title: 'Other work',
+            request: 'Other work',
+            createdAt: 1,
+          });
+          const todo = store.addTodo('moved', 'other', draft, 1);
+          joinedId = store.moveTodo(todo, 'ask', '', 2).id;
+        }
+        expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
+          ok: true,
+          question: {
+            id: question.id,
+            state: 'open',
+            sourceSession: question.sourceSession,
+          },
+        });
+        expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1', joinedId]);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test('retains one explicit source session through read, answer and list payloads', async () => {
+    const { asked, call, store } = setup();
+    const source = { adapter: 'codex-desktop', id: 'source-worker', daemon: 'remote-machine' };
+    const question = await asked({
+      kind: 'yesno',
+      text: 'Review the worker output?',
+      noLabel: 'Wait',
+      yesLabel: 'Approve',
+      sourceSession: source,
+    });
+    expect(question).toMatchObject({ sourceSession: source });
+    expect(store.getQuestion(question.id)).toMatchObject({ sourceSession: source });
+    expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
+      question: { sourceSession: source },
+    });
+    expect(
+      await call('neo.question.answer', { questionId: question.id, answer: 'yes' }, human)
+    ).toMatchObject({ question: { state: 'answered', answer: 'yes', sourceSession: source } });
+    expect(store.listQuestionsForAsks(['ask'])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: question.id,
+          sourceSession: expect.objectContaining(source),
+        }),
+      ])
+    );
+    const ordinary = await asked({
+      kind: 'reply',
+      text: 'No single worker produced this question',
+    });
+    expect(ordinary).not.toHaveProperty('sourceSession');
+  });
+
   test('keeps registered artifact references on the question card', async () => {
     const artifact = {
       daemonId: '10000000-0000-4000-8000-000000000001',

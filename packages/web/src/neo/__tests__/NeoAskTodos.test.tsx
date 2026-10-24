@@ -118,6 +118,95 @@ describe('NeoAskTodos', () => {
     expect(reply).not.toHaveBeenCalled();
   });
 
+  it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge'])(
+    'opens a question source through the existing opener: %s',
+    async (link) => {
+      locale.value = 'en';
+      const onOpen = vi.fn();
+      const onAnswer = vi.fn();
+      const sourceSession = {
+        adapter: 'codex-desktop',
+        id: 'worker',
+        name: 'Review worker',
+        label: 'Codex · Review worker',
+        provider: 'Codex',
+        link,
+      };
+      const app = render(
+        <NeoAskTodos
+          entry={entry({
+            questions: [
+              question('source', {
+                kind: 'yesno',
+                noLabel: 'Wait',
+                yesLabel: 'Approve',
+                ...{ sourceSession },
+              }),
+            ],
+          })}
+          onOpen={onOpen}
+          onAnswer={onAnswer}
+        />
+      );
+      const body = app.container.querySelector('#neo-ref-question-source')!;
+      expect(body.textContent).toContain('Review worker');
+      expect(body.textContent).toContain('Codex');
+      fireEvent.click(app.getByRole('button', { name: 'Open session: Review worker' }));
+      expect(onOpen).toHaveBeenCalledWith(link, 'Codex · Review worker');
+      fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
+      expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
+    }
+  );
+
+  it.each([
+    { link: null, opener: true },
+    { link: 'codex://threads/worker', opener: false },
+  ])('shows source identity without navigation: %j', ({ link, opener }) => {
+    locale.value = 'en';
+    const onAnswer = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('source', {
+              kind: 'yesno',
+              yesLabel: 'Approve',
+              noLabel: 'Wait',
+              sourceSession: {
+                adapter: 'claude-code',
+                id: 'worker',
+                name: 'Terminal worker',
+                label: 'Claude Code · Terminal worker',
+                provider: 'Claude',
+                link,
+              },
+            }),
+          ],
+        })}
+        onOpen={opener ? vi.fn() : undefined}
+        onAnswer={onAnswer}
+      />
+    );
+    const header = app.container.querySelector('[data-question-source]');
+    expect(header?.textContent).toContain('Terminal worker');
+    expect(header?.textContent).toContain('Claude');
+    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
+    expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
+  });
+
+  it('offers no session opener for a question without one source', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ questions: [question('general', {})] })}
+        onOpen={vi.fn()}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+  });
+
   it.each(guidanceQuestions)('renders the concise guidance example: $title', async (fixture) => {
     const app = render(
       <NeoAskTodos
