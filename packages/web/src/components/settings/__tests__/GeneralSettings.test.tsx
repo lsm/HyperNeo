@@ -34,4 +34,13 @@ describe('GeneralSettings', () => {
     fireEvent.change(select, { target: { value: 'zh-Hans' } });
     expect(updateGlobalSettings).toHaveBeenCalledWith({ language: 'zh-Hans' });
   });
+
+  it('has no default thinking control; it lives beside the default model', () => {
+    const { container, queryByText } = render(<GeneralSettings />);
+    expect(queryByText('Default Thinking Level')).toBeNull();
+    const thinkingSelect = [...container.querySelectorAll('select')].find((element) =>
+      [...element.options].some((option) => option.value === 'think16k')
+    );
+    expect(thinkingSelect).toBeUndefined();
+  });
 });
