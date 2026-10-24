@@ -23,12 +23,9 @@ const evidence: unknown[] = [];
 const url = 'https://github.com/synthetic/delivery/pull/7';
 const write = { adapter: 'codex', id: 'same-local-id', daemon: 'author-daemon' };
 const qaRef = { adapter: 'codex', id: 'same-local-id', daemon: 'qa-daemon' };
-const qa: CodingStageFact = { url, head: 'head-a', stage: 'qa',
+const qa: CodingStageFact = { url, head: 'head-a', stage: 'qa', ref: qaRef,
   actor: { kind: 'agent', id: qaRef.id, model: 'gpt-6', harness: qaRef.adapter },
   verdict: 'pass', acceptanceContract: 'artifact:acceptance', evidence: ['artifact:qa'] };
-const candidate = { url, head: qa.head, open: true, requiredCiGreen: true,
-  findingsResolved: true, humanSignoffSatisfied: true, ciEvidence: ['ci:synthetic-run'] };
-const review = { kind: 'bot', head: qa.head, login: 'review-bot', approved: true };
 const smoke: CodingSmoke = { actor: qa.actor, ref: qaRef, mergeCommit: 'merge-a', verdict: 'pass',
   evidence: ['artifact:smoke'], build: { daemon: 'target', commit: 'build-a' } };
 const network = globalThis.fetch;
@@ -47,19 +44,13 @@ try {
         prSweepDeps: { tell: async () => true, wake: async () => true } });
       const repo = todos.deliveryFacts;
       const deploys = await readGithubDeploys([url], async () => [{ daemon: 'target', commit: 'build-a' }],
-        () => { throw new Error('Unexpected GitHub command'); }, async () => 'merge-a', async () => true);
+        () => { throw new Error('Unexpected GitHub command'); }, async () => 'merge-a', async () => true, async () => [{ url, head: qa.head, state: 'MERGED', checks: 'passing', review: 'approved' }]);
       if (phase === 'initial') {
         db.exec("INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES ('ask','synthetic','Deliver','Deliver',1,1); INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Deliver','Verified','doing',1,1)");
-        const prepare = (head: string | null, botApproved = true) => pack.prepareMerge(repo, 'todo', candidate,
-          { reference: qa.acceptanceContract, write, qa: qaRef }, { ...review, approved: botApproved }, [qa], async () => head);
-        const stale = await prepare('head-b'); evidence.push({ stale });
-        assert.deepEqual(stale, { accepted: false, reason: 'head_changed_before_manual_merge' });
-        const botRejected = await prepare(qa.head, false); evidence.push({ botRejected });
-        assert.deepEqual(botRejected, { accepted: false, reason: 'matching_head_review_required' });
-        assert.equal(repo.read('todo', url, qa.head), null);
-        const prepared = await prepare(qa.head); evidence.push({ prepared });
-        assert(prepared.accepted);
-        assert.deepEqual(prepared.command, ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', qa.head]);
+        await todos.write('record', 'todo', [{ url, head: qa.head, state: 'MERGED', checks: 'passing', review: 'approved' }], Date.now());
+        assert(await new CodingPrLedgerRepository(db).write('recordStage', qa));
+        await repo.write('recordGate', 'todo', { url, head: qa.head, acceptanceContract: qa.acceptanceContract,
+          write, reviewer: 'review-bot', qa: qaRef, evidence: ['artifact:qa', 'ci:synthetic-run'] });
         const wrongHead = await pack.recordSmoke(repo, 'todo', url, qa.head, smoke, { ...deploys, prs: [{ url, head: 'head-b', mergeCommit: smoke.mergeCommit }] });
         evidence.push({ wrongHead }); assert.deepEqual(wrongHead, { accepted: false, reason: 'matching_merge_commit_required' });
         const absent = await pack.recordSmoke(repo, 'todo', url, qa.head, smoke, { ...deploys, daemons: [] });
@@ -74,14 +65,15 @@ try {
         assert.equal(repo.read('todo', url, 'head-b'), null);
         assert.deepEqual(await pack.recordSmoke(repo, 'todo', url, qa.head, { ...smoke, verdict: 'inapplicable', build: undefined, reason: 'Docs-only change; no deployed behavior' }, deploys), { accepted: true });
       }
+      assert.deepEqual(todos.stageFacts.read(url)[0].ref, qaRef);
       const stored = repo.read('todo', url, qa.head);
       const state = db.prepare("SELECT state FROM neo_todos WHERE id = 'todo'").get() as { state: string };
       assert.equal(state.state, 'doing');
       evidence.push({ phase, daemonPort: app.server.port, deploys, stored, todoState: state.state });
     } finally { await app.cleanup(); }
   }
-  evidence.push({ verified: true, scope: 'Build slice: pack backend APIs and durable receipts. Todo completion and dispatch wiring are not part of this slice.' });
-  console.log('PASS: isolated daemon rejects stale heads, rejected bot, self-QA and absent build; records failure and reason across restart; returns pinned manual command only.');
+  evidence.push({ verified: true, scope: 'Build slice: delivery storage and smoke API. Merge preparation, todo completion and dispatch wiring are not part of this slice.' });
+  console.log('PASS: isolated daemon rejects ungated merged head, self-QA and absent build; preserves full fact refs and failed smoke across restart; records explicit inapplicability.');
 } catch (error) { evidence.push({ error: String(error) }); throw error; }
 finally {
   globalThis.fetch = network;

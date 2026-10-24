@@ -103,13 +103,18 @@ export const recordCodingSmoke = (superpipe({})('coding.record-smoke') as Pipeli
         gate = delivery.gate;
       if (
         smoke.actor.id !== gate.qa.id ||
+        (smoke.actor.kind === 'agent' && smoke.actor.harness !== gate.qa.adapter) ||
         !sameCodingWorkRef(smoke.ref, gate.qa) ||
         sameCodingWorkRef(smoke.ref, gate.write) ||
         (typeof gate.reviewer !== 'string' && sameCodingWorkRef(smoke.ref, gate.reviewer))
       )
         return refuse('independent_qa_required');
       const merged = deploys.prs.find((pr) => githubUrlKey(pr.url) === githubUrlKey(gate.url));
-      if (!merged?.mergeCommit || merged.mergeCommit !== smoke.mergeCommit)
+      if (
+        !merged?.mergeCommit ||
+        merged.head !== gate.head ||
+        merged.mergeCommit !== smoke.mergeCommit
+      )
         return refuse('matching_merge_commit_required');
       if (smoke.verdict === 'inapplicable')
         return smoke.reason ? { value: smoke } : refuse('inapplicability_reason_required');
