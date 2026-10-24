@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { resolveArtifactReference } from '../../../packages/web/src/lib/artifact-reference-client.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 
 const root = resolve(process.argv[2]);
@@ -32,13 +33,23 @@ try {
   }
   evidence.afterMissingId = receipts();
   assert.equal(evidence.afterMissingId, evidence.before, 'missing requestId retries allocated immutable receipts');
+  assert(attempts.every((attempt) => JSON.stringify(attempt).includes('requestId')), 'missing requestId must fail input validation');
   const input = { ...tap, requestId: '11111111-1111-4111-8111-111111111111' };
-  const first = await hub.request('operation.invoke', { name: 'artifact.reference.resolve', input });
+  const first = await hub.request<{ accepted: boolean }>('operation.invoke', { name: 'artifact.reference.resolve', input });
+  assert.equal(first.accepted, true);
   const second = await hub.request('operation.invoke', { name: 'artifact.reference.resolve', input });
   assert.deepEqual(second, first);
   assert.equal(receipts(), 1);
   evidence.keyedReceipt = first;
   evidence.afterKeyedRetries = receipts();
+  const target = { source: tap.sourceMessageOrCard as { kind: 'message'; id: string }, reference: tap.reference };
+  const web = await resolveArtifactReference(hub, target);
+  assert.equal(web.kind, 'artifact');
+  assert.deepEqual(await resolveArtifactReference(hub, target), web);
+  assert.equal(receipts(), 2);
+  assert.notDeepEqual(await resolveArtifactReference(hub, { ...target }), web);
+  assert.equal(receipts(), 3);
+  evidence.webClient = { retryStable: true, newTapDistinct: true, receipts: receipts() };
   evidence.passed = true;
 } finally {
   await writeFile(join(root, 'evidence', 'request-id.json'), JSON.stringify(evidence, null, 2));

@@ -36,7 +36,12 @@ describe('resolveArtifactReference', () => {
     });
     expect(request.mock.calls[0][1]).toEqual({
       name: 'artifact.reference.resolve',
-      input: { sourceMessageOrCard: source, reference: pr.url, file },
+      input: {
+        sourceMessageOrCard: source,
+        reference: pr.url,
+        file,
+        requestId: expect.any(String),
+      },
     });
   });
 
