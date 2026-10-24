@@ -20,7 +20,10 @@ export function requireClosedPrEvent(found: {
   if (!event) return { reason: 'event_missing' };
   const topic = parseGitHubTopic(event.topic);
   const action = topic?.action;
-  const closed = action === 'closed' || (action === 'polled' && event.payload.state === 'closed');
+  const closed =
+    action === 'closed' ||
+    ((action === 'polled' || event.payload.eventType === 'pull_request') &&
+      event.payload.state === 'closed');
   if (!topic || topic.resource !== 'pull_request' || !closed) return { reason: 'pr_not_closed' };
   return { value: { owner: topic.owner, repo: topic.repo, prNumber: topic.entity } };
 }

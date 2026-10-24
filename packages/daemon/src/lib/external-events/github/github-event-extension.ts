@@ -115,6 +115,7 @@ const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'mer
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
+  replaySessionTerminals?: () => Promise<unknown>;
   collectPollPage?: GitHubPollCollector;
   pollIntervalMs?: number;
   getPollIntervalMs?: () => number | undefined;
@@ -1002,6 +1003,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   ): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
+    const sessionConfig = await this.context.config.getSpaceConfig(
+      SESSION_EVENT_SCOPE,
+      this.sourceId
+    );
+    if (sessionConfig?.enabled !== false) await this.options.replaySessionTerminals?.();
     if (Date.now() < this.rateLimitedUntil) {
       log.warn('GitHub polling cycle skipped — rate limited until', {
         resetAt: new Date(this.rateLimitedUntil).toISOString(),
@@ -1038,6 +1044,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     const spaceConfig = await this.context.config.getSpaceConfig(spaceId, this.sourceId);
     if (spaceConfig && !spaceConfig.enabled) return 0;
+    if (spaceId === SESSION_EVENT_SCOPE) await this.options.replaySessionTerminals?.();
     let count = 0;
     const repos = this.repo
       .listPollingRepos(spaceId)

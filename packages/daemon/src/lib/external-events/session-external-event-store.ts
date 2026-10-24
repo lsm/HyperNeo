@@ -1,4 +1,5 @@
 import { defineDbOp } from '../../storage/db-gateway/db-op.ts';
+import { requireClosedPrEvent } from './session-subscription-close.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
   ingestExternalEvent,
@@ -91,7 +92,37 @@ export class SessionExternalEventStore {
       throw new Error(
         `SessionExternalEventStore.store: conflict reported but no row for (${event.source}, ${event.dedupeKey})`
       );
-    return { event: toRecord(existing).event, duplicate: true, terminal: true };
+    const record = toRecord(existing);
+    return {
+      event: record.event,
+      duplicate: true,
+      terminal: 'reason' in requireClosedPrEvent({ record }),
+    };
+  }
+
+  latestPrState(subject: string): ExternalEventRecord | null {
+    const prefix = `${subject.toLowerCase()}.`;
+    const closed = `${prefix}closed`,
+      opened = `${prefix}opened`,
+      reopened = `${prefix}reopened`;
+    const row = this.db
+      .prepare(`SELECT * FROM session_external_events
+      WHERE source = 'github' AND lower(substr(topic, 1, ?)) = ?
+      AND (json_extract(payload_json, '$.eventType') = 'pull_request' OR lower(topic) IN (?, ?, ?, ?))
+      AND (json_extract(payload_json, '$.state') IN ('open', 'closed') OR lower(topic) IN (?, ?, ?))
+      ORDER BY occurred_at DESC, ingested_at DESC, rowid DESC LIMIT 1`)
+      .get(
+        prefix.length,
+        prefix,
+        closed,
+        opened,
+        reopened,
+        `${prefix}polled`,
+        closed,
+        opened,
+        reopened
+      ) as SessionEventRow | undefined;
+    return row ? toRecord(row) : null;
   }
 
   getById(eventId: string): ExternalEventRecord | null {
@@ -111,4 +142,11 @@ export const ingestSessionEvent = defineDbOp({
     if (outcome.action === 'failed') throw outcome.error;
     return outcome;
   },
+});
+
+export const readLatestSessionPrState = defineDbOp({
+  name: 'externalEvents.latestSessionPrState',
+  mode: 'read',
+  run: (db: BunDatabase, subject: string): ExternalEventRecord | null =>
+    new SessionExternalEventStore(db).latestPrState(subject),
 });

@@ -58,6 +58,8 @@ import {
   ingestSessionEvent,
 } from './lib/external-events/index.ts';
 import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
+import { readLatestSessionPrState } from './lib/external-events/session-external-event-store.ts';
+import { replaySessionTerminals } from './lib/external-events/session-terminal-replay.ts';
 import {
   routeSessionExternalEvent,
   type SessionEventRouteDeps,
@@ -979,6 +981,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
         collectPollPage: collectGitHubPollPage,
+        replaySessionTerminals: () =>
+          replaySessionTerminals({
+            listSubscriptions: () => sessionEventSubscriptions.listAll(),
+            readLatestPrState: (subject) => db.gateway.run(readLatestSessionPrState, subject),
+            publish: (event) => sessionExternalEventService.publish(event),
+          }),
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
