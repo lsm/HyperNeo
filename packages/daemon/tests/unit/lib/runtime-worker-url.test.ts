@@ -22,6 +22,7 @@ test.each([
   String.raw`B:\~BUN\root\hyperneo.exe`,
   'B:/~BUN/root/hyperneo.exe',
   'file:///B:/~BUN/root/hyperneo.exe',
+  'file:///B:/%7EBUN/root/hyperneo.exe',
 ])('Windows compiled workers use an embedded absolute path for %s', (moduleUrl) => {
   expect(runtimeWorkerUrl('./worker.ts', './daemon/src/lib/worker.ts', moduleUrl)).toBe(
     String.raw`B:\~BUN\root\daemon\src\lib\worker.ts`
