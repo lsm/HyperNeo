@@ -49,6 +49,10 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     read_at INTEGER NOT NULL,
     PRIMARY KEY (repo, number)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_pr_event_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    activated_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_poll_facts (
     http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json)),
     subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
@@ -167,6 +171,13 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
       'ALTER TABLE pack_coding_poll_facts ADD COLUMN http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json))'
     );
   const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
+  if (!ledger.some((column) => column.name === 'terminal_event_json'))
+    db.exec(
+      'ALTER TABLE pack_coding_pr_ledger ADD COLUMN terminal_event_json TEXT CHECK (terminal_event_json IS NULL OR json_valid(terminal_event_json))'
+    );
+  db.prepare(
+    'INSERT OR IGNORE INTO pack_coding_pr_event_state (id, activated_at) VALUES (1, ?)'
+  ).run(activatedAt);
   if (!ledger.some((column) => column.name === 'reply_at'))
     db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');
   if (!ledger.some((column) => column.name === 'created_at'))

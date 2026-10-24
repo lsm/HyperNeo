@@ -379,24 +379,50 @@ export class CodingPrLedgerRepository {
     now: number,
     observedAt = now
   ): CodingPrTransition[] {
-    const before = new Map(
-      (
-        this.db
-          .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
-          .all(repo) as { number: number; state: CodingPrState }[]
-      ).map((row) => [row.number, row.state])
-    );
-    this.upsert(rows, now, observedAt);
-    this.db
-      .prepare(
-        `DELETE FROM pack_coding_pr_ledger WHERE repo = ? AND closed_at IS NULL
+    return this.db.transaction(() => {
+      const before = new Map(
+        (
+          this.db
+            .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
+            .all(repo) as { number: number; state: CodingPrState }[]
+        ).map((row) => [row.number, row.state])
+      );
+      this.upsert(rows, now, observedAt);
+      this.db
+        .prepare(
+          `DELETE FROM pack_coding_pr_ledger WHERE repo = ? AND closed_at IS NULL
            AND number NOT IN (SELECT value FROM json_each(?))`
-      )
-      .run(repo, JSON.stringify(rows.map((row) => row.number)));
-    return rows.flatMap((row) => {
-      const from = before.get(row.number);
-      return from && from !== row.state ? [{ ...row, from }] : [];
-    });
+        )
+        .run(repo, JSON.stringify(rows.map((row) => row.number)));
+      const activation = this.db
+        .prepare('SELECT activated_at FROM pack_coding_pr_event_state WHERE id=1')
+        .get() as { activated_at: number };
+      for (const row of rows) {
+        const from = before.get(row.number);
+        if (
+          !['merged', 'closed'].includes(row.state) ||
+          from === row.state ||
+          (!from && (row.closedAt === null || row.closedAt < activation.activated_at))
+        )
+          continue;
+        this.db
+          .prepare(
+            'UPDATE pack_coding_pr_ledger SET terminal_event_json = ?, told_at = NULL WHERE repo = ? AND number = ?'
+          )
+          .run(JSON.stringify({ ...row, from: from ?? row.state }), row.repo, row.number);
+      }
+      return rows.flatMap((row) => {
+        const from = before.get(row.number);
+        return from && from !== row.state ? [{ ...row, from }] : [];
+      });
+    })();
+  }
+
+  acceptTerminalEvent(row: CodingPrTransition, owner: string, now: number): void {
+    this.db
+      .prepare(`UPDATE pack_coding_pr_ledger SET terminal_event_json = NULL, told_at = ?
+      WHERE repo = ? AND number = ? AND head = ? AND state = ? AND owner = ? AND terminal_event_json = ?`)
+      .run(now, row.repo, row.number, row.head, row.state, owner, JSON.stringify(row));
   }
 
   private upsert(rows: readonly CodingLedgerRow[], now: number, observedAt: number): void {
@@ -417,6 +443,8 @@ export class CodingPrLedgerRepository {
            ELSE state_since END,
          reply_at = COALESCE(excluded.reply_at, reply_at),
          created_at = excluded.created_at, author_is_bot = excluded.author_is_bot,
+         terminal_event_json = CASE WHEN head = excluded.head AND state = excluded.state
+           THEN terminal_event_json ELSE NULL END,
          head = excluded.head, state = excluded.state`
     );
     for (const row of rows) {
@@ -745,6 +773,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
   | 'recordHealth'
   | 'recordStage'
@@ -761,6 +790,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'acceptTerminalEvent',
     'acceptHealthNotice',
     'recordHealth',
     'recordStage',

@@ -161,6 +161,107 @@ describe('PR ledger events', () => {
     }
   });
 
+  test('overlapping delivery sweeps serialize terminal handoffs', async () => {
+    const { db, ledger, events, deps, told, cycle, own } = setup();
+    try {
+      await cycle(response([node(1)]), 100);
+      own(1);
+      await reconcileCodingPrLedger(
+        ledger,
+        ['lsm/a'],
+        async () =>
+          response([], [node(1, { state: 'MERGED', closedAt: new Date(150).toISOString() })]),
+        200
+      );
+      let entered!: () => void, release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const first = deliverCodingPrEvents(events, [], {
+        ...deps,
+        tell: async (ref, key, text) => {
+          entered();
+          await barrier;
+          return deps.tell(ref, key, text);
+        },
+      });
+      await started;
+      const second = deliverCodingPrEvents(events, [], deps);
+      release();
+      await Promise.all([first, second]);
+      expect(told).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('legacy schema activation persists and leaves old terminal rows quiet', async () => {
+    const { db, ledger, events, deps, told, own } = setup(1000);
+    try {
+      const old = {
+        repo: 'lsm/a',
+        number: 1,
+        title: 'Old',
+        branch: 'b1',
+        head: 'head1',
+        state: 'merged' as const,
+        closedAt: 500,
+      };
+      ledger.replace('lsm/a', [old], 1100);
+      own(1);
+      db.exec(
+        'ALTER TABLE pack_coding_pr_ledger DROP COLUMN terminal_event_json; DROP TABLE pack_coding_pr_event_state'
+      );
+      createCodingPackTables(db, 2000);
+      createCodingPackTables(db, 9000);
+      expect(db.prepare('SELECT activated_at FROM pack_coding_pr_event_state').get()).toEqual({
+        activated_at: 2000,
+      });
+      await deliverCodingPrEvents(events, [], deps);
+      expect(told).toHaveLength(0);
+      ledger.replace('lsm/a', [old, { ...old, number: 2, closedAt: 2500 }], 3000);
+      own(2);
+      await deliverCodingPrEvents(events, [], deps);
+      expect(told).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a failed durable intent write rolls back the terminal state observation', async () => {
+    const { db, ledger, cycle, own, told } = setup();
+    try {
+      await cycle(response([node(1)]), 100);
+      own(1);
+      const terminal = {
+        repo: 'lsm/a',
+        number: 1,
+        title: 'T',
+        branch: 'b1',
+        head: 'head1abc',
+        state: 'closed' as const,
+        closedAt: 150,
+      };
+      db.exec(
+        "CREATE TRIGGER reject_terminal BEFORE UPDATE ON pack_coding_pr_ledger WHEN NEW.terminal_event_json IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic intent failure'); END"
+      );
+      expect(() => ledger.replace('lsm/a', [terminal], 200)).toThrow('synthetic intent failure');
+      expect(ledger.list()[0].state).not.toBe('closed');
+      expect(told).toHaveLength(0);
+      db.exec('DROP TRIGGER reject_terminal');
+      await cycle(
+        response([], [node(1, { state: 'CLOSED', closedAt: new Date(150).toISOString() })]),
+        300
+      );
+      expect(told).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test('an unowned PR stays quiet and a claimed PR receives its ledger event', async () => {
     const { db, told, woken, cycle } = setup();
     await cycle(response([node(1), node(2)]), 100);
