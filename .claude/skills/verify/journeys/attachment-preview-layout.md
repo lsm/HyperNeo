@@ -1,9 +1,7 @@
 # Docked attachment previews and mobile bottom sheets
 
-Build this worktree's web bundle with `cd packages/web && bun run build`. Follow
-SKILL.md's isolated setup: a fresh synthetic run outside configuration folders,
-empty HOME, own data/DB, NODE_ENV=test, no keys and a free port other than 8399.
-No GUI takeover or model turn is needed.
+Build web (`cd packages/web && bun run build`). Use SKILL.md isolation: a fresh
+synthetic run, empty HOME/data/DB, NODE_ENV=test, no keys or port 8399.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-attachment-preview-XXXXXX)
@@ -12,11 +10,8 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data"
   bun .claude/skills/verify/attachment-layout-seed.ts "$RUN"
 ```
 
-The seed reuses the registration fixture and captures a small Markdown file plus
-an immutable synthetic PR-file blob through the real capture path. Its Git reader
-is injected synthetic bytes; no GitHub or credential access occurs. Run the source
-CLI in a persistent terminal, with the refusing stub from the ordinary launch
-setup at the front of PATH. Use this branch's built web assets:
+The fixture captures Markdown and an immutable synthetic PR-file blob through the
+real capture path with injected bytes. Run the CLI in a persistent terminal:
 
 ```bash
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
@@ -24,7 +19,7 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   --host 127.0.0.1 --port 9491 --db-path "$RUN/data/daemon.db"
 ```
 
-In another terminal, populate the question card through public RPC:
+Populate the card through RPC:
 
 ```bash
 env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
@@ -45,6 +40,10 @@ at wide and narrow widths; numeric bounds alone are not a visual pass.
 
 For human preview, visit `/neo`, then the **Synthetic** ask's question card. On
 narrow screens open **Your work** at the top right first. Its attachments are
-**Launch plan (Markdown)** and **proposal.md**. No model is configured. The
-preview-only run may stay active for explicit human review; otherwise stop only
-its owned process. Do not copy a live DB or stop another daemon.
+**Launch plan (Markdown)** and **proposal.md**. No model is configured. Keep this owned run for explicit human review; otherwise
+stop it.
+
+Repeat with `VERIFY_PLAIN_HTTP=1`: Chromium maps preview.invalid to localhost so
+isSecureContext is false. Require the same behavior without crypto.randomUUID.
+The wide composer must consume Escape to cancel a quote while retaining the
+preview; a subsequent unconsumed Escape closes it. Retain each origin's layout.json.

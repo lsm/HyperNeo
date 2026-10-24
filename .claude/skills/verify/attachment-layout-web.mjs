@@ -20,6 +20,7 @@ try {
     try {
       await page.goto(`${base}/neo`);
       assert.equal(await page.evaluate(() => window.isSecureContext), !plainHttp);
+      if (plainHttp) assert.equal(await page.evaluate(() => typeof crypto.randomUUID), 'undefined');
       const narrow = width < 1120;
       await page.getByRole('heading', { name: 'A little less on your mind.' }).waitFor();
       if (narrow) await page.getByRole('button', { name: /your work/i }).click();
@@ -54,7 +55,13 @@ try {
         assert.equal(await panel.count(), 1);
         assert(await panel.getByText(/commit aaaaaaa/).count());
         await page.screenshot({ path: join(evidence, `layout-git-${width}.png`) });
+        await page.getByRole('button', { name: 'Reply in chat', exact: true }).click();
+        const quote = page.getByRole('region', { name: /^Replying to/ });
+        await quote.waitFor();
         await input.focus();
+        await page.keyboard.press('Escape');
+        await quote.waitFor({ state: 'detached' });
+        assert.equal(await panel.count(), 1);
         await page.keyboard.press('Escape');
       } else {
         await page.getByRole('button', { name: 'Dismiss preview' }).click({ position: { x: 20, y: 20 } });
@@ -82,12 +89,12 @@ try {
       await panel.waitFor({ state: 'detached' });
       assert.equal(new URL(page.url()).pathname, '/neo');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      observed[width] = { bounds, browserBackStaysOnNeo: true, close: true, ...(narrow ? { stripDismiss: true, swipeDown: true } : { chatEditable: true, replacesContent: true, escapeFromChat: true }) };
+      observed[width] = { bounds, browserBackStaysOnNeo: true, close: true, ...(narrow ? { stripDismiss: true, swipeDown: true } : { chatEditable: true, replacesContent: true, escapeFromChat: true, quoteEscapePreservesPreview: true }) };
     } catch (error) {
       await page.screenshot({ path: join(evidence, `layout-failure-${width}.png`) });
       throw error;
     } finally { await context.close(); }
   }
-  writeFileSync(join(evidence, 'layout.json'), JSON.stringify({ verified: true, observed }, null, 2));
+  writeFileSync(join(evidence, 'layout.json'), JSON.stringify({ verified: true, plainHttp, observed }, null, 2));
   console.log(JSON.stringify(observed));
 } finally { await browser.close(); }

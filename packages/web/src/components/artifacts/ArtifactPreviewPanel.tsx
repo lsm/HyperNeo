@@ -1,3 +1,4 @@
+import { generateUUID } from '@hyperneo/shared/utils';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { t } from '../../lib/i18n/index.ts';
@@ -99,17 +100,26 @@ export function ArtifactPreviewPanel() {
 
   useLayoutEffect(() => {
     if (!open) return;
-    const entry = crypto.randomUUID();
+    const entry = generateUUID();
     history.pushState({ ...history.state, artifactPreview: entry }, '');
     const onPop = () => closeArtifactPreview();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !document.querySelector('[aria-modal="true"]'))
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        !event
+          .composedPath()
+          .some(
+            (node) => node instanceof Element && node.matches('[role="menu"], [aria-modal="true"]')
+          ) &&
+        !document.querySelector('[aria-modal="true"]')
+      )
         closeArtifactPreview();
     };
     window.addEventListener('popstate', onPop);
-    document.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey);
       window.removeEventListener('popstate', onPop);
       if (history.state?.artifactPreview === entry) history.back();
       resolved.current.clear();
