@@ -333,6 +333,10 @@ export class CodingPrLedgerRepository {
     return this.health.record(repo, cycle);
   }
 
+  acceptHealthNotice(repo: string, key: string, at: number) {
+    this.health.accept(repo, key, at);
+  }
+
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
     return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
   }
@@ -730,6 +734,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'acceptHealthNotice'
   | 'recordHealth'
   | 'recordStage'
   | 'recordAlias'
@@ -745,6 +750,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'acceptHealthNotice',
     'recordHealth',
     'recordStage',
     'recordAlias',

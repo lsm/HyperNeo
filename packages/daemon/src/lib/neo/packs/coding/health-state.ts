@@ -6,7 +6,9 @@ export type RepoHealthCycle = {
   outcome: 'complete' | 'partial' | 'failed' | 'not_reached' | 'cooldown';
   retryAt?: number;
 };
+export type HealthNotice = { key: string; text: string; acceptedAt: number | null };
 type Health = {
+  notices?: HealthNotice[];
   cycleAt: number;
   attemptedAt: number | null;
   completeAt: number | null;
@@ -59,6 +61,27 @@ const reduceHealth = (superpipe({})('coding-repository-health') as PipelineAPI)
   .input(['repo', 'before', 'cycle'])
   .pipe(admitCycle, ['before', 'cycle'], 'result:health')
   .pipe(projectHealth, ['repo', 'before', 'health'], 'health')
+  .pipe(
+    (repo: string, before: Health | null, health: Health): Health => {
+      const notices = [...(before?.notices ?? [])];
+      if (health.incident) {
+        const recovered = health.incident.resolvedAt !== null;
+        const key = health.incident.key + (recovered ? ':recovery' : '');
+        if (
+          !notices.some((notice) => notice.key === key) &&
+          (!recovered || before?.incident?.resolvedAt === null)
+        )
+          notices.push({
+            key,
+            text: `GitHub coverage ${recovered ? 'recovered' : 'stalled'} for ${repo}. Incident ${health.incident.key}.`,
+            acceptedAt: null,
+          });
+      }
+      return { ...health, notices };
+    },
+    ['repo', 'before', 'health'],
+    'health'
+  )
   .end('health') as (repo: string, before: Health | null, cycle: RepoHealthCycle) => Health;
 
 export class CodingRepoHealthRepository {
@@ -69,6 +92,18 @@ export class CodingRepoHealthRepository {
       .prepare('SELECT health_json FROM pack_coding_repo_health WHERE repo=?')
       .get(repo.toLowerCase()) as { health_json: string } | undefined;
     return row ? (JSON.parse(row.health_json) as Health) : null;
+  }
+
+  accept(repo: string, key: string, at: number): void {
+    this.db.transaction(() => {
+      const health = this.read(repo);
+      const notice = health?.notices?.find((item) => item.key === key);
+      if (!notice || notice.acceptedAt !== null) return;
+      notice.acceptedAt = at;
+      this.db
+        .prepare('UPDATE pack_coding_repo_health SET health_json=? WHERE repo=?')
+        .run(JSON.stringify(health), repo.toLowerCase());
+    }, 'immediate')();
   }
 
   record(repo: string, cycle: RepoHealthCycle): Health {

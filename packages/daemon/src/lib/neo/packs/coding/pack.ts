@@ -23,6 +23,7 @@ import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
+import { deliverCodingHealth } from './health-delivery.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -130,6 +131,7 @@ export function createCodingPack(deps: {
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
+      await deliverCodingHealth(deps.prLedger, deps.projectRepos(), deps.prSweepDeps.wake, now);
       await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
       await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
