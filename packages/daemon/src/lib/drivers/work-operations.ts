@@ -57,6 +57,7 @@ export interface WorkVerbDeps {
   remote: RemoteDaemons;
   daemonName: string;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
+  recordStarted?: (ref: WorkRef) => void;
 }
 
 export const WORK_MESSAGE_MAX = 20_000;
@@ -332,7 +333,11 @@ export async function startWork(
   caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<StartResult> {
-  if ('local' in route) return route.local(input, { from, caller });
+  if ('local' in route) {
+    const result = await route.local(input, { from, caller });
+    if (result.ok) deps.recordStarted?.(result.value.ref);
+    return result;
+  }
   const { daemon: _daemon, ...place } = input.place;
   const result = await forwardWork(
     route.daemon,

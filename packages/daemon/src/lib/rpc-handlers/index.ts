@@ -45,11 +45,14 @@ import {
 } from '../drivers/claude-feed.ts';
 import {
   codexSessionsRoot,
+  ownCodexSessions,
   runCodexFeed,
   scheduleCodexFeed,
   WORK_FEED_CODEX,
 } from '../drivers/codex-feed.ts';
 import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
+import { readStartedWork } from '../../storage/work-started-sessions.ts';
+import { CLAUDE_DESKTOP_SESSIONS, ownClaudeSessions } from './family-operations/drivers.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations, neoReorganizeRuntime } from '../neo/operations.ts';
 import { createNeoProjectsReorganizer } from '../neo/reorganize-operation.ts';
@@ -1790,18 +1793,35 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.jobProcessor.register(WORK_TURN_EMBED, () =>
     runTurnEmbedding(deps.jobQueue, deps.db, deps.db.getEmbedder())
   );
-  deps.jobProcessor.register(WORK_FEED_CLAUDE, async () => ({
-    ...(await runClaudeFeed(
-      deps.jobQueue,
-      deps.db.getDatabase(),
-      claudeProjectsRoot(),
-      Date.now(),
-      deps.purgeClaudeFeed
-    )),
-  }));
-  deps.jobProcessor.register(WORK_FEED_CODEX, async () => ({
-    ...(await runCodexFeed(deps.jobQueue, deps.db.getDatabase(), codexSessionsRoot(), Date.now())),
-  }));
+  const startedWork = () =>
+    deps.settingsManager.getGlobalSettings().workFeedScope === 'own'
+      ? readStartedWork(deps.db.getDatabase())
+      : null;
+  deps.jobProcessor.register(WORK_FEED_CLAUDE, async () => {
+    const started = startedWork();
+    return {
+      ...(await runClaudeFeed(
+        deps.jobQueue,
+        deps.db.getDatabase(),
+        claudeProjectsRoot(),
+        Date.now(),
+        deps.purgeClaudeFeed,
+        started && (await ownClaudeSessions(started, CLAUDE_DESKTOP_SESSIONS))
+      )),
+    };
+  });
+  deps.jobProcessor.register(WORK_FEED_CODEX, async () => {
+    const started = startedWork();
+    return {
+      ...(await runCodexFeed(
+        deps.jobQueue,
+        deps.db.getDatabase(),
+        codexSessionsRoot(),
+        Date.now(),
+        started && ownCodexSessions(started)
+      )),
+    };
+  });
   if (process.env.NODE_ENV !== 'test') {
     scheduleTurnEmbedding(deps.jobQueue);
     scheduleCodexFeed(deps.jobQueue);

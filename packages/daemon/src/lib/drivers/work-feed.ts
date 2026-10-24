@@ -168,6 +168,14 @@ export async function withKnownFeedFiles(
   return [...listed, ...extra.flat()].sort((a, b) => b.mtime - a.mtime);
 }
 
+export function ownFeedFiles<Meta extends FeedFileMeta>(
+  files: readonly FeedFile[],
+  source: FeedSource<Meta>,
+  own: ReadonlySet<string> | null | undefined
+): FeedFile[] {
+  return own ? files.filter((file) => own.has(source.sessionOf(file.path))) : [...files];
+}
+
 const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 export async function feedWorkFiles<Meta extends FeedFileMeta>(

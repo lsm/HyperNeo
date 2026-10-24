@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ownClaudeSessions, runClaudeFeed } from '../../../../src/lib/drivers/claude-feed';
+import { runClaudeFeed } from '../../../../src/lib/drivers/claude-feed';
+import { ownClaudeSessions } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
 import { ownCodexSessions, runCodexFeed } from '../../../../src/lib/drivers/codex-feed';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types';
@@ -50,7 +51,13 @@ async function startThroughWorkStart(adapter: string, id: string) {
     find: () => [],
     start: async (request) => ({
       ok: true,
-      value: { ref: { adapter, id }, title: request.title, place, status: 'running' },
+      value: {
+        ref: { adapter, id },
+        title: request.title,
+        place,
+        status: 'running',
+        lastActivityAt: 1,
+      },
     }),
   };
   const registry = createOperationRegistry(
@@ -67,7 +74,8 @@ async function startThroughWorkStart(adapter: string, id: string) {
     { adapter, place, title: 'heron', message: 'go' },
     { source: 'rpc' }
   );
-  expect(outcome).toMatchObject({ kind: 'completed', value: { ok: true } });
+  if (outcome.kind !== 'completed') throw new Error(JSON.stringify(outcome));
+  expect(outcome.value).toMatchObject({ ok: true });
 }
 
 function startedForTodo(todoId: string, adapter: string, id: string) {
