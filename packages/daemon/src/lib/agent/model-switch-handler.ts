@@ -334,7 +334,9 @@ export class ModelSwitchHandler {
   }
 
   private liveWireModel(model: string, providerId: string): string {
-    if (providerId === 'anthropic') return model;
+    if (providerId === 'anthropic') {
+      return getProviderRegistry().get(providerId)?.translateModelIdForSdk?.(model) ?? model;
+    }
     const provider = getProviderRegistry().get(providerId);
     let envVars: Record<string, string | undefined> = {};
     try {

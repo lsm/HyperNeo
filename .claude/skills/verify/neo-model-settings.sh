@@ -16,8 +16,10 @@ trap 'bash .claude/skills/verify/stop.sh "$RUN"' EXIT
 clean=(env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" NODE_ENV=test TMPDIR="$RUN" HYPERNEO_USE_DEV_PROXY=0)
 "${clean[@]}" bun .claude/skills/verify/neo-model-settings-mock.ts "$MOCK" > "$RUN/mock-api.log" 2>&1 &
 echo $! > "$RUN/mock-api.pid"
+ENTRY=packages/cli/main.ts
+if [[ "${VERIFY_ANTHROPIC_1M:-0}" == 1 ]]; then ENTRY=.claude/skills/verify/anthropic-1m-settings.ts; fi
 "${clean[@]}" HYPERNEO_DATA_DIR="$RUN/data" ANTHROPIC_BASE_URL="http://127.0.0.1:$MOCK" \
-  bun packages/cli/main.ts --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
+  bun "$ENTRY" --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
 echo $! > "$RUN/daemon.pid"
 ready=false
 for _ in $(seq 1 60); do
