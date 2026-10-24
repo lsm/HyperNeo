@@ -18,8 +18,9 @@ unchanged. Both daemon and socket close in `finally`. Evidence retains every
 state and emitted message in `evidence/observed.json`. No credentials, provider,
 model, live DB, real GitHub calls or GUI are used.
 
-Slice 3 conservatively keeps any configured humanSignoff in `waiting_human`
-when otherwise merge-ready: current-head path/label reads and durable holds are
-later slices. Review-author login is read now to enforce designated-bot approval;
-unknown/stale authors never count. This journey proves the nudge decision and
-snapshot, not live GitHub transport, actual delivery or later worker merge checks.
+Configured humanSignoff globs apply to changed paths: this design PR stays in
+`waiting_human`; code-only PRs can become merge-ready. Missing or incomplete file
+lists keep signoff pending. See `coding-signoff-scope.md` for code-only approval
+and terminal owner-mailbox delivery. Review-author login enforces designated-bot
+approval; unknown/stale authors never count. This journey proves the nudge
+decision and snapshot, not live GitHub transport or worker consumption.
