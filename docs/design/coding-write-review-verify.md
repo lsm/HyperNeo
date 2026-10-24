@@ -13,20 +13,23 @@ flows. Clarify missing criteria before dispatch; the author cannot broaden them.
 | Review | Repo review bot, otherwise a fresh review session, or a human | A code-soundness verdict. Reuse the review contract's two lenses: one pass hunting bugs/integration risks, one checking scope against the request. Static review does not replace running the change. |
 | Verify | Independent session, distinct from both author and reviewer | Evidence answering “did this do what the human asked?” and “did it change anything else?” Never the author reviewing its own report. |
 
-Every PR description includes `Author: <model> via <harness>` with the actual
-model and harness (for example Claude Code, Codex or HyperNeo). The coding pack
-reads it before assigning review. Missing or ambiguous provenance asks the author
-to correct the description; it does not guess. A pack preference, **on by default**,
-requires an AI reviewer with a different model **and/or** harness from the author;
-a fresh session alone is insufficient. Record the reviewer's actual identity too.
+A coding-pack provenance preference is **on by default**; the user may turn it
+off, for example when writing the code themselves. When on, every PR description
+includes `Author: <model> via <harness>` with the actual model and harness. The pack
+reads it before assigning review; missing or ambiguous provenance asks the author
+to correct it rather than guessing. An AI reviewer must use a **different model**;
+a different harness is preferred too. Best: both differ (for example a Codex model
+via Codex CLI reviewing Claude Code work). Fallback: same harness, different model.
+The same model through another harness does not qualify. Record reviewer identity.
 A human reviewer is an independent alternative. If a required repo bot cannot
-satisfy diversity, retain its required approval and add a qualifying reviewer.
-Unavailable alternatives block for configuration rather than silently disabling
-the preference. Existing repository review/sign-off rules remain mandatory.
+satisfy diversity, retain its approval and add a qualifying reviewer; unavailable
+alternatives block for configuration. When the preference is off, no Author line
+is required and reviewer diversity is not enforced. Existing repository review
+and sign-off rules remain mandatory in either mode.
 
 ## Independent QA
 
-QA pins the candidate head and base, then reuses the repo's existing verify skill
+QA pins the candidate head, then reuses the repo's existing verify skill
 (including scripts and journeys) in its own isolated checkout. Run the actual
 changed behavior against every acceptance criterion. For daemon work use
 `NODE_ENV=test`, a private synthetic data directory/database, separate ports and
@@ -34,10 +37,13 @@ mock endpoints, with no real keys or production data. Record inputs, commands,
 outputs, test results, screenshots where applicable and pass/fail per criterion.
 Missing or inconclusive evidence is not a pass.
 
-UI changes require the real browser or Simulator and screenshots of the relevant
-states; unit tests alone never pass UI QA. Tests driving a real GUI must never
-run unattended on the human's own machine: use an isolated CI/test machine or an
-attended run. If neither is available, mark QA blocked. Stop test resources.
+QA runs autonomously, with no human watching. For UI changes it launches the
+Simulator or an isolated browser profile, performs the action and checks the
+result with screenshots (for “remove this button”, open the screen and confirm
+the button is gone); unit tests alone never pass UI QA. For backend/API changes
+it calls the changed API against an isolated test daemon and checks the response.
+QA never drives the human's own running apps or signed-in accounts; it uses its own isolated environment.
+Stop test resources.
 
 For scope, compare the entire diff with the allowed scope, run key flows on both
 the base and candidate, and record unexpected changes. Require full-suite results
@@ -50,11 +56,10 @@ does not authorize it. Findings go to the author with reproducible evidence.
 
 Attach review and QA facts to the existing PR/todo ledger: PR identity, exact
 head, actor identity, verdict, acceptance-contract reference and durable evidence
-links (CI/run/artifact identifiers). QA also records its tested base/integration
-commit. The pack reads the actual review verdict and QA artifacts; an author's
-“done” message or a link without results cannot open the gate. A new push
-invalidates **both** approvals. A base advance requires QA to revalidate the
-candidate's integration before merging.
+links (CI/run/artifact identifiers). The pack reads the actual review verdict and
+QA artifacts; an author's “done” message or a link without results cannot open the gate. A new push
+invalidates **both** approvals. QA is bound to the PR head only; CI covers
+integration with the base. A rebase changes the head and reruns QA.
 
 Merge requires matching-head passing review and QA, green required CI, resolved
 findings and any repository human sign-off. Re-read the head immediately before
