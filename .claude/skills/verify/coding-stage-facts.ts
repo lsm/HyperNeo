@@ -51,12 +51,13 @@ try {
         assert.equal(todos.stages('todo-7').length, 2);
         assert.deepEqual(await rpc('pack.preferences.get', setting), { preference: null });
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, false);
-        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer).preferred, true);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: GPT-6 via Harness A', reviewer).preferred, true);
         const proposal = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'stage-provenance', values: [{ ...setting, value: true }, { ...setting, key: 'mergePolicy', value: 'ci_only' }] }) as { ok: boolean; questionId: string };
         assert.equal(proposal.ok, true);
         assert(proposal.questionId);
         assert.deepEqual(await rpc('pack.preferences.list', {}), { preferences: [] });
-        const aliases = ['gpt-6-2026-09', 'openai/gpt-6', 'unidentified-model'].map(model => ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via A', { ...reviewer, model }));
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer).qualifies, false);
+        const aliases = ['gpt-6-2026-09', 'openai/gpt-6', 'unidentified-model'].map(model => ledger.reviewerPolicy('synthetic/stages', 'Agent: GPT-6 via A', { ...reviewer, model }));
         await rpc('neo.question.answer', { questionId: proposal.questionId, answer: 'no' });
         const afterNo = await rpc('pack.preferences.get', setting) as { preference: { value: unknown } | null };
         evidence.push({ aliases, afterNo });
@@ -66,8 +67,8 @@ try {
         assert.equal(label.label, 'Keep current settings');
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, false);
         for (const model of ['claude-fable-5-1', 'Opus 5.5', 'claude-opus-5-5[1m]'])
-          assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via A', { ...reviewer, model }).qualifies, true, model);
-        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: gpt-6 via A', { ...reviewer, model: 'gpt-6.0' }).qualifies, false);
+          assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: GPT-6 via A', { ...reviewer, model }).qualifies, true, model);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: gpt-6 via A', { ...reviewer, model: 'gpt-6.0' }).qualifies, false);
         const disable = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'disable-provenance', values: [{ ...setting, value: false }] }) as { ok: boolean; questionId: string };
         assert.equal(disable.ok, true);
         await rpc('neo.question.answer', { questionId: disable.questionId, answer: 'yes' });

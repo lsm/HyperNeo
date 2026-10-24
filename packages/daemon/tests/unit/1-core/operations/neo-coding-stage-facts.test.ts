@@ -115,7 +115,7 @@ describe('coding provenance policy', () => {
   test('defaults on without saving, requires different model, prefers different harness, allows human', () => {
     const { db, ledger } = setup();
     try {
-      const body = 'Author: GPT-6 via Harness A';
+      const body = 'Agent: GPT-6 via Harness A';
       expect(ledger.reviewerPolicy('synthetic/stages', body, reviewer)).toMatchObject({
         qualifies: true,
         preferred: true,
@@ -131,11 +131,12 @@ describe('coding provenance policy', () => {
       ).toMatchObject({ qualifies: true });
       for (const invalid of [
         '',
-        'Author: <model> via <harness>',
+        'Author: GPT-6 via Harness A',
+        'Agent: <model> via <harness>',
         body + '\n' + body,
-        'Author: A via B via C',
+        'Agent: A via B via C',
         '```\n' + body + '\n```',
-        'Author:   via B',
+        'Agent:   via B',
       ]) {
         expect(ledger.reviewerPolicy('synthetic/stages', invalid, reviewer)).toMatchObject({
           qualifies: false,
@@ -153,7 +154,7 @@ describe('coding provenance policy', () => {
         ['unidentified-model', 'claude-opus-5-5'],
       ])
         expect(
-          ledger.reviewerPolicy('synthetic/stages', `Author: ${author} via A`, {
+          ledger.reviewerPolicy('synthetic/stages', `Agent: ${author} via A`, {
             ...reviewer,
             model,
           })
