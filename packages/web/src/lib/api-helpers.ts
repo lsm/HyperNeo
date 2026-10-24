@@ -489,3 +489,17 @@ export async function listCustomEndpointModels(data: {
     fromCache: boolean;
   }>('customEndpoints.listModels', data, { timeout: 15000 });
 }
+
+export async function testCustomEndpointConnection(data: {
+  baseUrl: string;
+  type?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+}): Promise<{ success: boolean; message: string }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ success: boolean; message: string }>(
+    'customEndpoints.testConnection',
+    data,
+    { timeout: 15000 }
+  );
+}
