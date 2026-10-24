@@ -6,6 +6,7 @@ import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { createStandaloneTaskMetadataEditor } from '../../../../src/lib/tasks/metadata-standalone';
+import { fixtureChanges, runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 beforeEach(() => {
@@ -17,9 +18,13 @@ afterEach(() => db.close());
 test.each(['rpc', 'mcp', 'internal'] as const)(
   'keeps standalone metadata editing available to %s',
   async (source) => {
-    const original = createStandaloneTask(db, { title: 'Original' }, undefined, () => {});
+    const original = createStandaloneTask.run(
+      db,
+      { input: { title: 'Original' } },
+      fixtureChanges()
+    );
     const notify = mock(() => {});
-    const edit = createStandaloneTaskMetadataEditor(db, notify);
+    const edit = createStandaloneTaskMetadataEditor(db, runDbOpOn(db, notify));
     const updated = await edit(
       { taskId: original.id, title: ' Updated ', labels: ['label'] },
       { source, sessionId: 'session-1' }
@@ -44,7 +49,7 @@ test('missing and Space-owned tasks stay inaccessible without notification', asy
   const tasks = new SpaceTaskRepository(db);
   const owned = tasks.createTask({ spaceId: space.id, title: 'Owned', description: '' });
   const notify = mock(() => {});
-  const edit = createStandaloneTaskMetadataEditor(db, notify);
+  const edit = createStandaloneTaskMetadataEditor(db, runDbOpOn(db, notify));
   for (const taskId of ['missing', owned.id]) {
     expect(
       await edit({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: 'session-1' })
@@ -55,9 +60,9 @@ test('missing and Space-owned tasks stay inaccessible without notification', asy
 });
 
 test('preserves storage failures without notification', async () => {
-  const original = createStandaloneTask(db, { title: 'Original' }, undefined, () => {});
+  const original = createStandaloneTask.run(db, { input: { title: 'Original' } }, fixtureChanges());
   const notify = mock(() => {});
-  const edit = createStandaloneTaskMetadataEditor(db, notify);
+  const edit = createStandaloneTaskMetadataEditor(db, runDbOpOn(db, notify));
   await expect(edit({ taskId: original.id }, { source: 'rpc' })).rejects.toThrow(
     'Task edit requires at least one field'
   );

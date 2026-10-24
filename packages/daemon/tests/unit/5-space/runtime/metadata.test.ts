@@ -22,6 +22,7 @@ import {
   requireMetadataCallerScope,
   resolveMetadataSessionSpace,
 } from '../../../../src/lib/tasks/metadata';
+import { fixtureChanges, runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 let spaceId: string;
@@ -58,7 +59,7 @@ function editor(extra = {}) {
     getSession,
     getTaskManager,
     emitTaskUpdated: emit,
-    notifyStandalone: notify,
+    runOp: runDbOpOn(db, notify),
     taskRepo: tasks,
     ...extra,
   });
@@ -191,7 +192,11 @@ test.each(['ended', 'archived', 'paused'] as const)(
 );
 
 test('standalone edits remain available without a persisted caller', async () => {
-  const standalone = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+  const standalone = createStandaloneTask.run(
+    db,
+    { input: { title: 'Standalone' } },
+    fixtureChanges()
+  );
   expect(
     await editor()({ taskId: standalone.id, title: 'Changed' }, { source: 'mcp' })
   ).toMatchObject({ title: 'Changed' });
@@ -295,8 +300,8 @@ test.each([
   ['missing', 'dependency_not_found'],
   ['cycle', 'dependency_cycle'],
 ] as const)('rejects a standalone %s edge and writes nothing', async (shape, reason) => {
-  const own = createStandaloneTask(db, { title: 'Standalone' }, undefined, notify);
-  const other = createStandaloneTask(db, { title: 'Other' }, undefined, notify);
+  const own = createStandaloneTask.run(db, { input: { title: 'Standalone' } }, fixtureChanges());
+  const other = createStandaloneTask.run(db, { input: { title: 'Other' } }, fixtureChanges());
   await editor()({ taskId: other.id, dependsOn: [own.id] }, { source: 'rpc' });
   notify.mockClear();
   const dependsOn =
@@ -400,8 +405,8 @@ test('a combined Space update reaches the task manager once', async () => {
 });
 
 test('a rejected combined standalone update leaves both halves unwritten', async () => {
-  const own = createStandaloneTask(db, { title: 'Standalone' }, undefined, notify);
-  const other = createStandaloneTask(db, { title: 'Other' }, undefined, notify);
+  const own = createStandaloneTask.run(db, { input: { title: 'Standalone' } }, fixtureChanges());
+  const other = createStandaloneTask.run(db, { input: { title: 'Other' } }, fixtureChanges());
   await editor()({ taskId: other.id, dependsOn: [own.id] }, { source: 'rpc' });
   notify.mockClear();
 
@@ -414,8 +419,8 @@ test('a rejected combined standalone update leaves both halves unwritten', async
 });
 
 test('a combined standalone update writes both halves in one notification', async () => {
-  const own = createStandaloneTask(db, { title: 'Standalone' }, undefined, notify);
-  const other = createStandaloneTask(db, { title: 'Other' }, undefined, notify);
+  const own = createStandaloneTask.run(db, { input: { title: 'Standalone' } }, fixtureChanges());
+  const other = createStandaloneTask.run(db, { input: { title: 'Other' } }, fixtureChanges());
   notify.mockClear();
 
   const updated = await editor()(

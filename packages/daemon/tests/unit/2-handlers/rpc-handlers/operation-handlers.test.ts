@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { setupOperationHandlers } from '../../../../src/lib/rpc-handlers/operation-handlers';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { fixtureChanges, runDbOpOn } from '../../helpers/run-db-op';
 
 const message = { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null };
 
@@ -38,10 +39,10 @@ describe('operation.invoke RPC registration', () => {
         sessionStatus: () => 'active',
         readTask: (taskId) => readTaskCore(taskDb, taskId),
         createTask: (input, creatorSessionId) =>
-          createStandaloneTask(taskDb, input, creatorSessionId, () => {}),
+          runDbOpOn(taskDb)(createStandaloneTask, { input, creatorSessionId }),
         listTasks: (input) => listTaskCores(taskDb, input),
-        editTask: createStandaloneTaskMetadataEditor(taskDb, () => {}),
-        transitionTask: (input) => transitionStandaloneTask(taskDb, input, () => {}),
+        editTask: createStandaloneTaskMetadataEditor(taskDb, runDbOpOn(taskDb)),
+        transitionTask: (input) => runDbOpOn(taskDb)(transitionStandaloneTask, input),
       }),
       () => null
     );
@@ -230,9 +231,13 @@ describe('operation.invoke RPC registration', () => {
   });
 
   test('replaces standalone dependencies through the update door', async () => {
-    const task = createStandaloneTask(taskDb, { title: 'Work' }, undefined, () => {});
-    const first = createStandaloneTask(taskDb, { title: 'First' }, undefined, () => {});
-    const second = createStandaloneTask(taskDb, { title: 'Second' }, undefined, () => {});
+    const task = createStandaloneTask.run(taskDb, { input: { title: 'Work' } }, fixtureChanges());
+    const first = createStandaloneTask.run(taskDb, { input: { title: 'First' } }, fixtureChanges());
+    const second = createStandaloneTask.run(
+      taskDb,
+      { input: { title: 'Second' } },
+      fixtureChanges()
+    );
     const update = (dependsOn: string[]) =>
       client.request<TaskCore>('operation.invoke', {
         name: 'task.update',
@@ -255,7 +260,11 @@ describe('operation.invoke RPC registration', () => {
     { dependsOn: [''] },
     { dependsOn: 'task' },
   ])('rejects invalid metadata patches without changing the task: %j', async (patch) => {
-    const task = createStandaloneTask(taskDb, { title: 'Original' }, undefined, () => {});
+    const task = createStandaloneTask.run(
+      taskDb,
+      { input: { title: 'Original' } },
+      fixtureChanges()
+    );
     await expect(
       client.request('operation.invoke', {
         name: 'task.update',
@@ -266,7 +275,7 @@ describe('operation.invoke RPC registration', () => {
   });
 
   test('manages standalone lifecycle through RPC without changing Space tasks', async () => {
-    const task = createStandaloneTask(taskDb, { title: 'Work' }, undefined, () => {});
+    const task = createStandaloneTask.run(taskDb, { input: { title: 'Work' } }, fixtureChanges());
     for (const status of [
       'in_progress',
       'blocked',
@@ -331,7 +340,7 @@ describe('operation.invoke RPC registration', () => {
   });
 
   test('returns lifecycle rejection codes and rejects invalid schemas before writing', async () => {
-    const task = createStandaloneTask(taskDb, { title: 'Work' }, undefined, () => {});
+    const task = createStandaloneTask.run(taskDb, { input: { title: 'Work' } }, fixtureChanges());
     expect(
       await client.request('operation.invoke', {
         name: 'task.transition',

@@ -1,6 +1,7 @@
 import { generateUUID } from '@hyperneo/shared';
 import type { TaskCore, TaskPriority } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { type ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { decodeTaskCoreRow } from './task-row.ts';
 
@@ -35,20 +36,32 @@ function insertStandaloneTask(
     ) as Record<string, unknown>;
 }
 
-function notifyTaskCreated(notifyChange: () => void): void {
-  notifyChange();
+function notifyTaskCreated(changes: Pick<ChangeRecorder, 'notifyChange'>): void {
+  changes.notifyChange('space_tasks');
 }
 
-export const createStandaloneTask = (superpipe({})('create-standalone-task') as PipelineAPI)
-  .input(['db', 'input', 'creatorSessionId', 'notifyChange'])
+const insertAndAnnounceStandaloneTask = (superpipe({})('create-standalone-task') as PipelineAPI)
+  .input(['db', 'input', 'creatorSessionId', 'changes'])
   .pipe(generateUUID, undefined, 'id')
   .pipe(Date.now, undefined, 'now')
   .pipe(insertStandaloneTask, ['db', 'input', 'creatorSessionId', 'id', 'now'], 'row')
   .pipe(decodeTaskCoreRow, 'row', 'task')
-  .pipe(notifyTaskCreated, 'notifyChange')
+  .pipe(notifyTaskCreated, 'changes')
   .end('task') as (
   db: Database,
   input: CreateStandaloneTaskInput,
   creatorSessionId: string | undefined,
-  notifyChange: () => void
+  changes: Pick<ChangeRecorder, 'notifyChange'>
 ) => TaskCore;
+
+export interface CreateStandaloneTaskArgs {
+  input: CreateStandaloneTaskInput;
+  creatorSessionId?: string;
+}
+
+export const createStandaloneTask = defineDbOp<CreateStandaloneTaskArgs, TaskCore>({
+  name: 'tasks.createStandalone',
+  mode: 'write',
+  run: (db, { input, creatorSessionId }, changes) =>
+    insertAndAnnounceStandaloneTask(db, input, creatorSessionId, changes),
+});

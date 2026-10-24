@@ -9,6 +9,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { fixtureChanges } from '../../helpers/run-db-op';
 
 let db: Database;
 let tasks: SpaceTaskRepository;
@@ -73,7 +74,7 @@ test('getActiveTaskIds returns an empty set for no ids', () => {
 });
 
 test('a standalone task is left unstamped, since it cannot hold an attempt', () => {
-  const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  const standalone = createStandaloneTask.run(db, { input: { title: 'Loose' } }, fixtureChanges());
   expect(stampActiveAttempt(db, standalone)).toBe(standalone);
   const page = { tasks: [standalone], total: 1, nextCursor: null };
   expect(stampActiveAttempts(db, page)).toBe(page);

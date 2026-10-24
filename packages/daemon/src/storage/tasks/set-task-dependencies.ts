@@ -1,6 +1,7 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { planTaskDependencies } from '../../lib/tasks/dependency-plan.ts';
 import type { TaskDependencyNode } from '../../lib/tasks/dependency-graph.ts';
+import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { applyStandaloneTaskEdit, type EditStandaloneTaskInput } from './edit-task.ts';
 
@@ -38,11 +39,6 @@ export function decideTaskDependencyReplacement(
   return typeof result === 'string' ? { reason: result } : { value: result };
 }
 
-function requireOwnTransaction(db: Database): void {
-  const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
-  if (active) throw new Error('Task dependencies require their own transaction');
-}
-
 export function planStandaloneTaskDependencies(
   db: Database,
   input: SetTaskDependenciesInput
@@ -51,22 +47,29 @@ export function planStandaloneTaskDependencies(
   return 'reason' in scope ? scope : decideTaskDependencyReplacement(scope.value, input);
 }
 
-export function editStandaloneTaskWithDependencies(
+function editWithDependencies(
   db: Database,
-  input: EditStandaloneTaskInput,
-  notifyChange: () => void
+  input: EditStandaloneTaskInput
 ): TaskCore | Rejection | null {
-  requireOwnTransaction(db);
-  const result = db.transaction(() => {
-    if (input.dependsOn === undefined) return applyStandaloneTaskEdit(db, input);
-    const planned = planStandaloneTaskDependencies(db, {
-      taskId: input.taskId,
-      dependsOn: input.dependsOn,
-    });
-    return 'reason' in planned
-      ? planned.reason
-      : applyStandaloneTaskEdit(db, { ...input, dependsOn: planned.value });
-  })();
-  if (result !== null && typeof result !== 'string') notifyChange();
-  return result;
+  if (input.dependsOn === undefined) return applyStandaloneTaskEdit(db, input);
+  const planned = planStandaloneTaskDependencies(db, {
+    taskId: input.taskId,
+    dependsOn: input.dependsOn,
+  });
+  return 'reason' in planned
+    ? planned.reason
+    : applyStandaloneTaskEdit(db, { ...input, dependsOn: planned.value });
 }
+
+export const editStandaloneTaskWithDependencies = defineDbOp<
+  EditStandaloneTaskInput,
+  TaskCore | Rejection | null
+>({
+  name: 'tasks.editStandalone',
+  mode: 'write',
+  run: (db, input, changes) => {
+    const result = editWithDependencies(db, input);
+    if (result !== null && typeof result !== 'string') changes.notifyChange('space_tasks');
+    return result;
+  },
+});

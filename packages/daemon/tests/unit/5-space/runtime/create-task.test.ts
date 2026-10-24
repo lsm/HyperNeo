@@ -15,6 +15,7 @@ import { createTestSession } from '../../../helpers/database';
 import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 let spaces: SpaceRepository;
@@ -46,7 +47,7 @@ function deps(overrides: Partial<SpaceCreateTaskDependencies> = {}): SpaceCreate
     getSession: (id) => sessions.getSession(id),
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     getTaskManager: (id) => new SpaceTaskManager(db, id),
-    notifyStandalone,
+    runOp: runDbOpOn(db, notifyStandalone),
     emitTaskCreated,
     getSpace: async (id) => spaces.getSpace(id),
     validateDefaultTaskWorkspace,

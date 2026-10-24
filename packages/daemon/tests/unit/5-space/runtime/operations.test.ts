@@ -23,6 +23,7 @@ import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/d
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { DIRECT_TASK_OUTCOME } from '../../../../src/lib/tasks/direct-outcome-jobs';
+import { fixtureChanges, runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 let database: AppDatabase;
@@ -69,7 +70,7 @@ function provider(
       getSession: (id) => sessions.getSession(id),
       getTaskManager: (id) => new SpaceTaskManager(db, id),
       taskRepo: tasks,
-      notifyStandalone: () => database.notifyChange('space_tasks'),
+      runOp: runDbOpOn(db, () => database.notifyChange('space_tasks')),
       emitTaskUpdated: emit,
       emitTaskCreated: emitCreated,
       getSpace: (id: string) => spaces.getSpace(id),
@@ -132,7 +133,7 @@ function transitionDeps() {
   return {
     getSession: (id: string) => sessions.getSession(id),
     getTaskManager: (id: string) => new SpaceTaskManager(db, id),
-    notifyStandalone: () => database.notifyChange('space_tasks'),
+    runOp: runDbOpOn(db, () => database.notifyChange('space_tasks')),
     emitTaskUpdated: emit,
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     resolveDirectWorker: taskWorkerIdentity,
@@ -200,7 +201,11 @@ test('rpc task.create without spaceId creates a standalone row', async () => {
 });
 
 test('fallback MCP catalog hides Space-owned task reads while preserving standalone reads', async () => {
-  const standalone = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+  const standalone = createStandaloneTask.run(
+    db,
+    { input: { title: 'Standalone' } },
+    fixtureChanges()
+  );
   const caller = member('fallback-member', spaceId);
   const mcp = createOperationMcpHandler(
     createDatabaseOperationCatalog(database, jobQueue),
@@ -259,7 +264,7 @@ test.each([undefined, 'other-space'])(
     });
     expect(tasks.getTask(taskId)?.title).toBe('Original');
     expect(emit).not.toHaveBeenCalled();
-    const task = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+    const task = createStandaloneTask.run(db, { input: { title: 'Standalone' } }, fixtureChanges());
     const edited = await mcp(update('Allowed', task.id));
     expect(edited.isError).not.toBe(true);
     expect(JSON.parse(edited.content[0].text)).toMatchObject({ id: task.id, title: 'Allowed' });
@@ -415,7 +420,7 @@ test('task.transition is served through the Space registry when bound', async ()
     provider({}, undefined, {
       getSession: (id) => sessions.getSession(id),
       getTaskManager: (id) => new SpaceTaskManager(db, id),
-      notifyStandalone: () => database.notifyChange('space_tasks'),
+      runOp: runDbOpOn(db, () => database.notifyChange('space_tasks')),
       emitTaskUpdated: emit,
       isWorkflowRunActive,
     }),
@@ -442,7 +447,7 @@ test('task.transition durably queues a terminal outcome for a running direct att
     provider({}, undefined, {
       getSession: (id) => sessions.getSession(id),
       getTaskManager: (id) => new SpaceTaskManager(db, id),
-      notifyStandalone: () => database.notifyChange('space_tasks'),
+      runOp: runDbOpOn(db, () => database.notifyChange('space_tasks')),
       emitTaskUpdated: emit,
       isWorkflowRunActive: () => false,
     }),
@@ -463,7 +468,7 @@ test('task.transition durably queues a terminal outcome for a running direct att
 });
 
 test('task.get returns the core shape unchanged for a standalone task through the Space registry', async () => {
-  const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  const standalone = createStandaloneTask.run(db, { input: { title: 'Loose' } }, fixtureChanges());
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   const result = await rpc({ name: 'task.get', input: { taskId: standalone.id } }, context);
   expect(result).toEqual(standalone);
@@ -533,7 +538,7 @@ test('task.transition returns full Space fields for a Space-owned task', async (
     provider({}, undefined, {
       getSession: (id) => sessions.getSession(id),
       getTaskManager: (id) => new SpaceTaskManager(db, id),
-      notifyStandalone: () => database.notifyChange('space_tasks'),
+      runOp: runDbOpOn(db, () => database.notifyChange('space_tasks')),
       emitTaskUpdated: emit,
       isWorkflowRunActive: () => false,
     }),
@@ -600,7 +605,7 @@ test('a task repository without a batch read degrades to core rows', async () =>
 });
 
 test('task.list returns the core shape unchanged for standalone tasks through the Space registry', async () => {
-  const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  const standalone = createStandaloneTask.run(db, { input: { title: 'Loose' } }, fixtureChanges());
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   const result = await rpc({ name: 'task.list', input: {} }, context);
   expect(result).toEqual({
@@ -757,7 +762,11 @@ test.each([undefined, 'other-space'])(
     const denied = await mcp(get());
     expect(denied.isError).not.toBe(true);
     expect(JSON.parse(denied.content[0].text)).toBeNull();
-    const standalone = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+    const standalone = createStandaloneTask.run(
+      db,
+      { input: { title: 'Standalone' } },
+      fixtureChanges()
+    );
     const allowed = await mcp(get(standalone.id));
     expect(JSON.parse(allowed.content[0].text)).toMatchObject({ id: standalone.id });
   }

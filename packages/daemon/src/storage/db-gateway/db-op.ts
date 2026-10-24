@@ -23,6 +23,8 @@ export interface DbOp<A, R> {
   readonly run: (db: Database, args: A, changes: ChangeRecorder) => R;
 }
 
+export type RunDbOp = <A, R>(op: DbOp<A, R>, args: A) => Promise<R>;
+
 export function defineDbOp<A, R>(op: DbOp<A, R>): DbOp<A, R> {
   return op;
 }

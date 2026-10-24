@@ -40,6 +40,7 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
 import { createDirectTaskFinalizer } from '../../../../src/lib/tasks/finalize-direct-attempt';
 import { readDirectKickoffIntent } from '../../../../src/lib/tasks/direct-kickoff-intent';
+import { runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 let jobs: JobQueueRepository;
@@ -817,7 +818,7 @@ test('configured start capability is lazy and requires bound lifecycle callbacks
     getSession: (id: string) => sessions.getSession(id),
     getTaskManager: (id: string) => new SpaceTaskManager(db, id),
     taskRepo: tasks,
-    notifyStandalone: () => {},
+    runOp: runDbOpOn(db, () => {}),
     emitTaskUpdated: async () => {},
     emitTaskCreated: async () => {},
     getSpace: (id: string) => new SpaceRepository(db).getSpace(id),

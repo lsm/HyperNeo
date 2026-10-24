@@ -1,4 +1,5 @@
 import type { Session, SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
@@ -7,7 +8,7 @@ export interface SpaceTaskDependencyDependencies extends SpaceMcpSessionPolicyCo
   db: Database;
   getSession: (sessionId: string) => Session | null;
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'updateTask'>;
-  notifyStandalone: () => void;
+  runOp: RunDbOp;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
   blockExecution: (
     spaceId: string,
