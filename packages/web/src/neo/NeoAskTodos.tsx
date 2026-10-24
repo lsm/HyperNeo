@@ -289,6 +289,7 @@ function QuestionBox({
         class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
       />
       <QuestionDocument question={question} />
+      <ArtifactCards artifacts={question.artifacts} />
       {question.kind === 'start' &&
         listed.map((todo) => (
           <TodoRow
@@ -598,6 +599,7 @@ export function NeoAskTodos({
                       class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
                     />
                     <QuestionDocument question={question} />
+                    <ArtifactCards artifacts={question.artifacts} />
                     <p>
                       — {neoQuestionAnswerLabel(question, todos)}
                       {question.answeredAt
@@ -620,6 +622,7 @@ export function NeoAskTodos({
                       class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
                     />
                     <QuestionDocument question={question} />
+                    <ArtifactCards artifacts={question.artifacts} />
                     <p>
                       {t('question.retired', { question: '' })}
                       {question.retiredReason ? `: ${question.retiredReason}` : ''}

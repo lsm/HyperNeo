@@ -1,3 +1,4 @@
+import { runMigration450 } from './m450-neo-question-artifacts.ts';
 import { runMigration449 } from './m449-retire-stale-sdk-indexes.ts';
 import { runMigration448 } from './m448-session-schedule-quiet-count.ts';
 import { runMigration447 } from './m447-neo-todo-removed-index.ts';
@@ -953,6 +954,7 @@ export function runMigrations(
   run(migrationMarkerKey(447), () => runMigration447(db));
   run(migrationMarkerKey(448), () => runMigration448(db));
   run(migrationMarkerKey(449), () => runMigration449(db));
+  run(migrationMarkerKey(450), () => runMigration450(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
