@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
-import { writeFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 const run = realpathSync(process.argv[2]);
 const port = process.argv[3] ?? '9491';
 assert.notEqual(port, '8399');
 const { chromium } = createRequire(import.meta.url)('playwright');
-const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
-const base = `http://localhost:${port}`;
+const plainHttp = process.env.VERIFY_PLAIN_HTTP === '1';
+const evidence = join(run, 'evidence', plainHttp ? 'plain-http' : 'localhost');
+mkdirSync(evidence, { recursive: true });
+const browser = await chromium.launch({ headless: true, args: plainHttp ? ['--host-resolver-rules=MAP preview.invalid 127.0.0.1', '--no-proxy-server'] : [], ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
+const base = `http://${plainHttp ? 'preview.invalid' : 'localhost'}:${port}`;
 const observed = {};
 try {
   for (const width of [1440, 1120, 768, 390, 320]) {
@@ -16,6 +19,7 @@ try {
     const page = await context.newPage();
     try {
       await page.goto(`${base}/neo`);
+      assert.equal(await page.evaluate(() => window.isSecureContext), !plainHttp);
       const narrow = width < 1120;
       await page.getByRole('heading', { name: 'A little less on your mind.' }).waitFor();
       if (narrow) await page.getByRole('button', { name: /your work/i }).click();
@@ -30,12 +34,12 @@ try {
         return input.right <= chat.right + 1;
       });
       if (narrow) {
-        await page.screenshot({ path: join(run, 'evidence', `layout-opening-${width}.png`) });
+        await page.screenshot({ path: join(evidence, `layout-opening-${width}.png`) });
         await page.waitForFunction(() => Math.abs(document.querySelector('.artifact-preview-panel').getBoundingClientRect().bottom - innerHeight) < 1);
       }
       const bounds = await panel.boundingBox();
       assert(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= 901);
-      await page.screenshot({ path: join(run, 'evidence', `layout-markdown-${width}.png`) });
+      await page.screenshot({ path: join(evidence, `layout-markdown-${width}.png`) });
       if (!narrow) {
         const chat = await page.locator('.neo-chat-rail').boundingBox();
         const input = page.locator('textarea').first();
@@ -49,7 +53,7 @@ try {
         await panel.getByRole('heading', { name: 'PR layout proposal' }).waitFor();
         assert.equal(await panel.count(), 1);
         assert(await panel.getByText(/commit aaaaaaa/).count());
-        await page.screenshot({ path: join(run, 'evidence', `layout-git-${width}.png`) });
+        await page.screenshot({ path: join(evidence, `layout-git-${width}.png`) });
         await input.focus();
         await page.keyboard.press('Escape');
       } else {
@@ -64,7 +68,7 @@ try {
       await second.click();
       await panel.getByRole('heading', { name: 'PR layout proposal' }).waitFor();
       if (narrow) await page.waitForFunction(() => Math.abs(document.querySelector('.artifact-preview-panel').getBoundingClientRect().bottom - innerHeight) < 1);
-      await page.screenshot({ path: join(run, 'evidence', `layout-git-final-${width}.png`) });
+      await page.screenshot({ path: join(evidence, `layout-git-final-${width}.png`) });
       if (narrow) {
         const cdp = await context.newCDPSession(page);
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: width / 2, y: 105 }] });
@@ -80,10 +84,10 @@ try {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       observed[width] = { bounds, browserBackStaysOnNeo: true, close: true, ...(narrow ? { stripDismiss: true, swipeDown: true } : { chatEditable: true, replacesContent: true, escapeFromChat: true }) };
     } catch (error) {
-      await page.screenshot({ path: join(run, 'evidence', `layout-failure-${width}.png`) });
+      await page.screenshot({ path: join(evidence, `layout-failure-${width}.png`) });
       throw error;
     } finally { await context.close(); }
   }
-  writeFileSync(join(run, 'evidence', 'layout.json'), JSON.stringify({ verified: true, observed }, null, 2));
+  writeFileSync(join(evidence, 'layout.json'), JSON.stringify({ verified: true, observed }, null, 2));
   console.log(JSON.stringify(observed));
 } finally { await browser.close(); }

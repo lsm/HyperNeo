@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import { artifactPreviewStack, openArtifactPreview } from '../../../lib/artifact-preview-store.ts';
 import { ArtifactPreviewPanel } from '../ArtifactPreviewPanel.tsx';
+import { NeoMessageMenu } from '../../../neo/NeoMessageMenu.tsx';
 import { Modal } from '../../ui/Modal.tsx';
 
 const request = vi.hoisted(() => vi.fn());
@@ -75,9 +76,60 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('ArtifactPreviewPanel', () => {
+  it('opens and closes on ordinary HTTP without crypto.randomUUID', async () => {
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    render(<ArtifactPreviewPanel />);
+    expect(() =>
+      act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }))
+    ).not.toThrow();
+    await screen.findByRole('heading', { name: 'Layout design' });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('lets the composer consume Escape without losing the preview', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    const cancelQuote = vi.fn();
+    render(
+      <>
+        <textarea
+          aria-label="Quoted reply"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              cancelQuote();
+            }
+          }}
+        />
+        <ArtifactPreviewPanel />
+      </>
+    );
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+    expect(cancelQuote).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('dismisses a message menu without losing the preview', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    const close = vi.fn();
+    render(
+      <NeoMessageMenu at={{ x: 10, y: 10 }} actions={['copy']} onPick={() => {}} onClose={close} />
+    );
+    fireEvent.keyDown(screen.getByRole('menuitem'), { key: 'Escape' });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
   it('offers an explicit close action independently of nested navigation', async () => {
     route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     render(<ArtifactPreviewPanel />);
