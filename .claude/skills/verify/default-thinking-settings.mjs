@@ -14,6 +14,9 @@ function rpc(name, input = {}) {
   assert(!result.error, JSON.stringify(result));
   return result;
 }
+const valueOf = async (page, wanted) => {
+  await page.waitForFunction((value) => document.querySelector('select[aria-label="Default thinking"]')?.value === value, wanted, { timeout: 10000 });
+};
 const settings = () => rpc('rpc:state.global.snapshot').settings.settings;
 assert(rpc('rpc:providers.create', {
   params: { providerId: 'anthropic', displayName: 'Anthropic fixture', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 },
@@ -43,7 +46,7 @@ try {
   const select = page.getByLabel('Default thinking', { exact: true });
   await select.waitFor();
   await page.waitForFunction((name) => document.body.innerText.includes(`${name} · `), model.display_name);
-  assert.equal(await select.inputValue(), 'think8k');
+  await valueOf(page, 'think8k');
   assert.equal(await select.locator('option').count(), 7);
   assert(!(await page.locator('body').innerText()).includes('support for this model is unknown'));
   assert.deepEqual(sent, [], 'opening Settings must not write');
@@ -68,7 +71,7 @@ try {
     await page.setViewportSize({ width, height: 1000 });
     await page.reload();
     await select.waitFor();
-    assert.equal(await select.inputValue(), 'think24k');
+    await valueOf(page, 'think24k');
     const box = await select.boundingBox();
     assert(box && box.x >= 0 && box.x + box.width <= width + 1, JSON.stringify(box));
     await page.screenshot({ path: `${run}/evidence/default-thinking-${width}.png`, fullPage: true, animations: 'disabled' });
