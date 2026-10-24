@@ -12,6 +12,7 @@ import {
 import { defineDbOp, defineRepositoryOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { recordWouldRefuse } from '../../../../src/storage/repositories/device-pairing-repository';
+import { recordOperationRefusal } from '../../../../src/storage/repositories/operation-refusal-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 class TestWorker {
@@ -341,6 +342,25 @@ describe('DbGateway', () => {
 
   test('the worker registry holds every op the daemon sends through the gateway', () => {
     expect(DB_OPS.get(recordWouldRefuse.name)).toBe(recordWouldRefuse);
+    expect(DB_OPS.get(recordOperationRefusal.name)).toBe(recordOperationRefusal);
+  });
+
+  test('an operation refusal is recorded through the gateway', async () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE operation_refusals (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation TEXT NOT NULL, reason TEXT NOT NULL, session_id TEXT, at INTEGER NOT NULL)`);
+    const gateway = new DbGateway(':memory:', db);
+    await gateway.run(recordOperationRefusal, {
+      refusal: { operation: 'task.create', reason: 'not_allowed' },
+      sessionId: 'session-1',
+      at: 7,
+    });
+    expect(
+      db
+        .prepare('SELECT operation, reason, session_id AS sessionId, at FROM operation_refusals')
+        .all()
+    ).toEqual([{ operation: 'task.create', reason: 'not_allowed', sessionId: 'session-1', at: 7 }]);
+    db.close();
   });
 });
 

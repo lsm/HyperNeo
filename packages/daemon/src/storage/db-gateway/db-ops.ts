@@ -20,6 +20,7 @@ import {
   jobQueueReads,
   jobQueueWrites,
 } from '../repositories/job-queue-repository.ts';
+import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
 import { deleteWorkFeedBatch } from '../work-feed.ts';
@@ -46,5 +47,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingDeliveryWrites,
     codingSweepWrites,
     claudeDesktopOutboxWrites,
+    recordOperationRefusal,
   ].map((op) => [op.name, op])
 );

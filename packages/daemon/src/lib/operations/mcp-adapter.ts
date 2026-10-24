@@ -36,7 +36,7 @@ export function operationRefusal(
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
   resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
-  recordRefusal: (refusal: OperationRefusal) => void = () => {}
+  recordRefusal: (refusal: OperationRefusal) => void | Promise<void> = () => {}
 ) {
   return async (args: unknown) => {
     const parsed = OperationMcpInvocationSchema.safeParse(args);
@@ -55,7 +55,7 @@ export function createOperationMcpHandler(
         }
       );
       const refusal = operationRefusal(parsed.data.name, outcome);
-      if (refusal) recordRefusal(refusal);
+      if (refusal) await recordRefusal(refusal);
       return outcome.kind === 'completed'
         ? mcpResult(
             parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value

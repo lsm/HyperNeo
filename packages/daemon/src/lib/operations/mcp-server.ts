@@ -12,7 +12,7 @@ export function createOperationMcpServer(
   registry: OperationRegistrySource,
   resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
   signatures = '',
-  recordRefusal?: (refusal: OperationRefusal) => void
+  recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>
 ) {
   const tools = [
     tool(
