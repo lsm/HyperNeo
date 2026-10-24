@@ -3643,7 +3643,7 @@ export class SpaceRuntime {
         throw err;
       }
     } else {
-      updated = this.config.taskRepo.updateTask(taskId, writeParams);
+      updated = await this.writeTask('updateTask', taskId, writeParams);
     }
     if (updated) {
       let emitUpdated = true;

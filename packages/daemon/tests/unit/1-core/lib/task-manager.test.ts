@@ -10,6 +10,7 @@ import { settleTaskDependents } from '../../../../src/lib/tasks/settle-dependent
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorktreeRepository } from '../../../../src/storage/repositories/space-worktree-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { bindSpaceTaskLane, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 
 describe('SpaceTaskManager', () => {
   let db: Database;
@@ -50,6 +51,25 @@ describe('SpaceTaskManager', () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  describe('space_tasks lane', () => {
+    it('writes a plain task edit through the bound space_tasks lane', async () => {
+      const task = await manager.createTask({ title: 'Lane', description: '' });
+      const lane = new DbGateway(':memory:', db);
+      const ops: string[] = [];
+      const run = lane.run.bind(lane);
+      lane.run = (op, args) => {
+        ops.push(op.name);
+        return run(op, args);
+      };
+      bindSpaceTaskLane(db, lane);
+
+      const updated = await manager.updateTask(task.id, { title: 'Renamed' });
+
+      expect(updated.title).toBe('Renamed');
+      expect(ops).toEqual(['space_tasks.write']);
+    });
   });
 
   describe('isValidSpaceTaskTransition', () => {
