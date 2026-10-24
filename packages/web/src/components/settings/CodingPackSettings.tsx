@@ -90,6 +90,18 @@ export function CodingPackSettings() {
     setError('');
     try {
       const address = { pack: 'coding', scope: targetScope, key };
+      if (key === 'watchedRepos') {
+        const { preference: current } = await invokeOperation<{
+          preference: NeoPackSetting | null;
+        }>(hub(), 'pack.preferences.get', address);
+        if (JSON.stringify(current?.value ?? []) !== JSON.stringify(watched?.value ?? [])) {
+          await load();
+          setWatchDraft(null);
+          throw new Error(
+            'Watched repositories changed elsewhere. Review the refreshed list and save again.'
+          );
+        }
+      }
       const result = await invokeOperation<{ ok: true } | { ok: false; reason: string }>(
         hub(),
         'pack.preferences.set',
