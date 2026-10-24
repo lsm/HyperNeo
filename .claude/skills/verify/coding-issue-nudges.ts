@@ -5,6 +5,7 @@ import {
 } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import assert from 'node:assert/strict';
+import { createServer, type Socket } from 'node:net';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -22,7 +23,7 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 assert(!existsSync(join(run, 'data/daemon.db')));
-for (const d of ['home/.codex/app-server-control', 'workspace', 'bin', 'evidence'])
+for (const d of ['home/.codex/ipc', 'workspace', 'bin', 'evidence'])
   mkdirSync(join(run, d), { recursive: true });
 const root = 'neo:10000000-0000-4000-8000-000000008231',
   at = Date.now();
@@ -81,46 +82,36 @@ for (const id of ['flow', 'nudge']) {
 }
 state.close();
 const calls: Record<string, unknown>[] = [];
-const peer = Bun.serve({
-  unix: join(run, 'home/.codex/app-server-control/app-server-control.sock'),
-  fetch(request, server) {
-    return server.upgrade(request) ? undefined : new Response('websocket', { status: 400 });
-  },
-  websocket: {
-    message(socket, bytes) {
-      const call = JSON.parse(String(bytes));
-      if (!('id' in call)) return;
-      calls.push(call);
-      if (call.method === 'turn/start') {
-        const input = call.params.input
-          .map((part: { text?: string }) => part.text ?? '')
-          .join('\n');
-        writeFileSync(
-          join(run, `home/.codex/${call.params.threadId}.jsonl`),
-          JSON.stringify({
-            timestamp: new Date(clock).toISOString(),
-            type: 'response_item',
-            payload: {
-              type: 'message',
-              role: 'user',
-              content: [{ type: 'input_text', text: input }],
-            },
-          }) + '\n',
-          { flag: 'a' }
-        );
+const sockets = new Set<Socket>();
+const peer = createServer(socket => {
+  sockets.add(socket); socket.on('close', () => sockets.delete(socket));
+  let buffer = Buffer.alloc(0);
+  socket.on('data', chunk => {
+    buffer = Buffer.concat([buffer, chunk]);
+    while (buffer.length >= 4 && buffer.length >= buffer.readUInt32LE(0) + 4) {
+      const size = buffer.readUInt32LE(0);
+      const call = JSON.parse(buffer.subarray(4, size + 4).toString());
+      buffer = buffer.subarray(size + 4); calls.push(call);
+      if (call.method === 'thread-follower-start-turn') {
+        const input = call.params.turnStart.request.input.map((part: { text?: string }) => part.text ?? '').join('\n');
+        writeFileSync(join(run, `home/.codex/${call.params.conversationId}.jsonl`), JSON.stringify({
+          timestamp: new Date(clock).toISOString(), type: 'response_item',
+          payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: input }] },
+        }) + '\n', { flag: 'a' });
       }
-      const result =
-        call.method === 'thread/turns/list'
-          ? { data: [] }
-          : call.method === 'thread/resume'
-            ? { thread: { id: call.params.threadId, status: { type: 'idle' }, turns: [] } }
-            : call.method === 'turn/start'
-              ? { turn: { id: crypto.randomUUID() } }
-              : {};
-      socket.send(JSON.stringify({ id: call.id, jsonrpc: '2.0', result }));
-    },
-  },
+      const response = call.method === 'initialize' ? { resultType: 'success', result: { clientId: 'fixture' } }
+        : call.method === 'thread-owner-discovery' ? { resultType: 'success', handledByClientId: 'fixture-owner' }
+        : call.method === 'thread-follower-steer-turn' ? { resultType: 'error', error: 'NoActiveTurn' }
+        : call.method === 'thread-follower-start-turn' ? { resultType: 'success', result: { result: { turn: { id: crypto.randomUUID() } } } }
+        : { resultType: 'error', error: 'Unknown synthetic IPC request' };
+      const body = Buffer.from(JSON.stringify({ type: 'response', requestId: call.requestId, ...response }));
+      const header = Buffer.alloc(4); header.writeUInt32LE(body.length); socket.write(Buffer.concat([header, body]));
+    }
+  });
 });
+await new Promise<void>(done => peer.listen(join(run, 'home/.codex/ipc/ipc.sock'), done));
+writeFileSync(join(run, 'bin/ps'), '#!/bin/sh\nprintf "%s\\n" /Applications/Codex.app/Contents/MacOS/Codex\n', { mode: 0o700 });
+writeFileSync(join(run, 'bin/open'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 const evidence: Record<string, unknown> = {
   mode,
   calls,
@@ -128,7 +119,7 @@ const evidence: Record<string, unknown> = {
 };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
 let store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository;
-const starts = () => calls.filter((c) => c.method === 'turn/start').length;
+const starts = () => calls.filter((c) => c.method === 'thread-follower-start-turn').length;
 const open = async () => {
   app = await createDaemonApp({
     config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
@@ -294,7 +285,7 @@ try {
     add('nudge', 'nudges', 5, 'nudge', true);
     store.updateTodo(store.getTodo('nudge')!, { startedAt: baseline }, baseline);
     const reminders = () =>
-      calls.filter((call: any) => call.method === 'turn/start' && call.params.threadId === 'nudge')
+      calls.filter((call: any) => call.method === 'thread-follower-start-turn' && call.params.conversationId === 'nudge')
         .length;
     const ladder = [];
     for (const minutes of [19, 20, 21, 40, 60, 120]) {
@@ -400,7 +391,7 @@ try {
     assert.equal(starts(), beforeLedger + 1, 'claimed PR must receive its ledger CI event');
     await refresh('neo.pack.sweep');
     assert.equal(starts(), beforeLedger + 1, 'unchanged ledger facts must not resend');
-    const delivered = calls.filter((call: any) => call.method === 'turn/start').slice(beforeLedger);
+    const delivered = calls.filter((call: any) => call.method === 'thread-follower-start-turn').slice(beforeLedger);
     assert.match(JSON.stringify(delivered), /synthetic\/plan#9.*has failing CI/);
     assert.equal(db.prepare("SELECT count(*) AS n FROM pack_coding_pr_claims WHERE todo_id='legacy'").get().n, 1);
     evidence.ledgerClaimDelivery = { beforeFrames: beforeLedger, afterFrames: starts(), delivered };
@@ -413,7 +404,8 @@ try {
   Date.now = realNow;
   ws?.close();
   await app?.cleanup();
-  peer.stop(true);
+  for (const socket of sockets) socket.destroy();
+  await new Promise<void>((done, fail) => peer.close(error => error ? fail(error) : done()));
   evidence.resourcesStopped = true;
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }
