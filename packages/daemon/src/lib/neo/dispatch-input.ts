@@ -33,8 +33,8 @@ export const dispatchNeoInput = (superpipe({})('neo.dispatch-input') as Pipeline
     'outcome'
   )
   .pipe(
-    (inputs: WorkDeliveryInputRepository, inputId: string, outcome: Outcome) => {
-      inputs.recordOutcome(inputId, outcome, Date.now());
+    async (inputs: WorkDeliveryInputRepository, inputId: string, outcome: Outcome) => {
+      await inputs.recordOutcome(inputId, outcome, Date.now());
       return outcome;
     },
     ['inputs', 'inputId', 'outcome'],

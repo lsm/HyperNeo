@@ -72,19 +72,19 @@ function resolveTaskIdForSession(db: Database, sessionId: string): string | null
   }
 }
 
-function sdkMessageScope(db: Database, sessionId: unknown): TableChangeScope {
+export function sdkMessageScope(db: Database, sessionId: unknown): TableChangeScope {
   if (typeof sessionId !== 'string') return {};
   return { sessionId, taskId: resolveTaskIdForSession(db, sessionId) ?? undefined };
 }
 
-function sdkMessageSubtype(message: unknown): string | null | undefined {
+export function sdkMessageSubtype(message: unknown): string | null | undefined {
   if (typeof message !== 'object' || message === null) return undefined;
   const subtype = (message as { subtype?: unknown }).subtype;
   if (subtype === undefined || subtype === null) return null;
   return typeof subtype === 'string' ? subtype : undefined;
 }
 
-function messageIdsScope(db: Database, messageIds: unknown): TableChangeScope {
+export function messageIdsScope(db: Database, messageIds: unknown): TableChangeScope {
   if (!Array.isArray(messageIds) || messageIds.length === 0) return {};
   try {
     const ids = messageIds.filter((id): id is string => typeof id === 'string');
@@ -109,7 +109,7 @@ function messageIdsScope(db: Database, messageIds: unknown): TableChangeScope {
   }
 }
 
-function messageIdScope(db: Database, messageId: unknown): TableChangeScope {
+export function messageIdScope(db: Database, messageId: unknown): TableChangeScope {
   if (typeof messageId !== 'string') return {};
   try {
     const row = db

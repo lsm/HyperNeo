@@ -1,3 +1,4 @@
+import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
 import {
   ingestSessionEvent,
@@ -34,6 +35,11 @@ import {
   forgetAgentChildren,
   recordAgentChild,
 } from '../repositories/agent-child-process-repository.ts';
+import { recordNeoSessionMessage } from '../repositories/neo-session-message-repository.ts';
+import {
+  acceptWorkDeliveryInput,
+  recordWorkDeliveryOutcome,
+} from '../repositories/work-delivery-input-repository.ts';
 import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
@@ -47,6 +53,7 @@ import type { DbOp } from './db-op.ts';
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
     sdkMessageWrites,
+    ...SDK_MESSAGE_TRANSACTIONS,
     recordWouldRefuse,
     touchDevice,
     recordUnpaired,
@@ -78,5 +85,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     unregisterClient,
     recordAgentChild,
     forgetAgentChildren,
+    recordNeoSessionMessage,
+    acceptWorkDeliveryInput,
+    recordWorkDeliveryOutcome,
   ].map((op) => [op.name, op])
 );

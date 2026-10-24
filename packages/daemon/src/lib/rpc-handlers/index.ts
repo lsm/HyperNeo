@@ -394,6 +394,7 @@ export interface RPCHandlerSetupResult {
   cancelInactivityWatchdog: () => void;
   sessionScheduler: SessionScheduler;
   notifyScheduleIdle: ReturnType<typeof createNeoService>['notifyScheduleIdle'];
+  wakePollingConcern: (key: string, text: string) => Promise<boolean>;
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
@@ -1839,6 +1840,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       inactivityRunNowCancelled = true;
     },
     sessionScheduler,
+    wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
     notifyScheduleIdle: neoService.notifyScheduleIdle,
   };
 }

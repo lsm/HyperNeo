@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import {
   CodingStageFactsRepository,
   codingReviewerPolicy,
@@ -60,6 +61,12 @@ const Node = z.object({
   isDraft: z.boolean(),
   mergeable: z.string(),
   reviewDecision: z.string().nullable(),
+  files: z
+    .object({
+      nodes: z.array(z.object({ path: z.string() })),
+      pageInfo: z.object({ hasNextPage: z.boolean() }),
+    })
+    .nullish(),
   reviews: z
     .object({
       nodes: z.array(
@@ -156,6 +163,14 @@ export function codingPrState(
   if (review === 'CHANGES_REQUESTED') return 'changes_requested';
   if (!policy.mergePolicy) return 'waiting_human';
   const readyCi = noCi || ci === 'SUCCESS';
+  const humanSignoff =
+    !!policy.humanSignoff?.length &&
+    (!pr.files ||
+      pr.files.pageInfo.hasNextPage ||
+      policy.humanSignoff.some((pattern) => pattern.startsWith('label:')) ||
+      pr.files.nodes.some((file) =>
+        policy.humanSignoff!.some((pattern) => posix.matchesGlob(file.path, pattern))
+      ));
   if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
     return readyCi ? 'waiting_human' : 'waiting_ci';
   if (policy.mergePolicy === 'review_bot') {
@@ -167,14 +182,10 @@ export function codingPrState(
       )
       .at(-1);
     if (bot?.state !== 'APPROVED') return 'waiting_review';
-    if (policy.humanSignoff?.length) return 'waiting_human';
+    if (humanSignoff) return 'waiting_human';
     return readyCi ? 'approved_green' : 'approved_pending';
   }
-  return readyCi
-    ? policy.humanSignoff?.length
-      ? 'waiting_human'
-      : 'approved_green'
-    : 'waiting_ci';
+  return readyCi ? (humanSignoff ? 'waiting_human' : 'approved_green') : 'waiting_ci';
 }
 
 export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };

@@ -159,7 +159,8 @@ export function persistMailboxFailure(
     sessionId,
     message,
     origin
-  ) => repository.saveUserMessage(sessionId, message, 'failed', origin)
+  ) => repository.saveUserMessage(sessionId, message, 'failed', origin),
+  strict = false
 ): MailboxFailureState {
   const ctx = buildFailureMessageStage(
     parseFailureEntryStage({ job, entry: null } as MailboxFailureState)
@@ -181,6 +182,7 @@ export function persistMailboxFailure(
     return { ...ctx, failedId, uuidOwned: outcome.uuidOwned };
   } catch (error) {
     emitMaterializeFailure(target, entry.id, error);
+    if (strict) throw error;
     return { ...ctx, uuidOwned: ownershipKnown };
   }
 }

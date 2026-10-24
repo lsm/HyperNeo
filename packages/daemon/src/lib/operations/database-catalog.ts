@@ -97,7 +97,7 @@ export function createDatabaseOperationCatalog(
               )
             ).label;
       },
-      sessionSent: (sent) => {
+      sessionSent: async (sent) => {
         const neo = new NeoRepository(db.getDatabase());
         const sessionId = neo.defaultBinding()?.sessionId;
         const conversationId = neo.conversationId();
@@ -106,10 +106,7 @@ export function createDatabaseOperationCatalog(
           sessionId && conversationId ? { sessionId, conversationId } : null,
           (id) => readSessionField(db, 'title', id)
         );
-        if (message)
-          new NeoSessionMessageRepository(db.getDatabase(), () =>
-            db.notifyChange('neo_session_messages')
-          ).record(message);
+        if (message) await new NeoSessionMessageRepository(db.getDatabase()).record(message);
       },
       ...(ensureAgentSession
         ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
