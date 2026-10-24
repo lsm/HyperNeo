@@ -184,7 +184,7 @@ async function makeIdleSessionHarness(): Promise<IdleCoordinatorHarness> {
   session.type = 'space_chat';
   session.workspacePath = workspacePath;
   (session as Session & { context?: { spaceId?: string } }).context = { spaceId: SPACE_ID };
-  db.createSession(session);
+  await db.createSession(session);
 
   const internalEventBus: InternalEventBus<DaemonInternalEventMap> = createDaemonInternalEventBus();
   const agentSession = AgentSession.restore(

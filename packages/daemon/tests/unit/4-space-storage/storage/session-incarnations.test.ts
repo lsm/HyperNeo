@@ -201,15 +201,15 @@ describe('session incarnation migration and durable storage', () => {
     try {
       daemon = new DaemonDatabase(path, { messageSearchIndexFlushIntervalMs: 0 });
       await daemon.initialize();
-      daemon.createSession(session());
+      await daemon.createSession(session());
       const first = daemon.getSessionIncarnation('fictional-session');
       expect(first).toBeGreaterThan(0);
-      daemon.close();
+      await daemon.close();
       daemon = new DaemonDatabase(path, { messageSearchIndexFlushIntervalMs: 0 });
       await daemon.initialize();
       expect(daemon.getSessionIncarnation('fictional-session')).toBe(first);
       daemon.getDatabase().prepare('DELETE FROM sessions WHERE id = ?').run('fictional-session');
-      daemon.createSession(session());
+      await daemon.createSession(session());
       expect(daemon.getSessionIncarnation('fictional-session')).toBeGreaterThan(first!);
     } finally {
       daemon?.close();

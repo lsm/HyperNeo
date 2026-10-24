@@ -1,3 +1,8 @@
+import { getConfig } from '../../config.ts';
+import {
+  forwardSQLiteWorkerLog,
+  type SQLiteWorkerLog,
+} from '../../storage/sqlite-worker-observability.ts';
 import { resolve } from 'node:path';
 import type { Database } from '../../storage/database.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
@@ -34,7 +39,13 @@ export function mirrorNeoWorkspaceProjectsAsync(
           };
           try {
             worker = runLagPhase('neo:project_mirror:worker_start', spawn);
-            worker.onmessage = (event: MessageEvent<{ changed: boolean } | { error: string }>) => {
+            worker.onmessage = (
+              event: MessageEvent<{ changed: boolean } | { error: string } | SQLiteWorkerLog>
+            ) => {
+              if ('log' in event.data) {
+                forwardSQLiteWorkerLog(event.data, 'project-mirror');
+                return;
+              }
               if ('error' in event.data) finish(false, new Error(event.data.error));
               else finish(event.data.changed);
             };
@@ -43,7 +54,12 @@ export function mirrorNeoWorkspaceProjectsAsync(
               () => finish(false, new Error('Project mirror worker timed out')),
               30_000
             );
-            worker.postMessage({ dbPath: path, groups });
+            worker.postMessage({
+              dbPath: path,
+              groups,
+              requestId: crypto.randomUUID(),
+              queryObservability: getConfig().sqlQueryObservability,
+            });
           } catch (error) {
             finish(false, error instanceof Error ? error : new Error(String(error)));
           }

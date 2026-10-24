@@ -56,7 +56,7 @@ describe('Neo todo pull request events', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession('root'));
+    await db.createSession(createTestSession('root'));
     sent = [];
     prs = [open];
     sendFails = false;
@@ -144,15 +144,15 @@ describe('Neo todo pull request events', () => {
   }
 
   test('archived local workers are never card-event targets', async () => {
-    db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
+    await db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
     todo({ adapter: 'hyperneo', id: 'archived-worker' });
     await event('review_submitted', { body: 'Fresh review' });
     expect(sent).toHaveLength(0);
     expect(db.getSession('archived-worker')?.status).toBe('archived');
   });
 
-  test('archived subscriptions remain stored but are not delivery targets', () => {
-    db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
+  test('archived subscriptions remain stored but are not delivery targets', async () => {
+    await db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
     const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     subscriptions.upsert({
       sessionId: 'archived-worker',

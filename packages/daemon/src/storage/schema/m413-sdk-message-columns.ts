@@ -14,7 +14,8 @@ export function runMigration413(db: Database): void {
 
 export async function backfillSdkMessageColumns(
   db: Database,
-  log: (progress: string) => void
+  log: (progress: string) => void,
+  options: { signal?: AbortSignal; ceiling?: number; onProgress?: (through: number) => void } = {}
 ): Promise<void> {
   const done = 'sdk_message_columns_backfilled_v2';
   const cursorPrefix = 'sdk_message_columns_backfill_v2:';
@@ -27,13 +28,17 @@ export async function backfillSdkMessageColumns(
   const update = db.prepare(
     `UPDATE sdk_messages SET ${names.map((name) => `${name} = ?`).join(', ')} WHERE seq = ?`
   );
+  const ceiling =
+    options.ceiling ??
+    (db.prepare('SELECT COALESCE(MAX(seq),0) AS n FROM sdk_messages').get() as { n: number }).n;
   for (;;) {
+    if (options.signal?.aborted) return;
     const startedAt = performance.now();
     const sizes = db
       .prepare(
-        'SELECT seq, octet_length(sdk_message) AS bytes FROM sdk_messages WHERE seq > ? ORDER BY seq LIMIT 512'
+        'SELECT seq, octet_length(sdk_message) AS bytes FROM sdk_messages WHERE seq > ? AND seq <= ? ORDER BY seq LIMIT 512'
       )
-      .all(after) as { seq: number; bytes: number }[];
+      .all(after, ceiling) as { seq: number; bytes: number }[];
     if (!sizes.length) break;
     let bytes = 0;
     let through = after;
@@ -67,11 +72,13 @@ export async function backfillSdkMessageColumns(
       );
     })();
     after = through;
+    options.onProgress?.(through);
     log(
       `SDK message columns: ${JSON.stringify({ through, rows: rows.length, bytes, malformed, elapsedMs: performance.now() - startedAt })}`
     );
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
+  if (options.signal?.aborted) return;
   db.transaction(() => {
     db.prepare('INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, ?)').run(
       done,

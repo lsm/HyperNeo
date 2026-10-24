@@ -115,7 +115,7 @@ describe('Neo working sessions', () => {
       events
     );
     for (const id of [main, holder, worker])
-      db.createSession({
+      await db.createSession({
         ...createTestSession(id),
         title: id === main ? 'Synthetic main' : 'Synthetic worker',
       });

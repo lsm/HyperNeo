@@ -1,4 +1,4 @@
-import type { MessageHub } from '@hyperneo/shared';
+import { generateUUID, type MessageHub } from '@hyperneo/shared';
 import type { ArtifactPrSummary } from '@hyperneo/shared/types/artifact-pr';
 import { invokeOperation } from './operations.ts';
 import { previewStateForRefusal } from './artifact-preview-client.ts';
@@ -25,17 +25,18 @@ export function presentResolution(result: Resolved): ArtifactResolution {
     : { kind: 'state', state: previewStateForRefusal(result.reason) };
 }
 
+const requestIds = new WeakMap<object, string>();
+
 export function resolveArtifactReference(
   hub: MessageHub,
-  {
-    source,
-    reference,
-    file,
-    context,
-  }: Omit<Extract<ArtifactPreviewTarget, { kind: 'reference' }>, 'kind'>
+  target: Omit<Extract<ArtifactPreviewTarget, { kind: 'reference' }>, 'kind'>
 ): Promise<ArtifactResolution> {
+  const { source, reference, file, context } = target;
+  const requestId = requestIds.get(target) ?? generateUUID();
+  requestIds.set(target, requestId);
   return invokeOperation<Resolved>(hub, 'artifact.reference.resolve', {
     sourceMessageOrCard: source,
+    requestId,
     reference,
     ...(file ? { file } : {}),
     ...(context ? { context } : {}),

@@ -9,6 +9,7 @@ const WRITERS: Array<[file: string, method: string]> = [
     'clearAcpSessionIds',
     'detachSessionFromParent',
     'setSessionParent',
+    'setSessionLastError',
     'markRestartInterruptedTurns',
     'takeRestartCooldownResume',
     'casSessionInputDraft',
@@ -18,8 +19,14 @@ const WRITERS: Array<[file: string, method: string]> = [
   ['/lib/agent/session-config-handler.ts', 'updateMetadata'],
 ];
 const root = process.cwd();
-const configPath = ts.findConfigFile(`${root}/packages/daemon`, ts.sys.fileExists, 'tsconfig.json');
-if (!configPath) throw new Error('packages/daemon/tsconfig.json not found');
+const tests = process.argv.includes('--tests');
+const scanned = `${root}/packages/daemon/${tests ? 'tests' : 'src'}/`;
+const configPath = ts.findConfigFile(
+  `${root}/packages/daemon`,
+  ts.sys.fileExists,
+  tests ? 'tsconfig.tests.json' : 'tsconfig.json'
+);
+if (!configPath) throw new Error('packages/daemon tsconfig not found');
 const config = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
   ...ts.sys,
   onUnRecoverableConfigFileDiagnostic: (d) => {
@@ -57,7 +64,7 @@ function settledByCaller(call: ts.Node): boolean {
 
 const floating: string[] = [];
 for (const file of program.getSourceFiles()) {
-  if (file.isDeclarationFile || !file.fileName.startsWith(`${root}/packages/daemon/src/`)) continue;
+  if (file.isDeclarationFile || !file.fileName.startsWith(scanned)) continue;
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const method = node.expression.name.text;
@@ -81,5 +88,5 @@ for (const file of program.getSourceFiles()) {
   visit(file);
 }
 for (const entry of floating) console.log(entry);
-console.log(`${floating.length} unawaited session write(s) in ${relative(root, dirname(configPath))}/src`);
+console.log(`${floating.length} unawaited session write(s) in ${relative(root, scanned)}`);
 process.exit(floating.length === 0 ? 0 : 1);

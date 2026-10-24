@@ -219,7 +219,7 @@ describe('claude-desktop start', () => {
       '-n',
       'Bigger font',
       '--permission-mode',
-      'bypassPermissions',
+      'auto',
     ]);
     expect(spawned[0]).not.toContain('--model');
     expect(spawned[0].at(-1)).not.toContain(request.message);

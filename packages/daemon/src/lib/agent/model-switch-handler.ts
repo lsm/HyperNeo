@@ -20,6 +20,7 @@ import {
   resolveSessionContextModelInfo,
 } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
+import { providerSessionConfigForSession } from '../providers/session-config.js';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager.ts';
@@ -51,10 +52,20 @@ type LiveSwitchSide = {
   effortLevels?: readonly string[];
 };
 
+const LIVE_SWITCH_PROVIDERS = new Set(['anthropic', 'glm', 'deepseek', 'kimi']);
+
+export function wireModelForLiveSwitch(
+  model: string,
+  translated: string,
+  routed: string | undefined
+): string {
+  return translated === 'default' ? (routed ?? model) : translated;
+}
+
 export function canSwitchModelLive(previous: LiveSwitchSide, next: LiveSwitchSide) {
   return (
-    previous.provider === 'anthropic' &&
-    next.provider === 'anthropic' &&
+    LIVE_SWITCH_PROVIDERS.has(previous.provider ?? '') &&
+    previous.provider === next.provider &&
     previous.contextWindow === next.contextWindow &&
     (previous.effortLevels ?? []).join() === (next.effortLevels ?? []).join()
   );
@@ -322,6 +333,19 @@ export class ModelSwitchHandler {
     }
   }
 
+  private liveWireModel(model: string, providerId: string): string {
+    if (providerId === 'anthropic') return model;
+    const provider = getProviderRegistry().get(providerId);
+    let envVars: Record<string, string | undefined> = {};
+    try {
+      envVars =
+        provider?.buildSdkConfig(model, providerSessionConfigForSession(this.ctx.session))
+          .envVars ?? {};
+    } catch {}
+    const sdkModel = envVars.ANTHROPIC_MODEL ?? provider?.translateModelIdForSdk?.(model) ?? model;
+    return wireModelForLiveSwitch(model, sdkModel, envVars.ANTHROPIC_DEFAULT_SONNET_MODEL);
+  }
+
   async canSwitchLive(newModel: string, newProvider: string): Promise<boolean> {
     const { session, queryObject } = this.ctx;
     const provider = session.config.provider;
@@ -585,8 +609,9 @@ export class ModelSwitchHandler {
           await this.ctx.queryObject.setModel(resolvedModel);
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         } else if (live && this.ctx.queryObject?.setModel) {
-          await this.ctx.queryObject.setModel(resolvedModel);
+          await this.ctx.queryObject.setModel(this.liveWireModel(resolvedModel, nextProvider));
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+          if (nextProvider !== 'anthropic') await lifecycleManager.restartWhenIdle();
         } else {
           if (deferQueryStart) await lifecycleManager.stop();
           else

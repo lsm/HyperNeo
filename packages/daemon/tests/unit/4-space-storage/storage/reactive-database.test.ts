@@ -321,73 +321,71 @@ describe('ReactiveDatabase', () => {
     });
   });
 
-  describe('session writes that settle later', () => {
-    function deferUpdates(): Array<() => void> {
+  describe('proxied writes that settle later', () => {
+    const message = { type: 'assistant' } as unknown as Parameters<Database['saveSDKMessage']>[1];
+
+    function deferSaves(): Array<() => void> {
       const settle: Array<() => void> = [];
-      const write = db.updateSession.bind(db);
-      db.updateSession = (id, updates) =>
-        new Promise<void>((resolve) => settle.push(() => resolve(write(id, updates))));
+      db.saveSDKMessage = () => new Promise<boolean>((resolve) => settle.push(() => resolve(true)));
       return settle;
     }
 
     test('emits the change only once the write has landed', async () => {
       await db.createSession(makeSession('late'));
-      const settle = deferUpdates();
-      const titles: string[] = [];
-      reactiveDb.on('change:sessions', () => titles.push(db.getSession('late')!.title));
+      const settle = deferSaves();
+      const events: unknown[] = [];
+      reactiveDb.on('change:sdk_messages', (event) => events.push(event));
 
-      const write = reactiveDb.db.updateSession('late', { title: 'Landed' });
+      const write = reactiveDb.db.saveSDKMessage('late', message);
       await Promise.resolve();
-      expect(titles).toEqual([]);
+      expect(events).toEqual([]);
 
       settle[0]();
       await write;
-      expect(titles).toEqual(['Landed']);
+      expect(events).toHaveLength(1);
     });
 
     test('scopes the change by the session as it was when the write was issued', async () => {
       await db.createSession(
         makeSession('moved', { context: { spaceId: 'space-1', taskId: 'task-1' } })
       );
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const scopes: unknown[] = [];
-      reactiveDb.on('change:sessions', (event) => scopes.push(event.scope?.taskId));
+      reactiveDb.on('change:sdk_messages', (event) => scopes.push(event.scope?.taskId));
 
-      const write = reactiveDb.db.updateSession('moved', { title: 'Renamed' });
-      db.getDatabase()
-        .prepare('UPDATE sessions SET session_context = ? WHERE id = ?')
-        .run(JSON.stringify({ spaceId: 'space-1', taskId: 'task-2' }), 'moved');
+      const write = reactiveDb.db.saveSDKMessage('moved', message);
+      await db.updateSession('moved', { context: { spaceId: 'space-1', taskId: 'task-2' } });
       settle[0]();
       await write;
 
       expect(scopes).toEqual(['task-1']);
     });
 
-    test('a committed batch emits now and its pending session write emits once it lands', async () => {
+    test('a committed batch emits now and its pending write emits once it lands', async () => {
       await db.createSession(makeSession('batched'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.updateSession('batched', { title: 'Later' });
+      const write = reactiveDb.db.saveSDKMessage('batched', message);
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.commitTransaction();
       expect(events.map((event) => event.tables)).toEqual([['space_tasks']]);
 
       settle[0]();
       await write;
-      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['sessions']]);
+      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['sdk_messages']]);
     });
 
     test('a later aborted batch keeps the change of a committed batch write', async () => {
       await db.createSession(makeSession('committed'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const tables: string[][] = [];
       reactiveDb.on('change', (data) => tables.push(data.tables));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.updateSession('committed', { title: 'Kept' });
+      const write = reactiveDb.db.saveSDKMessage('committed', message);
       reactiveDb.commitTransaction();
       reactiveDb.beginTransaction();
       reactiveDb.notifyChange('space_tasks');
@@ -395,41 +393,41 @@ describe('ReactiveDatabase', () => {
       settle[0]();
       await write;
 
-      expect(tables).toEqual([['sessions']]);
+      expect(tables).toEqual([['sdk_messages']]);
     });
 
     test('a write landing inside an unrelated batch survives that batch aborting', async () => {
       await db.createSession(makeSession('outside'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const tables: string[][] = [];
       reactiveDb.on('change', (data) => tables.push(data.tables));
 
-      const write = reactiveDb.db.updateSession('outside', { title: 'Landed' });
+      const write = reactiveDb.db.saveSDKMessage('outside', message);
       reactiveDb.beginTransaction();
       settle[0]();
       await write;
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.abortTransaction();
 
-      expect(tables).toEqual([['sessions']]);
+      expect(tables).toEqual([['sdk_messages']]);
     });
 
-    test('an aborted batch drops the change of a session write that lands later', async () => {
+    test('an aborted batch drops the change of a write that lands later', async () => {
       await db.createSession(makeSession('aborted'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.updateSession('aborted', { title: 'Dropped' });
+      const write = reactiveDb.db.saveSDKMessage('aborted', message);
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.abortTransaction();
       settle[0]();
       await write;
-      await reactiveDb.db.createSession(makeSession('after-abort'));
+      reactiveDb.notifyChange('sdk_messages');
 
-      expect(events.map((event) => event.tables)).toEqual([['sessions']]);
-      expect(reactiveDb.getTableVersion('sessions')).toBe(2);
+      expect(events.map((event) => event.tables)).toEqual([['sdk_messages']]);
+      expect(reactiveDb.getTableVersion('sdk_messages')).toBe(2);
     });
   });
 

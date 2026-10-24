@@ -1441,7 +1441,7 @@ export async function startClaudeSession(
     prepared ? null : await deps.gitCheckout(folder).catch(() => null)
   );
   const worktree = placement.kind === 'worktree' ? `neo-${cliSessionId.slice(0, 8)}` : null;
-  const permissionMode = deps.permissionMode?.() ?? 'bypassPermissions';
+  const permissionMode = deps.permissionMode?.() ?? 'auto';
   const cwd =
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)

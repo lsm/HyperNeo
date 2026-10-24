@@ -18,8 +18,13 @@ import { DatabaseCore } from './database-core.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
 import { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
-import { SessionRepository } from './repositories/session-repository.ts';
+import {
+  sessionConfigReplacer,
+  SessionRepository,
+  sessionWrites,
+} from './repositories/session-repository.ts';
 import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
+import type { SessionWriteOutcome } from './repositories/session-status-write.ts';
 import type {
   RuntimeSettingsPatch,
   SessionRuntimeSettingsSnapshot,
@@ -160,11 +165,12 @@ export class Database {
     await this.core.initialize();
     this.reactiveDb = reactiveDb;
     bindGateway(this.core.getDb(), this.gateway);
-    this.gateway.onChanges = (changes) => {
-      reactiveDb.beginTransaction();
-      for (const { table, scope } of changes) reactiveDb.notifyChange(table, scope);
-      reactiveDb.commitTransaction();
-    };
+    if (reactiveDb)
+      this.gateway.onChanges = (changes) => {
+        reactiveDb.beginTransaction();
+        for (const { table, scope } of changes) reactiveDb.notifyChange(table, scope);
+        reactiveDb.commitTransaction();
+      };
 
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);
@@ -221,7 +227,8 @@ export class Database {
     session: Session,
     options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
   ): Promise<void> {
-    this.sessionRepo.createSession(session, options);
+    await this.gateway.call(sessionWrites, 'createSession', postable(session), options);
+    this.reactiveDb?.forgetSessionTask(session.id);
   }
 
   isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
@@ -253,7 +260,7 @@ export class Database {
   }
 
   async clearAcpSessionIds(): Promise<void> {
-    this.sessionRepo.clearAcpSessionIds();
+    return this.gateway.call(sessionWrites, 'clearAcpSessionIds');
   }
 
   listProcessingSessionIds(): string[] {
@@ -261,7 +268,7 @@ export class Database {
   }
 
   async markRestartInterruptedTurns(): Promise<number> {
-    return this.sessionRepo.markRestartInterruptedTurns();
+    return this.gateway.call(sessionWrites, 'markRestartInterruptedTurns');
   }
 
   listRestartCooldownResumes(): Array<{ sessionId: string; resumeAt: number }> {
@@ -269,15 +276,30 @@ export class Database {
   }
 
   async takeRestartCooldownResume(sessionId: string): Promise<boolean> {
-    return this.sessionRepo.takeRestartCooldownResume(sessionId);
+    return this.gateway.call(sessionWrites, 'takeRestartCooldownResume', sessionId);
   }
 
   listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
     return this.sessionRepo.listAcpSessionIds();
   }
 
-  async updateSession(id: string, updates: Partial<Session>): Promise<void> {
-    this.sessionRepo.updateSession(id, updates);
+  async updateSession(id: string, updates: Partial<Session>): Promise<SessionWriteOutcome> {
+    const readStatus = updates.status ? (this.sessionRepo.getSession(id)?.status ?? null) : null;
+    const outcome = await this.gateway.call(
+      sessionWrites,
+      'guardedUpdateSession',
+      id,
+      postable(updates),
+      readStatus
+    );
+    if (outcome !== 'written') {
+      this.logger.warn(
+        `refused status ${updates.status} for session ${id}: ${outcome} (read ${readStatus})`
+      );
+      return outcome;
+    }
+    if (updates.type !== undefined || 'context' in updates) this.reactiveDb?.forgetSessionTask(id);
+    return outcome;
   }
 
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
@@ -287,7 +309,7 @@ export class Database {
     snapshot: SessionInputDraftSnapshot,
     text: string | null
   ): Promise<'won' | 'superseded' | 'invalid'> {
-    return this.sessionRepo.casSessionInputDraft(snapshot, text);
+    return this.gateway.call(sessionWrites, 'casSessionInputDraft', snapshot, text);
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
@@ -297,11 +319,12 @@ export class Database {
     snapshot: SessionRuntimeSettingsSnapshot,
     patch: RuntimeSettingsPatch
   ): Promise<'won' | 'superseded'> {
-    return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
+    return this.gateway.call(sessionWrites, 'casSessionRuntimeSettings', snapshot, patch);
   }
 
   async deleteSession(id: string): Promise<void> {
-    this.sessionRepo.deleteSession(id);
+    await this.gateway.call(sessionWrites, 'deleteSession', id);
+    this.reactiveDb?.forgetSessionTask(id);
   }
 
   listChildSessions(parentId: string): Session[] {
@@ -309,15 +332,15 @@ export class Database {
   }
 
   async detachSessionFromParent(id: string): Promise<void> {
-    this.sessionRepo.detachFromParent(id);
+    return this.gateway.call(sessionWrites, 'detachFromParent', id);
   }
 
   async setSessionParent(id: string, parentId: string | null): Promise<void> {
-    this.sessionRepo.setParent(id, parentId);
+    return this.gateway.call(sessionWrites, 'setParent', id, parentId);
   }
 
   async setSessionLastError(id: string, lastError: string | null): Promise<void> {
-    this.sessionRepo.setLastError(id, lastError);
+    return this.gateway.call(sessionWrites, 'setLastError', id, lastError);
   }
 
   saveSDKMessage(
@@ -468,7 +491,14 @@ export class Database {
       this.getDbPath(),
       undefined,
       undefined,
-      this.options?.queryObservability
+      this.options?.queryObservability,
+      (args) =>
+        'codexSnapshot' in args
+          ? Promise.resolve()
+          : this.core.waitForSdkMessageColumns(
+              'sessionId' in args ? args.sessionId : undefined,
+              false
+            )
     ));
   }
 
@@ -616,6 +646,22 @@ export class Database {
     return this.core.getDbPath();
   }
 
+  getDataMigrationStatus() {
+    return this.core.getDataMigrationStatus();
+  }
+
+  waitForSdkMessageColumns(sessionId?: string, wait = true) {
+    return this.core.waitForSdkMessageColumns(sessionId, wait);
+  }
+
+  stopSdkMessageColumnsBackfill(): void {
+    this.core.stopSdkMessageColumnsBackfill();
+  }
+
+  startSdkMessageColumnsBackfill(changed?: () => void) {
+    return this.core.startSdkMessageColumnsBackfill(changed);
+  }
+
   startMessageSearchMerges(): void {
     this.core.startMessageSearchMerges();
   }
@@ -681,4 +727,14 @@ export class Database {
         .finally(() => this.core.close());
     this.core.close();
   }
+}
+
+function postable<T extends Partial<Session>>(session: T): T {
+  if (!session.config) return session;
+  const config = Object.fromEntries(
+    Object.entries(session.config).filter(
+      ([key, value]) => value === undefined || sessionConfigReplacer(key, value) !== undefined
+    )
+  );
+  return { ...session, config };
 }

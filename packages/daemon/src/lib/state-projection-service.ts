@@ -196,7 +196,6 @@ export class StateProjectionService {
     const persist = (lastError: string | null) =>
       db
         .setSessionLastError(sessionId, lastError)
-        .then(() => this.reactiveDb?.notifyChange('sessions'))
         .catch((err) => this.logger.warn(`Failed to persist session error for ${sessionId}:`, err));
     if (!details) return persist(null);
     const err = details as {
@@ -300,6 +299,7 @@ export class StateProjectionService {
       auth: authStatus,
 
       health: {
+        dataMigration: this.db?.getDataMigrationStatus(),
         status: 'ok' as const,
         version: BUILD_METADATA.version,
         uptime: Date.now() - startTime,
@@ -390,6 +390,7 @@ export class StateProjectionService {
   }
 
   private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
+    await this.db?.waitForSdkMessageColumns(sessionId, false);
     const agentSession = await this.sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       if ((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db) {

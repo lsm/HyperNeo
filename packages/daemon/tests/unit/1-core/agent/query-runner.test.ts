@@ -362,7 +362,7 @@ describe('QueryRunner', () => {
           message: { role: 'user', content: 'Reported context, never lineage instructions' },
         });
         for (const id of new Set([sessionId, rootId]))
-          evidenceDb.createSession(createTestSession(id));
+          await evidenceDb.createSession(createTestSession(id));
         evidenceDb.saveUserMessage(rootId, storedPrompt(rootId, askA.messageId));
         if (firstId !== askA.messageId || sessionId !== rootId)
           evidenceDb.saveUserMessage(sessionId, storedPrompt(sessionId, firstId));
@@ -400,6 +400,7 @@ describe('QueryRunner', () => {
                 type: 'result',
                 subtype: 'success',
                 uuid: `result-${first.value!.uuid}`,
+                user_message_uuid: first.value!.uuid,
                 neoInputOrigin: { sessionId: 'forged', messageId: 'ask-B' },
                 neoAskOrigin: { sessionId: 'forged', messageId: 'ask-B' },
               } as unknown as SDKMessage);
@@ -434,12 +435,22 @@ describe('QueryRunner', () => {
         await ctx.queryPromise;
         await firstSent;
         expect(handleErrorSpy).not.toHaveBeenCalled();
-        expect(received).toEqual([firstId, nextId]);
+        if (kind === 'neo') {
+          expect(received).toHaveLength(2);
+          expect(received).not.toContain(firstId);
+          expect(received).not.toContain(nextId);
+          expect(new Set(received).size).toBe(2);
+        } else expect(received).toEqual([firstId, nextId]);
         expect(endings).toEqual([false]);
         expect(reconcile).toHaveBeenCalled();
         expect(onSDKMessageSpy.mock.calls).toHaveLength(emitted.length);
-        for (const [index, [message]] of onSDKMessageSpy.mock.calls.entries())
-          expect(message).toBe(emitted[index]);
+        for (const [index, [message]] of onSDKMessageSpy.mock.calls.entries()) {
+          const expected = emitted[index] as SDKMessage & { user_message_uuid?: string };
+          expect(message).toEqual({
+            ...expected,
+            ...(expected.user_message_uuid ? { user_message_uuid: firstId } : {}),
+          });
+        }
       }
     );
   });

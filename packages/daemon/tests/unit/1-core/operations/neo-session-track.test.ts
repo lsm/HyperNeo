@@ -102,7 +102,7 @@ describe('neo.session.track', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession('neo:root'));
+    await db.createSession(createTestSession('neo:root'));
     listed = [];
     status = { status: 'running', lastActivityAt: 0 };
     sent.mockClear();

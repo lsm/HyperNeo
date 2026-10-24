@@ -1,4 +1,5 @@
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
+import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import {
   recordUnpaired,
   recordWouldRefuse,
@@ -6,10 +7,12 @@ import {
 } from '../repositories/device-pairing-repository.ts';
 import { jobQueueReads, jobQueueWrites } from '../repositories/job-queue-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
+import { sessionWrites } from '../repositories/session-repository.ts';
 import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    sdkMessageWrites,
     recordWouldRefuse,
     touchDevice,
     recordUnpaired,
@@ -17,5 +20,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobQueueReads,
     externalEventSweeps,
     messageSearchIndexWrites,
+    sessionWrites,
   ].map((op) => [op.name, op])
 );

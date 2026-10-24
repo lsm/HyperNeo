@@ -35,7 +35,7 @@ await db.initialize(createReactiveDatabase(db));
 const conversation = '10000000-0000-4000-8000-000000000009';
 const root = `neo:${conversation}`;
 const now = new Date().toISOString();
-db.createSession({
+await db.createSession({
   id: root, title: 'Synthetic', workspacePath: join(run, 'workspace'), createdAt: now, lastActiveAt: now, status: 'active',
   config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1 },
   metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 },

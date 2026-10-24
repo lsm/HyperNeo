@@ -26,7 +26,7 @@ const agent: OperationCaller = {
 const edit = { add: ['Ask before publishing.'], remove: ['Old synthetic rule.'] };
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession('neo:10000000-0000-4000-8000-000000000002'));
+  await db.createSession(createTestSession('neo:10000000-0000-4000-8000-000000000002'));
   published = [];
   service = createNeoService(
     db,
@@ -123,7 +123,7 @@ describe('human-approved standing rules', () => {
     async (kind) => {
       const messageId = crypto.randomUUID();
       const sessionId = kind === 'foreign' ? 'ordinary-session' : agent.sessionId!;
-      if (kind === 'foreign') db.createSession(createTestSession(sessionId));
+      if (kind === 'foreign') await db.createSession(createTestSession(sessionId));
       if (kind !== 'unknown') {
         db.getSDKMessageRepo().saveUserMessage(sessionId, {
           type: 'user',

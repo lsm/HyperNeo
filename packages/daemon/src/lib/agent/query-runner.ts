@@ -25,6 +25,7 @@ import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import type { ProviderEnvVars } from '../provider-service.ts';
+import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import {
@@ -53,6 +54,7 @@ import {
 } from './query-retry-routing.ts';
 import { type QuestionInputOriginSource, QuestionInputScope } from './question-input-origin.ts';
 import { RetryPromptIdentity } from './retry-prompt-identity.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
 import {
@@ -969,6 +971,7 @@ export class QueryRunner {
           session.id,
           optionsBuilder.getEffectiveThinkingLevel()
         );
+        setKeyBridgeThinkingOff(session.id, queryOptions.thinking?.type === 'disabled');
         const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
         );
@@ -2217,7 +2220,10 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield this.retryPromptIdentity.outgoing(message);
+      yield this.retryPromptIdentity.outgoing(
+        message,
+        !!neoCoordinatorBinding(this.ctx.db, session.id)
+      );
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
     }

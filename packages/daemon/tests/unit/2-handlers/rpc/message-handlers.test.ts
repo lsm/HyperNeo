@@ -698,6 +698,7 @@ describe('Message RPC Handlers', () => {
         )
         .run(Date.now());
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => ':memory:',
         getDatabase: () => sqlite,
       } as unknown as Database;
@@ -726,6 +727,7 @@ describe('Message RPC Handlers', () => {
       };
       const read = mock(async () => page);
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => '/synthetic-page.db',
         getSDKMessagePageAsync: read,
       } as unknown as Database;
@@ -758,6 +760,7 @@ describe('Message RPC Handlers', () => {
         throw new Error('SDK reader failed');
       });
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => '/synthetic-page.db',
         getSDKMessagePageAsync: read,
       } as unknown as Database;
@@ -773,6 +776,7 @@ describe('Message RPC Handlers', () => {
       const page = { sdkMessages: [], hasMore: false, backgroundTaskMessages: [] };
       const read = mock(async () => page);
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => '/synthetic-page.db',
         getSDKMessagePageAsync: read,
       } as unknown as Database;
@@ -910,6 +914,7 @@ describe('Message RPC Handlers', () => {
         .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
         .run('session-123', 'u1', JSON.stringify(full));
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => ':memory:',
         getDatabase: () => sqlite,
         getSession: (id: string) => (id === 'session-123' ? { id } : null),

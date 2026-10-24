@@ -113,7 +113,7 @@ async function createWakeHelper(deps: ClaudeDesktopAdapterDeps): Promise<Gate<Rc
       '-n',
       'desktop-wake',
       '--permission-mode',
-      'acceptEdits',
+      deps.permissionMode?.() ?? 'auto',
       '--model',
       'haiku',
       '--max-turns',

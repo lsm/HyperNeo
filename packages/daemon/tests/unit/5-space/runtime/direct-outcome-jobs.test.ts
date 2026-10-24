@@ -232,7 +232,7 @@ test('unverified shutdown is retryable without dropping the durable request', as
 function freshUncachedManager(processor: JobQueueProcessor): SessionManager {
   type Args = ConstructorParameters<typeof SessionManager>;
   return new SessionManager(
-    { getGoalRepo: () => ({}) } as Args[0],
+    { getGoalRepo: () => ({}), getDataMigrationStatus: () => ({ state: 'complete' }) } as Args[0],
     {} as Args[1],
     {} as Args[2],
     {} as Args[3],

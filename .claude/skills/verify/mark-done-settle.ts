@@ -49,7 +49,7 @@ const evidence: Record<string, unknown> = { mode, ports: [app.server.port, front
 try {
   assert.notEqual(app.server.port, 8399);
   const root = 'neo:10000000-0000-4000-8000-000000008287';
-  app.db.createSession({
+  await app.db.createSession({
     id: root,
     title: 'Synthetic Mark done',
     workspacePath: join(run, 'workspace'),

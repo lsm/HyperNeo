@@ -33,7 +33,7 @@ export function planNeoSessionFiling(
 export async function fileNeoSessions(
   db: {
     getSession(id: string): Pick<Session, 'id' | 'workspacePath'> | null;
-    updateSession(id: string, updates: Partial<Session>): Promise<void>;
+    updateSession(id: string, updates: Partial<Session>): Promise<unknown>;
   },
   repo: Pick<NeoRepository, 'defaultBinding'>,
   folder: string

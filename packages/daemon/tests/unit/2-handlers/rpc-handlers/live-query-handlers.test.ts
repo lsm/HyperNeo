@@ -3879,6 +3879,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         },
         willEmitTableChange: () => true,
         resolveTaskIdForSession: () => null,
+        forgetSessionTask: () => {},
       };
       const emitter = new EventEmitter();
       const tableVersions: Record<string, number> = {};
@@ -5251,7 +5252,7 @@ describe('sessions.list reactive scope filter', () => {
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows).toHaveLength(0);
 
-    reactiveDb.db.createSession(makeSession('human-1'));
+    await reactiveDb.db.createSession(makeSession('human-1'));
     await flush();
 
     expect(diffs).toHaveLength(2);
@@ -5260,9 +5261,9 @@ describe('sessions.list reactive scope filter', () => {
     expect(diffs[1].rows[0].id).toBe('human-1');
   });
 
-  test('session rows leave out a network pause held prompt', () => {
-    reactiveDb.db.createSession(makeSession('paused-1'));
-    db.updateSession('paused-1', {
+  test('session rows leave out a network pause held prompt', async () => {
+    await reactiveDb.db.createSession(makeSession('paused-1'));
+    await db.updateSession('paused-1', {
       processingState: JSON.stringify({
         status: 'rate_limit_cooldown',
         retryAt: 5_000,
@@ -5289,17 +5290,19 @@ describe('sessions.list reactive scope filter', () => {
     await flush();
     spy.mockClear();
 
-    reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
+    await reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
     await flush();
     expect(spy.mock.calls).toHaveLength(0);
     expect(diffs).toHaveLength(1);
 
-    reactiveDb.db.createSession(makeSession('room-chat-1', { roomId: 'room-1' }, 'room_chat'));
+    await reactiveDb.db.createSession(
+      makeSession('room-chat-1', { roomId: 'room-1' }, 'room_chat')
+    );
     await flush();
     expect(spy.mock.calls).toHaveLength(0);
     expect(diffs).toHaveLength(1);
 
-    reactiveDb.db.updateSession('space-worker-1', { status: 'active' });
+    await reactiveDb.db.updateSession('space-worker-1', { status: 'active' });
     await flush();
     expect(spy.mock.calls).toHaveLength(0);
     expect(diffs).toHaveLength(1);
@@ -5315,7 +5318,7 @@ describe('sessions.list reactive scope filter', () => {
   }
 
   test('worker session message saves do not re-run the list', async () => {
-    reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
+    await reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
     const spy = spyOnEvaluate();
     const diffs: QueryDiff<Record<string, unknown>>[] = [];
     subscribeToList((diff) => diffs.push(diff));
@@ -5330,7 +5333,7 @@ describe('sessions.list reactive scope filter', () => {
   });
 
   test('human session message saves re-run the list', async () => {
-    reactiveDb.db.createSession(makeSession('human-1'));
+    await reactiveDb.db.createSession(makeSession('human-1'));
     const spy = spyOnEvaluate();
     subscribeToList(() => {});
     await flush();
@@ -5343,13 +5346,13 @@ describe('sessions.list reactive scope filter', () => {
   });
 
   test('archiving a human session re-runs and drops it from the list', async () => {
-    reactiveDb.db.createSession(makeSession('human-1'));
+    await reactiveDb.db.createSession(makeSession('human-1'));
     const diffs: QueryDiff<Record<string, unknown>>[] = [];
     subscribeToList((diff) => diffs.push(diff));
     await flush();
     expect(diffs[0].rows).toHaveLength(1);
 
-    reactiveDb.db.updateSession('human-1', {
+    await reactiveDb.db.updateSession('human-1', {
       status: 'archived',
       archivedAt: new Date().toISOString(),
     });
@@ -5360,13 +5363,13 @@ describe('sessions.list reactive scope filter', () => {
   });
 
   test('deleting a human session re-runs and drops it from the list', async () => {
-    reactiveDb.db.createSession(makeSession('human-1'));
+    await reactiveDb.db.createSession(makeSession('human-1'));
     const diffs: QueryDiff<Record<string, unknown>>[] = [];
     subscribeToList((diff) => diffs.push(diff));
     await flush();
     expect(diffs[0].rows).toHaveLength(1);
 
-    reactiveDb.db.deleteSession('human-1');
+    await reactiveDb.db.deleteSession('human-1');
     await flush();
 
     expect(diffs).toHaveLength(2);
@@ -5374,13 +5377,13 @@ describe('sessions.list reactive scope filter', () => {
   });
 
   test('visible session gaining a spaceId context re-runs and leaves the list', async () => {
-    reactiveDb.db.createSession(makeSession('human-1'));
+    await reactiveDb.db.createSession(makeSession('human-1'));
     const diffs: QueryDiff<Record<string, unknown>>[] = [];
     subscribeToList((diff) => diffs.push(diff));
     await flush();
     expect(diffs[0].rows).toHaveLength(1);
 
-    reactiveDb.db.updateSession('human-1', { context: { spaceId: 'space-1' } });
+    await reactiveDb.db.updateSession('human-1', { context: { spaceId: 'space-1' } });
     await flush();
 
     expect(diffs).toHaveLength(2);
@@ -5388,13 +5391,13 @@ describe('sessions.list reactive scope filter', () => {
   });
 
   test('visible session changing to an excluded type re-runs and leaves the list', async () => {
-    reactiveDb.db.createSession(makeSession('human-1'));
+    await reactiveDb.db.createSession(makeSession('human-1'));
     const diffs: QueryDiff<Record<string, unknown>>[] = [];
     subscribeToList((diff) => diffs.push(diff));
     await flush();
     expect(diffs[0].rows).toHaveLength(1);
 
-    reactiveDb.db.updateSession('human-1', { type: 'space_chat' });
+    await reactiveDb.db.updateSession('human-1', { type: 'space_chat' });
     await flush();
 
     expect(diffs).toHaveLength(2);
@@ -5420,7 +5423,7 @@ describe('sessions.list reactive scope filter', () => {
     spy.mockClear();
 
     reactiveDb.beginTransaction();
-    reactiveDb.db.createSession(makeSession('human-1'));
+    await reactiveDb.db.createSession(makeSession('human-1'));
     reactiveDb.notifyChange('sessions');
     reactiveDb.commitTransaction();
     await flush();

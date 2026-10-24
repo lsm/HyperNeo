@@ -110,6 +110,7 @@ describe('getDaemonHelpText', () => {
     const help = getDaemonHelpText();
     expect(help).toContain('--port');
     expect(help).toContain('--host');
+    expect(help).toContain('Host to bind to (default: 127.0.0.1)');
     expect(help).toContain('--db-path');
     expect(help).toContain('--data-dir');
     expect(help).toContain('--workspace');

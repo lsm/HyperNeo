@@ -1,5 +1,6 @@
+import { forwardSQLiteWorkerLog } from '../sqlite-worker-observability.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
-import { emitStructuredLogEvent, Logger } from '../../lib/logger.ts';
+import { Logger } from '../../lib/logger.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteQueryObservabilityOptions } from '../sqlite-query-observability.ts';
 import {
@@ -97,12 +98,7 @@ class WorkerLane {
       }
       worker.onmessage = ({ data }: MessageEvent<DbGatewayReply>) => {
         if ('ready' in data) resolve(worker);
-        else if ('log' in data)
-          emitStructuredLogEvent({
-            ...data.log,
-            args: [data.log.message],
-            metadata: { ...data.log.metadata, workerKind: `db-gateway-${this.lane}` },
-          });
+        else if ('log' in data) forwardSQLiteWorkerLog(data, `db-gateway-${this.lane}`);
         else {
           const waiter = this.pending.get(data.id);
           this.pending.delete(data.id);
