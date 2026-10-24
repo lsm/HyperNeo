@@ -26,6 +26,10 @@ import {
   removeRemoteDaemonSecret,
   saveRemoteDaemonSecret,
 } from '../repositories/remote-daemon-secret-repository.ts';
+import {
+  registerClient,
+  unregisterClient,
+} from '../repositories/client-registration-repository.ts';
 import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
@@ -58,5 +62,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     replaceNeoSessionSeen,
     saveRemoteDaemonSecret,
     removeRemoteDaemonSecret,
+    registerClient,
+    unregisterClient,
   ].map((op) => [op.name, op])
 );
