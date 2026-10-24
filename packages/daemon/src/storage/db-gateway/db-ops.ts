@@ -14,6 +14,7 @@ import {
   jobQueueReads,
   jobQueueWrites,
 } from '../repositories/job-queue-repository.ts';
+import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
 import { deleteWorkFeedBatch } from '../work-feed.ts';
 import type { DbOp } from './db-op.ts';
@@ -27,6 +28,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobQueueWrites,
     jobQueueReads,
     externalEventSweeps,
+    messageSearchIndexWrites,
     cleanupJobs,
     ingestSessionEvent,
     deleteWorkFeedBatch,
