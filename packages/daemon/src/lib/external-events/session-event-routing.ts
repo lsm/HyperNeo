@@ -35,19 +35,24 @@ export function planSessionEventRoute(
 ): { value: SessionEventRoute } | { reason: Exclude<SessionEventRouteSkip, 'not_session_scope'> } {
   const event = found.record?.event;
   if (!event) return { reason: 'event_missing' };
-  const feedback = requireSessionFeedbackEvent(event);
+  const closed = requireClosedPrEvent(found);
+  const ending = (
+    'value' in closed ? valueOr(planClosedPrUnsubscribes(closed.value, subscribed), []) : []
+  ).filter((subscription) => !isTopicCovered(subscription.sessionId, event.topic));
+  const feedback =
+    'value' in closed ? { value: { event, urgent: true } } : requireSessionFeedbackEvent(event);
   const uncovered = {
-    subscriptions: subscribed.subscriptions.filter(
-      (subscription) => !isTopicCovered(subscription.sessionId, event.topic)
-    ),
+    subscriptions: [
+      ...subscribed.subscriptions.filter(
+        (subscription) => !isTopicCovered(subscription.sessionId, event.topic)
+      ),
+      ...ending.map((subscription) => ({ ...subscription, topic: event.topic })),
+    ],
   };
   const deliveries =
     'value' in feedback
       ? valueOr(planSessionEventDeliveries(feedback.value, uncovered, isSessionBusy), [])
       : [];
-  const closed = requireClosedPrEvent(found);
-  const ending =
-    'value' in closed ? valueOr(planClosedPrUnsubscribes(closed.value, subscribed), []) : [];
   return deliveries.length > 0 || ending.length > 0
     ? { value: { deliveries, ending } }
     : { reason: 'nothing_to_route' };

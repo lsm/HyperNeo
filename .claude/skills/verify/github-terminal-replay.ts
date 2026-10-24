@@ -60,9 +60,16 @@ try {
   const store = new SessionExternalEventStore(sql());
   for (const e of [event('terminal-7', 7, 'polled', 'closed', 100), event('comment-7', 7, 'review_submitted', 'open', 300), event('old-terminal-8', 8, 'closed', 'closed', 100), event('reopened-8', 8, 'reopened', 'open', 200), event('late-old-terminal-8', 8, 'closed', 'closed', 50)]) store.store(e);
   const originalHistory = history(), ghBefore = ghCalls();
+  const config = new ExternalEventExtensionConfigStore(sql());
+  await config.setGlobalConfig('github', { source: 'github', globallyEnabled: false, capabilities: { polling: true, rpcConfig: true } });
+  proof.disabledPoll = await poll(); assert.equal(jobs().length, 0);
+  assert((proof.disabledPoll as Record<string, unknown>).error);
+  assert.equal(subscriptions().listAll().length, 5);
+  await config.setGlobalConfig('github', { source: 'github', globallyEnabled: true, capabilities: { polling: true, rpcConfig: true } });
   sql().exec("CREATE TRIGGER reject_terminal BEFORE INSERT ON job_queue WHEN NEW.queue = 'mailbox' AND json_extract(NEW.payload, '$.to.sessionId') = 'synthetic-review-only' BEGIN SELECT RAISE(ABORT, 'synthetic terminal rejection'); END");
   proof.failedPoll = await poll(); proof.afterFailure = snapshot();
   assert.equal(jobs().length, 1, 'poll must attempt final delivery even for queued terminal facts');
+  assert.match(String((proof.failedPoll as Record<string, unknown>).error), /handler failure/);
   assert.equal(receipts().length, 1);
   assert.equal(subscriptions().listAll().filter(s => s.topic.startsWith(prefix + '7.')).length, 2);
   const firstAcceptance = { jobs: jobs(), receipts: receipts() };
@@ -71,6 +78,7 @@ try {
   proof.retryAfterRestart = await poll(); assert.deepEqual({ jobs: jobs(), receipts: receipts() }, firstAcceptance);
   sql().exec('DROP TRIGGER reject_terminal');
   proof.recoveredPoll = await poll(); proof.afterRecovery = snapshot();
+  assert.equal((proof.recoveredPoll as Record<string, unknown>).error, undefined);
   assert.equal(jobs().length, 2); assert.equal(receipts().length, 2);
   assert.deepEqual(jobs().map((r: { payload: string }) => JSON.parse(r.payload).to.sessionId).sort(), ['synthetic-general', 'synthetic-review-only']);
   assert.deepEqual(subscriptions().listAll().map(s => s.topic).sort(), [prefix + '*.review_*', prefix + '8.*', prefix + '9.*'].sort());

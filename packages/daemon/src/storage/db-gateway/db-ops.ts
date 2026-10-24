@@ -1,5 +1,8 @@
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
-import { ingestSessionEvent } from '../../lib/external-events/session-external-event-store.ts';
+import {
+  ingestSessionEvent,
+  readLatestSessionPrState,
+} from '../../lib/external-events/session-external-event-store.ts';
 import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
 import { codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
@@ -34,6 +37,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     messageSearchIndexWrites,
     cleanupJobs,
     ingestSessionEvent,
+    readLatestSessionPrState,
     deleteWorkFeedBatch,
     sessionWrites,
     codingLedgerWrites,
