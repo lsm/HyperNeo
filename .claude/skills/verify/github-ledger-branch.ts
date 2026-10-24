@@ -62,7 +62,9 @@ async function watch(){
   return db.prepare('SELECT status FROM job_queue WHERE id=?').get(job.id);
 }
 try{
-  await open();const root=await rpc('neo.open');assert(root.sessionId);
+  await open();
+  app!.db.getDatabase().prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'").run(JSON.stringify([repo]));
+  const root=await rpc('neo.open');assert(root.sessionId);
   for(const [i,q] of queries.entries()){
     const at=new Date().toISOString();
     app!.db.createSession({id:`synthetic-worker-${i}`,title:`Branch worker ${i}`,workspacePath:q.cwd,createdAt:at,lastActiveAt:at,status:'active',config:{model:'claude-sonnet-4-5-20250929',maxTokens:8192,temperature:1},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0},worktree:{isWorktree:true,worktreePath:q.cwd,mainRepoPath:q.cwd,branch:q.branch}} as Session);

@@ -14,6 +14,7 @@ The helper owns an ephemeral loopback daemon, local synthetic repositories and a
 fake gh executable. It rejects all non-branch commands (including auth discovery)
 and direct HTTP, and uses no provider, model, GUI or real keys. Two synthetic
 worker sessions have different checkouts of the same GitHub repo and branch.
+The fixture explicitly opts its synthetic repository into the instance watch list.
 Public WebSocket `work.find`, `work.status` and `neo.snapshot` observe the running
 daemon. Only its own existing driver-refresh job is made due; the real handler,
 watcher and default branch reader execute unchanged.
