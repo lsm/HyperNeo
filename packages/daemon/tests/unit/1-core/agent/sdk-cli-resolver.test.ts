@@ -25,6 +25,9 @@ const mocks = vi.hoisted(() => ({
   readFileSync: vi.fn(),
   execSync: vi.fn(),
   execFileSync: vi.fn(),
+  execFile: vi.fn(),
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
 }));
 
 function passthrough<Args extends unknown[], R>(
@@ -49,6 +52,15 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    readFile: passthrough(mocks.readFile, actual.readFile),
+    writeFile: passthrough(mocks.writeFile, actual.writeFile),
+  };
+});
+
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   mocks.actualCp = actual;
@@ -56,6 +68,7 @@ vi.mock('node:child_process', async (importOriginal) => {
     ...actual,
     execSync: passthrough(mocks.execSync, actual.execSync),
     execFileSync: passthrough(mocks.execFileSync, actual.execFileSync),
+    execFile: passthrough(mocks.execFile, actual.execFile),
   };
 });
 
@@ -70,6 +83,9 @@ function resetModuleMocks(): void {
     mocks.readFileSync,
     mocks.execSync,
     mocks.execFileSync,
+    mocks.execFile,
+    mocks.readFile,
+    mocks.writeFile,
   ]) {
     mockFn.mockReset();
   }
@@ -601,6 +617,47 @@ describe('warmupSDKCliBinary', () => {
     expect(result.status).toBe('ready');
     expect(result.source).toBe('download');
     expect(result.path).toContain('.hyperneo/sdk');
+  });
+
+  it('keeps the event loop responsive while it downloads the binary', async () => {
+    const originalExistsSync = mocks.actualFs.existsSync;
+    const binaryName = getCliBinaryName();
+    const tarData = createTarGzWithFile(`package/${binaryName}`, Buffer.from('claude'));
+    const integrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
+    const curl = (args: string[]) =>
+      !args.includes('-o')
+        ? JSON.stringify({ dist: { tarball: 'https://registry.npmjs.org/fake.tgz', integrity } })
+        : '';
+
+    mocks.existsSync.mockImplementation((path: fs.PathLike) => {
+      const p = String(path);
+      if (p.includes('node_modules') || p.includes('.hyperneo/sdk')) return false;
+      if (p.endsWith('.tgz')) return true;
+      return originalExistsSync(p);
+    });
+    mocks.readFileSync.mockImplementation((path: fs.PathLike) =>
+      String(path).endsWith('.tgz') ? tarData : mocks.actualFs.readFileSync(path)
+    );
+    mocks.readFile.mockImplementation(async () => tarData);
+    mocks.writeFile.mockImplementation(async () => {});
+    mocks.execFileSync.mockImplementation((_file: string, args: string[]) => {
+      const until = Date.now() + 200;
+      while (Date.now() < until);
+      return curl(args);
+    });
+    mocks.execFile.mockImplementation(
+      (_file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) =>
+        setTimeout(() => done(null, curl(args), ''), 200)
+    );
+
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 10);
+    const result = await warmupSDKCliBinary();
+    clearInterval(timer);
+
+    expect(result.status).toBe('ready');
+    expect(result.source).toBe('download');
+    expect(ticks).toBeGreaterThan(10);
   });
 
   it('logs startup messages regardless of HYPERNEO_VERBOSE', () => {
