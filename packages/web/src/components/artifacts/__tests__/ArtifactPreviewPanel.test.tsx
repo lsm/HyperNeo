@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import { artifactPreviewStack, openArtifactPreview } from '../../../lib/artifact-preview-store.ts';
 import { ArtifactPreviewPanel } from '../ArtifactPreviewPanel.tsx';
+import MarkdownRenderer from '../../chat/MarkdownRenderer.tsx';
 import { NeoMessageMenu } from '../../../neo/NeoMessageMenu.tsx';
 import { Modal } from '../../ui/Modal.tsx';
 
@@ -69,6 +70,13 @@ function route(resolve: (input: Record<string, unknown>) => unknown) {
   );
 }
 
+async function openDocument() {
+  route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+  render(<ArtifactPreviewPanel />);
+  act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+  await screen.findByRole('heading', { name: 'Layout design' });
+}
+
 beforeEach(() => {
   connectionState.value = 'connected';
   artifactPreviewStack.value = [];
@@ -77,9 +85,26 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('ArtifactPreviewPanel', () => {
+  it('dismisses the real image lightbox without losing the preview after focus moves', async () => {
+    await openDocument();
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    render(
+      <MarkdownRenderer content="![Synthetic image](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)" />
+    );
+    fireEvent.click(await screen.findByRole('img', { name: 'Synthetic image' }));
+    expect(document.querySelector('.markdown-image-overlay')).toBeTruthy();
+    screen.getByRole('dialog').focus();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.querySelector('.markdown-image-overlay')).toBeNull();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('opens and closes on ordinary HTTP without crypto.randomUUID', async () => {
     vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
     route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
@@ -117,10 +142,7 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('dismisses a message menu without losing the preview', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
-    render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     const close = vi.fn();
     render(
       <NeoMessageMenu at={{ x: 10, y: 10 }} actions={['copy']} onPick={() => {}} onClose={close} />
@@ -131,10 +153,7 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('offers an explicit close action independently of nested navigation', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
-    render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -156,19 +175,13 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('dismisses the narrow sheet from its uncovered strip', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
-    render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss preview' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('closes with a downward swipe but preserves horizontal gestures', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
-    render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     const panel = screen.getByRole('dialog');
     fireEvent.touchStart(panel, { touches: [{ clientX: 100, clientY: 100 }] });
     fireEvent.touchEnd(panel, { changedTouches: [{ clientX: 240, clientY: 105 }] });
@@ -270,10 +283,7 @@ describe('ArtifactPreviewPanel', () => {
   });
 
   it('lets Escape close only a Modal opened on top of the panel', async () => {
-    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
-    render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    await screen.findByRole('heading', { name: 'Layout design' });
+    await openDocument();
     const onClose = vi.fn();
     render(
       <Modal isOpen onClose={onClose} title="Question document">

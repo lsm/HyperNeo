@@ -55,6 +55,12 @@ try {
         assert.equal(await panel.count(), 1);
         assert(await panel.getByText(/commit aaaaaaa/).count());
         await page.screenshot({ path: join(evidence, `layout-git-${width}.png`) });
+        await page.getByRole('button', { name: 'Model and thinking', exact: true }).click();
+        await page.locator('#neo-preferences').waitFor();
+        await input.focus();
+        await page.keyboard.press('Escape');
+        await page.locator('#neo-preferences').waitFor({ state: 'detached' });
+        assert.equal(await panel.count(), 1);
         await page.getByRole('button', { name: 'Reply in chat', exact: true }).click();
         const quote = page.getByRole('region', { name: /^Replying to/ });
         await quote.waitFor();
@@ -89,7 +95,7 @@ try {
       await panel.waitFor({ state: 'detached' });
       assert.equal(new URL(page.url()).pathname, '/neo');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      observed[width] = { bounds, browserBackStaysOnNeo: true, close: true, ...(narrow ? { stripDismiss: true, swipeDown: true } : { chatEditable: true, replacesContent: true, escapeFromChat: true, quoteEscapePreservesPreview: true }) };
+      observed[width] = { bounds, browserBackStaysOnNeo: true, close: true, ...(narrow ? { stripDismiss: true, swipeDown: true } : { chatEditable: true, replacesContent: true, escapeFromChat: true, quoteEscapePreservesPreview: true, preferencesEscapePreservesPreview: true }) };
     } catch (error) {
       await page.screenshot({ path: join(evidence, `layout-failure-${width}.png`) });
       throw error;
