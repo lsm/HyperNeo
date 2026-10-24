@@ -9739,6 +9739,76 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('subscribed session details discover a stable closure despite a saved ETag', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const recorded: ExternalEvent[] = [];
+    const options = Object.assign(
+      { subscribedPullRequests: () => [42] },
+      {
+        recordSessionClosure: async (event: ExternalEvent) => {
+          recorded.push(event);
+        },
+      }
+    );
+    const extension = new GitHubEventExtension(db, 'synthetic-token', options);
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'sessions',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const watched = extension.repo.listPollingRepos()[0];
+    extension.repo.updatePollCursor(watched.id, { mergeConflictEtags: { 42: 'old-closure-etag' } });
+    const closedAt = '2026-10-23T10:00:00Z';
+    let detail = { ...createPullRequestRow(42), state: 'closed', closed_at: closedAt };
+    const conditionals: (string | null)[] = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (new URL(String(url)).pathname.endsWith('/pulls/42')) {
+        const conditional = new Headers(init?.headers).get('if-none-match');
+        conditionals.push(conditional);
+        return conditional ? new Response(null, { status: 304 }) : pollingResponse(detail);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    const poll = () => extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+    try {
+      await poll();
+      expect(conditionals).toEqual([null]);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]).toMatchObject({
+        topic: 'github/acme/widgets/pull_request/42.closed',
+        occurredAt: Date.parse(closedAt),
+        payload: { state: 'closed', closedAt },
+      });
+      const key = recorded[0].dedupeKey;
+      detail = { ...detail, head: { sha: 'another-head' } };
+      await poll();
+      expect(recorded[1].dedupeKey).toBe(key);
+      for (const patch of [
+        { state: 'open' },
+        { closed_at: '' },
+        { closed_at: 'invalid' },
+        { number: 43 },
+      ]) {
+        detail = { ...createPullRequestRow(42), state: 'closed', closed_at: closedAt, ...patch };
+        await poll();
+      }
+      expect(recorded).toHaveLength(2);
+      detail = { ...detail, number: 42, closed_at: '2026-10-24T10:00:00Z' };
+      await poll();
+      expect(recorded[2].dedupeKey).not.toBe(key);
+    } finally {
+      await extension.stop();
+      db.close();
+    }
+  });
+
   test('a new subscription to a still-conflicting pull request is told again', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
