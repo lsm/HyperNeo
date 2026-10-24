@@ -35,28 +35,29 @@ not permission authority.
 
 ## Target: one host decision, adapter delivery
 
-Origins are bundled, global and repo-authored. Adopt `.agents/skills/<name>/SKILL.md`
-as HyperNeo's provider-neutral repo convention (also native to Codex). HyperNeo
-scans from the session's working directory to its repository root, also importing
-legacy `.claude/skills/` trees. Preserve whole directories: scripts, references,
-journeys and assets. Migrate by reviewed move or in-repo symlink, never automatic
-copying/deletion. Deduplicate identical aliases; qualify conflicting IDs by
-repo/source/path rather than silently choosing by name.
+Origins are bundled, global and repo-authored. Canonical repo content lives in
+`.agents/skills/<name>/SKILL.md` (also native to Codex). HyperNeo scans from session
+directory to repo root, importing legacy `.claude/skills/` trees. By reviewed move,
+make `.claude/skills/` an in-repo symlink to `.agents/skills/` so apps and HyperNeo
+read the same files. Preserve scripts, references, journeys and assets; never
+migrate automatically. Deduplicate identical aliases; qualify conflicts by repo/source/path.
 
 Catalog IDs qualify origin/repo/path; checkout and revision bind loads. Repo skills
 remain file-owned and repo-scoped; a global install cannot satisfy a required repo
 verify skill. One policy snapshot controls availability and tool access. Skill prose never grants tools, approves actions or installs hooks.
 
-Sessions, including Neo, get eligible metadata and proposed `skill.load` through
+Daemon-run sessions, including Neo, get eligible metadata and proposed `skill.load` through
 the existing operation registry. HyperNeo checks scope/dependencies before returning
 the body and skill-root-relative resources. Scripts/journeys use existing authorized
 tools; relative paths survive migration.
 
-OAP transports those operations through advertised tool sources; Claude SDK is
-one adapter receiving explicit host options. Disable native skill/plugin discovery
-for managed sessions; import required project guidance separately first. Vendor
-managed policy remains authoritative and visible. Adapters unable to honor the
-catalog must report unsupported capability, without silent native fallback.
+OAP transports operations through advertised tool sources; Claude SDK receives
+explicit host options. Disable native skill/plugin discovery **only for sessions
+the daemon runs itself (SDK/ACP/OAP)**; import project guidance separately first.
+Claude Desktop and Codex Desktop keep native repo-skill discovery: HyperNeo cannot
+and should not disable it; those workers find verify this way today. Vendor managed
+policy remains authoritative and visible. Incapable daemon-run adapters report
+unsupported capability, without silent native fallback.
 
 **Recap:** load on request, fix the N-hour window, and paginate Neo/PR-ledger reads
 with citations and coverage gaps. No new pack, background turn or raw database access.
@@ -75,8 +76,9 @@ and creation bootstrap. `verifySkill` neither enables MCP nor owns files.
 2. Extract policy; build repo discovery/alias resolution in its own small PR.
 3. Build scoped metadata/body/resource operations; then adapt the coding verify gate/prompts separately.
 4. Wire Claude to that catalog, including Neo; separately preserve project guidance.
-5. Wire Codex and OAP in separate PRs, using advertised attachment/catalog capabilities.
-6. Add recap using existing ledger reads; missing bounded reads get their own PR.
+5. Add recap next: requires `skill.load`, Neo wiring and bounded ledger reads
+   (add missing reads first).
+6. Wire remaining daemon-run adapters via advertised capabilities; Desktop keeps native discovery.
 7. Migrate MCP-skill aliases/gates into server policy, preserving effective access
    and stored records. Import supported bundle components without executing them;
    expose unsupported agents/hooks rather than silently adopting them.
@@ -84,7 +86,8 @@ and creation bootstrap. `verifySkill` neither enables MCP nor owns files.
 9. Delete obsolete SDK wrappers/discovery and duplicate controls after parity.
 
 Verify each slice on an isolated test daemon: identical policy gives identical
-catalogs across Neo/ordinary, Claude/Codex/OAP. Check legacy/canonical verify,
+catalogs across daemon-run adapters and Neo/ordinary sessions. Check Desktop native
+discovery through the shared repo tree, legacy/canonical verify,
 script/journey loading, same-name repos/worktrees, denied dependencies, restart and
 no double native discovery. Recap respects its time window. This docs PR proves no
 runtime behavior.
