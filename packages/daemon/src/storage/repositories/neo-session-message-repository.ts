@@ -1,4 +1,6 @@
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 const SELECT = `SELECT message_id AS messageId, conversation_id AS conversationId, sequence,
@@ -9,29 +11,32 @@ export const SENT_BY_NEO = "from_session GLOB 'neo:*'";
 
 export type NeoSessionMessageDraft = Omit<NeoSessionMessage, 'sequence'>;
 
-export class NeoSessionMessageRepository {
-  constructor(
-    private readonly db: Database,
-    private readonly changed: () => void = () => {}
-  ) {}
+export const recordNeoSessionMessage = defineDbOp({
+  name: 'neo.sessionMessage.record',
+  mode: 'write',
+  run: (db: Database, message: NeoSessionMessageDraft, changes): void => {
+    db.prepare(
+      `INSERT OR IGNORE INTO neo_session_messages (conversation_id, message_id, from_session,
+         from_name, to_session, to_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      message.conversationId,
+      message.messageId,
+      message.fromSession,
+      message.fromName,
+      message.toSession,
+      message.toName,
+      message.text,
+      message.createdAt
+    );
+    changes.notifyChange('neo_session_messages');
+  },
+});
 
-  record(message: NeoSessionMessageDraft): void {
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO neo_session_messages (conversation_id, message_id, from_session,
-           from_name, to_session, to_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        message.conversationId,
-        message.messageId,
-        message.fromSession,
-        message.fromName,
-        message.toSession,
-        message.toName,
-        message.text,
-        message.createdAt
-      );
-    this.changed();
+export class NeoSessionMessageRepository {
+  constructor(private readonly db: Database) {}
+
+  record(message: NeoSessionMessageDraft): Promise<void> {
+    return gatewayFor(this.db).run(recordNeoSessionMessage, message);
   }
 
   get(conversationId: string, messageId: string): NeoSessionMessage | null {

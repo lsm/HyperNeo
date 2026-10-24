@@ -207,7 +207,7 @@ export type SessionSent = {
   text: string;
   at: number;
 };
-export type SessionSentObserver = (sent: SessionSent) => void;
+export type SessionSentObserver = (sent: SessionSent) => void | Promise<void>;
 
 function plainText(content: SendInput['message']['message']['content']): string {
   return typeof content === 'string'
@@ -215,15 +215,15 @@ function plainText(content: SendInput['message']['message']['content']): string 
     : content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n');
 }
 
-export function reportSessionSend(
+export async function reportSessionSend(
   receipt: SendResult,
   admitted: SendInput,
   origin: string,
   sent: SessionSentObserver
-): void {
+): Promise<void> {
   const fromSession = sessionSender(origin);
   if (receipt.kind === 'accepted' && fromSession)
-    sent({
+    await sent({
       messageId: receipt.messageId,
       fromSession,
       toSession: admitted.sessionId,
@@ -545,7 +545,7 @@ export function createSendMessageOperation(
   const limit = createSessionSendLimiter();
   const forwardAndReport: RemoteSendForwarder = async (target, input, origin) => {
     const forwarded = await forwardRemote(target, input, origin);
-    reportSessionSend(
+    await reportSessionSend(
       forwarded,
       { ...input, sessionId: renderRemoteAddress(target) },
       origin,

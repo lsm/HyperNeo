@@ -34,6 +34,7 @@ import {
   forgetAgentChildren,
   recordAgentChild,
 } from '../repositories/agent-child-process-repository.ts';
+import { recordNeoSessionMessage } from '../repositories/neo-session-message-repository.ts';
 import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
@@ -70,5 +71,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     unregisterClient,
     recordAgentChild,
     forgetAgentChildren,
+    recordNeoSessionMessage,
   ].map((op) => [op.name, op])
 );
