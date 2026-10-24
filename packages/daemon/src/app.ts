@@ -900,10 +900,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         'idle',
       deliver: async (delivery) => {
         const outcome = await mailSessionEvent(db.getJobQueueRepo(), delivery);
-        if (outcome.kind === 'rejected')
-          logError(
-            `[Daemon] External event for session ${delivery.sessionId} was rejected: ${outcome.reason}`
-          );
+        if (outcome.kind === 'rejected') {
+          const reason = `[Daemon] External event for session ${delivery.sessionId} was rejected: ${outcome.reason}`;
+          logError(reason);
+          throw new Error(reason);
+        }
       },
       removeSubscription: (sessionId, topic) => sessionEventSubscriptions.delete(sessionId, topic),
       isTopicCovered: coveredSessionTopic,

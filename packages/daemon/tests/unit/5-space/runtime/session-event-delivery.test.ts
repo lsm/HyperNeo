@@ -11,7 +11,7 @@ import {
 import { SESSION_EVENT_SCOPE } from '../../../../src/lib/external-events/session-external-event-store';
 import { topicMatchesPattern } from '../../../../src/lib/external-events/topic-trie';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
-import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { createMailboxTestDb } from '../../../helpers/mailbox-test-db';
 import {
   type SessionEventSubscription,
   SessionEventSubscriptionRepository,
@@ -198,27 +198,86 @@ describe('planSessionEventDeliveries', () => {
 
 describe('mailSessionEvent', () => {
   test('hands the event to the session mailbox as system input under its message id', async () => {
-    const enqueued: { payload: Record<string, unknown> }[] = [];
-    const jobQueue = {
-      enqueueUniquePending: (args: { payload: Record<string, unknown> }) => {
-        enqueued.push(args);
-      },
-    } as unknown as JobQueueRepository;
-    const outcome = await mailSessionEvent(jobQueue, {
-      sessionId: 's1',
-      messageUuid: 'ev-1234',
-      text: 'PR #7 review comment',
-      mode: 'defer',
-    });
-    expect(outcome.kind).toBe('enqueued');
-    expect(enqueued[0].payload).toMatchObject({
-      to: { kind: 'session', sessionId: 's1' },
-      origin: SESSION_EVENT_ORIGIN,
-      messageUuid: 'ev-1234',
-      deliveryMode: 'defer',
-      message: { message: { content: 'PR #7 review comment' }, inputKind: 'system' },
-    });
+    const db = createMailboxTestDb();
+    try {
+      const outcome = await mailSessionEvent(db.jobQueue, {
+        sessionId: 's1',
+        messageUuid: 'ev-1234',
+        text: 'PR #7 review comment',
+        mode: 'defer',
+      });
+      expect(outcome.kind).toBe('enqueued');
+      expect(JSON.parse(db.jobsByQueue('mailbox')[0].payload)).toMatchObject({
+        to: { kind: 'session', sessionId: 's1' },
+        origin: SESSION_EVENT_ORIGIN,
+        messageUuid: 'ev-1234',
+        deliveryMode: 'defer',
+        message: { message: { content: 'PR #7 review comment' }, inputKind: 'system' },
+      });
+    } finally {
+      db.close();
+    }
   });
+
+  test('accepts the same event once per destination even after the job is consumed', async () => {
+    const db = createMailboxTestDb();
+    const delivery = {
+      sessionId: 's1',
+      messageUuid: 'ev-terminal',
+      text: 'PR #7 closed',
+      mode: 'immediate' as const,
+    };
+    try {
+      const first = await mailSessionEvent(db.jobQueue, delivery);
+      expect(first.kind).toBe('enqueued');
+      db.db.exec("UPDATE job_queue SET status = 'completed'");
+      expect(await mailSessionEvent(db.jobQueue, { ...delivery, mode: 'defer' })).toEqual(first);
+      expect(db.jobsByQueue('mailbox')).toHaveLength(1);
+      expect((await mailSessionEvent(db.jobQueue, { ...delivery, sessionId: 's2' })).kind).toBe(
+        'enqueued'
+      );
+      expect(db.jobsByQueue('mailbox')).toHaveLength(2);
+      expect(
+        await mailSessionEvent(db.jobQueue, { ...delivery, text: 'different event content' })
+      ).toMatchObject({
+        kind: 'rejected',
+        reason: expect.stringContaining('idempotency_conflict'),
+      });
+      expect(db.jobsByQueue('mailbox')).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each(['job_queue', 'message_send_receipts'])(
+    'a failed %s insert rolls back acceptance and can be retried',
+    async (table) => {
+      const db = createMailboxTestDb();
+      const delivery = {
+        sessionId: 's1',
+        messageUuid: 'ev-retry',
+        text: 'PR #7 closed',
+        mode: 'immediate' as const,
+      };
+      try {
+        db.db.exec(
+          `CREATE TRIGGER reject_mailbox BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'synthetic mailbox unavailable'); END`
+        );
+        expect(await mailSessionEvent(db.jobQueue, delivery)).toMatchObject({
+          kind: 'rejected',
+          reason: expect.stringContaining('synthetic mailbox unavailable'),
+        });
+        expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toEqual([]);
+        expect(db.jobsByQueue('mailbox')).toEqual([]);
+        db.db.exec('DROP TRIGGER reject_mailbox');
+        expect((await mailSessionEvent(db.jobQueue, delivery)).kind).toBe('enqueued');
+        expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toHaveLength(1);
+        expect(db.jobsByQueue('mailbox')).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    }
+  );
 });
 
 describe('SessionEventSubscriptionRepository.listAll', () => {

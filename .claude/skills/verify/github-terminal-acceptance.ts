@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
+import { SESSION_EVENT_SCOPE, SessionExternalEventStore } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
+import type { ExternalEvent } from '../../../packages/daemon/src/lib/external-events/types.ts';
+import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/session-event-subscription-repository.ts';
+
+const run = resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data/daemon.db')));
+for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(process.env[key], undefined);
+for (const dir of ['bin', 'evidence']) mkdirSync(join(run, dir), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
+process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
+const network = globalThis.fetch;
+globalThis.fetch = (async () => { throw new Error('No network in terminal acceptance proof'); }) as typeof fetch;
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+const session = 'synthetic-terminal-worker', topic = 'github/synthetic/acceptance/pull_request/7.*';
+const event: ExternalEvent = { id: 'synthetic-terminal-7', spaceId: SESSION_EVENT_SCOPE, source: 'github', topic: topic.replace('*', 'closed'), dedupeKey: 'synthetic-terminal-7', summary: 'Synthetic PR closed', occurredAt: Date.now(), ingestedAt: Date.now(), urgency: 'immediate', payload: { state: 'closed', prNumber: 7 } };
+const payload = { ...event, namespaceId: SESSION_EVENT_SCOPE, eventId: event.id };
+const proof: Record<string, unknown> = { verified: false, providerTurns: 0, automaticReplayVerified: false };
+const sql = () => app!.db.getDatabase();
+const subscriptions = () => new SessionEventSubscriptionRepository(sql());
+const jobs = () => sql().prepare("SELECT id, status, payload FROM job_queue WHERE queue = 'mailbox' ORDER BY id").all();
+const receipts = () => sql().prepare('SELECT * FROM message_send_receipts ORDER BY key').all();
+const publish = () => app!.internalEventBus.publish('externalEvent.published', payload);
+async function open() {
+  app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+  await app.jobProcessor.stop();
+  assert.notEqual(app.server.port, 8399);
+  app.db.updateGlobalSettings({ neo: { packs: [] } });
+}
+try {
+  await open();
+  proof.runtime = { commit: BUILD_METADATA.commit, pid: process.pid, port: app!.server.port };
+  await app!.db.createSession({ id: session, title: 'Synthetic terminal worker', workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  subscriptions().upsert({ sessionId: session, topic });
+  new SessionExternalEventStore(sql()).store(event);
+  sql().exec("CREATE TRIGGER reject_terminal BEFORE INSERT ON job_queue WHEN NEW.queue = 'mailbox' BEGIN SELECT RAISE(ABORT, 'synthetic terminal rejection'); END");
+  let rejected = false;
+  try { await publish(); } catch (error) { rejected = String(error).includes('handler failure'); }
+  proof.rejected = { rejected, subscriptions: subscriptions().listBySession(session), jobs: jobs(), receipts: receipts() };
+  assert(rejected, 'rejected handoff must reject event routing');
+  assert.equal(subscriptions().listBySession(session).length, 1);
+  assert.equal(jobs().length, 0);
+  assert.equal(receipts().length, 0);
+  sql().exec('DROP TRIGGER reject_terminal');
+  await publish();
+  assert.equal(subscriptions().listBySession(session).length, 0);
+  assert.equal(jobs().length, 1);
+  assert.equal(receipts().length, 1);
+  const accepted = { jobs: jobs(), receipts: receipts() };
+  proof.accepted = accepted;
+  subscriptions().upsert({ sessionId: session, topic });
+  await publish();
+  assert.deepEqual({ jobs: jobs(), receipts: receipts() }, accepted);
+  assert.equal(subscriptions().listBySession(session).length, 0);
+  subscriptions().upsert({ sessionId: session, topic });
+  sql().prepare("UPDATE job_queue SET run_at = ? WHERE queue = 'mailbox'").run(Date.now() + 86400000);
+  await app!.cleanup(); app = undefined;
+  await open();
+  await publish();
+  assert.deepEqual({ jobs: jobs(), receipts: receipts() }, accepted);
+  assert.equal(subscriptions().listBySession(session).length, 0);
+  assert(new SessionExternalEventStore(sql()).getById(event.id));
+  assert.equal(sql().prepare('SELECT count(*) AS count FROM sdk_messages WHERE session_id = ?').get(session).count, 0);
+  proof.afterRestart = { jobs: jobs(), receipts: receipts(), canonicalEventPreserved: true };
+  proof.verified = true;
+  console.log(JSON.stringify({ verified: true, acceptanceReceipts: receipts().length, mailboxJobs: jobs().length }));
+} finally {
+  await app?.cleanup();
+  globalThis.fetch = network;
+  proof.resourcesStopped = true;
+  writeFileSync(join(run, 'evidence/terminal-acceptance.json'), JSON.stringify(proof, null, 2));
+}
