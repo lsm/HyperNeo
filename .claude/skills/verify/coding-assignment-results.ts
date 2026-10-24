@@ -19,6 +19,7 @@ const url = 'https://github.com/synthetic/assignments/pull/7';
 const write = { adapter: 'codex-desktop', id: 'author' };
 const ref = { adapter: 'hyperneo', id: 'review-session' };
 const actor = { kind: 'agent', id: ref.id, model: 'claude-opus-5-5', harness: ref.adapter } as const;
+const qaRef = { adapter: 'hyperneo', id: 'qa-session', daemon: 'fixture-daemon' };
 const assignment: CodingAssignment = { url, head: 'head-a', acceptanceContract: 'artifact:acceptance-7', newDispatch: true, write, ref, actor };
 const fact = { url, head: 'head-a', stage: 'review', actor, verdict: 'pass', acceptanceContract: assignment.acceptanceContract, evidence: ['artifact:observed-review-7'] };
 const network = globalThis.fetch;
@@ -48,7 +49,7 @@ try {
         db.exec("INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES ('synthetic-neo',NULL,'neo')");
         ledger.stageFacts.observeHead(url, 'head-a', 1);
         assert(await assignments.recordLater('todo', 'review', assignment));
-        assert(await assignments.recordLater('todo', 'qa', { ...assignment, ref: { ...ref, id: 'qa-session' }, actor: { ...actor, id: 'qa-session' } }));
+        assert(await assignments.recordLater('todo', 'qa', { ...assignment, ref: qaRef, actor: { ...actor, id: qaRef.id } }));
         assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: true });
         const mcp = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'synthetic-neo', role: 'neo' }));
         const refusal = await mcp({ name: 'neo.coding.result', input: { todoId: 'todo', ref: { ...ref, id: 'other' }, fact } });
@@ -59,13 +60,17 @@ try {
         evidence.push({ phase, surface: 'agent-mcp', refusal });
         for (const patch of [{ ref: { ...ref, id: 'author' } }, { fact: { ...fact, acceptanceContract: 'other' } }, { fact: { ...fact, actor: { ...actor, model: 'gpt-6' } } }, { fact: { ...fact, head: 'head-b' } }])
           assert.deepEqual(await rpc({ todoId: 'todo', ref, fact, ...patch }), { ok: false, reason: 'stage_assignment_mismatch' });
-        assert.deepEqual(await rpc({ todoId: 'todo', ref: { ...ref, id: 'qa-session' }, fact: { ...fact, actor: { ...actor, id: 'qa-session' }, stage: 'qa', verdict: 'inconclusive' } }), { ok: true });
+        assert.deepEqual(await rpc({ todoId: 'todo', ref: qaRef, fact: { ...fact, actor: { ...actor, id: qaRef.id }, ref: { ...qaRef, id: 'unassigned-claim' }, stage: 'qa', verdict: 'inconclusive' } }), { ok: true });
         assert.equal(ledger.stageFacts.read(url).length, 2);
+        evidence.push({ phase, storedResults: ledger.stageFacts.read(url) });
+        const observedRefs = Object.fromEntries(ledger.stageFacts.read(url).map(result => [result.stage, Reflect.get(result, 'ref')]));
+        assert.deepEqual(observedRefs, { review: ref, qa: qaRef });
       } else {
         const stored = assignments.read('todo', url, 'head-a');
         assert.deepEqual(stored.review, assignment);
         assert.equal(stored.qa?.ref?.id, 'qa-session');
         assert.equal(ledger.stageFacts.read(url).length, 2);
+        assert.deepEqual(Object.fromEntries(ledger.stageFacts.read(url).map(result => [result.stage, Reflect.get(result, 'ref')])), { review: ref, qa: qaRef });
         evidence.push({ phase, assignments: stored, results: ledger.stageFacts.read(url) });
         assert.deepEqual(await rpc({ todoId: 'todo', ref, fact: { ...fact, verdict: 'fail' } }), { ok: true });
         assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: false, reason: 'head_changed_or_failed_stage' });
