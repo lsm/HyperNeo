@@ -249,32 +249,35 @@ describe('mailSessionEvent', () => {
     }
   });
 
-  test('a rejected enqueue leaves no acceptance receipt and can be retried', async () => {
-    const db = createMailboxTestDb();
-    const delivery = {
-      sessionId: 's1',
-      messageUuid: 'ev-retry',
-      text: 'PR #7 closed',
-      mode: 'immediate' as const,
-    };
-    try {
-      db.db.exec(
-        "CREATE TRIGGER reject_mailbox BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'synthetic mailbox unavailable'); END"
-      );
-      expect(await mailSessionEvent(db.jobQueue, delivery)).toMatchObject({
-        kind: 'rejected',
-        reason: expect.stringContaining('synthetic mailbox unavailable'),
-      });
-      expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toEqual([]);
-      expect(db.jobsByQueue('mailbox')).toEqual([]);
-      db.db.exec('DROP TRIGGER reject_mailbox');
-      expect((await mailSessionEvent(db.jobQueue, delivery)).kind).toBe('enqueued');
-      expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toHaveLength(1);
-      expect(db.jobsByQueue('mailbox')).toHaveLength(1);
-    } finally {
-      db.close();
+  test.each(['job_queue', 'message_send_receipts'])(
+    'a failed %s insert rolls back acceptance and can be retried',
+    async (table) => {
+      const db = createMailboxTestDb();
+      const delivery = {
+        sessionId: 's1',
+        messageUuid: 'ev-retry',
+        text: 'PR #7 closed',
+        mode: 'immediate' as const,
+      };
+      try {
+        db.db.exec(
+          `CREATE TRIGGER reject_mailbox BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'synthetic mailbox unavailable'); END`
+        );
+        expect(await mailSessionEvent(db.jobQueue, delivery)).toMatchObject({
+          kind: 'rejected',
+          reason: expect.stringContaining('synthetic mailbox unavailable'),
+        });
+        expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toEqual([]);
+        expect(db.jobsByQueue('mailbox')).toEqual([]);
+        db.db.exec('DROP TRIGGER reject_mailbox');
+        expect((await mailSessionEvent(db.jobQueue, delivery)).kind).toBe('enqueued');
+        expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toHaveLength(1);
+        expect(db.jobsByQueue('mailbox')).toHaveLength(1);
+      } finally {
+        db.close();
+      }
     }
-  });
+  );
 });
 
 describe('SessionEventSubscriptionRepository.listAll', () => {

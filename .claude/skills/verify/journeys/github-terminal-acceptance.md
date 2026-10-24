@@ -17,7 +17,8 @@ fail, retain the subscription and create neither a job nor an acceptance receipt
 After removing the trigger, retry the same persisted event: one mailbox job and
 receipt survive, then the subscription is removed. Re-registering and routing
 again, including after restart, must not duplicate the job. Canonical event
-history remains intact.
+history remains intact. Before restarting, the fixture defers its queued job for
+one day so startup cannot consume it before the processor is stopped again.
 
 Inspect `evidence/terminal-acceptance.json` and the captured daemon log. This proves
 durable queue acceptance through real app wiring, not worker consumption or

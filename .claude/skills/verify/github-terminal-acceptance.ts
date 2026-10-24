@@ -62,6 +62,7 @@ try {
   assert.deepEqual({ jobs: jobs(), receipts: receipts() }, accepted);
   assert.equal(subscriptions().listBySession(session).length, 0);
   subscriptions().upsert({ sessionId: session, topic });
+  sql().prepare("UPDATE job_queue SET run_at = ? WHERE queue = 'mailbox'").run(Date.now() + 86400000);
   await app!.cleanup(); app = undefined;
   await open();
   await publish();
