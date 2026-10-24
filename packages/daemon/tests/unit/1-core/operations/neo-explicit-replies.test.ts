@@ -58,7 +58,7 @@ beforeEach(async () => {
   await db.createSession(createTestSession(sessionId));
   service = createNeoService(
     db,
-    {} as SessionManager,
+    { getCachedSession: mock(() => undefined) } as unknown as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,
     new InternalEventBus<DaemonInternalEventMap>()
   );
@@ -99,6 +99,11 @@ test('questions retain explicit human references without marking them answered',
   expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
     value: { ok: true, question: { replyTo: [id] } },
   });
+  expect(service.sessions.getCachedSession).not.toHaveBeenCalled();
+  expect(service.publications.list(conversationId)).toMatchObject([
+    { cardReply: { sourceMessageIds: [id], askId: 'work' } },
+  ]);
+  expect(service.publications.list(conversationId)?.[0].replyTo).toBeUndefined();
   const stored = service.todos.listQuestions('work')[0];
   expect(await invoke('neo.question.get', { questionId: stored.id })).toMatchObject({
     value: { ok: true, question: { replyTo: [id] } },
