@@ -130,6 +130,36 @@ describe('ledger HTTP polling pages', () => {
     }
   });
 
+  test('overlapping cycles share one complete observation and both consume its response', async () => {
+    const { db, facts } = setup();
+    let calls = 0;
+    const request = async () => {
+      calls++;
+      return response();
+    };
+    try {
+      const peer = new CodingPrLedgerRepository(db).pollFacts;
+      const results = await Promise.allSettled([
+        facts.collect(subject, 'cycle-a', null, request, () => 100),
+        peer.collect(subject, 'cycle-b', null, request, () => 100),
+      ]);
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+      const responses = results.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value] : []
+      );
+      expect(await Promise.all(responses.map((result) => result.json()))).toEqual([
+        [{ id: 7 }],
+        [{ id: 7 }],
+      ]);
+      expect(calls).toBe(1);
+      expect(facts.read(subject, 100, Infinity).observationRevision).toBe(1);
+      await (await peer.collect(subject, 'cycle-c', null, request, () => 110)).text();
+      expect(calls).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a valid 304 refreshes its metadata without changing the fact; mismatched validators stay unknown', async () => {
     const { db, facts } = setup();
     try {

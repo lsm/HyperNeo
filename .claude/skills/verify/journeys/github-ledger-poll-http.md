@@ -20,7 +20,9 @@ daemon and loopback HTTP fixture on ephemeral ports. Migration/reopen must keep
 old rows/raw JSON/revisions unchanged and new metadata NULL. Three sequential
 local calls in one cycle make one HTTP request. A later cycle validates with
 304, retains known body/rate coverage without a fact change, and exposes a 503
-as unknown. Daemon restart retains that failure and recovery preserves the fact
+as unknown. Two overlapping distinct cycles must also both consume one complete
+observation from one upstream request, without a superseded-record failure.
+Daemon restart retains that failure and recovery preserves the fact
 revision. Inspect `evidence/poll-http.json`; no credentials, auth files, real
 GitHub, model, GUI, live DB or port 8399 are used. Resources close in finally.
 

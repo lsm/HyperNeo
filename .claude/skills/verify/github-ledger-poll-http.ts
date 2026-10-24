@@ -55,6 +55,12 @@ try {
       const failed = await facts.collect(subject, 'cycle-three', null, request('/failure'), () => 120);
       assert.equal(failed.status, 503); await failed.text();
       assert.equal(facts.read(subject, 120, 100).page.status, 'unknown');
+      const overlapSubject = { ...subject, url: `${subject.url}&overlap=1` }, beforeOverlap = requests;
+      const peer = new CodingPrLedgerRepository(db).pollFacts;
+      const overlap = await Promise.all([facts.collect(overlapSubject, 'overlap-a', null, request(), () => 125), peer.collect(overlapSubject, 'overlap-b', null, request(), () => 125)]);
+      assert.deepEqual(await Promise.all(overlap.map(response => response.json())), [[{ id: 7 }], [{ id: 7 }]]);
+      assert.equal(requests - beforeOverlap, 1); assert.equal(facts.read(overlapSubject, 125, Infinity).observationRevision, 1);
+      evidence.overlappingCycles = { consumersAccepted: 2, upstreamRequests: 1, observations: 1 };
       evidence.validation = { valid304: true, rateHeadersPreserved: true, metadataOnlyFactRevision: 1, failureUnknown: true };
     } else {
       assert.equal(facts.read(subject, 120, 100).page.status, 'unknown');
