@@ -156,7 +156,41 @@ export const sdkDeliveryFencedStatus = sdkOp(
   (args: Parameters<JobQueueRepository['transitionDeliverySendStatusFenced']>[0], deps) =>
     deps.jobQueue.transitionDeliverySendStatusFenced(args)
 );
+export const sdkPendingRemoval = sdkOp(
+  'pendingRemoval',
+  (
+    args: {
+      sessionId: string;
+      messageDbId: string;
+      mode: 'remove' | 'defer';
+      expectedStatus?: 'deferred';
+      withdrawalJobId?: string;
+    },
+    deps
+  ) => {
+    const { sessionId, messageDbId } = args;
+    const removed =
+      args.mode === 'remove'
+        ? deps.sdkMessageRepo.deletePendingUserMessage(sessionId, messageDbId, args.expectedStatus)
+        : deps.sdkMessageRepo.deferEnqueuedUserMessage(sessionId, messageDbId);
+    if (removed?.uuid) {
+      deps.changes.notifyChange('sdk_messages', { sessionId });
+      if (
+        args.withdrawalJobId &&
+        !deps.jobQueue.markDeadIfActive(args.withdrawalJobId, 'driver_input_withdrawn', [
+          'dead',
+          'completed',
+        ])
+      )
+        throw new Error('Input withdrawal was superseded.');
+      deps.jobQueue.cancelDelivery(sessionId, removed.uuid);
+      deps.changes.notifyChange('job_queue', { sessionId });
+    }
+    return removed;
+  }
+);
 export const SDK_MESSAGE_TRANSACTIONS = [
+  sdkPendingRemoval,
   sdkPromptEnsure,
   sdkPromptActivate,
   sdkPromptRetry,
