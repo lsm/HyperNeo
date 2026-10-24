@@ -1,3 +1,5 @@
+import type { DbGateway } from './db-gateway/db-gateway.ts';
+import { ChangeRecorder, defineDbOp } from './db-gateway/db-op.ts';
 import type { Database as BunDatabase } from './sqlite-compat.ts';
 
 const BODY_CHARS = 16_000;
@@ -76,22 +78,31 @@ export function saveWorkFeedChunk(
   knownWorkFeedOffsets(db).set(path, Object.freeze({ ...offset }));
 }
 
-async function deleteWorkFeedSessions(
+export const deleteWorkFeedBatch = defineDbOp({
+  name: 'workFeed.deleteBatch',
+  mode: 'write',
+  run: (db: BunDatabase, { kind, sessions }: { kind: WorkFeedKind; sessions: string }): number =>
+    db
+      .prepare(
+        `DELETE FROM message_search_content WHERE id IN (
+           SELECT id FROM message_search_content INDEXED BY idx_message_search_content_feed_turns
+           WHERE kind IN ('codex', 'claude') AND kind = ?
+             AND session_id IN (SELECT value FROM json_each(?)) LIMIT ${DELETE_BATCH_ROWS}
+         )`
+      )
+      .run(kind, sessions).changes,
+});
+
+export async function deleteWorkFeedSessions(
   db: BunDatabase,
   kind: WorkFeedKind,
   sessionIds: readonly string[]
 ): Promise<number> {
-  const remove = db.prepare(
-    `DELETE FROM message_search_content WHERE id IN (
-       SELECT id FROM message_search_content INDEXED BY idx_message_search_content_feed_turns
-       WHERE kind IN ('codex', 'claude') AND kind = ?
-         AND session_id IN (SELECT value FROM json_each(?)) LIMIT ${DELETE_BATCH_ROWS}
-     )`
-  );
+  if (sessionIds.length === 0) return 0;
   const sessions = JSON.stringify(sessionIds);
   let total = 0;
   for (;;) {
-    const changed = remove.run(kind, sessions).changes;
+    const changed = deleteWorkFeedBatch.run(db, { kind, sessions }, new ChangeRecorder());
     if (changed === 0) return total;
     total += changed;
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -123,10 +134,12 @@ export function rereadWorkFeedPaths(db: BunDatabase, paths: readonly string[]): 
 }
 
 export async function purgeWorkFeedSessions(
-  db: BunDatabase,
+  db: DbGateway,
   kind: WorkFeedKind,
   sessionIds: readonly string[]
 ): Promise<void> {
   if (sessionIds.length === 0) return;
-  await deleteWorkFeedSessions(db, kind, sessionIds);
+  const sessions = JSON.stringify(sessionIds);
+  while ((await db.run(deleteWorkFeedBatch, { kind, sessions })) > 0)
+    await new Promise((resolve) => setTimeout(resolve, 0));
 }

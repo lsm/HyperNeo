@@ -5,7 +5,7 @@ import type { JobQueueRepository } from '../../storage/repositories/job-queue-re
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import {
-  purgeWorkFeedSessions,
+  deleteWorkFeedSessions,
   readWorkFeedOffsets,
   type WorkFeedTurn,
 } from '../../storage/work-feed.ts';
@@ -173,7 +173,7 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
       purge?: (sessionIds: string[]) => Promise<void>
     ) =>
       runLagPhase('feed:claude:purge', () =>
-        purge ? purge([...hyperneo]) : purgeWorkFeedSessions(db, 'claude', [...hyperneo])
+        purge ? purge([...hyperneo]) : deleteWorkFeedSessions(db, 'claude', [...hyperneo])
       ),
     ['db', 'hyperneo', 'purge'],
     'purged'

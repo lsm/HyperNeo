@@ -41,31 +41,6 @@ vi.mock('../src/storage/sdk-message-body-admission.ts', async (importOriginal) =
   };
 });
 
-vi.mock('../src/lib/external-events/session-event-writer.ts', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../src/lib/external-events/session-event-writer.ts')>();
-  return {
-    ...actual,
-    SessionEventWriter: class extends actual.SessionEventWriter {
-      constructor(...args: ConstructorParameters<typeof actual.SessionEventWriter>) {
-        super(
-          args[0],
-          args[1] ??
-            (() =>
-              new SDKBunWorkerBridge(
-                new URL(
-                  '../src/lib/external-events/session-event-writer-worker.ts',
-                  import.meta.url
-                ).href
-              ) as unknown as Worker),
-          args[2],
-          args[3]
-        );
-      }
-    },
-  };
-});
-
 vi.mock('../src/storage/db-gateway/db-gateway.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/storage/db-gateway/db-gateway.ts')>();
   return {
