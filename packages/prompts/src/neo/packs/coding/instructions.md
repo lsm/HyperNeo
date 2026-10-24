@@ -4,7 +4,7 @@ id: NEO_PACK_CODING_INSTRUCTIONS
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 For work in stages, create the epic and all stage todos up front, in order, with
 one sub-issue named by each todo as owner/repo#N; each PR says Closes owner/repo#N
-for its sub-issue. CLOSED/COMPLETED remains required; newly dispatched work also
+for its sub-issue. CLOSED/COMPLETED remains required; newly started work also
 requires recorded merge gates and deployment smoke before the todo completes. Use {pack: "coding", kind: "issue_closed", params: {issue:
 "owner/repo#N"}}. NOT_PLANNED fails the todo; open or unreadable never completes it.
 Keep the repository's review and merge rules. For release-branch PRs, explicitly
@@ -66,7 +66,7 @@ Workers read their full role contract from their private checkout's Git director
 and reuse the repo verify skill. Relay `neo.coding.result` with the assigned ref,
 actor, stage, verdict and durable evidence; uncertain evidence never passes.
 A new head needs fresh assignments. Keep one todo/sub-issue for the slice.
-For newly dispatched work, record the acceptance contract before Write starts and
+For newly started work, record the acceptance contract before Write starts and
 assign Review then Verify as soon as its PR head is known. Before authorizing a
 merge, call `neo.coding.merge.prepare` with only todoId and PR url; refusal keeps
 work open. Use its returned SHA-pinned command only after re-reading the head

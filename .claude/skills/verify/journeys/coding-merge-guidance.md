@@ -19,7 +19,10 @@ require a fresh head and SHA pin rather than an unconditional merge instruction.
 The production coding-worker goal formatter supplies the exact manual squash
 command with `--match-head-commit`, a head reread immediately before merge, and
 the existing ban on auto-merge. A merge does not replace a remaining recorded
-smoke/deployment condition. The helper ends with `verified: true`, closes the app
+smoke/deployment condition. The assembled root Neo pack briefing also names
+merge admission and post-deploy smoke without retired coordinator routing terms
+(the separately owned focused-discussion contract is excluded from that check).
+The helper records that model-facing briefing and ends with `verified: true`, closes the app
 in finally and forbids external direct HTTP. No merge or deployment is executed.
 Keep the evidence outside the worktree.
 

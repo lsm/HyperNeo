@@ -6,6 +6,9 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingPrEventRepository, deliverCodingPrEvents } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
 import { CodingPrSweepRepository, sweepCodingPrs } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
+import { NEO_FOCUSED_DISCUSSION } from '../../../packages/prompts/src/mod.ts';
+import { neoPrompt } from '../../../packages/daemon/src/lib/neo/prompt.ts';
+import { neoSettingsPackBriefs } from '../../../packages/daemon/src/lib/neo/packs/index.ts';
 import { withCodingWorkGoal } from '../../../packages/daemon/src/lib/neo/packs/coding/work-goal.ts';
 
 const run = resolve(process.argv[2]);
@@ -49,6 +52,11 @@ try {
   assert(prompt.includes('immediately before'));
   assert(prompt.includes('Never enable GitHub auto-merge'));
   assert(prompt.includes('remaining recorded deployment or Verify smoke condition'));
+  const briefing = neoPrompt(neoSettingsPackBriefs());
+  evidence.push({ surface: 'production root Neo coding pack briefing', prompt: briefing });
+  assert(briefing.includes('neo.coding.merge.prepare'));
+  assert(briefing.includes('neo.coding.smoke'));
+  assert(!/holder|consult|forward|dispatch/i.test(briefing.replace(NEO_FOCUSED_DISCUSSION, '')));
   evidence.push({ verified: true });
   console.log('PASS: review/CI notifications require merge gates; worker prompt requires a freshly read SHA-pinned manual command. No merge executed.');
 } catch (error) { evidence.push({ error: String(error) }); throw error; }
