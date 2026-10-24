@@ -1,3 +1,4 @@
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -10,7 +11,7 @@ import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src
 
 const [mode, portText, runText] = process.argv.slice(2);
 const port = Number(portText), run = resolve(runText);
-assert(['reproduce', 'verify', 'resume-reproduce', 'resume-verify'].includes(mode));
+assert(['reproduce', 'verify', 'resume-reproduce', 'resume-verify', 'reconciliation-verify'].includes(mode));
 const resume = mode.startsWith('resume-');
 const committed = Date.parse('2026-01-01T00:00:00Z');
 const occurred = '2026-01-01T00:01:00Z';
@@ -25,13 +26,14 @@ mkdirSync(join(run, 'bin'));
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 const repos = resume ? ['resume-4', 'resume-5', 'resume-6'] : ['a-heavy', 'b-phone', 'c-ops', 'd-research'];
-let cycle = 0, remaining = 40;
+let cycle = 0, remaining = 40, stall = false;
 const calls: string[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request) => {
   const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
   assert.equal(url.hostname, 'api.github.com', `unmocked network: ${url.hostname}`);
   calls.push(url.pathname);
+  if (stall) return Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'X-RateLimit-Remaining': '0', 'Retry-After': '60' } });
   const repo = url.pathname.split('/')[3];
   let body: unknown = [];
   if (resume) {
@@ -67,13 +69,13 @@ await new Promise<void>(done => broker.listen(0, '127.0.0.1', done));
 const brokerPort = (broker.address() as { port: number }).port;
 assert(brokerPort !== 8399);
 writeFileSync(join(run, 'bin/gh'), `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] !== 'api' || !args.includes('--include')) process.exit(2);\nconst response = await fetch('http://127.0.0.1:${brokerPort}', {method:'POST', body:JSON.stringify(args)});\nprocess.stdout.write(await response.text());\n`, { mode: 0o700 });
-const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+let app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 let ws: WebSocket | undefined;
 const evidence: unknown[] = [];
 try {
   await app.jobProcessor.stop();
-  const db = app.db.getDatabase();
-  const github = app.extensionManager.getExtension('github') as GitHubEventExtension;
+  let db = app.db.getDatabase();
+  let github = app.extensionManager.getExtension('github') as GitHubEventExtension;
   assert(github instanceof GitHubEventExtension);
   const config = new ExternalEventExtensionConfigStore(db);
   await config.setGlobalConfig('github', { source: 'github', globallyEnabled: true, capabilities: { polling: true, rpcConfig: true } });
@@ -93,6 +95,20 @@ try {
   }
   const heavy = github.repo.getWatchedRepo('sessions', 'verify-test', 'a-heavy');
   if (!resume) github.repo.updatePollCursorJson(heavy!.id, { lastSeenAt: 0, recentPullRequestHeadShas: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [i + 1, `head-${i + 1}`])) });
+  if (mode === 'reconciliation-verify') {
+    db.exec(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('fixture-ask','${sessionId}','Ask','Request','open',1,1);
+      INSERT INTO neo_todos (id,ask_id,position,title,done_when,repo,check_json,state,created_at,updated_at) VALUES ('fixture-todo','fixture-ask',0,'Todo','Done','verify-test/z-todo','{"pack":"coding","kind":"pr","params":{}}','doing',1,1)`);
+    for (const repo of github.repo.listPollingRepos()) github.repo.removeWatchedRepo(repo.spaceId, repo.owner, repo.repo);
+    assert.equal(github.repo.listPollingRepos().length, 0);
+    await app.cleanup();
+    app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+    await app.jobProcessor.stop();
+    db = app.db.getDatabase();
+    github = app.extensionManager.getExtension('github') as GitHubEventExtension;
+    assert.equal(github.repo.listPollingRepos().length, 5, 'startup must restore subscription and todo-only watches');
+    for (const repo of repos.slice(1)) github.repo.removeWatchedRepo('sessions', 'verify-test', repo);
+    evidence.push({ startupRestored: true, deletedBeforeCycle: repos.slice(1) });
+  }
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const poll = () => new Promise<unknown>((done, fail) => {
@@ -109,7 +125,7 @@ try {
   for (cycle = 1; cycle <= (mode === 'reproduce' ? 1 : 3); cycle++) {
     calls.length = 0; remaining = 40;
     const reply = await poll();
-    if (cycle === 1 && !resume) assert(calls[0].includes('/a-heavy/'));
+    if (cycle === 1 && !resume && mode !== 'reconciliation-verify') assert(calls[0].includes('/a-heavy/'));
     const polled = github.repo.listPollingRepos().map((repo) => ({ repo: repo.repo, lastPollAt: repo.lastPollAt, resume: repo.pollCursor }));
     const events = db.prepare('SELECT topic, payload_json FROM session_external_events').all() as { topic: string; payload_json: string }[];
     const approvals = repos.slice(1).filter(repo => events.some(event => event.topic.includes(`/${repo}/`) && JSON.parse(event.payload_json).reviewId === String(cycle * 1000 + repos.indexOf(repo))));
@@ -142,6 +158,23 @@ try {
       assert(remaining >= 10);
       assert((queued as { count: number }).count >= cycle * 3);
     }
+  }
+  if (mode === 'reconciliation-verify') {
+    assert(github.repo.getWatchedRepo('sessions', 'verify-test', 'z-todo'));
+    db.exec("UPDATE neo_todos SET state='done' WHERE id='fixture-todo'");
+    remaining = 40;
+    await poll();
+    assert.equal(github.repo.getWatchedRepo('sessions', 'verify-test', 'z-todo'), null);
+    evidence.push({ todoWatchRetainedUntilDone: true });
+    new NeoRepository(db).reserveBinding({ sessionId, projectId: null, kind: 'neo' });
+    stall = true;
+    for (let miss = 0; miss < 4; miss++) await poll();
+    const health = db.prepare("SELECT repo, health_json FROM pack_coding_repo_health WHERE repo LIKE 'polling:%'").all() as { repo: string; health_json: string }[];
+    const notices = health.flatMap(row => JSON.parse(row.health_json).notices ?? []);
+    assert(notices.length >= 4, 'each stalled watched repo must raise a concern');
+    assert(notices.every(notice => notice.acceptedAt !== null), 'Neo mailbox must accept concerns');
+    const jobs = db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").all();
+    evidence.push({ staleHealth: health, mailbox: jobs });
   }
   console.log(`${resume ? mode : mode === 'reproduce' ? 'REPRODUCED starvation' : 'PASS: every small repo approval is published each cycle'}; ${run}/evidence/polling.json`);
 } finally {

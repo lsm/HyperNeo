@@ -1,3 +1,8 @@
+import {
+  GitHubWatchInventory,
+  reportGitHubWatchHealth,
+} from './lib/external-events/github/github-watch-inventory.ts';
+import { CodingPrLedgerRepository } from './lib/neo/packs/coding/pr-ledger.ts';
 import { createSessionScheduleFire } from './lib/scheduler/session-schedule-fire.ts';
 import { createScheduleDelivery } from './lib/scheduler/session-schedule-delivery.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
@@ -974,6 +979,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         readLatestPrState: (subject) => db.gateway.run(readLatestSessionPrState, subject),
         publish: (event) => sessionExternalEventService.publish(event),
       });
+    const watchInventory = new GitHubWatchInventory(db.getDatabase(), sessionEventSubscriptions);
+    let wakePollingConcern = async (_key: string, _text: string): Promise<boolean> => false;
     const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
@@ -992,8 +999,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,
         autoReconcileWebhooks: true,
-        sessionRepoReferenced: (owner, repo) =>
-          sessionEventSubscriptions.referencesRepo(owner, repo),
+        sessionWatchRepos: () => watchInventory.list(),
+        sessionRepoReferenced: (owner, repo) => watchInventory.references(owner, repo),
+        reportPollingHealth: (repos, reached, now) =>
+          reportGitHubWatchHealth(
+            new CodingPrLedgerRepository(db.getDatabase()),
+            repos,
+            reached,
+            wakePollingConcern,
+            now
+          ),
         subscribedPullRequests: (watched) =>
           pullRequestNumbersOfTopics(
             watched.spaceId === SESSION_EVENT_SCOPE
@@ -1141,6 +1156,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceAgentInactivityWatchdog,
       cancelInactivityWatchdog,
     } = rpcHandlers;
+    wakePollingConcern = rpcHandlers.wakePollingConcern;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
     startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
