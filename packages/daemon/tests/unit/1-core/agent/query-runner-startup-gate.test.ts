@@ -308,13 +308,24 @@ describe('QueryRunner startup gate', () => {
       return controlled.queryObject;
     };
     const { runner, ctx } = createRunner('neo:root', { messageQueue: queue });
+    const sqlite = new SQLite(':memory:');
+    createNeoTables(sqlite);
+    sqlite.exec(
+      "INSERT INTO neo_session_bindings(session_id,concern_id,kind) VALUES ('neo:root',NULL,'neo')"
+    );
+    Object.assign(ctx.db, { getDatabase: () => sqlite });
     const first = queue.enqueueWithId('system-event', 'First', false, { durable: true });
     const second = queue.enqueueWithId('human-input', 'Second', false, { durable: true });
     try {
       await runner.start();
       await waitFor(() => spawned.length === 1);
-      expect((await inputs[0].next()).value?.uuid).toBe('system-event');
-      expect((await inputs[0].next()).value?.uuid).toBe('human-input');
+      const firstWire = (await inputs[0].next()).value!;
+      const secondWire = (await inputs[0].next()).value!;
+      expect(firstWire.uuid).not.toBe('system-event');
+      expect(secondWire.uuid).not.toBe('human-input');
+      expect(firstWire.uuid).not.toBe(secondWire.uuid);
+      expect(runner.retryPromptIdentity.incoming(firstWire).uuid).toBe('system-event');
+      expect(runner.retryPromptIdentity.incoming(secondWire).uuid).toBe('human-input');
       const end = inputs[0].next();
       await Promise.all([first, second]);
       deliverFirstMessage(spawned[0]);
@@ -329,6 +340,7 @@ describe('QueryRunner startup gate', () => {
       queue.clear();
       queue.stop();
       await Promise.allSettled([first, second, ctx.queryPromise]);
+      sqlite.close();
     }
   });
 

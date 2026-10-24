@@ -54,6 +54,7 @@ import {
 } from './query-retry-routing.ts';
 import { type QuestionInputOriginSource, QuestionInputScope } from './question-input-origin.ts';
 import { RetryPromptIdentity } from './retry-prompt-identity.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
 import {
@@ -2219,7 +2220,10 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield this.retryPromptIdentity.outgoing(message);
+      yield this.retryPromptIdentity.outgoing(
+        message,
+        !!neoCoordinatorBinding(this.ctx.db, session.id)
+      );
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
     }
