@@ -72,6 +72,9 @@ try {
         assert.equal(await ledger.write('recordStage', fact), false);
         assert(await ledger.write('recordStage', { ...fact, head: 'head-b' }));
         assert(await ledger.write('recordStage', { ...fact, head: 'head-b', stage: 'qa', verdict: 'inconclusive' }));
+        await todos.write('record', 'todo-7', [{ url, head: 'head-a', state: 'OPEN', checks: 'passing', review: 'approved' }], 1);
+        assert.equal(todos.stages('todo-7').length, 2, 'An older read must not erase current-head facts');
+        assert.equal(await ledger.write('recordStage', fact), false, 'Old head must stay rejected');
         await todos.write('record', 'todo-7', [{ url, head: 'head-c', state: 'OPEN', checks: 'passing', review: 'approved' }], 3);
         assert.deepEqual(todos.stages('todo-7'), []);
         evidence.push({ phase, afterPush: todos.stages('todo-7'), todo: db.prepare("SELECT state FROM neo_todos WHERE id = 'todo-7'").get() });

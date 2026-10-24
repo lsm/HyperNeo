@@ -58,6 +58,11 @@ describe('coding stage facts', () => {
       ledger.replace('synthetic/stages', [row('head-a')], 2);
       expect(ledger.stageFacts.read(url)).toHaveLength(2);
       ledger.replace('synthetic/stages', [row('head-b')], 3);
+      todos.record(
+        'todo-7',
+        [{ url, head: 'head-a', state: 'OPEN', checks: 'passing', review: 'none' }],
+        2
+      );
       expect(todos.stages('todo-7')).toEqual([]);
       expect(ledger.recordStage(fact)).toBe(false);
       ledger.replace('synthetic/stages', [row('head-a')], 4);
@@ -83,6 +88,7 @@ describe('coding stage facts', () => {
       expect(ledger.stageFacts.read(url)).toEqual([]);
       expect(() => ledger.recordStage({ ...fact, head: 'head-b', evidence: [] })).toThrow();
       expect(ledger.recordStage({ ...fact, head: 'head-b', verdict: 'fail' })).toBe(true);
+      expect(ledger.recordStage({ ...fact, head: 'head-b', verdict: 'pass' })).toBe(false);
       expect(ledger.stageFacts.read(url)[0].verdict).toBe('fail');
     } finally {
       db.close();
@@ -123,6 +129,7 @@ describe('coding provenance policy', () => {
       for (const [author, model] of [
         ['GPT-6', 'gpt-6-2026-09'],
         ['GPT-6', 'openai/gpt-6'],
+        ['GPT-6', 'gpt 6'],
         ['Claude Opus 5.5', 'claude-opus-5-5'],
         ['GPT-6', 'unidentified-model'],
         ['unidentified-model', 'claude-opus-5-5'],
