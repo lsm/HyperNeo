@@ -6,7 +6,7 @@ import { invokeOperation } from '../../lib/operations.ts';
 import { Button } from '../ui/Button';
 
 type Scope = { kind: 'global' | 'repo'; key: string };
-type Key = 'mergePolicy' | 'reviewBot' | 'humanSignoff';
+type Key = 'mergePolicy' | 'reviewBot' | 'humanSignoff' | 'watchedRepos';
 
 const MERGE_POLICIES = [
   ['review_bot', 'CI and review bot approval'],
@@ -28,6 +28,7 @@ export function CodingPackSettings() {
   const [repo, setRepo] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [watchDraft, setWatchDraft] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   async function load() {
@@ -44,9 +45,17 @@ export function CodingPackSettings() {
     );
   }, []);
 
+  const watched = rows?.find((row) => row.key === 'watchedRepos' && sameScope(row.scope, GLOBAL));
+  const savedWatches = Array.isArray(watched?.value)
+    ? watched.value.filter((value): value is string => typeof value === 'string')
+    : [];
+  const watchText = watchDraft ?? savedWatches.join('\n');
   const repoName = repo.trim();
   const repos = [
-    ...new Set(rows?.filter((row) => row.scope.kind === 'repo').map((row) => row.scope.key)),
+    ...new Set([
+      ...savedWatches,
+      ...(rows?.filter((row) => row.scope.kind === 'repo').map((row) => row.scope.key) ?? []),
+    ]),
   ];
   const scope: Scope = repoName
     ? {
@@ -76,11 +85,11 @@ export function CodingPackSettings() {
   const setBot = (text: string) => setDrafts({ [botDraft]: text, [globsDraft]: globs });
   const setGlobs = (text: string) => setDrafts({ [botDraft]: bot, [globsDraft]: text });
 
-  async function save(key: Key, value: unknown) {
+  async function save(key: Key, value: unknown, targetScope: Scope = scope) {
     setSaving(true);
     setError('');
     try {
-      const address = { pack: 'coding', scope, key };
+      const address = { pack: 'coding', scope: targetScope, key };
       const result = await invokeOperation<{ ok: true } | { ok: false; reason: string }>(
         hub(),
         'pack.preferences.set',
@@ -94,13 +103,17 @@ export function CodingPackSettings() {
       );
       if (
         !preference ||
-        !sameScope(preference.scope, scope) ||
+        !sameScope(preference.scope, targetScope) ||
         JSON.stringify(preference.value) !== JSON.stringify(value)
       )
-        throw new Error(`The saved ${key} did not read back for ${scopeName}.`);
+        throw new Error(
+          `The saved ${key} did not read back for ${targetScope.kind === 'repo' ? targetScope.key : 'pack global'}.`
+        );
       await load();
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save the Coding pack setting.');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -129,10 +142,54 @@ export function CodingPackSettings() {
       <div>
         <h4 class="text-[13px] font-semibold text-fg">Coding pack</h4>
         <p class="text-xs text-fg-faint mt-0.5">
-          How Neo merges pull requests. Answers for a repository override pack global; a repository
-          without its own answer uses pack global. Only you can change these.
+          Repositories this instance watches and how Neo merges pull requests. Answers for a
+          repository override pack global; a repository without its own answer uses pack global.
+          Only you can change these.
         </p>
       </div>
+      {rows !== null
+        ? field(
+            'Watched repositories',
+            'For this instance',
+            <div class="space-y-1.5">
+              <p class="text-xs text-fg-soft">
+                One owner/repository per line. Leave empty to watch nothing.
+              </p>
+              {savedWatches.length === 0 ? (
+                <p class="text-xs text-fg-soft">No repositories watched.</p>
+              ) : null}
+              <textarea
+                aria-label="Watched repositories"
+                rows={3}
+                class={input}
+                placeholder="owner/repository"
+                value={watchText}
+                disabled={saving}
+                onInput={(event) => setWatchDraft(event.currentTarget.value)}
+              />
+              <div class="flex justify-end">
+                <Button
+                  size="sm"
+                  aria-label="Save watched repositories"
+                  disabled={saving}
+                  onClick={async () => {
+                    const values = [
+                      ...new Set(
+                        watchText
+                          .split('\n')
+                          .map((line) => line.trim().toLowerCase())
+                          .filter(Boolean)
+                      ),
+                    ];
+                    if (await save('watchedRepos', values, GLOBAL)) setWatchDraft(null);
+                  }}
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+          )
+        : null}
       <label class="block space-y-1">
         <span class="text-xs text-fg-soft">Repository</span>
         <input
