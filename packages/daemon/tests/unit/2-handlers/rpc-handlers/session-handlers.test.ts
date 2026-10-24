@@ -2520,9 +2520,13 @@ describe('Session RPC Handlers — session.retryNowAfterRateLimit', () => {
     );
 
     expect(result).toEqual({ success: true });
-    expect(getSessionAsync).toHaveBeenCalledWith('space:s1:task:t1:post-approval:worker', {
-      startQuery: false,
-    });
+    expect(getSessionAsync).toHaveBeenCalledWith(
+      'space:s1:task:t1:post-approval:worker',
+      {
+        startQuery: false,
+      },
+      false
+    );
     expect(retryNowAfterRateLimit).toHaveBeenCalledTimes(1);
   });
 });
@@ -2581,9 +2585,13 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
     expect(result.success).toBe(true);
     expect(replacement.calls).toEqual(['restart', 'replay']);
     expect(stale.calls).toEqual([]);
-    expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('resume-session', {
-      startQuery: false,
-    });
+    expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
+      'resume-session',
+      {
+        startQuery: false,
+      },
+      false
+    );
   });
 
   it('reports a failed resume when the post-choice lookup finds no session', async () => {

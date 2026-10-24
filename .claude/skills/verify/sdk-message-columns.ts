@@ -68,8 +68,10 @@ if (mode === 'seed') {
   const start = performance.now();
   try {
     await core.initialize();
+    const schemaReadyMs = performance.now() - start;
+    await core.startSdkMessageColumnsBackfill();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const result = { elapsedMs: performance.now() - start, maxLagMs };
+    const result = { elapsedMs: performance.now() - start, schemaReadyMs, maxLagMs };
     writeFileSync(join(run, 'evidence/upgrade.json'), JSON.stringify(result));
     console.log(JSON.stringify(result));
   } finally {

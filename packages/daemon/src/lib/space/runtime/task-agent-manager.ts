@@ -2960,6 +2960,7 @@ export class TaskAgentManager {
   }
 
   async rehydrate(): Promise<void> {
+    await this.config.db.waitForSdkMessageColumns();
     let danglingLinksCleared = 0;
     for (const task of this.config.taskRepo.listActiveWithTaskAgentSession()) {
       try {
