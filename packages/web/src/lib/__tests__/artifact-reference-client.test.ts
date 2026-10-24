@@ -59,6 +59,24 @@ describe('resolveArtifactReference', () => {
     expect(next.input.requestId).not.toBe(first.input.requestId);
   });
 
+  it('opens a reference over plain HTTP when crypto.randomUUID is unavailable', async () => {
+    const { hub: h, request } = hub({ accepted: true, artifact: { artifactId: 'a1' } });
+    const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    vi.stubGlobal('crypto', { getRandomValues });
+    try {
+      expect(await resolveArtifactReference(h, { source, reference: 'docs/a.md' })).toEqual({
+        kind: 'artifact',
+        artifactId: 'a1',
+      });
+      const sent = request.mock.calls[0][1] as { input: { requestId: string } };
+      expect(sent.input.requestId).toMatch(
+        /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('returns a PR summary for a PR link', async () => {
     expect(
       await resolveArtifactReference(hub({ accepted: true, pr }).hub, { source, reference: pr.url })
