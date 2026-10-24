@@ -75,9 +75,7 @@ export function createDatabaseOperationCatalog(
           taskId
         ),
       createTask: (input, creatorSessionId) =>
-        createStandaloneTask(db.getDatabase(), input, creatorSessionId, () =>
-          db.notifyChange('space_tasks')
-        ),
+        db.runSpaceTaskOp(createStandaloneTask, { input, creatorSessionId }),
       listTasks: (input, caller) =>
         listScopedTasks(
           caller,
@@ -86,12 +84,8 @@ export function createDatabaseOperationCatalog(
           input
         ),
       editTask: (input, caller) =>
-        createStandaloneTaskMetadataEditor(db.getDatabase(), () => db.notifyChange('space_tasks'))(
-          input,
-          caller
-        ),
-      transitionTask: (input) =>
-        transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
+        createStandaloneTaskMetadataEditor(db.getDatabase(), db.runSpaceTaskOp)(input, caller),
+      transitionTask: (input) => db.runSpaceTaskOp(transitionStandaloneTask, input),
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
       sessionTitle: async (id) => {
         const title = readSessionField(db, 'title', id);

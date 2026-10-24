@@ -13,6 +13,7 @@ import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { fixtureChanges } from '../../helpers/run-db-op';
 
 const caller = { source: 'mcp' as const, sessionId: 'session-1' };
 
@@ -214,11 +215,10 @@ test('the result survives validation instead of being stripped to a bare task id
 });
 
 test('a standalone task reads as an empty roster, not as a missing task', async () => {
-  const standalone = createStandaloneTask(
+  const standalone = createStandaloneTask.run(
     db,
-    { title: 'Standalone', description: '' },
-    undefined,
-    () => {}
+    { input: { title: 'Standalone', description: '' } },
+    fixtureChanges()
   );
   expect(taskRepo.getTask(standalone.id)).toBeNull();
 

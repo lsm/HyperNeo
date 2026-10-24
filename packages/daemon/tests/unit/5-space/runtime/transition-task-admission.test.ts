@@ -18,6 +18,7 @@ import { createTestSession } from '../../../helpers/database';
 import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { fixtureChanges, runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 let spaces: SpaceRepository;
@@ -47,7 +48,7 @@ function deps(
     getSession: (id) => sessions.getSession(id),
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     getTaskManager: (id) => new SpaceTaskManager(db, id),
-    notifyStandalone,
+    runOp: runDbOpOn(db, notifyStandalone),
     ...overrides,
   };
 }
@@ -70,14 +71,16 @@ function worker(id: string, memberSpaceId?: string, status: SessionStatus = 'act
   return { source: 'mcp' as const, sessionId: id };
 }
 
-describe('resolveOwner', () => {
-  test('a missing task gives null', () => {
-    expect(resolveOwner({ taskId: 'missing', status: 'open' }, deps())).toEqual({ reason: null });
+describe('resolveOwner', async () => {
+  test('a missing task gives null', async () => {
+    expect(await resolveOwner({ taskId: 'missing', status: 'open' }, deps())).toEqual({
+      reason: null,
+    });
   });
 
-  test('a standalone task transitions and reports the updated row', () => {
-    const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
-    const result = resolveOwner({ taskId: task.id, status: 'in_progress' }, deps());
+  test('a standalone task transitions and reports the updated row', async () => {
+    const task = createStandaloneTask.run(db, { input: { title: 'Solo' } }, fixtureChanges());
+    const result = await resolveOwner({ taskId: task.id, status: 'in_progress' }, deps());
     expect(result).toMatchObject({
       reason: expect.objectContaining({ id: task.id, status: 'in_progress' }),
     });
@@ -88,16 +91,16 @@ describe('resolveOwner', () => {
     expect(notifyStandalone).toHaveBeenCalledTimes(1);
   });
 
-  test('a standalone task requesting a Space-only status is unsupported', () => {
-    const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
-    const result = resolveOwner({ taskId: task.id, status: 'review' }, deps());
+  test('a standalone task requesting a Space-only status is unsupported', async () => {
+    const task = createStandaloneTask.run(db, { input: { title: 'Solo' } }, fixtureChanges());
+    const result = await resolveOwner({ taskId: task.id, status: 'review' }, deps());
     expect(result).toEqual({ reason: 'unsupported_status' });
     expect(notifyStandalone).not.toHaveBeenCalled();
   });
 
-  test('a Space task passes its spaceId through', () => {
+  test('a Space task passes its spaceId through', async () => {
     const task = tasks.createTask({ spaceId, title: 'T', description: '' });
-    expect(resolveOwner({ taskId: task.id, status: 'in_progress' }, deps())).toEqual({
+    expect(await resolveOwner({ taskId: task.id, status: 'in_progress' }, deps())).toEqual({
       value: spaceId,
     });
   });

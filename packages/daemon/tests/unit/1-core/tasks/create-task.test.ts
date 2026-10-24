@@ -4,6 +4,7 @@ import { createStandaloneTask } from '../../../../src/storage/tasks/create-task'
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { runDbOpOn } from '../../helpers/run-db-op';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 
 describe('standalone task creation', () => {
@@ -13,11 +14,13 @@ describe('standalone task creation', () => {
   });
   afterEach(() => db.close());
 
-  test('persists core defaults and notifies only after the row is readable', () => {
+  test('persists core defaults and notifies only after the row is readable', async () => {
     const notify = mock(() => {
       expect(db.getDatabase().prepare('SELECT id FROM space_tasks').all()).toHaveLength(1);
     });
-    const task = createStandaloneTask(db.getDatabase(), { title: 'Work' }, undefined, notify);
+    const task = await runDbOpOn(db.getDatabase(), notify)(createStandaloneTask, {
+      input: { title: 'Work' },
+    });
     expect(task).toEqual({
       id: expect.any(String),
       title: 'Work',
@@ -52,17 +55,15 @@ describe('standalone task creation', () => {
 
   test('preserves caller fields and provenance without binding lifetime to the creator', async () => {
     await db.createSession(createTestSession('creator'));
-    const task = createStandaloneTask(
-      db.getDatabase(),
-      {
+    const task = await runDbOpOn(db.getDatabase())(createStandaloneTask, {
+      input: {
         title: "Work's title",
         description: 'Details',
         priority: 'high',
         labels: ['one', 'two'],
       },
-      'creator',
-      () => {}
-    );
+      creatorSessionId: 'creator',
+    });
     expect(task).toMatchObject({
       title: "Work's title",
       description: 'Details',
@@ -79,7 +80,7 @@ describe('standalone task creation', () => {
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
   });
 
-  test('uses unique IDs without consuming Space numbering or changing Space task APIs', () => {
+  test('uses unique IDs without consuming Space numbering or changing Space task APIs', async () => {
     const space = new SpaceRepository(db.getDatabase()).createSpace({
       name: 'Test',
       slug: 'test',
@@ -87,8 +88,8 @@ describe('standalone task creation', () => {
     });
     const tasks = new SpaceTaskRepository(db.getDatabase());
     const first = tasks.createTask({ spaceId: space.id, title: 'First', description: '' });
-    const a = createStandaloneTask(db.getDatabase(), { title: 'A' }, undefined, () => {});
-    const b = createStandaloneTask(db.getDatabase(), { title: 'B' }, undefined, () => {});
+    const a = await runDbOpOn(db.getDatabase())(createStandaloneTask, { input: { title: 'A' } });
+    const b = await runDbOpOn(db.getDatabase())(createStandaloneTask, { input: { title: 'B' } });
     expect(a.id).not.toBe(b.id);
     expect(tasks.getTask(a.id)).toBeNull();
     expect(tasks.updateTask(a.id, { title: 'Space update' })).toBeNull();
@@ -98,14 +99,14 @@ describe('standalone task creation', () => {
     expect(second.taskNumber).toBe(first.taskNumber + 1);
   });
 
-  test('does not notify when persistence fails', () => {
+  test('does not notify when persistence fails', async () => {
     const notify = mock(() => {});
     db.getDatabase().exec(
       "CREATE TRIGGER reject_create BEFORE INSERT ON space_tasks BEGIN SELECT RAISE(ABORT, 'rejected'); END"
     );
-    expect(() =>
-      createStandaloneTask(db.getDatabase(), { title: 'Rejected' }, undefined, notify)
-    ).toThrow('rejected');
+    await expect(
+      runDbOpOn(db.getDatabase(), notify)(createStandaloneTask, { input: { title: 'Rejected' } })
+    ).rejects.toThrow('rejected');
     expect(notify).not.toHaveBeenCalled();
     expect(db.getDatabase().prepare('SELECT id FROM space_tasks').all()).toEqual([]);
   });

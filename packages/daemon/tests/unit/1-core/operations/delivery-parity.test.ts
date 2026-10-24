@@ -15,6 +15,7 @@ import { createTestSession } from '../../../helpers/database';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 import { operationInvoke } from '../../../helpers/operation-mcp';
 import { SESSION_MESSAGE_NOTE } from '../../../../src/lib/messaging/session-envelope';
+import { runDbOpOn } from '../../helpers/run-db-op';
 
 const categories = [undefined, 'lobby', 'worker', 'space_chat', 'worker'] as const;
 const cases = categories.flatMap((targetType) => [
@@ -60,10 +61,10 @@ describe('shared operation delivery parity', () => {
             : null,
         readTask: (taskId) => readTaskCore(mailbox.db, taskId),
         createTask: (input, creatorSessionId) =>
-          createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
+          runDbOpOn(mailbox.db)(createStandaloneTask, { input, creatorSessionId }),
         listTasks: (input) => listTaskCores(mailbox.db, input),
-        editTask: (input) => editStandaloneTaskWithDependencies(mailbox.db, input, () => {}),
-        transitionTask: (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
+        editTask: (input) => runDbOpOn(mailbox.db)(editStandaloneTaskWithDependencies, input),
+        transitionTask: (input) => runDbOpOn(mailbox.db)(transitionStandaloneTask, input),
       }),
       () => null
     );
@@ -105,10 +106,10 @@ describe('shared operation delivery parity', () => {
                 : null,
             readTask: (taskId) => readTaskCore(mailbox.db, taskId),
             createTask: (input, creatorSessionId) =>
-              createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
+              runDbOpOn(mailbox.db)(createStandaloneTask, { input, creatorSessionId }),
             listTasks: (input) => listTaskCores(mailbox.db, input),
-            editTask: (input) => editStandaloneTaskWithDependencies(mailbox.db, input, () => {}),
-            transitionTask: (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
+            editTask: (input) => runDbOpOn(mailbox.db)(editStandaloneTaskWithDependencies, input),
+            transitionTask: (input) => runDbOpOn(mailbox.db)(transitionStandaloneTask, input),
           }),
           () => ({
             sessionId: sender.id,

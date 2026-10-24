@@ -13,6 +13,7 @@ import {
   admitSpaceTaskMutation,
   resolveSpaceTaskOwner,
 } from '../../../../src/lib/tasks/metadata';
+import { fixtureChanges } from '../../helpers/run-db-op';
 
 let db: Database;
 let spaces: SpaceRepository;
@@ -64,7 +65,7 @@ test('resolveSpaceTaskOwner returns null for a missing task', () => {
 });
 
 test('resolveSpaceTaskOwner reports a standalone task', () => {
-  const task = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+  const task = createStandaloneTask.run(db, { input: { title: 'Standalone' } }, fixtureChanges());
   expect(resolveSpaceTaskOwner(db, task.id)).toEqual({ kind: 'standalone' });
 });
 
