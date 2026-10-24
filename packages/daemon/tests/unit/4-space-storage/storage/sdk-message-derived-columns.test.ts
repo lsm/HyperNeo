@@ -7,6 +7,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { deriveSdkMessageColumns } from '../../../../src/storage/sdk-message-columns';
 import {
   backfillSdkMessageColumns,
+  backfillSdkMessageColumnsChunk,
   runMigration413,
 } from '../../../../src/storage/schema/m413-sdk-message-columns';
 
@@ -213,6 +214,65 @@ describe('SDK message column backfill', () => {
       malformed: number;
       through: number;
     };
+
+  test('one synchronous chunk respects the row limit and ceiling without completing the pass', () => {
+    db.transaction(() => {
+      for (let i = 0; i < 515; i++) insert(`chunk-${i}`, '{"inputKind":"task"}');
+    })();
+    const first = backfillSdkMessageColumnsChunk(db, { after: 0, ceiling: 514 });
+    expect(first).not.toBeInstanceOf(Promise);
+    expect(first).toMatchObject({ through: 512, rows: 512, malformed: 0 });
+    expect(
+      db
+        .prepare(
+          "SELECT key FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'"
+        )
+        .all()
+    ).toEqual([{ key: 'sdk_message_columns_backfill_v2:512' }]);
+    expect(
+      db
+        .prepare("SELECT 1 FROM migration_markers WHERE key='sdk_message_columns_backfilled_v2'")
+        .get()
+    ).toBeNull();
+    expect(backfillSdkMessageColumnsChunk(db, { after: 512, ceiling: 514 })).toMatchObject({
+      through: 514,
+      rows: 2,
+    });
+    expect(backfillSdkMessageColumnsChunk(db, { after: 514, ceiling: 514 })).toBeNull();
+    expect(db.prepare("SELECT input_kind FROM sdk_messages WHERE id='chunk-514'").get()).toEqual({
+      input_kind: null,
+    });
+  });
+
+  test('a chunk rolls projections and its cursor back together on a write failure', () => {
+    insert('chunk-valid', '{"inputKind":"task"}');
+    insert('chunk-malformed', '{broken');
+    db.exec(
+      "CREATE TRIGGER reject_backfill_cursor BEFORE INSERT ON migration_markers WHEN NEW.key GLOB 'sdk_message_columns_backfill_v2:*' BEGIN SELECT RAISE(ABORT, 'cursor fault'); END"
+    );
+    expect(() => backfillSdkMessageColumnsChunk(db, { after: 0, ceiling: 2 })).toThrow(
+      'cursor fault'
+    );
+    expect(db.prepare("SELECT input_kind FROM sdk_messages WHERE id='chunk-valid'").get()).toEqual({
+      input_kind: null,
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT key FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'"
+        )
+        .all()
+    ).toEqual([]);
+    db.exec('DROP TRIGGER reject_backfill_cursor');
+    expect(backfillSdkMessageColumnsChunk(db, { after: 0, ceiling: 2 })).toMatchObject({
+      through: 2,
+      rows: 2,
+      malformed: 1,
+    });
+    expect(
+      db.prepare("SELECT sdk_message,input_kind FROM sdk_messages WHERE id='chunk-malformed'").get()
+    ).toEqual({ sdk_message: '{broken', input_kind: null });
+  });
 
   test('bounds chunks by body bytes, keeps oversized results whole and leaves malformed JSON unchanged', async () => {
     const bodies = Array.from({ length: 10 }, (_, i) =>
