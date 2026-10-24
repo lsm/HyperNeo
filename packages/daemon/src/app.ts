@@ -1,4 +1,3 @@
-import { SessionEventWriter } from './lib/external-events/session-event-writer.ts';
 import { createSessionScheduleFire } from './lib/scheduler/session-schedule-fire.ts';
 import { createScheduleDelivery } from './lib/scheduler/session-schedule-delivery.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
@@ -56,6 +55,7 @@ import {
   ExternalEventStore,
   routeExternalEventPublisher,
   SessionExternalEventStore,
+  ingestSessionEvent,
 } from './lib/external-events/index.ts';
 import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
 import {
@@ -140,7 +140,11 @@ import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
 import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
-import { JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
+import {
+  cleanupJobsInBatches,
+  JobQueueRepository,
+} from './storage/repositories/job-queue-repository.ts';
+import { purgeWorkFeedSessions } from './storage/work-feed.ts';
 import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler.ts';
 import {
@@ -399,7 +403,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
-  let sessionEventWriter: SessionEventWriter | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
   let eventLoopLagLogStopped = false;
   let stopEventLoopLagLog = (): void => {
@@ -523,15 +526,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
     const workflowHookRuntimeService = new WorkflowHookRuntimeService();
     const maxConcurrent = parsePositiveInt(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT, 5);
-    sessionEventWriter =
-      db.getDbPath() === ':memory:'
-        ? null
-        : new SessionEventWriter(
-            db.getDbPath(),
-            undefined,
-            undefined,
-            config.sqlQueryObservability
-          );
     const jobProcessor = new JobQueueProcessor(jobQueue, {
       db: db.gateway,
       pollIntervalMs: 1000,
@@ -868,7 +862,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const sessionExternalEventService = new ExternalEventService(
       sessionExternalEventStore,
       internalEventBus,
-      sessionEventWriter ? (event) => sessionEventWriter!.ingest(event) : undefined
+      (event) => db.gateway.run(ingestSessionEvent, event)
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     const sessionTopicSources: (() => readonly { topic: string; session?: string | null }[])[] = [];
@@ -1082,9 +1076,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
-      purgeClaudeFeed: sessionEventWriter
-        ? (sessionIds) => sessionEventWriter!.purgeClaudeFeed(sessionIds)
-        : undefined,
+      purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
       deviceOf: (clientId) => transport.deviceOf(clientId),
       watchSessionRepo: async (owner, repo) =>
         (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
@@ -1289,10 +1281,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
     jobProcessor.register(
       JOB_QUEUE_CLEANUP,
-      createCleanupHandler(
-        jobQueue,
-        sessionEventWriter ? (params) => sessionEventWriter!.cleanupJobs(params) : undefined
-      )
+      createCleanupHandler(jobQueue, (params) => cleanupJobsInBatches(db.gateway, params))
     );
     jobProcessor.register(
       MEMORY_CONSOLIDATION,
@@ -1724,9 +1713,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           await extensionManager.stopExtension(extension.sourceId);
         }
         logInfo('[Daemon] External event extensions stopped');
-        await sessionEventWriter
-          ?.close()
-          .catch((error) => logError('[Daemon] Session event writer close failed:', error));
 
         const providerRegistry = getProviderRegistry();
         await Promise.allSettled(
@@ -1819,7 +1805,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
     await invalidateInFlightModelLoads();
-    await sessionEventWriter?.close().catch(() => {});
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;
     throw error;

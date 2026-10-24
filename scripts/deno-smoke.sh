@@ -236,61 +236,60 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/lib/external-events/session-event-writer.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
-  const { SessionEventWriter } = await import("file://" + Deno.env.get("SMOKE_WRITER_PATH"));
-  const writer = new SessionEventWriter(Deno.env.get("SMOKE_DB_PATH"));
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+  const src = "file://" + Deno.env.get("SMOKE_SRC");
+  const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
+  const { ingestSessionEvent } = await import(src + "/lib/external-events/session-external-event-store.ts");
+  const { cleanupJobs, jobQueueWrites } = await import(src + "/storage/repositories/job-queue-repository.ts");
+  const { purgeWorkFeedSessions } = await import(src + "/storage/work-feed.ts");
+  const gateway = new DbGateway(Deno.env.get("SMOKE_DB_PATH"), null);
   try {
     const event = { id:"deno-writer", spaceId:"sessions", source:"github", topic:"github/synthetic/writer/pull_request/1.review_submitted", dedupeKey:"deno-once", occurredAt:1, ingestedAt:2, summary:"Synthetic", payload:{body:"complete synthetic result"} };
-    const first = await writer.ingest(event);
-    const duplicate = await writer.ingest({...event,id:"deno-duplicate"});
+    const first = await gateway.run(ingestSessionEvent, event);
+    const duplicate = await gateway.run(ingestSessionEvent, {...event,id:"deno-duplicate"});
     if (first.action !== "ingested" || duplicate.action !== "duplicate" || duplicate.eventId !== event.id) Deno.exit(1);
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
     try {
       const insert = db.prepare("INSERT INTO message_search_content(kind,source_id,session_id,message_type,title,body,timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)");
       for (const kind of ["claude", "codex"]) insert.run(kind, "deno-purge-"+kind, "deno-purge-sdk", "user", "Synthetic", "complete retained result", 1);
-      await writer.purgeClaudeFeed(["deno-purge-sdk"]);
+      await purgeWorkFeedSessions(gateway, "claude", ["deno-purge-sdk"]);
       const rows = db.prepare("SELECT kind,body FROM message_search_content WHERE session_id=?").all("deno-purge-sdk");
       if (rows.length !== 1 || rows[0].kind !== "codex" || rows[0].body !== "complete retained result") Deno.exit(1);
-    } finally { db.close(); }
-    console.log("[deno-smoke] Claude feed purge preserves other feed kinds");
-    const cleanupDb = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
-    try {
+      console.log("[deno-smoke] Claude feed purge preserves other feed kinds");
       const now = Date.now(), hour = 3600000;
-      const insert = cleanupDb.prepare("INSERT INTO job_queue(id,queue,status,payload,priority,max_retries,retry_count,run_at,created_at,completed_at) VALUES(?,?,?,?,0,3,0,?,?,?)");
-      for (const [id,queue,status,age] of [["deno-cleanup-old","synthetic-cleanup","completed",8*24*hour],["deno-cleanup-reminder","longHorizonAgentReminder.fire","completed",2*hour],["deno-cleanup-keep","longHorizonAgentReminder.fire","failed",2*hour]]) insert.run(id,queue,status,"{\"body\":\"complete retained job\"}",now-age,now-age,now-age);
-      const count = await writer.cleanupJobs({beforeMs:now-7*24*hour,completed:[{queue:"longHorizonAgentReminder.fire",beforeMs:now-hour}]});
-      const rows = cleanupDb.prepare("SELECT id,payload FROM job_queue WHERE id LIKE ?").all("deno-cleanup-%");
-      if (count !== 2 || rows.length !== 1 || rows[0].id !== "deno-cleanup-keep" || JSON.parse(rows[0].payload).body !== "complete retained job") Deno.exit(1);
-    } finally { cleanupDb.close(); }
-    console.log("[deno-smoke] job cleanup preserves cutoffs and retained payloads");
-    const claimDb = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
-    claimDb.exec("PRAGMA busy_timeout=5000");
-    const holder = new Worker("data:application/javascript," + encodeURIComponent(`
-      import { DatabaseSync } from "node:sqlite";
-      onmessage = ({data}) => {
-        const db = new DatabaseSync(data);
-        db.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
-        postMessage("acquired");
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-        db.exec("COMMIT"); db.close();
-      };
-    `), {type:"module"});
-    try {
-      await new Promise((resolve, reject) => {
-        holder.onmessage = () => resolve(null);
-        holder.onerror = reject;
-        holder.postMessage(Deno.env.get("SMOKE_DB_PATH"));
-      });
-      const now = Date.now();
-      claimDb.prepare("INSERT INTO job_queue(id,queue,status,payload,run_at,created_at) VALUES(?,?,?,?,?,?)").run("deno-claim", "synthetic-claim", "pending", "{\"body\":\"complete claim payload\"}", now, now);
-      const claimed = await writer.claimJobs({method:"dequeue",args:["synthetic-claim",5]});
-      const again = await writer.claimJobs({method:"dequeue",args:["synthetic-claim",5]});
-      if (claimed.length !== 1 || again.length !== 0 || !claimed[0].claimToken || claimed[0].payload.body !== "complete claim payload") Deno.exit(1);
-    } finally { holder.terminate(); claimDb.close(); }
-    console.log("[deno-smoke] worker claim is fenced and not duplicated");
-    console.log("[deno-smoke] session event writer commit/dedupe ok");
-  } finally { await writer.close(); }
+      const job = db.prepare("INSERT INTO job_queue(id,queue,status,payload,priority,max_retries,retry_count,run_at,created_at,completed_at) VALUES(?,?,?,?,0,3,0,?,?,?)");
+      for (const [id,queue,status,age] of [["deno-cleanup-old","synthetic-cleanup","completed",8*24*hour],["deno-cleanup-reminder","longHorizonAgentReminder.fire","completed",2*hour],["deno-cleanup-keep","longHorizonAgentReminder.fire","failed",2*hour]]) job.run(id,queue,status,"{\"body\":\"complete retained job\"}",now-age,now-age,now-age);
+      const count = await gateway.run(cleanupJobs, {beforeMs:now-7*24*hour,completed:[{queue:"longHorizonAgentReminder.fire",beforeMs:now-hour}]});
+      const kept = db.prepare("SELECT id,payload FROM job_queue WHERE id LIKE ?").all("deno-cleanup-%");
+      if (count !== 2 || kept.length !== 1 || kept[0].id !== "deno-cleanup-keep" || JSON.parse(kept[0].payload).body !== "complete retained job") Deno.exit(1);
+      console.log("[deno-smoke] job cleanup preserves cutoffs and retained payloads");
+      db.exec("PRAGMA busy_timeout=5000");
+      const holder = new Worker("data:application/javascript," + encodeURIComponent(`
+        import { DatabaseSync } from "node:sqlite";
+        onmessage = ({data}) => {
+          const db = new DatabaseSync(data);
+          db.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
+          postMessage("acquired");
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+          db.exec("COMMIT"); db.close();
+        };
+      `), {type:"module"});
+      try {
+        await new Promise((resolve, reject) => {
+          holder.onmessage = () => resolve(null);
+          holder.onerror = reject;
+          holder.postMessage(Deno.env.get("SMOKE_DB_PATH"));
+        });
+        db.prepare("INSERT INTO job_queue(id,queue,status,payload,run_at,created_at) VALUES(?,?,?,?,?,?)").run("deno-claim", "synthetic-claim", "pending", "{\"body\":\"complete claim payload\"}", now, now);
+        const claimed = await gateway.call(jobQueueWrites, "dequeue", "synthetic-claim", 5);
+        const again = await gateway.call(jobQueueWrites, "dequeue", "synthetic-claim", 5);
+        if (claimed.length !== 1 || again.length !== 0 || !claimed[0].claimToken || claimed[0].payload.body !== "complete claim payload") Deno.exit(1);
+      } finally { holder.terminate(); }
+      console.log("[deno-smoke] gateway claim is fenced and not duplicated");
+    } finally { db.close(); }
+    console.log("[deno-smoke] session event ingest commit/dedupe ok");
+  } finally { await gateway.close(); }
 '; then
   dump_log
   exit 1

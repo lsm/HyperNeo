@@ -1,4 +1,5 @@
-import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { DbGateway } from '../db-gateway/db-gateway.ts';
+import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { generateUUID } from '@hyperneo/shared';
 import { withBusyRetry } from '../busy-retry.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
@@ -9,6 +10,11 @@ export type JobClaim =
   | { method: 'dequeue'; args: Parameters<JobQueueRepository['dequeue']> }
   | { method: 'dequeueSessionFifo'; args: Parameters<JobQueueRepository['dequeueSessionFifo']> }
   | { method: 'dequeueExempt'; args: Parameters<JobQueueRepository['dequeueExempt']> };
+
+export type JobCleanup = {
+  beforeMs: number;
+  completed: { queue: string; beforeMs: number }[];
+};
 
 export interface Job {
   id: string;
@@ -1187,3 +1193,40 @@ export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueue
 export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [
   'isClaimOwnedByAnother',
 ]);
+
+const CLEANUP_BATCH_ROWS = 500;
+
+export const cleanupJobs = defineDbOp({
+  name: 'jobs.cleanup',
+  mode: 'write',
+  run: (db: BunDatabase, { beforeMs, completed }: JobCleanup): number => {
+    let deleted = db
+      .prepare(
+        `DELETE FROM job_queue WHERE rowid IN (
+           SELECT rowid FROM job_queue
+            WHERE status IN ('completed', 'dead', 'failed') AND completed_at < ? LIMIT ?)`
+      )
+      .run(beforeMs, CLEANUP_BATCH_ROWS).changes;
+    for (const lane of completed) {
+      if (deleted >= CLEANUP_BATCH_ROWS) break;
+      deleted += db
+        .prepare(
+          `DELETE FROM job_queue WHERE rowid IN (
+             SELECT rowid FROM job_queue
+              WHERE queue = ? AND status = 'completed' AND completed_at < ? LIMIT ?)`
+        )
+        .run(lane.queue, lane.beforeMs, CLEANUP_BATCH_ROWS - deleted).changes;
+    }
+    return deleted;
+  },
+});
+
+export async function cleanupJobsInBatches(db: DbGateway, cleanup: JobCleanup): Promise<number> {
+  let total = 0;
+  for (;;) {
+    const deleted = await db.run(cleanupJobs, cleanup);
+    total += deleted;
+    if (deleted < CLEANUP_BATCH_ROWS) return total;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
