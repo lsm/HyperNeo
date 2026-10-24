@@ -18,7 +18,7 @@ empty `humanSignoff` for `acme/app`, through `pack.preferences.set`. It then ope
 Settings > Coding pack from the nav and checks: pack global shows its saved
 values and leaves `humanSignoff` unanswered; `acme/app` shows the inherited merge
 policy and its own empty sign-off list; another repo stays unanswered; opening and
-switching scope leave `pack.preferences.list` unchanged; no Reset/delete control
+switching scope leave `pack.preferences.list` unchanged; an unsaved sign-off draft is dropped when the repository changes; no Reset/delete control
 exists. An invalid review bot login shows the daemon's refusal and the saved value
 is kept. Saving no sign-off paths at pack global stores `[]` (other repos then
 inherit it), and picking `CI passes` for `acme/app` reads back at repo scope while

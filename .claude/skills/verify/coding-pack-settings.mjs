@@ -53,6 +53,14 @@ try {
   assert.deepEqual(await states(), { 'Merge policy': 'Inherited from pack global', 'Human sign-off paths or labels': 'Unanswered' });
   assert.deepEqual(list(), seeded);
   evidence.openingWritesNothing = true;
+  const signoffBox = section.getByRole('textbox', { name: 'Human sign-off paths or labels', exact: true });
+  await signoffBox.fill('docs/**');
+  await scopeTo('acme/app');
+  assert.equal(await signoffBox.inputValue(), '');
+  await scopeTo('other/repo');
+  assert.equal(await signoffBox.inputValue(), '');
+  assert.deepEqual(list(), seeded);
+  evidence.draftDroppedOnScopeSwitch = true;
 
   await scopeTo('');
   await section.getByRole('textbox', { name: 'Review bot', exact: true }).fill('not a login!');

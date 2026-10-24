@@ -28,8 +28,7 @@ export function CodingPackSettings() {
   const [repo, setRepo] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [bot, setBot] = useState('');
-  const [globs, setGlobs] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   async function load() {
     const result = await invokeOperation<{ preferences: NeoPackSetting[] }>(
@@ -70,8 +69,12 @@ export function CodingPackSettings() {
   const signoff = read('humanSignoff');
   const savedBot = typeof reviewBot.value === 'string' ? reviewBot.value : '';
   const savedGlobs = Array.isArray(signoff.value) ? signoff.value.join('\n') : '';
-  useEffect(() => setBot(savedBot), [savedBot]);
-  useEffect(() => setGlobs(savedGlobs), [savedGlobs]);
+  const botDraft = `${scopeName}\nreviewBot\n${savedBot}`;
+  const globsDraft = `${scopeName}\nhumanSignoff\n${savedGlobs}`;
+  const bot = drafts[botDraft] ?? savedBot;
+  const globs = drafts[globsDraft] ?? savedGlobs;
+  const setBot = (text: string) => setDrafts({ [botDraft]: text, [globsDraft]: globs });
+  const setGlobs = (text: string) => setDrafts({ [botDraft]: bot, [globsDraft]: text });
 
   async function save(key: Key, value: unknown) {
     setSaving(true);
@@ -138,7 +141,10 @@ export function CodingPackSettings() {
           class={input}
           placeholder="owner/name — leave empty for pack global"
           value={repo}
-          onInput={(event) => setRepo(event.currentTarget.value)}
+          onInput={(event) => {
+            setRepo(event.currentTarget.value);
+            setDrafts({});
+          }}
         />
         <datalist id="coding-pack-repos">
           {repos.map((key) => (
