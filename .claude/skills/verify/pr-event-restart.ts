@@ -46,6 +46,7 @@ async function open() {
 async function close() { await neo?.dispose(); neo = undefined; await app?.cleanup(); app = undefined; }
 try {
   await open();
+  sql().prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'").run(JSON.stringify([repo]));
   const now = Date.now();
   for (const id of ['synthetic-event-neo', worker]) await app!.db.createSession({ id, title: id, workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   neo!.repo.reserveBinding({ sessionId: 'synthetic-event-neo', projectId: null, kind: 'neo' });

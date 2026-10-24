@@ -151,7 +151,7 @@ describe('Coding watched repositories', () => {
       [{ ...row, state: 'merged', closedAt: Date.now() + 3 }],
       Date.now() + 3
     );
-    expect(events.pendingTerminals()).toHaveLength(1);
+    expect(events.pendingEvents()).toHaveLength(1);
     await f.save([]);
     await f.pack.sweep!(Date.now() + 4);
     expect(f.reads).toEqual([]);

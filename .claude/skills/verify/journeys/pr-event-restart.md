@@ -24,3 +24,6 @@ Inspect `evidence/pr-event-restart.json` for the ledger before and after the
 restart, the owner mailbox, and the skip warnings. This proves durable owner
 mailbox acceptance, not provider consumption or native Claude Desktop delivery.
 No real DB, live daemon or 8399 access is part of the helper.
+
+The fixture explicitly watches its synthetic repository before the first sweep.
+That watch survives restart; merge-policy preferences remain unanswered.
