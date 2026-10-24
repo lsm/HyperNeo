@@ -4,12 +4,15 @@ import {
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_GOAL_CYCLE,
   NEO_ROOT_PROMPT,
+  NEO_FOCUSED_DISCUSSION,
   NEO_ROOT_TURN_END,
 } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('root Neo system prompt', () => {
   test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
-    expect(neoPrompt([])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`);
+    expect(neoPrompt([])).toBe(
+      `${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n${NEO_ROOT_TURN_END}`
+    );
     expect(neoPrompt([])).not.toContain(NEO_GOAL_CYCLE);
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
@@ -24,6 +27,7 @@ describe('root Neo system prompt', () => {
   });
 
   test('routes continuing discussion into a fresh prepared session using existing flows', () => {
+    expect(NEO_FOCUSED_DISCUSSION.split(/\s+/).length).toBeLessThan(180);
     for (const prompt of [neoPrompt([]), neoPrompt(neoSettingsPackBriefs())]) {
       for (const rule of [
         'fresh focused session',
