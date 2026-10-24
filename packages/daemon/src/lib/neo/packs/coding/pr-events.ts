@@ -2,7 +2,7 @@ import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { CodingPrLedgerRepository, type CodingPrTransition } from './pr-ledger.ts';
-import type { CodingSweepDeps } from './pr-sweep.ts';
+import { CODING_MANUAL_MERGE_NEXT_STEP, type CodingSweepDeps } from './pr-sweep.ts';
 import {
   codingUnownedPrKey,
   planCodingUnownedNotice,
@@ -30,7 +30,7 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
     return owner('now conflicts with its base. Merge the base branch in and push.');
   if (row.state === 'approved_green')
     return owner(
-      `is approved and green on head ${head(row)}. Merge it now with a manual squash on this head.`
+      `has passing review and CI on head ${head(row)}. ${CODING_MANUAL_MERGE_NEXT_STEP}`
     );
   if (
     row.from === 'failing' &&

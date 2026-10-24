@@ -302,7 +302,7 @@ describe('planCodingPrEvent', () => {
         from: from as never,
       })?.text;
     expect(row('approved_green')).toBe(
-      'lsm/a#3 "T" is approved and green on head abcdef1. Merge it now with a manual squash on this head.'
+      'lsm/a#3 "T" has passing review and CI on head abcdef1. Complete all required merge gates, re-read the head, then squash-merge manually with --match-head-commit and the full approved head SHA.'
     );
     expect(row('dirty')).toContain('Merge the base branch in');
     expect(row('changes_requested')).toContain('Address the review');
