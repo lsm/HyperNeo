@@ -63,6 +63,28 @@ describe('Startup SDK history preparation', () => {
     }
   });
 
+  test('public reads report preparation promptly instead of waiting past the client deadline', async () => {
+    const { core } = await legacy();
+    const request = (core.waitForSdkMessageColumns as (id: string, wait: boolean) => Promise<void>)(
+      'old-session',
+      false
+    ).then(
+      () => 'empty history',
+      (error: Error) => error.message
+    );
+    try {
+      expect(
+        await Promise.race([
+          request,
+          new Promise((resolve) => setTimeout(() => resolve('client deadline'), 50)),
+        ])
+      ).toContain('being prepared');
+    } finally {
+      core.close();
+      await request;
+    }
+  });
+
   test('shutdown preserves a committed cursor and restart resumes without changing bodies', async () => {
     const { core, path, body } = await legacy();
     expect(await core.startSdkMessageColumnsBackfill(() => core.close())).toBe(false);
