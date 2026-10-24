@@ -383,10 +383,9 @@ export class NeoService {
     return {
       ...workerIdentity(ref, current.data.value.title),
       provider: local?.config.provider ?? workerEngine(ref.adapter),
-      link: neoSafeSessionLink(
-        current.data.value.link ?? current.data.value.remoteLink,
-        !!ref.daemon
-      ),
+      link:
+        neoSafeSessionLink(current.data.value.link, !!ref.daemon) ??
+        neoSafeSessionLink(current.data.value.remoteLink, true),
     };
   }
 

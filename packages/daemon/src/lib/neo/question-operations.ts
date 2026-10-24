@@ -339,8 +339,10 @@ export function createNeoQuestionOperations(
         const source = input.sourceSession ? await readSource(input.sourceSession) : undefined;
         if (input.sourceSession && !source)
           return fail('source_session_unavailable: choose one readable source session.');
+        const current = requireNeoOpenAsk(store.getAsk(owned.id));
+        if ('reason' in current) return current;
         return planNeoQuestion(
-          owned,
+          current.value,
           store.listQuestions(owned.id),
           input,
           'todoId' in input && input.todoId ? store.getTodo(input.todoId) : null,

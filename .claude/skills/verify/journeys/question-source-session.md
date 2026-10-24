@@ -43,3 +43,24 @@ contains `adapter`, `id`, optional `daemon`, plus captured `name`, `provider`,
 `label` and `link`. No source is inferred from prose or multiple workers. Stop the
 daemon again after this persistence check. The worker identity is captured when
 Neo asks the question; this journey does not claim live rename tracking.
+
+For delayed adapter lookup and local-ref HTTPS navigation, also run the controlled
+agent-door proof in a separate fresh directory (no HTTP mock/provider required):
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-question-source-races-XXXXXX)
+mkdir -p "$RUN/home" "$RUN/bin"
+printf '#!/bin/sh\nexit 1\n' > "$RUN/bin/gh"
+chmod +x "$RUN/bin/gh"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn \
+  bun .claude/skills/verify/question-source-races.ts "$RUN"
+```
+
+This owns a real test daemon on an ephemeral port and replaces only the synthetic
+worker's `work.status` response in its operation registry. A local Claude ref
+with only a safe HTTPS remoteLink retains that destination in the actual question
+payload. A second response pauses at an explicit barrier while the human settle
+operation drops its ask; releasing the response must refuse with `ask_settled`,
+creating no question. Preserve observed/cleanup evidence. The native/HTTPS opener
+callback is component-tested; do not open a native app or external website.
