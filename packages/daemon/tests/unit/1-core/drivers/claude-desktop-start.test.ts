@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -574,6 +575,26 @@ describe('claude-desktop start', () => {
     );
     expect(spawned).toEqual([]);
     expect(released).toBe(1);
+  });
+
+  test('a repository symlink cannot redirect policy creation outside its clone', async () => {
+    const prepared = join(dir, 'prepared');
+    const outside = join(dir, 'outside-config');
+    mkdirSync(outside);
+    symlinkSync(outside, join(prepared, '.claude'), 'dir');
+    const result = await adapter({
+      prepareExecution: async () => ({
+        ok: true,
+        value: { directory: prepared, release: async () => {} },
+      }),
+    }).start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user);
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preparation_failed',
+      detail: expect.stringContaining('in-clone .claude'),
+    });
+    expect(spawned).toEqual([]);
+    expect(() => readFileSync(join(outside, 'settings.local.json'))).toThrow();
   });
 
   test('failed preparation launches no Claude process', async () => {
