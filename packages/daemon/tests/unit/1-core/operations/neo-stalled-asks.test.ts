@@ -30,6 +30,21 @@ afterEach(async () => {
   db.close();
 });
 function ask(id: string, at = clock - 2 * hour) {
+  db.getDatabase()
+    .prepare(
+      'INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)'
+    )
+    .run(
+      'recipient-' + id,
+      'Synthetic',
+      'general',
+      '/synthetic',
+      new Date(at).toISOString(),
+      new Date(at).toISOString(),
+      'active',
+      '{}',
+      '{}'
+    );
   return service.todos.openAsk({
     id,
     sessionId: 'recipient-' + id,
@@ -144,4 +159,35 @@ test('new todo activity restarts the inactivity clock before a later wake', asyn
   clock++;
   await service.refreshDriverWork();
   expect(tell).toHaveBeenCalledTimes(2);
+});
+
+test('one failed mailbox handoff does not block other asks or session watching', async () => {
+  ask('first');
+  ask('second');
+  const tell = spyOn(service, 'deliverForward')
+    .mockRejectedValueOnce(new Error('Synthetic unavailable'))
+    .mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(2);
+  expect(service.sessionWatcher.watchSessions).toHaveBeenCalledTimes(1);
+  clock += 60_000;
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(3);
+  expect(tell.mock.calls[2][1]).toEqual(tell.mock.calls[0][1]);
+});
+
+test('asks with deleted or archived recipients do not create doomed wake jobs', async () => {
+  ask('live');
+  ask('deleted');
+  ask('archived');
+  db.getDatabase().prepare('DELETE FROM sessions WHERE id = ?').run('recipient-deleted');
+  db.getDatabase()
+    .prepare("UPDATE sessions SET status = 'archived' WHERE id = ?")
+    .run('recipient-archived');
+  const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell.mock.calls.map((call) => call[0])).toEqual(['recipient-live']);
+  clock += 4 * hour;
+  await service.refreshDriverWork();
+  expect(tell.mock.calls.map((call) => call[0])).toEqual(['recipient-live', 'recipient-live']);
 });
