@@ -8,7 +8,7 @@ ephemeral non-8399 daemon and closes it in finally.
 The production Neo MCP operation handler must refuse work.send with no todoId,
 an unknown todo or a todo belonging to a closed ask. An id in message text and a
 forged input source do not satisfy admission. work.start without a todo must
-likewise refuse before creating work. The same real HyperNeo worker accepts a
+likewise refuse before creating work. work.queue must refuse untracked next-turn input too. The same real HyperNeo worker accepts a
 follow-up naming an open-ask todo, and trusted internal daemon dispatch remains
 accepted without a todo reference. Retain evidence/result.json and the daemon
 log; the baseline accepts untracked sends and this helper fails.

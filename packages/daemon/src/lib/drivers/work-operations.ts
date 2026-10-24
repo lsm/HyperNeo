@@ -171,18 +171,19 @@ type StatusResult = z.infer<typeof WorkStatusResultSchema>;
 type StopResult = z.infer<typeof StopWorkResultSchema>;
 
 function admitNeoTodo(
-  input: StartInput | SendInput,
+  input: StartInput | QueuedInput,
   caller: OperationCaller,
   deps: WorkVerbDeps
 ): Gate<true> {
-  return caller.role !== 'neo' ||
+  return !('message' in input) ||
+    caller.role !== 'neo' ||
     caller.source === 'internal' ||
     (input.todoId && deps.isOpenTodo?.(input.todoId))
     ? { value: true }
     : {
         reason: reject(
           'todo_required',
-          'Neo work needs todoId belonging to an open ask. Add/start a todo with neo.todo.add or neo.todo.start; reference that todoId for follow-ups.'
+          'Neo work needs todoId belonging to an open ask. Start a todo with neo.todo.add {start:true}; use neo.todo.continue or reference that todoId for follow-ups.'
         ),
       };
 }
@@ -534,6 +535,7 @@ async function changeQueuedInput(
 }
 const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
+  .pipe(admitNeoTodo, ['input', 'caller', 'deps'], 'result:outcome')
   .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')

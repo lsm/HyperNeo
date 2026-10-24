@@ -281,6 +281,7 @@ describe('work verb operations', () => {
     const registry = createOperationRegistry(
       createWorkVerbOperations({
         adapters: () => [adapter],
+        isOpenTodo: (id) => id === 'open-todo',
         daemonName: 'imac',
         remote: { list: () => [], invoke: async () => ({}) },
       })
@@ -295,7 +296,7 @@ describe('work verb operations', () => {
     expect(
       await call(
         'work.queue',
-        { ref, message: ' next ', from: 'session:forged' },
+        { ref, message: ' next ', from: 'session:forged', todoId: 'open-todo' },
         undefined,
         caller,
         [adapter]
@@ -331,7 +332,9 @@ describe('work verb operations', () => {
     async (verb) => {
       const input = {
         ref: { adapter: desktop.id, id: 'd1' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(await call(`work.${verb}`, input)).toMatchObject({ ok: false, reason: 'unsupported' });
     }
@@ -349,7 +352,9 @@ describe('work verb operations', () => {
       };
       const input = {
         ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(
         await call(`work.${verb}`, input, remote, {
@@ -385,7 +390,9 @@ describe('work verb operations', () => {
     async (verb) => {
       const input = {
         ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(
         await call(`work.${verb}`, input, async () => {
