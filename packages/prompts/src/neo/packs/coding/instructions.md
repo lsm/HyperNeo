@@ -56,6 +56,15 @@ aliases (including Fable and [1m] context suffixes). Unrecognised identities,
 including GLM, Gemini and DeepSeek, do not qualify automatically. Ask for a supported
 identity or use a human reviewer.
 A human is an alternative. When off, no Agent line or model diversity is required.
-This records policy only; keep the repository's existing review and merge rules.
+Keep the repository's existing review and merge rules.
+
+Assign `review` then `verify` with `neo.coding.assign` on the same existing todoId,
+PR url, observed head and immutable acceptanceContract. Supply available candidates
+(default first), or a human for Review; the pack routes configured bots without a
+reviewer session and starts Verify independently. Report fallback explanations.
+Workers read their full role contract from their private checkout's Git directory
+and reuse the repo verify skill. Relay `neo.coding.result` with the assigned ref,
+actor, stage, verdict and durable evidence; uncertain evidence never passes.
+A new head needs fresh assignments. Keep one todo/sub-issue for the slice.
 
 Use `neo.coding.pr.file` for document attachments: always attach the complete file at the PR’s current head (Markdown renders as Markdown); explain changes in card text, never attach a diff or diff text disguised as a Markdown document.
