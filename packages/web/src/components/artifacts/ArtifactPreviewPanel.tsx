@@ -23,9 +23,11 @@ type Reference = Extract<ArtifactPreviewTarget, { kind: 'reference' }>;
 function ReferenceView({
   target,
   resolved,
+  markdownClass,
 }: {
   target: Reference;
   resolved: Map<string, ArtifactResolution>;
+  markdownClass?: string;
 }) {
   const key = JSON.stringify(target);
   const [resolution, setResolution] = useState(() => resolved.get(key));
@@ -48,7 +50,13 @@ function ReferenceView({
   }, [key]);
 
   if (resolution?.kind === 'artifact')
-    return <ArtifactPreview artifactId={resolution.artifactId} onBack={backArtifactPreview} />;
+    return (
+      <ArtifactPreview
+        artifactId={resolution.artifactId}
+        onBack={backArtifactPreview}
+        markdownClass={markdownClass}
+      />
+    );
   if (resolution?.kind === 'pr')
     return (
       <ArtifactPrSummary
@@ -90,7 +98,7 @@ function ReferenceView({
   );
 }
 
-export function ArtifactPreviewPanel() {
+export function ArtifactPreviewPanel({ markdownClass }: { markdownClass?: string } = {}) {
   const stack = artifactPreviewStack.value;
   const top = stack.at(-1);
   const open = !!top;
@@ -209,9 +217,15 @@ export function ArtifactPreviewPanel() {
             key={stack.length}
             artifactId={top.artifactId}
             onBack={backArtifactPreview}
+            markdownClass={markdownClass}
           />
         ) : (
-          <ReferenceView key={stack.length} target={top} resolved={resolved.current} />
+          <ReferenceView
+            key={stack.length}
+            target={top}
+            resolved={resolved.current}
+            markdownClass={markdownClass}
+          />
         )}
       </div>
     </>

@@ -100,9 +100,11 @@ export function PreviewHeader({
 export function ArtifactPreview({
   artifactId,
   onBack,
+  markdownClass,
 }: {
   artifactId: string;
   onBack: () => void;
+  markdownClass?: string;
 }) {
   const connection = connectionState.value;
   const connected = connection === 'connected';
@@ -205,7 +207,7 @@ export function ArtifactPreview({
         ) : shown.image ? (
           <ArtifactImage blob={shown.image} title={shown.metadata.artifact.title} />
         ) : view === 'preview' && shown.metadata.artifact.kind === 'markdown' ? (
-          <MarkdownRenderer content={shown.text} artifactLinks />
+          <MarkdownRenderer content={shown.text} artifactLinks class={markdownClass} />
         ) : (
           <>
             {!!shown.omittedBytes && (

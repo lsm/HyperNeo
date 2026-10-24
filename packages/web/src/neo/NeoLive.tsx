@@ -734,7 +734,7 @@ export function NeoLive() {
         </div>
       </footer>
       <ToastContainer />
-      <ArtifactPreviewPanel />
+      <ArtifactPreviewPanel markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed" />
     </div>
   );
 }
