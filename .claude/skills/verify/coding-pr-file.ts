@@ -26,7 +26,7 @@ const sha = 'a'.repeat(40), tree = 'b'.repeat(40);
 const content = '# Complete review document\n\nUnchanged introduction.\n\n## Updated decision\n\nThe complete current decision.\n\nUnchanged appendix.\n';
 const bytes = Buffer.from(content);
 const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-const pr = { url: 'https://github.com/example/project/pull/42', title: 'Synthetic document', body: '', state: 'OPEN', headRefOid: sha, reviews: [], statusCheckRollup: [], changedFiles: 1, files: [{ path: 'report.md', additions: 1, deletions: 1 }] };
+const pr = { url: 'https://github.com/example/project/pull/42', title: 'Synthetic document', body: '', state: 'OPEN', headRefOid: sha, reviews: [], statusCheckRollup: [], changedFiles: 1, files: [{ path: 'report.md', additions: 1, deletions: 1, changeType: 'MODIFIED' }] };
 const fixtures = Object.fromEntries([
   [`commits/${sha}`, { sha, tree: { sha: tree } }],
   [`trees/${tree}`, { sha: tree, truncated: false, tree: [{ path: 'report.md', mode: '100644', type: 'blob', sha: blob, size: bytes.length }] }],

@@ -22,7 +22,8 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 ```
 
 Keep `evidence/observed.json`, `gh.log`, and `cleanup.json`. The helper starts and
-stops its own actual test daemon, registers only synthetic GitHub responses and
+stops its own actual test daemon, registers only synthetic GitHub responses (including
+current gh file metadata such as `changeType`) and
 Git objects, invokes its coding-pack operation through the agent MCP adapter,
 reads the registered complete Markdown bytes, and attaches that exact reference
 to a question. Both ask and todo contexts work. Stale heads and unlisted files

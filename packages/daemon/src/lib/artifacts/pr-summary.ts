@@ -40,7 +40,7 @@ const raw = z.object({
   body: z.string(),
   headRefOid: z.string(),
   changedFiles: count,
-  files: z.array(file).max(1000),
+  files: z.array(z.object(file.shape)).max(1000),
 });
 type Target = { repository: string; number: number };
 type Planned = Target & { url: string; args: string[] };
