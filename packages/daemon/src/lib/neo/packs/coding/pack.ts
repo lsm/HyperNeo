@@ -60,7 +60,10 @@ export function createCodingPack(deps: {
     preferences: {
       provenance: {
         label: { en: 'Independent model provenance', 'zh-Hans': '独立模型来源' },
-        valueLabels: {},
+        valueLabels: {
+          true: { en: 'Require independent model provenance', 'zh-Hans': '要求独立模型来源' },
+          false: { en: 'Disable model provenance requirements', 'zh-Hans': '关闭模型来源要求' },
+        },
         scope: 'repo',
         type: { kind: 'boolean' },
         default: true,

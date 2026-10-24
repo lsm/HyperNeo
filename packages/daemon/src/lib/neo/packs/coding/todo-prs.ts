@@ -149,7 +149,7 @@ export class CodingTodoPrRepository {
   }
 
   record(todoId: string, prs: readonly NeoWorkPr[], now: number): void {
-    for (const pr of prs) if (pr.head) this.stageFacts.observeHead(pr.url, pr.head);
+    for (const pr of prs) if (pr.head) this.stageFacts.observeHead(pr.url, pr.head, now);
     this.db
       .prepare(
         `INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at) VALUES (?, ?, ?)
@@ -442,6 +442,7 @@ type CodingTodoFacts = {
 
 const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
   .input(['todo', 'readRefs', 'readPrs', 'repo'])
+  .pipe(() => Date.now(), 'todo', 'observedAt')
   .pipe(
     async (todo: NeoTodo, read: NeoRefStateReader) => {
       const ref = codingIssueRef(todo.check);
@@ -462,13 +463,13 @@ const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
     async (
       facts: Omit<CodingTodoFacts, 'observedAt'>,
       repo: CodingTodoPrRepository,
-      todo: NeoTodo
+      todo: NeoTodo,
+      observedAt: number
     ) => {
-      const observedAt = Date.now();
       await repo.write('record', todo.id, facts.prs, observedAt);
       return { ...facts, observedAt };
     },
-    ['facts', 'repo', 'todo'],
+    ['facts', 'repo', 'todo', 'observedAt'],
     'facts'
   )
   .endAsync('facts') as (
@@ -498,6 +499,7 @@ export function createCodingTodoPack(
     await repo.write('claim', todo.id, claimsOf(todo), Date.now());
     const urls = repo.urls(todo.id);
     if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
+    const observedAt = Date.now();
     const read = await readPrs(urls);
     if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url)))
       return { prs: [], observedAt: Date.now(), incomplete: true };
@@ -505,8 +507,8 @@ export function createCodingTodoPack(
     const window = repo.window(todo.id);
     const prs = codingTodoOwnPrs(todo, claims, read, window);
     const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
-    await repo.write('record', todo.id, [...prs, ...open], Date.now());
-    return { prs, observedAt: Date.now() };
+    await repo.write('record', todo.id, [...prs, ...open], observedAt);
+    return { prs, observedAt };
   };
   return {
     readFacts,

@@ -392,7 +392,11 @@ export class CodingPrLedgerRepository {
          head = excluded.head, state = excluded.state`
     );
     for (const row of rows) {
-      this.stageFacts.observeHead(`https://github.com/${row.repo}/pull/${row.number}`, row.head);
+      this.stageFacts.observeHead(
+        `https://github.com/${row.repo}/pull/${row.number}`,
+        row.head,
+        now
+      );
       insert.run(
         row.repo,
         row.number,
@@ -543,6 +547,13 @@ export class CodingPrLedgerRepository {
 
   dropRepo(repo: string): void {
     this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
+    for (const table of ['pack_coding_stage_facts', 'pack_coding_stage_heads'])
+      this.db
+        .prepare(`DELETE FROM ${table} WHERE substr(url, 1, length(?)) = ?`)
+        .run(
+          `https://github.com/${repo.toLowerCase()}/pull/`,
+          `https://github.com/${repo.toLowerCase()}/pull/`
+        );
   }
 
   snapshot(
@@ -605,6 +616,12 @@ export class CodingPrLedgerRepository {
            OR repo NOT IN (SELECT value FROM json_each(?))`
       )
       .run(now - CODING_LEDGER_KEEP_MS, now - CODING_LEDGER_KEEP_MS, JSON.stringify(repos));
+    this.db
+      .prepare('DELETE FROM pack_coding_stage_heads WHERE observed_at < ?')
+      .run(now - CODING_LEDGER_KEEP_MS);
+    this.db.exec(
+      'DELETE FROM pack_coding_stage_facts WHERE url NOT IN (SELECT url FROM pack_coding_stage_heads)'
+    );
   }
 
   list(): (CodingLedgerRow & { stateSince: number; readAt: number })[] {

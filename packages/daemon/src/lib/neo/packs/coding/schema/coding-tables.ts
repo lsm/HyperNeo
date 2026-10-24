@@ -8,6 +8,7 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   );
   CREATE TABLE IF NOT EXISTS pack_coding_stage_heads (
     url TEXT PRIMARY KEY,
+    observed_at INTEGER NOT NULL,
     head TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS pack_coding_stage_facts (
@@ -145,6 +146,13 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     active_at INTEGER NOT NULL,
     seen_at INTEGER NOT NULL
   )`);
+  const heads = db.prepare('PRAGMA table_info(pack_coding_stage_heads)').all() as {
+    name: string;
+  }[];
+  if (!heads.some((column) => column.name === 'observed_at'))
+    db.exec(
+      'ALTER TABLE pack_coding_stage_heads ADD COLUMN observed_at INTEGER NOT NULL DEFAULT 0'
+    );
   const pages = db.prepare('PRAGMA table_info(pack_coding_poll_facts)').all() as { name: string }[];
   if (!pages.some((column) => column.name === 'http_json'))
     db.exec(

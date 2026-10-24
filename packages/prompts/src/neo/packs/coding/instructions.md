@@ -36,10 +36,14 @@ repository's merge rule. Put the real work in later todos.
 Include coding.provenance in the existing first-use pack preference question.
 Read the saved repository preference with pack.preferences.get; an unanswered
 provenance preference falls back to on without saving a value or marking it answered.
-The user can disable it through the same preference question or settings.
+Propose provenance true in the first-use question: yes enables it, no saves false
+and keeps any other proposed settings unchanged. Settings can also disable it.
 When on, require one unambiguous PR body line `Author: <model> via <harness>`
 with actual identities; ask the author to repair missing or ambiguous provenance.
 The reviewer policy requires a different model and prefers a different harness;
 same harness with a different model qualifies, same model with another harness does not.
+Known GPT/Codex and Claude family/version identities fold display, provider and dated
+aliases; unrecognised identities do not qualify automatically. Ask for a supported
+identity or use a human reviewer.
 A human is an alternative. When off, no Author line or model diversity is required.
 This records policy only; keep the repository's existing review and merge rules.

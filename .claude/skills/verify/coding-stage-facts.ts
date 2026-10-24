@@ -52,7 +52,7 @@ try {
         assert.deepEqual(await rpc('pack.preferences.get', setting), { preference: null });
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, false);
         assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer).preferred, true);
-        const proposal = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'stage-provenance', values: [{ ...setting, value: true }] }) as { ok: boolean; questionId: string };
+        const proposal = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'stage-provenance', values: [{ ...setting, value: true }, { ...setting, key: 'mergePolicy', value: 'ci_only' }] }) as { ok: boolean; questionId: string };
         assert.equal(proposal.ok, true);
         assert(proposal.questionId);
         assert.deepEqual(await rpc('pack.preferences.list', {}), { preferences: [] });
@@ -61,6 +61,9 @@ try {
         const afterNo = await rpc('pack.preferences.get', setting) as { preference: { value: unknown } | null };
         evidence.push({ aliases, afterNo });
         assert.equal(afterNo.preference?.value, false, 'No must disable provenance');
+        assert.deepEqual(await rpc('pack.preferences.get', { ...setting, key: 'mergePolicy' }), { preference: null });
+        const label = db.prepare('SELECT no_label AS label FROM neo_questions WHERE id = ?').get(proposal.questionId) as { label: string };
+        assert.match(label.label, /Disable provenance/);
         assert(aliases.every(policy => !policy.qualifies), 'Aliases and unknown models must not qualify');
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, true);
       } else {
@@ -75,6 +78,15 @@ try {
         await todos.write('record', 'todo-7', [{ url, head: 'head-a', state: 'OPEN', checks: 'passing', review: 'approved' }], 1);
         assert.equal(todos.stages('todo-7').length, 2, 'An older read must not erase current-head facts');
         assert.equal(await ledger.write('recordStage', fact), false, 'Old head must stay rejected');
+        await ledger.write('replace', 'synthetic/stages', [row('head-a')], 1);
+        assert.equal(todos.stages('todo-7').length, 2);
+        assert.equal(await ledger.write('recordStage', fact), false);
+        assert(await ledger.write('recordStage', { ...fact, head: 'head-b', verdict: 'fail' }));
+        assert.equal(await ledger.write('recordStage', { ...fact, head: 'head-b' }), false, 'A pass must not erase a fail');
+        await ledger.write('replace', 'synthetic/stages', [row('head-c')], 2);
+        assert.deepEqual(todos.stages('todo-7'), [], 'Conflicting timestamps must invalidate approvals');
+        assert.equal(await ledger.write('recordStage', { ...fact, head: 'head-b' }), false);
+        assert.equal(await ledger.write('recordStage', { ...fact, head: 'head-c' }), false);
         await todos.write('record', 'todo-7', [{ url, head: 'head-c', state: 'OPEN', checks: 'passing', review: 'approved' }], 3);
         assert.deepEqual(todos.stages('todo-7'), []);
         evidence.push({ phase, afterPush: todos.stages('todo-7'), todo: db.prepare("SELECT state FROM neo_todos WHERE id = 'todo-7'").get() });

@@ -26,16 +26,27 @@ export type CodingStageFact = z.infer<typeof CodingStageFact>;
 export class CodingStageFactsRepository {
   constructor(private readonly db: Database) {}
 
-  observeHead(url: string, head: string): void {
+  observeHead(url: string, head: string, observedAt: number): void {
     const key = githubUrlKey(url);
     this.db.transaction(() => {
+      const previous = this.db
+        .prepare('SELECT observed_at AS at, head FROM pack_coding_stage_heads WHERE url = ?')
+        .get(key) as { at: number; head: string } | undefined;
+      if (previous && observedAt < previous.at) return;
+      if (previous && observedAt === previous.at) {
+        if (previous.head !== head) {
+          this.db.prepare('DELETE FROM pack_coding_stage_facts WHERE url = ?').run(key);
+          this.db.prepare("UPDATE pack_coding_stage_heads SET head = '' WHERE url = ?").run(key);
+        }
+        return;
+      }
       this.db
         .prepare('DELETE FROM pack_coding_stage_facts WHERE url = ? AND head <> ?')
         .run(key, head);
       this.db
-        .prepare(`INSERT INTO pack_coding_stage_heads (url, head) VALUES (?, ?)
-        ON CONFLICT(url) DO UPDATE SET head = excluded.head`)
-        .run(key, head);
+        .prepare(`INSERT INTO pack_coding_stage_heads (url, head, observed_at) VALUES (?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET head = excluded.head, observed_at = excluded.observed_at`)
+        .run(key, head, observedAt);
     })();
   }
 
@@ -46,7 +57,8 @@ export class CodingStageFactsRepository {
       this.db
         .prepare(`INSERT INTO pack_coding_stage_facts (url, head, stage, fact_json)
       SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM pack_coding_stage_heads WHERE url = ? AND head = ?)
-      ON CONFLICT(url, stage) DO UPDATE SET head = excluded.head, fact_json = excluded.fact_json`)
+      ON CONFLICT(url, stage) DO UPDATE SET head = excluded.head, fact_json = excluded.fact_json
+      WHERE json_extract(pack_coding_stage_facts.fact_json, '$.verdict') <> 'fail'`)
         .run(fact.url, fact.head, fact.stage, JSON.stringify(fact), fact.url, fact.head).changes ===
       1
     );
@@ -62,6 +74,19 @@ export class CodingStageFactsRepository {
 }
 
 const normalize = (identity: string) => identity.trim().replace(/\s+/g, ' ').toLowerCase();
+
+function canonicalModel(identity: string): string | null {
+  const name = normalize(identity)
+    .replace(/^(openai|anthropic)\//, '')
+    .replace(/\s+/g, '-');
+  const gpt =
+    /^(?:gpt|codex)-(\d+(?:\.\d+)?)(?:-(?:sol|astra|luna|terra))?(?:-\d{4}-?\d{2}(?:-?\d{2})?)?$/.exec(
+      name
+    );
+  if (gpt) return `gpt-${gpt[1]}`;
+  const claude = /^claude-(opus|sonnet|haiku)-(\d+)[.-](\d+)(?:-\d{8})?$/.exec(name);
+  return claude ? `claude-${claude[1]}-${claude[2]}.${claude[3]}` : null;
+}
 
 function parseAuthor(body: string) {
   let fence: string | null = null;
@@ -100,7 +125,11 @@ export const codingReviewerPolicy = (superpipe({})('coding.reviewer-provenance')
             'author_provenance_required: ask the author to fix missing or ambiguous Author: <model> via <harness>',
         };
       if (reviewer.kind === 'human') return { qualifies: true, preferred: true, reason: 'human' };
-      const different = normalize(reviewer.model) !== author.model;
+      const authorModel = canonicalModel(author.model),
+        reviewerModel = canonicalModel(reviewer.model);
+      if (!authorModel || !reviewerModel)
+        return { qualifies: false, preferred: false, reason: 'model_identity_unrecognised' };
+      const different = reviewerModel !== authorModel;
       return {
         qualifies: different,
         preferred: different && normalize(reviewer.harness) !== author.harness,

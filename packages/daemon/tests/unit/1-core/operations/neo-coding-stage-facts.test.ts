@@ -88,8 +88,19 @@ describe('coding stage facts', () => {
       expect(ledger.stageFacts.read(url)).toEqual([]);
       expect(() => ledger.recordStage({ ...fact, head: 'head-b', evidence: [] })).toThrow();
       expect(ledger.recordStage({ ...fact, head: 'head-b', verdict: 'fail' })).toBe(true);
+      ledger.replace('synthetic/stages', [row('head-a')], 1);
+      expect(ledger.recordStage(fact)).toBe(false);
       expect(ledger.recordStage({ ...fact, head: 'head-b', verdict: 'pass' })).toBe(false);
       expect(ledger.stageFacts.read(url)[0].verdict).toBe('fail');
+      ledger.replace('synthetic/stages', [row('head-c')], 2);
+      expect(ledger.stageFacts.read(url)).toEqual([]);
+      expect(ledger.recordStage({ ...fact, head: 'head-b' })).toBe(false);
+      expect(ledger.recordStage({ ...fact, head: 'head-c' })).toBe(false);
+      ledger.replace('synthetic/stages', [row('head-c')], 3);
+      expect(ledger.recordStage({ ...fact, head: 'head-c' })).toBe(true);
+      ledger.dropRepo('synthetic/stages');
+      expect(ledger.stageFacts.read(url)).toEqual([]);
+      expect(ledger.recordStage({ ...fact, head: 'head-b' })).toBe(false);
     } finally {
       db.close();
     }
