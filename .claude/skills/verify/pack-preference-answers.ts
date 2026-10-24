@@ -46,7 +46,7 @@ for (const phase of ['initial', 'restart']) {
       assert.deepEqual(closed, { ok: false, reason: 'question_closed' });
       const proposed = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'synthetic-request', values });
       assert.equal(proposed.ok, true); questionId = proposed.questionId;
-      assert.equal((await rpc('pack.preferences.list', {})).preferences.length, 0);
+      assert.equal((await rpc('pack.preferences.list', {})).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos').length, 0);
       const read = await rpc('neo.question.get', { questionId });
       assert.equal(read.answeredByHuman, false); assert(read.question.text.includes('| --- | --- |')); for (const value of values) assert(!read.question.text.includes(JSON.stringify(value)));
       const snapshot = await rpc('neo.snapshot', {});
@@ -55,13 +55,13 @@ for (const phase of ['initial', 'restart']) {
       assert.equal((await rpc('neo.question.answer', { questionId, answer: 'yes' })).ok, true);
     }
     assert.equal((await rpc('neo.question.get', { questionId })).answeredByHuman, true);
-    const saved = (await rpc('pack.preferences.list', {})).preferences;
+    const saved = (await rpc('pack.preferences.list', {})).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos');
     assert.deepEqual(saved.map((s: any) => ({ pack: s.pack, scope: s.scope, key: s.key, value: s.value })), values);
     assert(saved.every((s: any) => s.setBy === 'human'));
     assert.equal((await mcp('pack.preferences.applyAnswer', { questionId, values: [{ ...values[0], value: 'ci_only' }] })).code, 'invalid_input');
     assert.equal((await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'synthetic-request', values: [{ ...values[0], value: 'ci_only' }] })).reason, 'proposal_is_immutable');
     assert.equal((await mcp('pack.preferences.applyAnswer', { questionId })).ok, true);
-    assert.deepEqual((await rpc('pack.preferences.list', {})).preferences, saved);
+    assert.deepEqual((await rpc('pack.preferences.list', {})).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos'), saved);
   } finally { ws?.close(); await app.cleanup(); }
 }
 writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

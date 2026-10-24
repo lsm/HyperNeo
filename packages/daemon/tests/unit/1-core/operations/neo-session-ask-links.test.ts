@@ -188,6 +188,11 @@ describe('ReturnType<typeof createNeoService> session ask links', () => {
     const raw = db.getDatabase();
     raw
       .prepare(
+        "UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'"
+      )
+      .run(JSON.stringify([pr(12).split('/').slice(3, 5).join('/').toLowerCase()]));
+    raw
+      .prepare(
         `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, read_at)
          VALUES (?, 12, 'Fix', 'b', 'h', 'waiting_review', 1, 1)`
       )

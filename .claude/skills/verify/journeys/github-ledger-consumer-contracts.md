@@ -21,6 +21,8 @@ production readers against the same fixture. The helper stops the job processor
 so it never consumes a model turn. All gh commands are synthetic, unknown
 commands refuse, no provider credentials are inherited, and direct fetch throws.
 Nothing contacts real GitHub, auth files or Keychain. Only this test DB is written.
+The fixture explicitly watches `synthetic/ledger` before exercising reconciliation;
+it does not rely on repository discovery to subscribe the instance.
 
 Observe `evidence/consumers.json` and `evidence/requests.jsonl`:
 

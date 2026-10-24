@@ -43,6 +43,7 @@ try {
     ws!.send(JSON.stringify({ id, type: 'REQ', method: 'operation.invoke', data: { name: 'neo.github.read', input }, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const db = app.db.getDatabase(); createCodingPackTables(db);
+  db.prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'").run(JSON.stringify([repo]));
   const ledger = new CodingPrLedgerRepository(db);
   const reconcile = () => reconcileCodingPrLedger(ledger, [repo], readCodingLedgerRepo, Date.now());
   const detail = () => rpc({ url });

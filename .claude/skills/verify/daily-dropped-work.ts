@@ -60,6 +60,7 @@ try {
       }
     }
   }
+  app!.db.getDatabase().prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'").run('["synthetic/plan"]');
   new CodingPrLedgerRepository(app!.db.getDatabase()).replace('synthetic/plan', [ { repo: 'synthetic/plan', number: 1, title: 'Synthetic ready item', branch: 'one', head: 'synthetic-head', state: 'approved_green', closedAt: null } ], at - hour - 1);
   await Promise.all([sweepNeoPacks(app!.jobQueue, service!), sweepNeoPacks(app!.jobQueue, service!)]);
   const first = (await read('daily message reaches conversation RPC', 1))[0].publication;

@@ -1,3 +1,4 @@
+import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +33,7 @@ function setup() {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  createNeoPackPreferencesTable(db);
   createCodingPackTables(db);
   const ledger = new CodingPrLedgerRepository(db);
   const wakes: { key: string; text: string }[] = [];
@@ -78,6 +80,7 @@ function setup() {
       accepted = value;
     },
     restart: () => {
+      createNeoPackPreferencesTable(db);
       createCodingPackTables(db);
       pack = makePack();
     },
@@ -218,6 +221,7 @@ describe('coding pack unowned PR persistence', () => {
       const { activated_at: cutoff } = db
         .prepare('SELECT activated_at FROM pack_coding_pr_unowned_state')
         .get() as { activated_at: number };
+      createNeoPackPreferencesTable(db);
       createCodingPackTables(db, cutoff + 600_000);
       expect(db.prepare('SELECT activated_at FROM pack_coding_pr_unowned_state').get()).toEqual({
         activated_at: cutoff,
@@ -239,6 +243,7 @@ describe('coding pack unowned PR persistence', () => {
     const path = join(root, 'synthetic.db');
     let db = new Database(path);
     try {
+      createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 10);
       db.prepare(`INSERT INTO pack_coding_pr_ledger (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
         VALUES ('synthetic/a',1,'Synthetic','b','h','unreviewed',20,20,11,0)`).run();
@@ -246,6 +251,7 @@ describe('coding pack unowned PR persistence', () => {
       expect(pending?.text).toContain('synthetic/a#1');
       db.close();
       db = new Database(path);
+      createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 30);
       const repo = new CodingPrEventRepository(db);
       const sent: unknown[] = [];
@@ -282,6 +288,7 @@ describe('coding pack unowned PR persistence', () => {
         state_since INTEGER, closed_at INTEGER, owner TEXT, nudges INTEGER DEFAULT 0,
         told_at INTEGER, read_at INTEGER, PRIMARY KEY(repo,number));
         INSERT INTO pack_coding_pr_ledger (repo,number,title,read_at) VALUES ('synthetic/a',1,'Keep this row',1)`);
+      createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 2);
       expect(
         db.prepare('SELECT title,created_at,author_is_bot FROM pack_coding_pr_ledger').get()

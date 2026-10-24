@@ -8,8 +8,9 @@ env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test
 ```
 
 The helper boots the real isolated daemon twice and reads `system.health` over
-WebSocket on each boot. `evidence/observed.json` must show zero preference rows
-on first boot: migrations never apply defaults or install-specific settings.
+WebSocket on each boot. `evidence/observed.json` must show only the explicit empty Coding watch list
+on first boot: merge/review preferences remain unanswered. The watch list is an
+instance boundary rather than a review-policy default.
 One synthetic human setting and its provenance/timestamp survive restart, and
 an unanswered repo stays unanswered. The helper inserts only synthetic fixture
 data directly; the human-only settings operation belongs to slice 2. It uses

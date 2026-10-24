@@ -41,6 +41,11 @@ beforeEach(async () => {
     );
   service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   service.pack('coding')!.sweep = mock(async () => {});
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'"
+    )
+    .run('["synthetic/plan"]');
 });
 afterEach(async () => {
   await service.dispose();

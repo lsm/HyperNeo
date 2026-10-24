@@ -38,7 +38,7 @@ for (const phase of ['initial', 'restart']) {
       ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
     });
     if (phase === 'initial') {
-      assert.deepEqual((await rpc('pack.preferences.list', {})).preferences, []);
+      assert.deepEqual((await rpc('pack.preferences.list', {})).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos'), []);
       assert.equal((await rpc('pack.preferences.get', setting)).preference, null);
       assert.equal((await rpc('pack.preferences.set', setting)).ok, true);
       assert.equal((await rpc('pack.preferences.set', { ...setting, value: 'invented' })).ok, false);
@@ -52,9 +52,9 @@ for (const phase of ['initial', 'restart']) {
     assert.equal(read.value, 'review_bot');
     assert.equal(read.setBy, 'human');
     assert(read.setAt > 0);
-    assert.deepEqual((await rpc('pack.preferences.list', {})).preferences, [read]);
+    assert.deepEqual((await rpc('pack.preferences.list', {})).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos'), [read]);
     const snapshot = await rpc('neo.snapshot', {});
-    assert.deepEqual(snapshot.packPreferences, [read]);
+    assert.deepEqual(snapshot.packPreferences.filter((row: { key: string }) => row.key !== 'watchedRepos'), [read]);
     const agentRead = await mcp({ name: 'pack.preferences.get', input: setting });
     assert.deepEqual(JSON.parse(agentRead.content[0].text).preference, read);
     evidence.push({ phase, agentRead });

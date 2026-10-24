@@ -87,7 +87,7 @@ try {
     const answer = await rpc('neo.question.get', { questionId: question.id });
     assert.equal(answer.question.answer, 'yes');
     assert.equal(answer.answeredByHuman, true);
-    const saved = (await rpc('pack.preferences.list')).preferences;
+    const saved = (await rpc('pack.preferences.list')).preferences.filter((row: { key: string }) => row.key !== 'watchedRepos');
     for (const value of values) assert(saved.some((row: any) => row.pack === value.pack && row.scope.key === value.scope.key && row.key === value.key && JSON.stringify(row.value) === JSON.stringify(value.value) && row.setBy === 'human'));
     evidence.push({ language, bound, saved, browser: JSON.parse(readFileSync(join(run, `evidence/table-${language}.json`), 'utf8')) });
   }
