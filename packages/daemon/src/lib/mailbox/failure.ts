@@ -92,7 +92,9 @@ export function sessionFailureTarget(entry: MailboxEntry | null): SessionFailure
   };
 }
 
-export function parseFailureEntryStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+export function parseFailureEntryStage<T extends MailboxFailureState>(
+  ctx: T
+): T & MailboxFailureState {
   const entry = parseMailboxEntry(ctx.job.payload);
   return { ...ctx, entry, target: sessionFailureTarget(entry) ?? undefined };
 }
@@ -101,7 +103,9 @@ function isSkippedMailboxFailure(ctx: MailboxFailureCtx): boolean {
   return ctx.target === undefined;
 }
 
-export function buildFailureMessageStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+export function buildFailureMessageStage<T extends MailboxFailureState>(
+  ctx: T
+): T & MailboxFailureState {
   const target = ctx.target;
   const entry = ctx.entry;
   if (target === undefined || entry === null || entry.to.kind !== 'session') return ctx;
@@ -116,6 +120,8 @@ function samePromptMessage(stored: SDKMessage, incoming: SDKUserMessage): boolea
     canonicalJson(normalizePromptForComparison(incoming))
   );
 }
+
+export type MailboxFailureState = Omit<MailboxFailureCtx, 'deps'>;
 
 type MailboxFailureRowOutcome = { failedId?: string; uuidOwned: boolean; save?: true };
 
@@ -144,6 +150,39 @@ export function persistExistingMailboxFailure(
       ? { uuidOwned: true, save: true }
       : { failedId, uuidOwned: true };
   });
+}
+
+export function persistMailboxFailure(
+  job: Job,
+  repository: SDKMessageRepository,
+  saveFailed: (sessionId: string, message: SDKUserMessage, origin?: MessageOrigin) => string = (
+    sessionId,
+    message,
+    origin
+  ) => repository.saveUserMessage(sessionId, message, 'failed', origin)
+): MailboxFailureState {
+  const ctx = buildFailureMessageStage(
+    parseFailureEntryStage({ job, entry: null } as MailboxFailureState)
+  );
+  const { target, message, entry } = ctx;
+  if (!target || !message || !entry) return ctx;
+  let ownershipKnown = false;
+  try {
+    const outcome = persistExistingMailboxFailure(repository, target, message, entry.id, () => {
+      ownershipKnown = true;
+    });
+    const failedId = outcome.save
+      ? saveFailed(
+          target.sessionId,
+          message,
+          mailboxMessageIsSynthetic(entry.origin, entry.message) ? 'system' : undefined
+        )
+      : outcome.failedId;
+    return { ...ctx, failedId, uuidOwned: outcome.uuidOwned };
+  } catch (error) {
+    emitMaterializeFailure(target, entry.id, error);
+    return { ...ctx, uuidOwned: ownershipKnown };
+  }
 }
 
 export async function persistFailedRowStage(ctx: MailboxFailureCtx): Promise<MailboxFailureCtx> {

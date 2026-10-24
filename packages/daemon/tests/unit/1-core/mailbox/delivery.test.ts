@@ -1180,6 +1180,7 @@ describe('createMailboxDeliveryHandler', () => {
 
         const cancelled = await materializeMailboxFailuresForSession(SESSION_ID, {
           db: {
+            getDatabase: () => mailbox.db,
             getJobQueueRepo: () => mailbox.jobQueue,
             getSDKMessageRepo: () => mailbox.sdkMessageRepo,
             saveUserMessage: async () => null,

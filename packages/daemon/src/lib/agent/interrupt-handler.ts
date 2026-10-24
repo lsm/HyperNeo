@@ -2,7 +2,7 @@ import type { MessageHub, Session } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
-import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
+import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { withSessionLock } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
@@ -85,54 +85,19 @@ export class InterruptHandler {
       }
       const preserveDeliveryJobs = opts?.preserveDeliveryJobs ?? !opts?.skipDeferredReplay;
       if (!preserveDeliveryJobs) {
-        const failedDbIds: string[] = [];
+        let failedDbIds: string[] = [];
         await withSessionLock(session.id, async () => {
-          await materializeMailboxFailuresForSession(session.id, {
-            db: this.ctx.db,
-            internalEventBus: this.ctx.internalEventBus,
-            preserveDeferred: opts?.skipDeferredReplay !== true,
-            settleSkipped: (_sessionId, messageUuid) =>
-              stateManager.clearQueuedIfOwnedBy(messageUuid).then(() => {}),
-          });
-          const jobQueue = this.ctx.db.getJobQueueRepo?.();
-          const messageUuids = jobQueue?.cancelForSessionWithMessages(session.id) ?? [];
-          for (const messageUuid of messageUuids) {
-            const failedDbId =
-              (await this.ctx.db.writeSDKMessage?.(
-                'markDeliveryFailedByUuid',
-                session.id,
-                messageUuid
-              )) ?? null;
-            if (failedDbId) failedDbIds.push(failedDbId);
-          }
-          const cancelled = new Set(messageUuids);
-          const enqueued = this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'enqueued') ?? [];
-          for (const msg of enqueued) {
-            const uuid = msg.uuid;
-            if (uuid && !cancelled.has(uuid)) {
-              const failedDbId =
-                (await this.ctx.db.writeSDKMessage?.(
-                  'markDeliveryFailedByUuid',
-                  session.id,
-                  uuid
-                )) ?? null;
-              if (failedDbId) failedDbIds.push(failedDbId);
-            }
-          }
-          if (opts?.skipDeferredReplay === true) {
-            const deferredRows =
-              this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'deferred') ?? [];
-            for (const row of deferredRows) {
-              if (!row.uuid) continue;
-              const failedDbId =
-                (await this.ctx.db.writeSDKMessage?.(
-                  'markDeliveryFailedByUuid',
-                  session.id,
-                  row.uuid
-                )) ?? null;
-              if (failedDbId) failedDbIds.push(failedDbId);
-            }
-          }
+          failedDbIds = await teardownSessionDeliveries(
+            session.id,
+            {
+              db: this.ctx.db,
+              internalEventBus: this.ctx.internalEventBus,
+              preserveDeferred: opts?.skipDeferredReplay !== true,
+              settleSkipped: (_sessionId, messageUuid) =>
+                stateManager.clearQueuedIfOwnedBy(messageUuid).then(() => {}),
+            },
+            { failEnqueued: true, failDeferred: opts?.skipDeferredReplay === true }
+          );
         });
         if (failedDbIds.length > 0) {
           await this.ctx.internalEventBus

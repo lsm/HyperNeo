@@ -29,7 +29,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler.ts';
 import { SESSION_TITLE_GENERATION } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
-import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
+import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { listProcesses, type ProcessSnapshot } from '../process-watchdog.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
@@ -283,29 +283,12 @@ export class SessionManager {
       );
 
       if (!options.restartQuery) {
-        const failedDbIds: string[] = [];
-        await materializeMailboxFailuresForSession(sessionId, {
+        const failedDbIds = await teardownSessionDeliveries(sessionId, {
           db: this.db,
           internalEventBus: this.internalEventBus,
           settleSkipped: (sid, messageUuid) =>
             this.getCachedSession(sid)?.settleSkippedDelivery(messageUuid) ?? Promise.resolve(),
         });
-        const jobQueue = this.db.getJobQueueRepo?.();
-        const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
-        for (const messageUuid of messageUuids) {
-          const failedDbId =
-            (await this.db.writeSDKMessage?.('markDeliveryFailedByUuid', sessionId, messageUuid)) ??
-            null;
-          if (failedDbId) failedDbIds.push(failedDbId);
-        }
-        const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
-        for (const row of deferredRows) {
-          if (!row.uuid) continue;
-          const failedDbId =
-            (await this.db.writeSDKMessage?.('markDeliveryFailedByUuid', sessionId, row.uuid)) ??
-            null;
-          if (failedDbId) failedDbIds.push(failedDbId);
-        }
         if (failedDbIds.length > 0) {
           await this.internalEventBus
             .publish('messages.statusChanged', {
