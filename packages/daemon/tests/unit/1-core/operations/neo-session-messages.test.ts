@@ -49,7 +49,7 @@ describe('NeoConversationReader session rows', () => {
       sent('worker-1', 'neo:root', 'Rebased, CI is green', 2000),
       sent('claude-code:30da458c', 'neo:root', 'fullstack 2: fixed the bot finding', 3000),
     ])
-      messages.record(planNeoSessionMessage(item, root, title)!);
+      await messages.record(planNeoSessionMessage(item, root, title)!);
     new NeoPublicationRepository(db).append({
       conversationId: root.conversationId,
       publicationId: '00000000-0000-4000-8000-0000000000a1',
