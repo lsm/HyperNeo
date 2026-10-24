@@ -18,7 +18,10 @@ const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
 type Receipt = { ok: true; question: NeoQuestion } | { ok: false; reason: string };
 
-function setup(artifact?: ArtifactRefReader) {
+function setup(
+  artifact?: ArtifactRefReader,
+  readSource?: Parameters<typeof createNeoQuestionOperations>[5]
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -52,16 +55,17 @@ function setup(artifact?: ArtifactRefReader) {
       },
       undefined,
       artifact,
-      async (ref) =>
-        ref.id === 'missing'
-          ? null
-          : {
-              ...ref,
-              name: 'Review worker',
-              label: 'Codex · Review worker',
-              provider: 'Codex',
-              link: `codex://threads/${ref.id}`,
-            }
+      readSource ??
+        (async (ref) =>
+          ref.id === 'missing'
+            ? null
+            : {
+                ...ref,
+                name: 'Review worker',
+                label: 'Codex · Review worker',
+                provider: 'Codex',
+                link: `codex://threads/${ref.id}`,
+              })
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -90,6 +94,50 @@ function setup(artifact?: ArtifactRefReader) {
 }
 
 describe('neo.question operations', () => {
+  test.each(['reply', 'yesno', 'choice', 'start'] as const)(
+    'refuses a %s question if its ask settles during source lookup',
+    async (kind) => {
+      let entered!: () => void;
+      let release!: (value: NonNullable<NeoQuestion['sourceSession']>) => void;
+      const reading = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const source = new Promise<NonNullable<NeoQuestion['sourceSession']>>((resolve) => {
+        release = resolve;
+      });
+      const f = setup(undefined, async () => {
+        entered();
+        return source;
+      });
+      try {
+        f.daemonStart(['t1']);
+        const pending = f.call('neo.question.ask', {
+          askId: 'ask',
+          kind,
+          text: 'Worker recommendation',
+          options: ['First', 'Second'],
+          noLabel: 'Wait',
+          yesLabel: 'Approve',
+          sourceSession: { adapter: 'codex-desktop', id: 'worker' },
+        });
+        await reading;
+        f.store.settleAsk(f.store.getAsk('ask')!, 'dropped', 'No longer needed', 2);
+        release({
+          adapter: 'codex-desktop',
+          id: 'worker',
+          name: 'Worker',
+          label: 'Codex · Worker',
+          provider: 'Codex',
+          link: 'codex://threads/worker',
+        });
+        expect(await pending).toEqual({ ok: false, reason: 'ask_settled: this ask is dropped.' });
+        expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
+
   test('refuses an unreadable source without opening or replacing a question', async () => {
     const { asked, call, store } = setup();
     const original = await asked({ kind: 'reply', text: 'Keep this question' });
