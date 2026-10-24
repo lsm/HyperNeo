@@ -1,3 +1,4 @@
+import { resolveNeoCardReply } from './public-conversation.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
@@ -47,6 +48,22 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
+  const [cardTarget, setCardTarget] = useState<{ askId: string; questionId: string } | null>(null);
+  const [cardUnavailable, setCardUnavailable] = useState(false);
+  const returnToChat = useRef<{
+    element: HTMLElement;
+    top: number;
+    focus: HTMLElement | null;
+  } | null>(null);
+  useEffect(() => {
+    if (scenesOpen || !returnToChat.current) return;
+    const saved = returnToChat.current;
+    returnToChat.current = null;
+    saved.element.scrollTop = saved.top;
+    saved.focus?.focus({ preventScroll: true });
+    setCardTarget(null);
+    setCardUnavailable(false);
+  }, [scenesOpen]);
   const [chat, setChat] = useState<{ sessionId: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
@@ -80,7 +97,12 @@ export function NeoLive() {
   if (publicConversation?.status === 'ready') loadedScope.current = sceneScope;
   const conversationLoaded =
     loadedScope.current === sceneScope && publicConversation?.status !== 'unavailable';
-  useEffect(() => setChat(null), [sceneScope]);
+  useEffect(() => {
+    setChat(null);
+    setCardTarget(null);
+    setCardUnavailable(false);
+    returnToChat.current = null;
+  }, [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
   const replyLabels = new Map(
@@ -98,6 +120,14 @@ export function NeoLive() {
       ),
     ])
   );
+  useEffect(() => {
+    if (!cardTarget || !view?.todoAsks) return;
+    const target = resolveNeoCardReply(cardTarget, view.todoAsks);
+    if (target === 'unavailable') {
+      setCardTarget(null);
+      setCardUnavailable(true);
+    } else if (target.questionId !== cardTarget.questionId) setCardTarget(target);
+  }, [view?.todoAsks, cardTarget]);
   const sceneGroups = [
     { key: 'attention', label: t('live.group.attention') },
     { key: 'running', label: t('live.group.running') },
@@ -440,7 +470,26 @@ export function NeoLive() {
               sessionId={neo.sessionId}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
-              onOpenWork={(anchor) => {
+              onOpenWork={(anchor, cardReply) => {
+                if (cardReply) {
+                  const element = scroll.current ?? mainScroll.current;
+                  if (element && !returnToChat.current)
+                    returnToChat.current = {
+                      element,
+                      top: element.scrollTop,
+                      focus:
+                        document.activeElement instanceof HTMLElement
+                          ? document.activeElement
+                          : null,
+                    };
+                  nearBottom.current = false;
+                  const target = resolveNeoCardReply(cardReply, view?.todoAsks ?? []);
+                  setCardTarget(target === 'unavailable' ? null : target);
+                  setCardUnavailable(target === 'unavailable');
+                  setChat(null);
+                  setScenesOpen(true);
+                  return;
+                }
                 setChat(null);
                 setScenesOpen(true);
                 requestAnimationFrame(() => {
@@ -587,6 +636,16 @@ export function NeoLive() {
               </button>
             </div>
           )}
+          {returnToChat.current && (
+            <button type="button" class="neo-float-link" onClick={() => setScenesOpen(false)}>
+              {t('chat.backToChat')}
+            </button>
+          )}
+          {cardUnavailable && (
+            <p role="status" class="mt-3 text-sm text-fg-muted">
+              {t('chat.cardUnavailable')}
+            </p>
+          )}
           <NeoGoals sessionId={neo.sessionId} />
           {publicConversation && workCount === 0 && (
             <p role="status" class="mt-6 text-sm text-fg-muted">
@@ -608,6 +667,7 @@ export function NeoLive() {
                   <NeoAskTodos
                     key={entry.ask.id}
                     entry={entry}
+                    focusedQuestion={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
                     onReply={

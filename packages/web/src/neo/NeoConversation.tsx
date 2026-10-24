@@ -1,3 +1,4 @@
+import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import { NeoBusyRow } from './NeoBusyRow.tsx';
 import type { ChatMessage } from '@hyperneo/shared';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -76,7 +77,7 @@ export function NeoConversation({
   store: SessionStore;
   busy?: readonly string[] | null;
   onQuote?: (quote: NeoQuote) => void;
-  onOpenWork?: (anchor: string) => void;
+  onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];

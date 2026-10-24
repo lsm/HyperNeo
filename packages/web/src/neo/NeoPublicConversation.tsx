@@ -1,3 +1,5 @@
+import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
+import { neoCardReplyTitle } from './public-conversation.ts';
 import { NativeContentDisclosure } from '../components/ui/NativeContentDisclosure.tsx';
 import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
@@ -412,10 +414,12 @@ function PublicEntry({
   replyLabels,
   onQuote,
   onSeek,
+  onOpenWork,
   status,
 }: {
   entry: NeoPublicEntry;
   status?: NeoMessageStatus;
+  onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
   onSeek?: (messageId: string) => void;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
@@ -564,6 +568,28 @@ function PublicEntry({
           </div>
         )}
         {(() => {
+          if (publication?.cardReply)
+            return (
+              <button
+                type="button"
+                class="text-left text-accent hover:underline focus-visible:outline-accent"
+                disabled={!onOpenWork}
+                onClick={() =>
+                  onOpenWork?.(
+                    `neo-ref-question-${publication.cardReply!.questionId}`,
+                    publication.cardReply
+                  )
+                }
+              >
+                {t('chat.cardReply')}
+                <span class="block text-sm text-fg">
+                  {neoCardReplyTitle(
+                    publication,
+                    replyLabels?.get(`question:${publication.cardReply.questionId}`)?.label
+                  )}
+                </span>
+              </button>
+            );
           const fold = (
             <ContentDisclosureControl expanded={expanded} onToggle={() => setExpanded(!expanded)} />
           );
@@ -623,7 +649,9 @@ function PublicEntry({
           );
         })()}
       </div>
-      {publication && (publication.editedAt || publication.revisions?.length) ? (
+      {publication &&
+      !publication.cardReply &&
+      (publication.editedAt || publication.revisions?.length) ? (
         <div class="flow-root mt-1">
           {history && <NeoPublicationHistory publication={publication} id={`${anchor}-history`} />}
           <ContentDisclosureControl
@@ -862,7 +890,7 @@ export function NeoPublicConversation({
   onEditUndelivered?: NeoEditUndelivered;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
-  onOpenWork?: (anchor: string) => void;
+  onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
 }) {
   const wakeFor = (id: string) =>
     conversation.entries.find(
@@ -938,6 +966,7 @@ export function NeoPublicConversation({
                     <PublicEntry
                       key={item.key}
                       entry={item}
+                      onOpenWork={onOpenWork}
                       replyLabels={labels}
                       onSeek={seek}
                       onQuote={onQuote}
@@ -953,6 +982,7 @@ export function NeoPublicConversation({
           <PublicEntry
             key={entry.key}
             entry={entry}
+            onOpenWork={onOpenWork}
             onEditUndelivered={onEditUndelivered}
             replyLabels={labels}
             onSeek={seek}

@@ -48,7 +48,10 @@ function item(sequence = 1) {
     links: [{ kind: 'project', id: 'research', label: '查看对照 ↗' }],
   };
 }
-function response(items = [item()], nextAfter = items.at(-1)?.sequence ?? 0) {
+function response(
+  items: readonly unknown[] = [item()],
+  nextAfter = (items.at(-1) as { sequence: number } | undefined)?.sequence ?? 0
+) {
   return { ok: true, conversationId, items, nextAfter };
 }
 function transport(value: unknown = response()) {
@@ -413,6 +416,31 @@ describe('presentPublicationPage revisions', () => {
   it('does not require revision metadata for an unchanged historical message', () => {
     expect(presentPublicationPage(response([original]), page)).toEqual({
       value: { state: 'ready', items: [original], nextAfter: 1 },
+    });
+  });
+});
+
+describe('card reply publication metadata', () => {
+  const cardReply = {
+    sourceMessageIds: ['30000000-0000-4000-8000-000000000001'],
+    askId: 'ask',
+    questionId: 'question',
+    mutationId: '40000000-0000-4000-8000-000000000001',
+  };
+  it('retains the typed association across repeated page reads', async () => {
+    const wire = { ...item(), cardReply };
+    const { getHub } = transport(response([wire]));
+    const first = await readNeoPublications(page, getHub, current);
+    expect(first).toMatchObject({ state: 'ready', items: [{ cardReply }] });
+    expect(await readNeoPublications(page, getHub, current)).toEqual(first);
+  });
+  it.each([
+    { ...cardReply, sourceMessageIds: [] },
+    { ...cardReply, mutationId: 'bad' },
+    { ...cardReply, questionId: '' },
+  ])('rejects malformed associations %o', (invalid) => {
+    expect(presentPublicationPage(response([{ ...item(), cardReply: invalid }]), page)).toEqual({
+      reason: { state: 'unavailable' },
     });
   });
 });
