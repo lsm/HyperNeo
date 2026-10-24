@@ -65,6 +65,7 @@ function makeGetPrOp(spawnImpl: SpawnFn): ConnectorOp {
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
     const hostError = validatePrLookupHost(prUrl);
     if (hostError) return hostError;
+    if (ctx.readPr) return ctx.readPr(prUrl, ctx.workspacePath || '/tmp');
     return runGhJson(
       ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
       ctx.workspacePath || '/tmp',
@@ -79,12 +80,7 @@ function makeGetPrReadinessOp(spawnImpl: SpawnFn): ConnectorOp {
     const prUrl = asString(opParams.prUrl);
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
 
-    const prOutcome = await runGhJson(
-      ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
-      ctx.workspacePath || '/tmp',
-      spawnImpl,
-      { resourceHint: 'graphql' }
-    );
+    const prOutcome = await makeGetPrOp(spawnImpl)(opParams, ctx);
     if (!prOutcome.ok) return prOutcome;
 
     const canonicalUrl = asString((prOutcome.data as Record<string, unknown>)?.url);

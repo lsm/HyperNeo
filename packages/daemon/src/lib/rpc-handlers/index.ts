@@ -1364,6 +1364,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   taskAgentManager = new TaskAgentManager({
     db: deps.reactiveDb.db,
+    readGithubPr: (url, workspacePath) => neoService.readConnectorPr(url, workspacePath),
     sessionManager: deps.sessionManager,
     reactiveDb: deps.reactiveDb,
     spaceManager: deps.spaceManager,
