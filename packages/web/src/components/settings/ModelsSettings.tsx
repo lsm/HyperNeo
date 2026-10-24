@@ -546,26 +546,33 @@ function NeoModelSettings({
       <div>
         <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
         <p class="text-xs text-fg-faint mt-0.5">
-          Models Neo and its projects use, in order: the primary first, then the fallbacks. Neo
-          returns to the primary after recovery.
+          Saved Neo model preference: the primary first, then the fallbacks. Recovery uses the
+          ordinary session policy and does not follow this list.
         </p>
       </div>
       <p class="text-xs text-fg-faint">
         Auto-compact is set per model and shown against that model’s context window. 90% keeps the
-        provider default; at 100%, compaction follows the provider’s limits. Changes apply after the
-        current reply.
+        provider default; at 100%, compaction follows the provider’s limits. Percentage changes
+        apply when Neo is idle.
       </p>
       <p class="text-xs text-fg-faint">
-        Usable fallback providers: {providers.join(', ') || 'None available'}
+        Providers with usable models: {providers.join(', ') || 'None available'}
       </p>
       {!draft ? (
-        <p class="text-xs text-fg-faint">Add a model. The first one in the list is the primary.</p>
+        <>
+          <p class="text-xs text-fg-faint">
+            Follows default (current: {globalSettings.value?.model ?? 'none'})
+          </p>
+          <p class="text-xs text-fg-faint">
+            Add a model to save a Neo preference. The first one is the primary.
+          </p>
+        </>
       ) : draft.fallbacks === undefined ? (
         <p class="text-xs text-fg-faint">
           Uses the general session fallback chain until you save a Neo chain.
         </p>
       ) : draft.fallbacks.length === 0 ? (
-        <p class="text-xs text-fg-faint">Neo fallbacks disabled.</p>
+        <p class="text-xs text-fg-faint">No saved fallbacks.</p>
       ) : null}
       <FallbackChainEditor
         models={list}
@@ -628,7 +635,7 @@ function NeoModelSettings({
           disabled={busy || !draft}
           onClick={() => draft && setDraft({ ...draft, fallbacks: [] })}
         >
-          Disable Neo fallbacks
+          Clear saved fallbacks
         </Button>
         <Button size="xs" disabled={busy || !draft} onClick={save}>
           Save Neo models
@@ -917,7 +924,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
     return (
       <SettingsSection
         title="Neo model"
-        description="Model, provider, thinking and compaction for Neo and its projects. Changes apply after the current reply."
+        description="Model, provider, thinking and compaction for Neo and its projects. Compaction changes apply when Neo is idle."
       >
         {loadError && (
           <p role="alert" class="text-sm text-danger">
@@ -932,6 +939,9 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
         >
           Refresh models
         </Button>
+        <p class="text-xs text-fg-faint">
+          Refresh reloads the model list only; it does not change saved defaults.
+        </p>
         <NeoModelSettings
           availableModels={availableModels}
           groupedModels={groupedModels}

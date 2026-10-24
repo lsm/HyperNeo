@@ -96,6 +96,29 @@ the cascade uses. Writes to `archived` are never refused, because archiving
 can't undo an archive. A refused write resolves to `stale-status` or
 `terminal-task` and is logged. Writes that leave `status` alone are not fenced.
 
+## `space_tasks` writers that stay on main
+
+The `space_tasks` switch binds the task lane to the gateway. Every blind
+`space_tasks` write goes through the lane: `SpaceTaskRepository`'s
+`spaceTaskWrites`, the standalone task ops, and the sites routed before the
+switch (task manager, runtime, post-approval, task-agent manager). These stay
+on main because they can't reorder:
+- Inserts of new tasks (goal, schedule, automation and evolution episode task
+  creation) and the delete of a task created in the same transaction.
+- Fenced or guarded writes: an `expectedStatus` (or other `expected*`) guard on
+  `updateTask`, `casStatus`, or a read-check-write in one transaction (direct
+  finalize, start and retry; the task manager's guarded paths; runtime spawn
+  release, task restart, workflow-run recovery and reopen; goal terminal
+  handling; workflow-run attach).
+- The spawn reservation (`reserveSpawnForTick`, `releaseSpawnReservation`).
+  Reserving is a compare-and-set on `spawn_reservation_token`, and only the
+  holder releases. Moving it would make spawn admission async, so a concurrent
+  spawn would be superseded instead of waiting on its in-flight peer.
+
+The archive cascade runs with whichever write ends the task: on the gateway for
+lane writes, on main for the fenced ones, where the `sessions.write` fence
+above still applies.
+
 ## Ownership and cross-table ops
 
 | Owner | Tables | Cross-table ops it owns |
@@ -126,6 +149,8 @@ session exists, checked in the same transaction.
    location.
 3. Switches, one at a time: `sessions`, then `sdk_messages`, then `space_tasks`
    as its own subsystem switch, then the remaining repositories by subsystem.
+   `space_tasks` prep routes its blind writers through the task lane and fences
+   the rest (above), so its switch only binds the lane to the gateway.
    `SpaceTaskRepository.updateTask/archiveTask` archives a terminal task's worker
    sessions in the same transaction (`SET status = 'archived'`). That no longer
    ties the two switches together: the `sessions` switch ships with the status

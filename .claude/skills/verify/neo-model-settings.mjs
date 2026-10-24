@@ -68,19 +68,19 @@ try {
     assert.equal(await section.getByLabel('Neo model 2 thinking', { exact: true }).inputValue(), 'off');
     assert.equal(await section.getByLabel('Neo model 3 thinking', { exact: true }).inputValue(), 'think8k');
     assert((await section.getByTitle('Remove', { exact: true }).nth(1).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]').innerText()).includes(second.display_name));
-    const providers = await section.getByText('Usable fallback providers:', { exact: false }).innerText();
+    const providers = await section.getByText('Providers with usable models:', { exact: false }).innerText();
     assert(providers.includes('Anthropic'));
     const overflow = await section.evaluate((element) => [...element.querySelectorAll('select,button')].filter((child) => { const box = child.getBoundingClientRect(); return box.x < 0 || box.right > innerWidth + 1; }).map((child) => child.outerHTML));
     assert.deepEqual(overflow, []);
     await page.screenshot({ path: `${run}/evidence/neo-model-settings-${width}.png`, fullPage: true, animations: 'disabled' });
     evidence.observations.push({ width, providers, persistedAfterReload: true, controlsFit: true });
   }
-  await section.getByRole('button', { name: 'Disable Neo fallbacks', exact: true }).click();
+  await section.getByRole('button', { name: 'Clear saved fallbacks', exact: true }).click();
   await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();
   await page.getByText('Neo models saved', { exact: true }).waitFor();
   assert.deepEqual(rpc('neo.snapshot').preferences.fallbacks, []);
   await page.reload();
-  await section.getByText('Neo fallbacks disabled.', { exact: true }).waitFor();
+  await section.getByText('No saved fallbacks.', { exact: true }).waitFor();
   evidence.disabledAfterReload = true;
   await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).fill('90');
   await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();

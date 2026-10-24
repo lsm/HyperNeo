@@ -2480,6 +2480,30 @@ describe('QueryOptionsBuilder', () => {
       expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
     });
 
+    it.each([
+      ['unset', undefined, undefined, 'bypassPermissions', true],
+      ['default', 'default', undefined, 'bypassPermissions', true],
+      ['bypassPermissions', 'bypassPermissions', undefined, 'bypassPermissions', true],
+      ['acceptEdits', 'acceptEdits', 'acceptEdits', undefined, false],
+      ['plan', 'plan', 'plan', undefined, false],
+      ['legacy delegate', 'delegate', 'delegate', undefined, false],
+    ])(
+      'a global %s permission mode keeps its SDK output',
+      async (_name, permissionMode, sent, deferred, skipsPermissions) => {
+        (mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue(
+          permissionMode ? { permissionMode } : {}
+        );
+        const built = new QueryOptionsBuilder({
+          session: mockSession,
+          settingsManager: mockSettingsManager,
+        });
+        const options = await built.build();
+        expect(options.permissionMode).toBe(sent);
+        expect(built.getDeferredPermissionMode()).toBe(deferred);
+        expect(options.allowDangerouslySkipPermissions ?? false).toBe(skipsPermissions);
+      }
+    );
+
     it('should map default to bypassPermissions (withheld at intake, deferred)', async () => {
       mockSession.config.permissionMode = 'default';
       const options = await builder.build();
