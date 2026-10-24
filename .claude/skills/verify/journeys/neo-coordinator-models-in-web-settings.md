@@ -33,8 +33,8 @@ uses synthetic Anthropic models; the former Neo-only execution journey was retir
 fallback preferences no longer override the ordinary session recovery policy. No real account quota or GUI session
 is used. The Settings PR contains no new fallback execution policy.
 
-It also checks 90 resets to an omitted override, the Neo popover links to the new
-page, and ordinary Settings > Models contains no Neo preference controls.
+It also checks 90 resets to an omitted override, the Neo popover lists models
+instead of linking here, and ordinary Settings > Models contains no Neo preference controls.
 
 The auto-compaction percentage control in #8121 keeps its existing preference
 and snapshot API. Its value writes the ordinary per-session setting; verify

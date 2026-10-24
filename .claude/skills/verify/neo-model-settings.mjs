@@ -92,16 +92,14 @@ try {
   evidence.resetToDefault = true;
   await page.goto(`http://127.0.0.1:${port}/neo`);
   await page.getByRole('button', { name: 'Model and thinking', exact: true }).click();
-  assert.equal(await page.getByRole('searchbox', { name: 'Search models' }).count(), 0);
-  await page.getByRole('link', { name: 'Neo model settings', exact: true }).click();
-  await page.waitForURL('**/settings?tab=neo-model');
-  await section.getByLabel('Neo model 1 auto-compact percentage', { exact: true }).waitFor();
-  evidence.popoverNavigatesToSettings = true;
+  await page.getByRole('searchbox', { name: 'Search models' }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'Neo model settings', exact: true }).count(), 0);
+  evidence.popoverListsModels = true;
   await page.goto(`http://127.0.0.1:${port}/settings?tab=models`);
   await page.getByRole('heading', { name: 'Models', exact: true }).waitFor();
   assert.equal(await page.getByRole('region', { name: 'Neo models', exact: true }).count(), 0);
   evidence.ordinaryModelSettingsSeparate = true;
-  console.log('PASS: actual Settings edit, thinking, provider list, order, persisted 70% reload, 90% reset, popover link and separate ordinary controls.');
+  console.log('PASS: actual Settings edit, thinking, provider list, order, persisted 70% reload, 90% reset, popover model list and separate ordinary controls.');
 } finally {
   writeFileSync(`${run}/evidence/neo-model-settings.json`, JSON.stringify(evidence, null, 2));
   await browser.close();

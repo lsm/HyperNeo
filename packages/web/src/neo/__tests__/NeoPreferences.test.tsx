@@ -51,49 +51,143 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo preferences', () => {
-  it('restarts Neo after the human confirms, and offers no restart for a plain session', async () => {
-    const store = makeStore();
-    api.request.mockImplementation(async (method: string) =>
-      method === 'operation.invoke' ? { ok: true, sessionId: 'neo:root' } : { providers: [] }
-    );
-    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    vi.stubGlobal('confirm', confirm);
-    render(<NeoPreferences sessionId="neo:root" store={store} onError={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    fireEvent.click(screen.getByRole('button', { name: /Restart Neo/ }));
-    expect(api.request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
-    fireEvent.click(screen.getByRole('button', { name: /Restart Neo/ }));
-    await waitFor(() =>
-      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'neo.restart',
-        input: {},
-      })
-    );
-    await waitFor(() => expect(store.refresh).toHaveBeenCalled());
-    expect(confirm).toHaveBeenCalledTimes(2);
-    cleanup();
-    render(<NeoPreferences sessionId="s1" store={makeStore()} onError={vi.fn()} forSession />);
-    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(screen.queryByRole('button', { name: /Restart Neo/ })).toBeNull();
-    vi.unstubAllGlobals();
-  });
-
-  it('links to Neo model Settings without duplicating the model or thinking controls', () => {
+  it('lists models and thinking on /neo, with no settings link or restart', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(screen.getByRole('link', { name: 'Neo model settings' }).getAttribute('href')).toBe(
-      '/settings?tab=neo-model'
-    );
-    expect(screen.queryByRole('searchbox')).toBeNull();
-    expect(screen.queryByRole('slider')).toBeNull();
-    expect(api.request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+    const menu = screen.getByRole('group', { name: 'Model and thinking settings' });
+    expect(screen.getByRole('button', { name: 'Haiku · Anthropic' })).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Thinking' })).toBeTruthy();
+    expect(screen.getByText('For Neo and all its projects')).toBeTruthy();
+    expect(menu.querySelector('a')).toBeNull();
+    expect(screen.queryByText('Neo model settings')).toBeNull();
+    expect(screen.queryByText(/Restart Neo/)).toBeNull();
   });
-  it('closes the minimal Neo menu on Escape and restores trigger focus', () => {
+  it('saves a model or thinking pick on /neo as Neo’s preference', async () => {
+    const store = makeStore();
+    const onSaved = vi.fn();
+    api.request.mockImplementation(async (method: string, params: { input?: unknown }) =>
+      method === 'operation.invoke' ? { ok: true, preferences: params.input } : { providers: [] }
+    );
+    render(
+      <NeoPreferences
+        sessionId="neo:root"
+        store={store}
+        onError={vi.fn()}
+        onSaved={onSaved}
+        preference={{ model: 'sonnet', provider: 'anthropic', thinkingLevel: 'off', saved: true }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: { model: 'haiku', provider: 'anthropic', thinkingLevel: 'off' },
+      })
+    );
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: { model: 'haiku', provider: 'anthropic', thinkingLevel: 'think16k' },
+      })
+    );
+    expect(api.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+    expect(api.request).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
+  });
+  it('keeps each model’s saved auto-compact percent across /neo picks', async () => {
+    const fallbacks = [
+      {
+        model: 'haiku',
+        provider: 'anthropic',
+        thinkingLevel: 'off' as const,
+        autoCompactPercent: 60,
+      },
+    ];
+    api.request.mockImplementation(async (method: string, params: { input?: object }) =>
+      method === 'operation.invoke'
+        ? { ok: true, preferences: { ...params.input, fallbacks } }
+        : { providers: [] }
+    );
+    render(
+      <NeoPreferences
+        sessionId="neo:root"
+        store={makeStore()}
+        onError={vi.fn()}
+        preference={{
+          model: 'sonnet',
+          provider: 'anthropic',
+          thinkingLevel: 'off',
+          autoCompactPercent: 70,
+          fallbacks,
+          saved: true,
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: {
+          model: 'sonnet',
+          provider: 'anthropic',
+          thinkingLevel: 'think16k',
+          autoCompactPercent: 70,
+        },
+      })
+    );
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: {
+          model: 'haiku',
+          provider: 'anthropic',
+          thinkingLevel: 'think16k',
+          autoCompactPercent: 60,
+        },
+      })
+    );
+  });
+  it('a thinking change right after a /neo model pick keeps the picked model', async () => {
+    api.request.mockImplementation(async (method: string, params: { input?: unknown }) =>
+      method === 'operation.invoke' ? { ok: true, preferences: params.input } : { providers: [] }
+    );
+    render(
+      <NeoPreferences
+        sessionId="neo:root"
+        store={makeStore()}
+        onError={vi.fn()}
+        preference={{ model: 'sonnet', provider: 'anthropic', thinkingLevel: 'off', saved: true }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
+    const slider = screen.getByRole('slider', { name: 'Thinking' }) as HTMLInputElement;
+    await waitFor(() => expect(slider.disabled).toBe(false));
+    fireEvent.change(slider, { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenLastCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: { model: 'haiku', provider: 'anthropic', thinkingLevel: 'think16k' },
+      })
+    );
+  });
+  it('closes the Neo menu on Escape and restores trigger focus', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
     const trigger = screen.getByRole('button', { name: 'Model and thinking' });
     fireEvent.click(trigger);
-    fireEvent.keyDown(screen.getByRole('link', { name: 'Neo model settings' }), { key: 'Escape' });
-    expect(screen.queryByRole('link', { name: 'Neo model settings' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Search models' }), {
+      key: 'Escape',
+    });
+    expect(screen.queryByRole('searchbox')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
   it('changes one session’s own model and thinking, ignoring Neo’s preference', async () => {
@@ -214,10 +308,10 @@ describe('Neo preferences', () => {
     );
     expect(api.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
   });
-  it('keeps the settings link available while Neo works', () => {
+  it('tells the human a Neo pick applies after the current reply', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore(true)} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(screen.getByRole('link', { name: 'Neo model settings' })).toBeTruthy();
+    expect(screen.getByText('Neo switches after this reply')).toBeTruthy();
   });
   it('shows Neo’s saved preference rather than the session’s current model', () => {
     render(
