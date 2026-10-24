@@ -73,7 +73,8 @@ export function persistSessionDeliveryTeardown(
   messages: SDKMessageRepository,
   getRows: Database['getUserMessageIdsByStatus'] | undefined,
   options: Pick<MailboxCancelMaterializerDeps, 'preserveDeferred' | 'deliveries'> = {},
-  saveFailed?: Parameters<typeof persistMailboxFailure>[2]
+  saveFailed?: Parameters<typeof persistMailboxFailure>[2],
+  strict = false
 ): Pick<MailboxCancelCtx, 'deleted' | 'failedDbIds'> {
   const deleted = jobQueue
     .cancelMailboxForSession(
@@ -81,13 +82,24 @@ export function persistSessionDeliveryTeardown(
       options.preserveDeferred === true ? { excludeDeferred: true } : undefined
     )
     .map((row) => {
+      let payload: Record<string, unknown>;
       try {
-        const payload = JSON.parse(row.payload) as Record<string, unknown>;
+        payload = JSON.parse(row.payload) as Record<string, unknown>;
+      } catch {
+        return row;
+      }
+      try {
         return {
           ...row,
-          failure: persistMailboxFailure(deletedRowAsJob(row.id, payload), messages, saveFailed),
+          failure: persistMailboxFailure(
+            deletedRowAsJob(row.id, payload),
+            messages,
+            saveFailed,
+            strict
+          ),
         };
-      } catch {
+      } catch (error) {
+        if (strict) throw error;
         return row;
       }
     });
@@ -128,7 +140,19 @@ function cancelUnsupported(ctx: MailboxCancelCtx): boolean {
   return ctx.jobQueue === null || ctx.sdkMessageRepo === null;
 }
 
-export function cancelMailboxJobsStage(ctx: MailboxCancelCtx): MailboxCancelCtx {
+type MailboxPersistenceContext = Pick<
+  MailboxCancelCtx,
+  'sessionId' | 'jobQueue' | 'sdkMessageRepo'
+> & {
+  deps: Pick<MailboxCancelMaterializerDeps, 'preserveDeferred' | 'deliveries'> & {
+    db: Pick<Database, 'getDatabase' | 'getUserMessageIdsByStatus' | 'notifyChange'>;
+  };
+};
+
+export function cancelMailboxJobsStage<T extends MailboxPersistenceContext>(
+  ctx: T,
+  strict = false
+) {
   if (ctx.jobQueue === null || ctx.sdkMessageRepo === null) return ctx;
   return {
     ...ctx,
@@ -151,7 +175,8 @@ export function cancelMailboxJobsStage(ctx: MailboxCancelCtx): MailboxCancelCtx 
         for (const change of changes.changes)
           ctx.deps.db.notifyChange?.(change.table, change.scope);
         return id;
-      }
+      },
+      strict
     ),
   };
 }
