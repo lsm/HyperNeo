@@ -18,7 +18,13 @@ type Candidate = {
   ciEvidence: string[];
   reviewEvidence: string[];
 };
-type Contract = { reference: string; write: WorkRef; qa: WorkRef; reviewer?: WorkRef };
+type Contract = {
+  reference: string;
+  write: WorkRef;
+  qa: WorkRef;
+  reviewer?: WorkRef;
+  bot?: string;
+};
 type Rejection = { accepted: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 const refuse = (reason: string): { reason: Rejection } => ({ reason: { accepted: false, reason } });
@@ -62,9 +68,11 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
         'approved' in review &&
         review.approved === true &&
         'login' in review &&
-        typeof review.login === 'string'
+        typeof review.login === 'string' &&
+        review.login.toLowerCase() === contract.bot?.toLowerCase()
           ? review.login
-          : review.kind === 'session' &&
+          : !contract.bot &&
+              review.kind === 'session' &&
               'sessionId' in review &&
               typeof review.sessionId === 'string' &&
               assigned(reviewFact, contract.reviewer) &&

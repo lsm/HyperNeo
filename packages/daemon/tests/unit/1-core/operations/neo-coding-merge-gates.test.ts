@@ -76,7 +76,12 @@ const candidate = {
   ciEvidence: ['ci:7'],
   reviewEvidence: ['review:7'],
 };
-const contract = { reference: gate.acceptanceContract, write: gate.write, qa: gate.qa };
+const contract = {
+  reference: gate.acceptanceContract,
+  write: gate.write,
+  qa: gate.qa,
+  bot: 'review-bot',
+};
 const review = { kind: 'bot', head: gate.head, login: gate.reviewer, approved: true };
 const qa: CodingStageFact = {
   url,
@@ -98,7 +103,7 @@ describe('coding manual merge preparation', () => {
         repo,
         'todo',
         candidate,
-        contract,
+        { ...contract, bot: 'REVIEW-BOT' },
         review,
         [qa],
         async () => {
@@ -252,7 +257,11 @@ describe('coding manual merge preparation', () => {
           repo,
           'todo',
           candidate,
-          { ...contract, reviewer: { adapter: 'test', id: sessionReview.sessionId } },
+          {
+            ...contract,
+            bot: undefined,
+            reviewer: { adapter: 'test', id: sessionReview.sessionId },
+          },
           sessionReview,
           [qa],
           async () => gate.head
@@ -262,7 +271,7 @@ describe('coding manual merge preparation', () => {
         repo,
         'todo',
         candidate,
-        { ...contract, reviewer: { adapter: 'test', id: sessionReview.sessionId } },
+        { ...contract, bot: undefined, reviewer: { adapter: 'test', id: sessionReview.sessionId } },
         sessionReview,
         [
           qa,
@@ -395,9 +404,45 @@ test('an approved different bot cannot satisfy the configured review assignment'
   const { db, repo } = setup();
   try {
     const configured = { ...contract, bot: 'review-bot' };
-    expect(await prepareCodingMerge(repo, 'todo', candidate, configured,
-      { ...review, login: 'unassigned-bot' }, [qa], async () => gate.head))
-      .toEqual({ accepted: false, reason: 'matching_head_review_required' });
+    expect(
+      await prepareCodingMerge(
+        repo,
+        'todo',
+        candidate,
+        configured,
+        { ...review, login: 'unassigned-bot' },
+        [qa],
+        async () => gate.head
+      )
+    ).toEqual({ accepted: false, reason: 'matching_head_review_required' });
     expect(repo.read('todo', url, gate.head)).toBeNull();
-  } finally { db.close(); }
+  } finally {
+    db.close();
+  }
+});
+
+test('a configured bot cannot fall back to a passing reviewer session', async () => {
+  const { db, repo } = setup();
+  try {
+    const reviewer = { adapter: 'test', id: 'reviewer-session' };
+    const reviewFact: CodingStageFact = {
+      ...qa,
+      stage: 'review',
+      ref: reviewer,
+      actor: { ...smoke.actor, id: reviewer.id },
+    };
+    expect(
+      await prepareCodingMerge(
+        repo,
+        'todo',
+        candidate,
+        { ...contract, reviewer },
+        { kind: 'session', head: gate.head, sessionId: reviewer.id },
+        [qa, reviewFact],
+        async () => gate.head
+      )
+    ).toEqual({ accepted: false, reason: 'matching_head_review_required' });
+  } finally {
+    db.close();
+  }
 });
