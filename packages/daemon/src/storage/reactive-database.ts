@@ -214,7 +214,7 @@ function messageIdScope(db: Database, messageId: unknown): TableChangeScope {
   }
 }
 
-function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | undefined {
+export function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | undefined {
   if (scopes.length === 0) return undefined;
   const merged: TableChangeScope = {};
   const keys: Array<keyof TableChangeScope> = [

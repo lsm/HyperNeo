@@ -1,4 +1,5 @@
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
+import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import {
   recordUnpaired,
   recordWouldRefuse,
@@ -9,6 +10,7 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    sdkMessageWrites,
     recordWouldRefuse,
     touchDevice,
     recordUnpaired,
