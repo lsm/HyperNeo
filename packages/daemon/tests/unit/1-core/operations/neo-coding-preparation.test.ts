@@ -505,3 +505,30 @@ describe('requireVerifySkill', () => {
     expect('value' in requireVerifySkill(undefined, listed, agents)).toBe(passes);
   });
 });
+
+test.each([
+  ['.claude/skills/verify/SKILL.md', true],
+  ['.claude/skills/verify-ui/SKILL.md', true],
+  ['.claude/skills/verify/nested/SKILL.md', false],
+  ['docs/.claude/skills/verify/SKILL.md', false],
+  ['.claude/skills/Verify/SKILL.md', false],
+])('verify preflight recognizes tracked path %s: %s', (path, accepted) => {
+  const result = requireVerifySkill(undefined, { code: 0, stdout: `${path}\n`, stderr: '' }, null);
+  expect('value' in result).toBe(accepted);
+});
+
+test('verify create bypasses read failures, but every other mode requires a readable listing', () => {
+  const failed = { code: 1, stdout: '', stderr: '  unavailable \n' };
+  const agents = { code: 0, stdout: '## Verify\n', stderr: '' };
+  expect(requireVerifySkill('create', failed, null)).toEqual({ value: true });
+  for (const mode of [undefined, 'Create', 'skip', true]) {
+    expect(requireVerifySkill(mode, failed, agents)).toEqual({
+      reason: { ok: false, reason: 'verify_skill_unreadable: unavailable' },
+    });
+  }
+  expect(
+    requireVerifySkill(undefined, { ...failed, code: 0 }, { ...agents, code: 1 })
+  ).toMatchObject({
+    reason: { ok: false, reason: expect.stringContaining('verify_skill_missing:') },
+  });
+});
