@@ -28,3 +28,9 @@ and daemon in finally. Keep evidence; no live DB or port 8399 is touched.
 Clients must generate one UUID for a new tap and reuse that UUID on retries;
 the operation never invents a new retry identity. Existing completed receipts
 and snapshots remain untouched; no migration, deletion or cleanup is added.
+
+The web client uses shared generateUUID(), including its plain-HTTP fallback;
+exercise artifact-reference-client.test.ts with crypto.randomUUID unavailable.
+The retained PR-summary native/RPC and Git-capture helpers now supply stable
+fixture UUIDs, including across daemon restart. Their existing journeys remain
+valid under the required-input contract.

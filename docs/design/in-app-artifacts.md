@@ -176,7 +176,10 @@ for missing/unauthorized artifacts. Do not leak paths or file existence in error
 | `artifact.file.register` | `{requestId, context, path, title}` → authorized immutable `ArtifactRef`; kind is validated from extension, MIME and bytes, not trusted as executable content. |
 | `artifact.file.get` / `artifact.file.list` | ID / authorized context plus cursor → metadata; no global cross-context search for workers. |
 | `artifact.file.read` | `{artifactId, offset, maxBytes}` → bounded base64 bytes, next offset, complete size and hash; at most 256 KiB decoded per call. Offsets address the immutable snapshot. |
-| `artifact.reference.resolve` | `{sourceMessageOrCard, reference}` → artifact ref or PR preview; validate that reference against that stored source and derive its context server-side. A source ID alone cannot authorize arbitrary paths. |
+| `artifact.reference.resolve` | `{requestId, sourceMessageOrCard, reference}` → artifact ref or PR preview; validate that reference against that stored source and derive its context server-side. A source ID alone cannot authorize arbitrary paths. |
+
+Resolve requires a caller-owned UUID `requestId` for each new tap, reused on retries.
+Missing IDs fail input validation before any receipt is created.
 
 The human's download action streams all chunks with backpressure and integrity
 checking through this authenticated operation path. Cancel stops transfer,
