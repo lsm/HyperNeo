@@ -38,11 +38,7 @@ const FOLLOWERS = [
   subscription('s3', 'github/acme/widgets/pull_request/8.*'),
 ];
 
-function harness(
-  stored: ExternalEvent | null,
-  subscriptions = FOLLOWERS,
-  covered: (sessionId: string, topic: string) => boolean = () => false
-) {
+function harness(stored: ExternalEvent | null, subscriptions = FOLLOWERS) {
   const delivered: SessionEventDelivery[] = [];
   const removed: string[] = [];
   let reads = 0;
@@ -61,7 +57,6 @@ function harness(
       delivered.push(delivery);
     },
     removeSubscription: (sessionId, topic) => removed.push(`${sessionId} ${topic}`),
-    isTopicCovered: covered,
   };
   const run = (published: ExternalEvent = stored ?? event()) =>
     routeSessionExternalEvent(deps, {
@@ -115,12 +110,8 @@ describe('a session external event is routed in one pass', () => {
     expect(closed.delivered.map((delivery) => delivery.sessionId)).toEqual(['s1', 's2']);
   });
 
-  test('every explicit follower gets its final event even when a card claims coverage', async () => {
-    const h = harness(
-      event({ topic: 'github/acme/widgets/pull_request/7.closed' }),
-      FOLLOWERS,
-      (sessionId, topic) => sessionId === 's1' && topic.endsWith('/7.closed')
-    );
+  test('every explicit follower gets its final event before removal', async () => {
+    const h = harness(event({ topic: 'github/acme/widgets/pull_request/7.closed' }), FOLLOWERS);
     await h.run();
     expect(h.delivered.map((delivery) => delivery.sessionId)).toEqual(['s1', 's2']);
     expect(h.removed).toEqual([

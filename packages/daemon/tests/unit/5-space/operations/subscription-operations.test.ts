@@ -31,7 +31,6 @@ let sessionSubscriptions: SpaceSessionEventSubscriptionRepository;
 let unscopedSubscriptions: SessionEventSubscriptionRepository;
 let watchedRepos: string[];
 let watchFails: boolean;
-let coveredTopics: string[];
 let sessionRefreshed: string[];
 let auditLogRepo: McpAuditLogRepository;
 let operations: Map<string, OperationDefinition>;
@@ -165,7 +164,6 @@ beforeEach(() => {
   unscopedSubscriptions = new SessionEventSubscriptionRepository(db);
   watchedRepos = [];
   watchFails = false;
-  coveredTopics = [];
   sessionRefreshed = [];
   registered = [];
   unregistered = [];
@@ -199,7 +197,6 @@ beforeEach(() => {
     }),
     sessionSubscriptions,
     unscopedSessionSubscriptions: unscopedSubscriptions,
-    isSessionTopicCovered: (_sessionId, topic) => coveredTopics.includes(topic),
     watchSessionRepo: async (owner, repo) => {
       if (watchFails) return "The daemon's GitHub token can't read Acme/Widgets.";
       watchedRepos.push(`${owner}/${repo}`);
@@ -822,9 +819,8 @@ describe('a session outside any Space', () => {
     expect(sessionRefreshed).toEqual([]);
   });
 
-  test('a PR its live card follows still persists the explicit subscription and starts its watch', async () => {
+  test('an explicit PR subscription always persists and starts its watch', async () => {
     const caller = plainSession('s-covered');
-    coveredTopics = [PR_TOPIC];
     expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toEqual({
       ok: true,
       topicPattern: PR_TOPIC,
