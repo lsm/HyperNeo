@@ -130,3 +130,14 @@ test.each([
   expect((await ui.findByRole('alert')).textContent).toBe(message);
   expect(state(ui, 'Merge policy')).toBe('Unanswered');
 });
+
+test('switching repository drops an unsaved draft instead of saving it to the new scope', async () => {
+  const ui = await page('acme/app');
+  const box = ui.getByRole('textbox', {
+    name: 'Human sign-off paths or labels',
+  }) as HTMLTextAreaElement;
+  fireEvent.input(box, { target: { value: 'docs/**' } });
+  fireEvent.input(ui.getByLabelText('Repository'), { target: { value: 'other/repo' } });
+  await waitFor(() => expect(ui.getByText('Editing: other/repo')).toBeTruthy());
+  expect(box.value).toBe('');
+});
