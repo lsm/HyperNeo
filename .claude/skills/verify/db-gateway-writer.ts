@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { Database as BunSqlite } from 'bun:sqlite';
 import { ingestSessionEvent } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
 import { DbGateway } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
+import { claudeDesktopOutboxWrites } from '../../../packages/daemon/src/storage/repositories/claude-desktop-outbox-repository.ts';
 import {
   cleanupJobs,
   jobQueueWrites,
@@ -64,6 +65,30 @@ try {
   check(
     (await gateway.run(cleanupJobs, { beforeMs: 0, completed: [] })) === 0,
     'cleanup keeps young jobs'
+  );
+
+  const sid = '3b286924-739c-487d-82d2-c3e36fd5ed36';
+  const queued = await gateway.call(claudeDesktopOutboxWrites, 'enqueueReported', sid, 'session:neo', {
+    kind: 'submit',
+    text: 'complete synthetic prompt',
+  });
+  const reported = db
+    .prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'mailbox'")
+    .get() as { n: number };
+  check(Boolean(queued.id) && reported.n === 1, 'outbox enqueue and its report commit together');
+  const reply = await gateway.call(
+    claudeDesktopOutboxWrites,
+    'exchange',
+    { version: 1, sessionId: sid, instanceId: `${sid}:1:1`, events: [{ sequence: 1, kind: 'session.start' }] },
+    4242,
+    true
+  );
+  const journal = db
+    .prepare('SELECT last_sequence FROM claude_desktop_bridge_instances WHERE session_id = ?')
+    .get(sid) as { last_sequence: number } | null;
+  check(
+    reply.ack === 1 && reply.command?.id === queued.id && journal?.last_sequence === 1,
+    'bridge exchange journals the event and hands out the queued prompt'
   );
 } finally {
   db.close();

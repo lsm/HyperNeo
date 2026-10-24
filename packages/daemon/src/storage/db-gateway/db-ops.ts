@@ -1,6 +1,7 @@
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
 import { ingestSessionEvent } from '../../lib/external-events/session-external-event-store.ts';
 import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
+import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
 import { codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
@@ -36,5 +37,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingLedgerWrites,
     codingTodoPrWrites,
     codingSweepWrites,
+    claudeDesktopOutboxWrites,
   ].map((op) => [op.name, op])
 );

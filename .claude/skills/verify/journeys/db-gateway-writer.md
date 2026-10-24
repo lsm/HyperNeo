@@ -10,7 +10,9 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data"
   bun .claude/skills/verify/db-gateway-writer.ts "$RUN"
 ```
 
-Expect four `ok` lines: session-event ingest commits once and dedupes, the
+Expect six `ok` lines: session-event ingest commits once and dedupes, the
 Claude feed purge deletes in batches and keeps the Codex row, a job claim sent
-during the purge completes on the same writer, and cleanup keeps young jobs.
+during the purge completes on the same writer, cleanup keeps young jobs, a
+Claude Desktop outbox prompt and its mailbox report commit together, and a
+bridge exchange journals its event and hands out that prompt.
 `scripts/deno-smoke.sh` runs the same ops under Deno in CI.
