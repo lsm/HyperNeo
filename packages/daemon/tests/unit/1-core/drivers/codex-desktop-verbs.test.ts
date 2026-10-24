@@ -484,6 +484,7 @@ describe('codex-desktop adapter status and send', () => {
       createWorkVerbOperations({
         adapters: () => [driver],
         daemonName: 'test',
+        isOpenTodo: (todoId) => todoId === 'open-todo',
         remote: { list: () => [], invoke: async () => ({}) },
       })
     );
@@ -491,7 +492,7 @@ describe('codex-desktop adapter status and send', () => {
       await invokeOperation(
         registry,
         'work.send',
-        { ref: ref('busy'), message: 'use the parser' },
+        { ref: ref('busy'), message: 'use the parser', todoId: 'open-todo' },
         { source: 'mcp', role: 'neo', sessionId: 'neo' }
       )
     ).toEqual({
