@@ -50,7 +50,8 @@ export class CodingDeliveryFactsRepository {
     const gate = CodingMergeGate.parse(input);
     this.db
       .prepare(`INSERT INTO pack_coding_delivery_facts (todo_id, url, head, gate_json)
-      VALUES (?, ?, ?, ?) ON CONFLICT(todo_id, url, head) DO NOTHING`)
+      VALUES (?, ?, ?, ?) ON CONFLICT(todo_id, url, head) DO UPDATE SET gate_json = excluded.gate_json
+      WHERE json_remove(gate_json, '$.evidence') = json_remove(excluded.gate_json, '$.evidence')`)
       .run(todoId, githubUrlKey(gate.url), gate.head, JSON.stringify(gate));
   }
   recordSmoke(todoId: string, gate: CodingMergeGate, smoke: CodingSmoke): boolean {
