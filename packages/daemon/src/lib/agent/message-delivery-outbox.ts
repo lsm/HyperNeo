@@ -13,7 +13,6 @@ import type {
 import {
   decideMessageAdmission,
   normalizeMessageAdmissionInput,
-  type MessageAdmissionRecord,
 } from '../../storage/repositories/sdk-message-admission.ts';
 import { extractSdkUuid } from '../../storage/repositories/sdk-message-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
@@ -55,29 +54,6 @@ export interface PersistPromptArgs extends PromptInput {
   jobQueue: JobQueueRepository;
   materializeOnly?: boolean;
   deferPostSaveSideEffects?: (publish: () => void) => void;
-}
-
-export interface PersistPromptResult {
-  dbMessageId: string;
-  released: boolean;
-}
-
-export interface PersistAndEnqueueDeliveryInput {
-  sessionId: string;
-  message: SDKMessage;
-  sendStatus: 'deferred' | 'enqueued';
-  origin?: MessageOrigin;
-  delivery: { origin: MessageDeliveryOrigin; parentToolUseId?: string | null };
-}
-
-export interface PersistAndEnqueueDeliveryArgs extends PersistAndEnqueueDeliveryInput {
-  db: BunDatabase;
-  sdkMessageRepo: SDKMessageRepository;
-  jobQueue: JobQueueRepository;
-}
-
-export interface PersistAndEnqueueDeliveryResult {
-  dbMessageId: string;
 }
 
 export interface EnsurePromptResult {
@@ -132,10 +108,6 @@ export interface RetryPromptResult {
 }
 
 interface PromptDeps {
-  persistAdmittedPrompt(ctx: PersistPromptAdmitted): {
-    dbMessageId: string;
-    countsTowardsBadge: boolean;
-  };
   runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void;
 }
 
@@ -149,24 +121,6 @@ type PromptSnapshotCtx = PromptCtx & {
 
 type PromptValidatedCtx = PromptSnapshotCtx & {
   messageUuid: string;
-};
-
-type PromptHeldCtx = PromptValidatedCtx & {
-  sendStatus: SendStatus;
-  released: boolean;
-};
-
-type PromptPayloadCtx = PromptHeldCtx & {
-  basePayload: ReleasedDeliveryPayload;
-};
-
-type PersistPromptAdmitted = PromptPayloadCtx & {
-  admission: MessageAdmissionRecord;
-};
-
-type PersistPromptEnqueued = PersistPromptAdmitted & {
-  dbMessageId: string;
-  countsTowardsBadge: boolean;
 };
 
 type EnsurePromptCtx = PromptValidatedCtx &
@@ -495,108 +449,9 @@ function snapshotPromptMessage(ctx: PromptCtx): PromptSnapshotCtx {
 function validatePromptUuid(ctx: PromptSnapshotCtx): PromptValidatedCtx {
   const messageUuid = extractSdkUuid(ctx.message);
   if (!messageUuid) {
-    throw new Error('persistPrompt: message has no uuid; cannot enqueue delivery');
+    throw new Error('ensurePrompt: message has no uuid; cannot enqueue delivery');
   }
   return { ...ctx, messageUuid };
-}
-
-function resolvePromptHold(ctx: PromptValidatedCtx): PromptHeldCtx {
-  const manual = ctx.hold === 'manual';
-  return { ...ctx, sendStatus: manual ? 'deferred' : 'enqueued', released: !manual };
-}
-
-function buildPromptPayload(ctx: PromptHeldCtx): PromptPayloadCtx {
-  return {
-    ...ctx,
-    basePayload: buildReleasedPayload({
-      sessionId: ctx.sessionId,
-      messageUuid: ctx.messageUuid,
-      origin: ctx.delivery.origin,
-      parentToolUseId: ctx.delivery.parentToolUseId,
-      released: ctx.released,
-      admittedAt: ctx.delivery.admittedAt,
-      admissionRowid: ctx.delivery.admissionRowid,
-      priority: ctx.delivery.priority,
-    }),
-  };
-}
-
-function admitPromptMessage(ctx: PromptPayloadCtx): PersistPromptAdmitted {
-  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
-    variant: 'user',
-    sendStatus: ctx.sendStatus,
-    origin: ctx.origin,
-  });
-  return { ...ctx, admission };
-}
-
-function persistAdmittedPrompt(
-  args: PersistPromptArgs,
-  ctx: PersistPromptAdmitted
-): { dbMessageId: string; countsTowardsBadge: boolean } {
-  return args.db.transaction(() => {
-    const core = args.sdkMessageRepo.saveUserMessageCoreWithAdmission(
-      ctx.sessionId,
-      ctx.id,
-      ctx.message,
-      ctx.sendStatus,
-      ctx.origin,
-      ctx.admission
-    );
-    enqueueDeliveryJob(args.jobQueue, ctx.basePayload);
-    return { dbMessageId: core.id, countsTowardsBadge: core.countsTowardsBadge };
-  })();
-}
-
-function persistPromptAtomic(ctx: PersistPromptAdmitted): PersistPromptEnqueued {
-  const { dbMessageId, countsTowardsBadge } = ctx.deps.persistAdmittedPrompt(ctx);
-  return { ...ctx, dbMessageId, countsTowardsBadge };
-}
-
-function publishPromptMessage(ctx: PersistPromptEnqueued): PersistPromptEnqueued {
-  try {
-    ctx.deps.runPostSaveSideEffects(ctx.sessionId, ctx.dbMessageId, ctx.countsTowardsBadge);
-  } catch {}
-  return ctx;
-}
-
-const runPersistPrompt = (superpipe({})('persist-prompt') as PipelineAPI)
-  .input(['ctx'])
-  .pipe(snapshotPromptMessage, 'ctx', 'ctx')
-  .pipe(validatePromptUuid, 'ctx', 'ctx')
-  .pipe(resolvePromptHold, 'ctx', 'ctx')
-  .pipe(buildPromptPayload, 'ctx', 'ctx')
-  .pipe(admitPromptMessage, 'ctx', 'ctx')
-  .pipe(persistPromptAtomic, 'ctx', 'ctx')
-  .pipe(publishPromptMessage, 'ctx', 'ctx')
-  .end('ctx') as (ctx: PromptCtx) => PersistPromptEnqueued;
-
-export function persistPrompt(args: PersistPromptArgs): PersistPromptResult {
-  const deps: PromptDeps = {
-    persistAdmittedPrompt: (ctx) => persistAdmittedPrompt(args, ctx),
-    runPostSaveSideEffects: (sessionId, id, countsTowardsBadge) =>
-      args.sdkMessageRepo.runPostSaveSideEffects(sessionId, id, countsTowardsBadge),
-  };
-  const ctx = runPersistPrompt({
-    sessionId: args.sessionId,
-    message: args.message,
-    origin: args.origin,
-    hold: args.hold,
-    delivery: args.delivery,
-    deps,
-  });
-  return { dbMessageId: ctx.dbMessageId, released: ctx.released };
-}
-
-export function persistAndEnqueueDelivery(
-  args: PersistAndEnqueueDeliveryArgs
-): PersistAndEnqueueDeliveryResult {
-  const { sendStatus, ...rest } = args;
-  const result = persistPrompt({
-    ...rest,
-    hold: sendStatus === 'deferred' ? 'manual' : 'immediate',
-  });
-  return { dbMessageId: result.dbMessageId };
 }
 
 function lookupPromptRow(ctx: PromptValidatedCtx & PersistPromptArgs): EnsurePromptCtx {
@@ -801,7 +656,6 @@ const runEnsurePrompt = (superpipe({})('ensure-prompt') as PipelineAPI)
 
 export function ensurePrompt(args: PersistPromptArgs): EnsurePromptResult {
   const deps: PromptDeps = {
-    persistAdmittedPrompt: (ctx) => persistAdmittedPrompt(args, ctx),
     runPostSaveSideEffects: (sessionId, id, countsTowardsBadge) =>
       args.sdkMessageRepo.runPostSaveSideEffects(sessionId, id, countsTowardsBadge),
   };
@@ -953,32 +807,6 @@ const runRetryPrompt = (superpipe({})('retry-prompt') as PipelineAPI)
   .pipe(commitRetryPrompt, 'ctx', 'ctx')
   .pipe(publishRetriedPrompt, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: RetryPromptArgs) => Promise<RetryPromptCtx>;
-
-export function redeliverPrompt(args: {
-  db: BunDatabase;
-  jobQueue: JobQueueRepository;
-  sdkMessageRepo: SDKMessageRepository;
-  sessionId: string;
-  messageUuid: string;
-}): string | null {
-  const dbId = args.sdkMessageRepo.findMessageIdByUuid(args.sessionId, args.messageUuid);
-  if (!dbId) return null;
-  return args.db.transaction(() => {
-    args.sdkMessageRepo.updateMessageStatus([dbId], 'enqueued');
-    rePendingDeliveryJob(
-      args.db,
-      args.jobQueue,
-      buildReleasedPayload({
-        sessionId: args.sessionId,
-        messageUuid: args.messageUuid,
-        origin: 'chat',
-        released: true,
-        priority: 1,
-      })
-    );
-    return dbId;
-  }, 'immediate')();
-}
 
 export async function retryPrompt(args: RetryPromptArgs): Promise<RetryPromptResult | null> {
   const ctx = await runRetryPrompt(args);

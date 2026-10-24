@@ -5,7 +5,7 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import {
-  persistPrompt,
+  ensurePrompt,
   PromptContentConflictError,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import {
@@ -214,7 +214,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   }
 
   function seedDeliveryRow(outbox: OutboxTestDb, uuid: string, text: string): string {
-    const { dbMessageId } = persistPrompt({
+    const { dbMessageId } = ensurePrompt({
       db: outbox.db,
       sdkMessageRepo: outbox.sdkRepo,
       jobQueue: outbox.jobQueue,

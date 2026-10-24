@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import {
-  ensurePrompt,
-  persistAndEnqueueDelivery,
-} from '../../../../src/lib/agent/message-delivery-outbox';
+import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
@@ -1231,13 +1228,12 @@ describe('cross-lane per-session ordering (mailbox vs direct message_delivery)',
   }
 
   function persistChatPrompt(messageUuid: string, text: string) {
-    return persistAndEnqueueDelivery({
+    return ensurePrompt({
       db: mailbox.db as never,
       sdkMessageRepo: mailbox.sdkMessageRepo,
       jobQueue: mailbox.jobQueue,
       sessionId: SESSION_ID,
       message: chatMessage(messageUuid, text),
-      sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
   }
