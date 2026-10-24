@@ -11,6 +11,18 @@ import { runMessageSearchMerge } from '../../../packages/daemon/src/lib/message-
 import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/project-mirror-async.ts';
 
 if (process.env.NODE_ENV !== 'test') throw new Error('Synthetic proof requires NODE_ENV=test');
+for (const entry of ['lib/message-search-merge-worker.ts', 'lib/neo/project-mirror-worker.ts']) {
+  const result = await Bun.build({
+    entrypoints: [resolve(import.meta.dir, '../../../packages/daemon/src', entry)],
+    target: 'bun',
+    plugins: [{ name: 'no-worker-config-discovery', setup(build) {
+      build.onLoad({ filter: /\/(config|credential-discovery)\.ts$/ }, ({ path }) => {
+        throw new Error(`SQL worker must not load application configuration: ${path}`);
+      });
+    } }],
+  });
+  assert(result.success, `Worker loads without application configuration: ${entry}: ${result.logs.join('\n')}`);
+}
 const root = resolve(process.argv[2]);
 mkdirSync(root, { recursive: true });
 const path = join(root, 'synthetic.db');
