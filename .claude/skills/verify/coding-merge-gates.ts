@@ -51,9 +51,12 @@ try {
         assert(await assignments.recordLater('todo', 'qa', { ...base, actor: qa.actor, ref: qaRef }));
         assert(await ledger.write('recordStage', qa));
         const assigned = assignments.read('todo', url, qa.head);
-        const contract = { reference: assigned.qa!.acceptanceContract, write: assigned.qa!.write, qa: assigned.qa!.ref! };
+        const contract = { bot: assigned.review!.bot, reference: assigned.qa!.acceptanceContract, write: assigned.qa!.write, qa: assigned.qa!.ref! };
         const facts = ledger.stageFacts.read(url);
         const repo = todos.deliveryFacts;
+        const wrongBot = await pack.prepareMerge(repo, 'todo', candidate, contract, { ...review, login: 'unassigned-bot' }, facts, async () => qa.head);
+        evidence.push({ phase, name: 'wrong-bot', outcome: wrongBot });
+        assert.deepEqual(wrongBot, { accepted: false, reason: 'matching_head_review_required' });
         const prepare = (head = qa.head, approved = true, current = candidate, input = facts) =>
           pack.prepareMerge(repo, 'todo', current, contract, { ...review, approved }, input, async () => head);
         for (const [name, outcome, reason] of [

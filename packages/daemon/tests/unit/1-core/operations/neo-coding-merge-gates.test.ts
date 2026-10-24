@@ -390,3 +390,14 @@ test('repeated preparation keeps the latest evidence while preserving assignment
     db.close();
   }
 });
+
+test('an approved different bot cannot satisfy the configured review assignment', async () => {
+  const { db, repo } = setup();
+  try {
+    const configured = { ...contract, bot: 'review-bot' };
+    expect(await prepareCodingMerge(repo, 'todo', candidate, configured,
+      { ...review, login: 'unassigned-bot' }, [qa], async () => gate.head))
+      .toEqual({ accepted: false, reason: 'matching_head_review_required' });
+    expect(repo.read('todo', url, gate.head)).toBeNull();
+  } finally { db.close(); }
+});
