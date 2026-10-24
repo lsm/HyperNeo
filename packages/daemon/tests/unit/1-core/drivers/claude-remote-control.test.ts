@@ -219,6 +219,12 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
   });
 
+  test('a fresh helper is prepared in auto mode when no mode is configured', async () => {
+    await openRcToggle([], [], deps(), 'desktop-wake');
+    const prepare = spawned[0].args;
+    expect(prepare[prepare.indexOf('--permission-mode') + 1]).toBe('auto');
+  });
+
   test('a stopped forwarding helper retains its history while a fresh acceptEdits helper is prepared', async () => {
     const old = record('old', {
       title: 'desktop-wake',
@@ -228,7 +234,12 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     write(old);
     const oldPath = join(dir, 'acct/scope/local_old.json');
     const bytes = readFileSync(oldPath, 'utf8');
-    const result = await openRcToggle([old], [], deps(), 'desktop-wake');
+    const result = await openRcToggle(
+      [old],
+      [],
+      { ...deps(), permissionMode: () => 'acceptEdits' },
+      'desktop-wake'
+    );
     expect(result).toMatchObject({
       value: { record: { sessionId: 'local_new-rc', permissionMode: 'acceptEdits' } },
     });
