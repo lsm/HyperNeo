@@ -309,7 +309,7 @@ describe('AgentSession', () => {
       );
     }
 
-    it('records a tracked child so a crashed daemon can sweep it, and forgets it on exit', () => {
+    it('records a tracked child so a crashed daemon can sweep it, and forgets it on exit', async () => {
       const raw = new SqliteDatabase(':memory:');
       runMigration264(raw);
       const agentSession = createAgentSession(raw);
@@ -325,16 +325,18 @@ describe('AgentSession', () => {
       };
 
       agentSession.trackAgentProcess(proc as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const recorded = new AgentChildProcessRepository(raw).list();
       expect(recorded).toMatchObject([{ pid: 9911, command: '/usr/local/bin/claude' }]);
       expect(recorded[0].daemonPid).toBe(process.pid);
 
       fireExit?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(new AgentChildProcessRepository(raw).list()).toEqual([]);
       raw.close();
     });
 
-    it('a stale exit does not forget the record of the process that replaced it', () => {
+    it('a stale exit does not forget the record of the process that replaced it', async () => {
       const raw = new SqliteDatabase(':memory:');
       runMigration264(raw);
       const agentSession = createAgentSession(raw);
@@ -358,6 +360,7 @@ describe('AgentSession', () => {
       agentSession.trackAgentProcess(oldProc as never);
       agentSession.trackAgentProcess(replacement as never);
       fireOldExit?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(new AgentChildProcessRepository(raw).list()).toMatchObject([{ pid: 9913 }]);
       raw.close();

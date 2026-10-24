@@ -143,7 +143,7 @@ async function runOrphanChildSweep(
       logError(`[Daemon] Failed to kill orphaned agent child ${pid}:`, err);
     }
   }
-  repo.forgetMany(
+  await repo.forgetMany(
     persisted.filter((child) => child.daemonPid !== process.pid).map((child) => child.pid)
   );
   logInfo(
