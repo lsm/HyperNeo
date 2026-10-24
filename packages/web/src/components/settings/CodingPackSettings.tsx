@@ -62,11 +62,7 @@ export function CodingPackSettings() {
     const saved = own ?? inherited;
     return {
       value: saved?.value,
-      state: own
-        ? `Saved for ${scopeName}`
-        : saved
-          ? 'Inherited from pack global'
-          : 'Unanswered',
+      state: own ? `Saved for ${scopeName}` : saved ? 'Inherited from pack global' : 'Unanswered',
     };
   };
   const merge = read('mergePolicy');
