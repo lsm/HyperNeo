@@ -67,8 +67,8 @@ export interface RenderPendingDigestDeps {
     sessionId: string,
     message: SDKUserMessage
   ): Promise<RenderPendingDigestSavedDigest>;
-  reopenFailedDigest(sessionId: string, uuid: string): void;
-  deleteDigestMessage(sessionId: string, dbId: string): void;
+  reopenFailedDigest(sessionId: string, uuid: string): Promise<void>;
+  deleteDigestMessage(sessionId: string, dbId: string): Promise<void>;
   appendDigest(sessionId: string, message: SDKUserMessage): Promise<boolean>;
   markDeliveriesDelivered(
     target: RenderPendingDigestTarget,

@@ -62,7 +62,7 @@ export async function persistAndAppend(
   }
   if (saved.replayed) {
     try {
-      ctx.deps.reopenFailedDigest(ctx.sessionId, uuid);
+      await ctx.deps.reopenFailedDigest(ctx.sessionId, uuid);
     } catch (error) {
       return { ...ctx, outcome: { action: 'failed', stage: 'reopenFailedDigest', error } };
     }
@@ -87,7 +87,7 @@ export async function persistAndAppend(
   if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
     if (!saved.replayed) {
       try {
-        ctx.deps.deleteDigestMessage(ctx.sessionId, dbId);
+        await ctx.deps.deleteDigestMessage(ctx.sessionId, dbId);
       } catch (error) {
         return { ...ctx, outcome: { action: 'failed', stage: 'digestCleanup', error } };
       }

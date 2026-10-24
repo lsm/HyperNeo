@@ -135,10 +135,10 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
       saved.push(message);
       return { dbId: `db-${uuid}`, replayed: false };
     },
-    reopenFailedDigest: (sessionId, uuid) => {
+    reopenFailedDigest: async (sessionId, uuid) => {
       reopened.push({ sessionId, uuid });
     },
-    deleteDigestMessage: (sessionId, dbId) => {
+    deleteDigestMessage: async (sessionId, dbId) => {
       deletedDigests.push({ sessionId, dbId });
     },
     appendDigest: async (_sessionId, message) => {
@@ -872,7 +872,7 @@ describe('render-pending-digest pipeline', () => {
         h.admissibility.interruptInProgress = true;
         return true;
       },
-      deleteDigestMessage: () => {
+      deleteDigestMessage: async () => {
         throw new Error('delete rejected');
       },
     });
@@ -880,6 +880,22 @@ describe('render-pending-digest pipeline', () => {
     const ctx = await persistAndAppend(runStages(h));
     expect(ctx.outcome).toMatchObject({ action: 'failed', stage: 'digestCleanup' });
     expect(h.marks).toEqual([]);
+  });
+
+  it('persistAndAppend reports a reopenFailedDigest failure when the replayed row cannot be reopened', async () => {
+    const h = harness({
+      saveDigestMessageIfAbsent: async (_sessionId, message) => ({
+        dbId: `db-${String(message.uuid)}`,
+        replayed: true,
+      }),
+      reopenFailedDigest: async () => {
+        throw new Error('reopen rejected');
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toMatchObject({ action: 'failed', stage: 'reopenFailedDigest' });
+    expect(h.appended).toEqual([]);
   });
 
   it('end to end: one digest message for a mixed pending set, all rows marked', async () => {
