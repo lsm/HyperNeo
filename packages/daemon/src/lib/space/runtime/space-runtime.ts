@@ -2216,11 +2216,11 @@ export class SpaceRuntime {
         const dbId = await messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
         return { dbId, replayed: false };
       },
-      reopenFailedDigest: (targetSessionId, uuid) => {
+      reopenFailedDigest: async (targetSessionId, uuid) => {
         const failedRow = messages.getMessageByStatusAndUuid(targetSessionId, 'failed', uuid);
         if (failedRow) messages.updateMessageStatus([failedRow.dbId], 'deferred');
       },
-      deleteDigestMessage: (targetSessionId, dbId) => {
+      deleteDigestMessage: async (targetSessionId, dbId) => {
         const row = messages.getMessageByStatusAndDbId(targetSessionId, 'deferred', dbId);
         if (row && typeof row.uuid === 'string') {
           this.deleteDigestHandoffDebt(targetSessionId, row.uuid);
@@ -2247,7 +2247,7 @@ export class SpaceRuntime {
       }
       if (outcome.action === 'delivered') {
         try {
-          this.supersedeObsoleteDigestRows(
+          await this.supersedeObsoleteDigestRows(
             sessionId,
             store,
             outcome.uuid,
@@ -2266,7 +2266,7 @@ export class SpaceRuntime {
         }
       } else {
         try {
-          this.dropUncoveredDeferredDigestRows(sessionId, store);
+          await this.dropUncoveredDeferredDigestRows(sessionId, store);
         } catch (cleanupError) {
           if (this.isTargetSessionLive(sessionId)) {
             this.scheduleTurnEndDigestRetry(sessionId, taskId);
@@ -2283,7 +2283,7 @@ export class SpaceRuntime {
       return outcome;
     } catch (error) {
       try {
-        this.dropUncoveredDeferredDigestRows(sessionId, store);
+        await this.dropUncoveredDeferredDigestRows(sessionId, store);
       } catch (cleanupError) {
         if (this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
@@ -2312,11 +2312,11 @@ export class SpaceRuntime {
       return;
     }
     this.digestSupersedeRetryCounts.set(key, attempts);
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       this.digestSupersedeRetryTimers.delete(key);
       if (this.isStopped) return;
       try {
-        this.supersedeObsoleteDigestRows(
+        await this.supersedeObsoleteDigestRows(
           sessionId,
           store,
           deliveredUuid,
@@ -2340,7 +2340,10 @@ export class SpaceRuntime {
     this.digestSupersedeRetryTimers.set(key, timer);
   }
 
-  private dropUncoveredDeferredDigestRows(sessionId: string, store: ExternalEventStore): void {
+  private async dropUncoveredDeferredDigestRows(
+    sessionId: string,
+    store: ExternalEventStore
+  ): Promise<void> {
     const messages = this.getSdkMessageRepo();
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     const targetWorkflowRunId = execution?.workflowRunId;
@@ -2383,13 +2386,13 @@ export class SpaceRuntime {
     }
   }
 
-  private supersedeObsoleteDigestRows(
+  private async supersedeObsoleteDigestRows(
     sessionId: string,
     store: ExternalEventStore,
     deliveredUuid: string | null,
     deliveredEventIds: string[],
     currentTaskId?: string
-  ): void {
+  ): Promise<void> {
     const messages = this.getSdkMessageRepo();
     const deliveredEventIdSet = new Set(deliveredEventIds);
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
