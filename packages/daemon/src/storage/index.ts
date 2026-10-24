@@ -243,7 +243,7 @@ export class Database {
     return this.sessionRepo.listProcessingSessionIds();
   }
 
-  markRestartInterruptedTurns(): number {
+  async markRestartInterruptedTurns(): Promise<number> {
     return this.sessionRepo.markRestartInterruptedTurns();
   }
 
@@ -251,7 +251,7 @@ export class Database {
     return this.sessionRepo.listRestartCooldownResumes();
   }
 
-  takeRestartCooldownResume(sessionId: string): boolean {
+  async takeRestartCooldownResume(sessionId: string): Promise<boolean> {
     return this.sessionRepo.takeRestartCooldownResume(sessionId);
   }
 
@@ -267,20 +267,20 @@ export class Database {
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
     return this.sessionRepo.captureSessionInputDraft(id);
   }
-  casSessionInputDraft(
+  async casSessionInputDraft(
     snapshot: SessionInputDraftSnapshot,
     text: string | null
-  ): 'won' | 'superseded' | 'invalid' {
+  ): Promise<'won' | 'superseded' | 'invalid'> {
     return this.sessionRepo.casSessionInputDraft(snapshot, text);
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
     return this.sessionRepo.captureSessionRuntimeSettings(id);
   }
-  casSessionRuntimeSettings(
+  async casSessionRuntimeSettings(
     snapshot: SessionRuntimeSettingsSnapshot,
     patch: RuntimeSettingsPatch
-  ): 'won' | 'superseded' {
+  ): Promise<'won' | 'superseded'> {
     return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
   }
 
