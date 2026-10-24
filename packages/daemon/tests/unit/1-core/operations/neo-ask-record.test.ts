@@ -58,7 +58,7 @@ function setup() {
         },
       },
       (projectId) => (projectId === 'project-1' ? projectId : null),
-      (sessionId) => sessionId === 'neo-a',
+      (sessionId) => ['neo-a', 'neo-other'].includes(sessionId),
       () => [{ id: 'project-1', title: 'P' }],
       () => [],
       (id) => goals.get(id)
@@ -86,6 +86,98 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('records a settled discussion decision and links while execution stays open', async () => {
+    const h = setup();
+    const opened = await h.call(
+      'neo.ask.open',
+      {
+        title: 'Choose positioning',
+        request: 'Discuss then implement',
+        todos: [{ title: 'Implement the chosen option', doneWhen: 'PR merged' }],
+      },
+      turn('m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    h.store.focusAsk(
+      opened.ask.id,
+      {
+        adapter: 'hyperneo',
+        id: 'discussion',
+        name: 'Discussion',
+        label: 'Discussion',
+        provider: 'Anthropic',
+        link: '/session/discussion',
+      },
+      2
+    );
+    const todos = h.store.listTodos(opened.ask.id);
+    const outcome =
+      'Decision: prioritize beginner gardeners.\nDocument: [Positioning](https://example.test/positioning.md)\nPR: https://github.com/example/project/pull/8';
+    expect(
+      await h.call('neo.ask.outcome', { askId: opened.ask.id, outcome }, turn('m2'))
+    ).toMatchObject({
+      ok: true,
+      ask: { outcome, status: 'open', settledAt: null, focusedSession: { id: 'discussion' } },
+    });
+    expect(h.store.listTodos(opened.ask.id)).toEqual(todos);
+    expect(h.stopped).toEqual([]);
+    expect(h.started).toEqual([]);
+    expect(
+      await h.call(
+        'neo.ask.settle',
+        { askId: opened.ask.id, status: 'done', outcome: 'Done' },
+        turn('m3')
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('todos_unfinished') });
+    expect(h.store.getAsk(opened.ask.id)).toMatchObject({ status: 'open', outcome });
+    expect(
+      await h.call(
+        'neo.ask.open',
+        {
+          title: 'Choose positioning',
+          request: 'Discuss then implement',
+          todos: [{ title: 'Deploy after implementation', doneWhen: 'Build readback matches' }],
+        },
+        turn('m4')
+      )
+    ).toMatchObject({ ok: true, ask: { id: opened.ask.id, outcome } });
+    expect(h.store.listTodos(opened.ask.id)).toHaveLength(2);
+  });
+
+  test('refuses recording by a worker, another Neo, or on an unfocused or settled ask', async () => {
+    const h = setup();
+    const opened = await h.call(
+      'neo.ask.open',
+      { title: 'Discussion', request: 'Choose a direction' },
+      turn('m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    const input = { askId: opened.ask.id, outcome: 'Claimed approval' };
+    expect(await h.call('neo.ask.outcome', input, turn('m2'))).toMatchObject({ ok: false });
+    h.store.focusAsk(
+      opened.ask.id,
+      {
+        adapter: 'hyperneo',
+        id: 'discussion',
+        name: null,
+        label: 'Discussion',
+        provider: 'Anthropic',
+        link: '/session/discussion',
+      },
+      2
+    );
+    for (const caller of [
+      { source: 'mcp', role: 'worker', sessionId: 'discussion' },
+      { source: 'mcp', role: 'neo', sessionId: 'neo-other' },
+      { source: 'rpc', principal: 'local' },
+    ] as OperationCaller[])
+      expect(await h.call('neo.ask.outcome', input, caller)).toMatchObject({ ok: false });
+    expect(h.store.getAsk(opened.ask.id)?.outcome).toBeNull();
+    h.store.settleAsk(h.store.getAsk(opened.ask.id)!, 'done', 'Finished', 3);
+    expect(await h.call('neo.ask.outcome', input, turn('m3'))).toMatchObject({ ok: false });
+    expect(h.store.getAsk(opened.ask.id)?.outcome).toBe('Finished');
+  });
+
   test('only the goal owner links an ask; retries and repo splits retain that goal', async () => {
     const { store, goals, call, started } = setup();
     const mine = goals.create('neo-a', { title: 'Ship', doneTest: 'Released' }, 'neo', 1);

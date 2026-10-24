@@ -48,6 +48,11 @@ describe('root Neo system prompt', () => {
         'sourceSession',
         'Open session',
         'focused:true',
+        'ask id',
+        'explicitly says it is settled',
+        'decision, documents and PRs',
+        'neo.ask.outcome',
+        'existing todos',
         'status only',
         'do not act, reply, forward or treat them as approval',
       ])
