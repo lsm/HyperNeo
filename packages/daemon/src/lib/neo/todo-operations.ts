@@ -1,6 +1,6 @@
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -281,6 +281,18 @@ export function requireNeoTodoArtifacts(
     : { value: plan };
 }
 
+export function requireNeoTodoCardsAnswered<T extends { todo: NeoTodo; patch: NeoTodoPatch }>(
+  plan: T,
+  questions: readonly NeoQuestion[]
+): Gate<T> {
+  const card =
+    plan.patch.state === 'done' &&
+    questions.find((question) => question.state === 'open' && question.todoId === plan.todo.id);
+  return card
+    ? fail(`card_unanswered: card ${card.id} is still waiting for the human.`)
+    : { value: plan };
+}
+
 export function planNeoTodoRemove(
   todo: NeoTodo,
   todos: NeoTodo[],
@@ -330,6 +342,7 @@ export function createNeoTodoOperations(
   };
   const completion = (plan: { todo: NeoTodo; patch: NeoTodoPatch }) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
+  const cards = (plan: { todo: NeoTodo }) => todos.listQuestions(plan.todo.askId);
   const withUrls = (
     plan: { todo: NeoTodo; patch: NeoTodoPatch },
     input: z.infer<typeof Edit>
@@ -448,6 +461,8 @@ export function createNeoTodoOperations(
     .pipe(withUrls, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
+    .pipe(cards, 'outcome', 'questions')
+    .pipe(requireNeoTodoCardsAnswered, ['outcome', 'questions'], 'result:outcome')
     .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Edit>,
@@ -490,6 +505,8 @@ export function createNeoTodoOperations(
     .pipe(planNeoTodoClose, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
+    .pipe(cards, 'outcome', 'questions')
+    .pipe(requireNeoTodoCardsAnswered, ['outcome', 'questions'], 'result:outcome')
     .pipe(stopAndWrite, 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Close>,
@@ -518,7 +535,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its existing PR-merge check and updates doneWhen, refusing URLs another live todo on this ask tracks. Prefer editing to adding a duplicate PR todo. Or tick it done with evidence (done met for what you read, reported for a claim you cannot read); attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document.',
+        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its existing PR-merge check and updates doneWhen, refusing URLs another live todo on this ask tracks. Prefer editing to adding a duplicate PR todo. Or tick it done with evidence (done met for what you read, reported for a claim you cannot read); attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -554,7 +571,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.close',
       description:
-        'Mark a todo done with the reason you judged it done; its session stops if it is running, unless the todo only follows a session the human tracked.',
+        'Mark a todo done with the reason you judged it done; its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
