@@ -564,10 +564,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     adapters: () => adapters,
     remote: remoteDaemons,
     daemonName: machine,
-    isOpenTodo: (todoId: string) => {
+    isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);
-      return !!todo && store.getAsk(todo.askId)?.status === 'open';
+      const ask = todo ? store.getAsk(todo.askId) : null;
+      return ask?.status === 'open' && ask.sessionId === sessionId;
     },
     namedFolder: {
       machine,

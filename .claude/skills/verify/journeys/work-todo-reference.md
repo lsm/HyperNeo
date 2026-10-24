@@ -6,7 +6,7 @@ model mock, real key, GUI or HTTP mock ports are needed. The helper owns an
 ephemeral non-8399 daemon and closes it in finally.
 
 The production Neo MCP operation handler must refuse work.send with no todoId,
-an unknown todo or a todo belonging to a closed ask. An id in message text and a
+an unknown todo, a todo belonging to a closed ask, or one owned by another coordinator’s ask. An id in message text and a
 forged input source do not satisfy admission. work.start without a todo must
 likewise refuse before creating work. work.queue must refuse untracked next-turn input too. The same real HyperNeo worker accepts a
 follow-up naming an open-ask todo, and trusted internal daemon dispatch remains

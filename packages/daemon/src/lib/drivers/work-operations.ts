@@ -56,7 +56,7 @@ export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
   daemonName: string;
-  isOpenTodo?: (todoId: string) => boolean;
+  isOpenTodo?: (todoId: string, sessionId: string) => boolean;
 }
 
 export const WORK_MESSAGE_MAX = 20_000;
@@ -178,7 +178,7 @@ function admitNeoTodo(
   return !('message' in input) ||
     caller.role !== 'neo' ||
     caller.source === 'internal' ||
-    (input.todoId && deps.isOpenTodo?.(input.todoId))
+    (input.todoId && caller.sessionId && deps.isOpenTodo?.(input.todoId, caller.sessionId))
     ? { value: true }
     : {
         reason: reject(
