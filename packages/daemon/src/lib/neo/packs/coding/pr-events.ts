@@ -139,7 +139,8 @@ export async function deliverCodingPrEvents(
     }
     for (const row of repo.pendingEvents()) {
       const event = planCodingPrEvent(row);
-      const owner = repo.route(row).owner!;
+      const owner = repo.route(row).owner;
+      if (!owner) continue;
       const told = event ? await deps.tell(owner, event.key, event.text).catch(() => false) : true;
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;

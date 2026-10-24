@@ -305,6 +305,31 @@ describe('PR ledger events', () => {
     }
   });
 
+  test('an owner cleared during delivery skips that PR and the sweep finishes', async () => {
+    const { db, ledger, deps, told, cycle, own } = setup();
+    try {
+      await cycle(response([node(1), node(2)]), 100);
+      own(1);
+      own(2);
+      await reconcileCodingPrLedger(
+        ledger,
+        ['lsm/a'],
+        async () => response([node(1, {}, 'FAILURE'), node(2, {}, 'FAILURE')]),
+        200
+      );
+      await deliverCodingPrEvents(new CodingPrEventRepository(db), [], {
+        ...deps,
+        tell: async (ref, key, text) => {
+          db.prepare('UPDATE pack_coding_pr_ledger SET owner = NULL WHERE number = 2').run();
+          return deps.tell(ref, key, text);
+        },
+      });
+      expect(told.map((item) => item.key)).toEqual(['neo-pr-event:lsm/a#1:head1abc:failing']);
+    } finally {
+      db.close();
+    }
+  });
+
   test('an event skipped because its PR has no owner is logged with the PR and event', async () => {
     const { db, told, cycle } = setup();
     const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
