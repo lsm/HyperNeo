@@ -113,7 +113,7 @@ try {
   assert.deepEqual(await revoked.execute({ ...input, requestId: randomUUID() }, caller), { accepted: false, reason: 'unavailable' });
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n, beforeRace);
   evidence.push({ ownershipRevokedDuringCapture: true });
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ status: 'pass', fullContent: content, evidence }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ status: 'pass', fullContent: content, changedHeadRetryRefused: true, freshRequestCapturedNewHead: true, priorSnapshotPreserved: true, evidence }, null, 2));
   console.log('PASS: owner Neo MCP -> complete Markdown Git snapshot -> question attachment; stale/unlisted/racing inputs refused');
 } finally {
   await app.cleanup();
