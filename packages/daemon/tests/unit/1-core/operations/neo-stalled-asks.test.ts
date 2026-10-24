@@ -122,3 +122,26 @@ test('failed handoff retries the same wake identity without consuming the cooldo
   await service.refreshDriverWork();
   expect(tell).toHaveBeenCalledTimes(2);
 });
+
+test('new todo activity restarts the inactivity clock before a later wake', async () => {
+  ask('active');
+  const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(1);
+  clock += 4 * hour;
+  const step = service.todos.addTodo(
+    'next',
+    'active',
+    { title: 'Next', doneWhen: 'Done', check: null, instruction: null, named: null },
+    clock
+  );
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(1);
+  service.todos.updateTodo(step, { state: 'done' }, clock);
+  clock += 2 * hour - 1;
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(1);
+  clock++;
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(2);
+});
