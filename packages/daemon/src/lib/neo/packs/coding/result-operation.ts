@@ -25,7 +25,7 @@ export function createCodingResultOperation(
           assignment.acceptanceContract === fact.acceptanceContract &&
           isDeepStrictEqual(assignment.actor, fact.actor) &&
           isDeepStrictEqual(assignment.ref, input.ref)
-          ? { value: fact }
+          ? { value: { ...fact, ref: input.ref } }
           : { reason: { ok: false, reason: 'stage_assignment_mismatch' } };
       },
       'input',
