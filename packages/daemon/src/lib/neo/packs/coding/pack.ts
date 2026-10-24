@@ -1,3 +1,5 @@
+import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { createCodingPrFileOperation } from './pr-file-operation.ts';
 import { withCodingWorkGoal } from './work-goal.ts';
 import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
@@ -27,6 +29,7 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
 };
 
 export function createCodingPack(deps: {
+  database: () => Database;
   readPrs: NeoWorkPrReader;
   readRefStates?: NeoRefStateReader;
   listGithub?: NeoGithubLister;
@@ -53,6 +56,7 @@ export function createCodingPack(deps: {
     ...CODING_PACK_BRIEF,
     recordSmoke: recordCodingSmoke,
     operations: [
+      createCodingPrFileOperation(deps.database),
       createCodingGithubReadOperation({
         readPrs: deps.readPrs,
         readRefStates: deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),

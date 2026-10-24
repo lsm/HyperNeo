@@ -33,7 +33,7 @@ try {
     assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/qlark-replay' }, key, value })).ok, true);
   const db = app.db.getDatabase(); const ledger = new CodingPrLedgerRepository(db);
   let approved = false;
-  const pack = createCodingPack({ readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: ledger,
+  const pack = createCodingPack({ database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: ledger,
     prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => ['synthetic/qlark-replay'], readClaudeOwners: async () => [],
     prSweepDeps: { tell: async (_ref, _key, text) => { output.push({ minute, text }); return true; }, wake: async (_key, text) => { output.push({ minute, text }); return true; } },
     readLedgerRepo: async () => ({ data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: 'synthetic/qlark-replay', done: { nodes: [] }, open: { pageInfo: { hasNextPage: false }, nodes: [{

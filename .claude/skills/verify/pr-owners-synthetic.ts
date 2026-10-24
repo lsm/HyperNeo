@@ -121,6 +121,7 @@ export async function verifySyntheticPrOwners(runText: string) {
     }
   );
   const pack = createCodingPack({
+    database: () => db,
     readPrs: async () => [],
     todoPrs: new CodingTodoPrRepository(db),
     prLedger: ledger,

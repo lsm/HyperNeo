@@ -52,11 +52,15 @@ export function createNeoCodingReaders(db: () => Database) {
 
 export function createNeoBuiltinPacks(
   db: Database,
-  deps: Omit<Parameters<typeof createCodingPack>[0], 'prLedger' | 'prSweep' | 'prEvents'>
+  deps: Omit<
+    Parameters<typeof createCodingPack>[0],
+    'prLedger' | 'prSweep' | 'prEvents' | 'database'
+  >
 ) {
   return {
     coding: createCodingPack({
       ...deps,
+      database: () => db,
       prLedger: new CodingPrLedgerRepository(db),
       prSweep: new CodingPrSweepRepository(db),
       prEvents: new CodingPrEventRepository(db),
