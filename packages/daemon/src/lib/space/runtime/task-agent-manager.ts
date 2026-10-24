@@ -138,7 +138,7 @@ import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.t
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
-import { HookExecutor } from '../../hooks/hook-executor.ts';
+import { HookExecutor, type HookExecutorConfig } from '../../hooks/hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,
@@ -251,6 +251,7 @@ function formatWorkflowNodeSessionTitle(task: SpaceTask, agentName?: string): st
 
 export interface TaskAgentManagerConfig {
   db: Database;
+  readGithubPr?: HookExecutorConfig['readGithubPr'];
   sessionManager: SessionManager;
   reactiveDb?: ReactiveDatabase;
   spaceManager: SpaceManager;
@@ -4835,7 +4836,10 @@ export class TaskAgentManager {
 
     let hookEngine: HookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
-      const hookExecutor = new HookExecutor({ workspacePath });
+      const hookExecutor = new HookExecutor({
+        workspacePath,
+        readGithubPr: this.config.readGithubPr,
+      });
       hookEngine = new HookEngine({
         addressing: workflowHookAddressing(workflow, workflowRunId),
         workflowRunCreatedAt: this.config.workflowRunRepo.getRun(workflowRunId)?.createdAt,

@@ -48,6 +48,7 @@ export function createExternalStateValidator(
     const opParams = resolveParams(context);
     const outcome = await op(opParams, {
       workspacePath: context.workspacePath,
+      readPr: context.readGithubPr,
       params: context.params,
       rawParams: context.rawParams,
       hookLocalState: context.hookLocalState,
