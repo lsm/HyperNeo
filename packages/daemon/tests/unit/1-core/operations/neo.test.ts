@@ -353,6 +353,7 @@ describe('Neo MVP', () => {
       'neo.session.track',
       'neo.coding.pr.file',
       'neo.github.read',
+      'neo.coding.smoke',
       'neo.coding.result',
       'neo.pack.read',
       'neo.snapshot',
