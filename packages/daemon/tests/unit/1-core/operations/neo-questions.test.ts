@@ -49,7 +49,17 @@ function setup(artifact?: ArtifactRefReader) {
           : { ok: true };
       },
       undefined,
-      artifact
+      artifact,
+      async (ref) =>
+        ref.id === 'missing'
+          ? null
+          : {
+              ...ref,
+              name: 'Review worker',
+              label: 'Codex · Review worker',
+              provider: 'Codex',
+              link: `codex://threads/${ref.id}`,
+            }
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -78,6 +88,38 @@ function setup(artifact?: ArtifactRefReader) {
 }
 
 describe('neo.question operations', () => {
+  test('refuses an unreadable source without opening or replacing a question', async () => {
+    const { asked, call, store } = setup();
+    const original = await asked({ kind: 'reply', text: 'Keep this question' });
+    const refused = await call('neo.question.ask', {
+      askId: 'ask',
+      kind: 'reply',
+      text: 'New worker output',
+      replaces: original.id,
+      sourceSession: { adapter: 'codex-desktop', id: 'missing' },
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('source_session_unavailable'),
+    });
+    expect(store.listQuestions('ask')).toEqual([original]);
+  });
+
+  test('retains the source when rewording the existing start question', async () => {
+    const { asked, daemonStart } = setup();
+    const initial = daemonStart(['t1']);
+    const question = await asked({
+      kind: 'start',
+      text: 'Start after the worker review?',
+      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+    });
+    expect(question).toMatchObject({
+      id: initial.id,
+      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+      startTodos: ['t1'],
+    });
+  });
+
   test('retains one explicit source session through read, answer and list payloads', async () => {
     const { asked, call, store } = setup();
     const source = { adapter: 'codex-desktop', id: 'source-worker', daemon: 'remote-machine' };

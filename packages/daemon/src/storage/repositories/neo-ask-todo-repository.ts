@@ -79,18 +79,27 @@ export type NeoQuestionDraft = Pick<
   | 'replyTo'
   | 'todoId'
   | 'artifacts'
+  | 'sourceSession'
 >;
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
   answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, document, created_at AS createdAt FROM neo_questions`;
+  confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
-  'options' | 'multiple' | 'startTodos' | 'answer' | 'confirm' | 'replyTo' | 'artifacts'
+  | 'options'
+  | 'multiple'
+  | 'startTodos'
+  | 'answer'
+  | 'confirm'
+  | 'replyTo'
+  | 'artifacts'
+  | 'sourceSession'
 > & {
   artifactsJson: string | null;
+  sourceSessionJson: string | null;
   confirmJson: string | null;
   replyToJson: string | null;
   options: string | null;
@@ -105,10 +114,14 @@ const toQuestion = ({
   confirmJson,
   replyToJson,
   artifactsJson,
+  sourceSessionJson,
   todoId,
   ...row
 }: QuestionRow): NeoQuestion => ({
   ...row,
+  ...(sourceSessionJson
+    ? { sourceSession: JSON.parse(sourceSessionJson) as NeoQuestion['sourceSession'] }
+    : {}),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoQuestion['artifacts'] } : {}),
   ...(todoId ? { todoId } : {}),
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
@@ -534,7 +547,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -551,6 +564,7 @@ export class NeoAskTodoRepository {
         draft.replyTo ? JSON.stringify(draft.replyTo) : null,
         draft.todoId ?? null,
         draft.artifacts ? JSON.stringify(draft.artifacts) : null,
+        draft.sourceSession ? JSON.stringify(draft.sourceSession) : null,
         now
       );
     this.touchAsk(askId, now);
@@ -563,19 +577,21 @@ export class NeoAskTodoRepository {
     text: string,
     now: number,
     replyTo?: readonly string[],
-    artifacts?: NeoQuestion['artifacts']
+    artifacts?: NeoQuestion['artifacts'],
+    sourceSession?: NeoQuestion['sourceSession']
   ): void {
     const question = this.getQuestion(id);
     if (!question) return;
     this.db
       .prepare(
-        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json) WHERE id = ? AND state = 'open'"
+        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json), source_session_json = COALESCE(?, source_session_json) WHERE id = ? AND state = 'open'"
       )
       .run(
         JSON.stringify(startTodos),
         text,
         replyTo ? JSON.stringify(replyTo) : null,
         artifacts ? JSON.stringify(artifacts) : null,
+        sourceSession ? JSON.stringify(sourceSession) : null,
         id
       );
     this.touchAsk(question.askId, now);

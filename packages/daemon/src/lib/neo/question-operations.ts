@@ -1,3 +1,6 @@
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
+import type { NeoQuestionSource } from '@hyperneo/shared/types/neo-ask';
 import type {
   NeoAsk,
   NeoQuestion,
@@ -35,6 +38,7 @@ const Confirmation = z.object({
 });
 const Artifacts = z.array(ArtifactRefSchema).max(16).readonly().optional();
 const Asked = {
+  sourceSession: WorkRefSchema.optional(),
   artifacts: Artifacts,
   todoId: Text.optional(),
   askId: Text,
@@ -57,6 +61,7 @@ const Ask = z.discriminatedUnion('kind', [
     askId: Text,
     text: Text,
     kind: z.literal('start'),
+    sourceSession: Asked.sourceSession,
     artifacts: Artifacts,
     confirm: Confirmation.optional(),
     replyTo: Asked.replyTo,
@@ -70,6 +75,10 @@ const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array
 const Get = z.object({ questionId: Text });
 
 export const NeoQuestionSchema = z.object({
+  sourceSession: WorkerIdentitySchema.extend({
+    provider: z.string(),
+    link: z.string().nullable(),
+  }).optional(),
   artifacts: Artifacts,
   todoId: z.string().nullable().optional(),
   document: z.string().nullable().optional(),
@@ -109,6 +118,7 @@ const QuestionReadResult = z.union([
       replyTo: true,
       todoId: true,
       artifacts: true,
+      sourceSession: true,
     }),
     answeredByHuman: z.boolean(),
   }),
@@ -128,6 +138,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
     replyTo,
     todoId,
     artifacts,
+    sourceSession,
   } = question;
   return {
     ok: true,
@@ -141,6 +152,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       confirm,
       document,
       ...(artifacts ? { artifacts } : {}),
+      ...(sourceSession ? { sourceSession } : {}),
       ...(replyTo ? { replyTo } : {}),
       ...(todoId ? { todoId } : {}),
     },
@@ -162,7 +174,8 @@ export function planNeoQuestion(
   ask: NeoAsk,
   questions: readonly NeoQuestion[],
   input: z.infer<typeof Ask>,
-  todo?: NeoTodo | null
+  todo?: NeoTodo | null,
+  sourceSession?: NeoQuestionSource
 ): Gate<QuestionPlan> {
   const todoId = 'todoId' in input ? input.todoId : undefined;
   if (
@@ -184,6 +197,7 @@ export function planNeoQuestion(
   }
   const draft: NeoQuestionDraft = {
     text: input.text,
+    ...(sourceSession ? { sourceSession } : {}),
     ...(input.artifacts ? { artifacts: input.artifacts } : {}),
     ...(todoId ? { todoId } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
@@ -287,7 +301,8 @@ export function createNeoQuestionOperations(
   told: (ask: NeoAsk, question: NeoQuestion, note: string) => Promise<void>,
   start: (todoId: string) => Promise<{ ok: boolean; reason?: string }>,
   receivedHumanInput: (caller: OperationCaller, messageId: string) => boolean = () => false,
-  artifact: ArtifactRefReader = () => null
+  artifact: ArtifactRefReader = () => null,
+  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null> = async () => null
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -320,13 +335,18 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (owned: NeoAsk, input: z.infer<typeof Ask>) =>
-        planNeoQuestion(
+      async (owned: NeoAsk, input: z.infer<typeof Ask>) => {
+        const source = input.sourceSession ? await readSource(input.sourceSession) : undefined;
+        if (input.sourceSession && !source)
+          return fail('source_session_unavailable: choose one readable source session.');
+        return planNeoQuestion(
           owned,
           store.listQuestions(owned.id),
           input,
-          'todoId' in input && input.todoId ? store.getTodo(input.todoId) : null
-        ),
+          'todoId' in input && input.todoId ? store.getTodo(input.todoId) : null,
+          source ?? undefined
+        );
+      },
       ['outcome', 'input'],
       'result:outcome'
     )
@@ -353,7 +373,8 @@ export function createNeoQuestionOperations(
             plan.draft.text,
             Date.now(),
             plan.draft.replyTo,
-            plan.draft.artifacts
+            plan.draft.artifacts,
+            plan.draft.sourceSession
           );
           const question = store.getQuestion(id);
           return question?.state === 'open'
@@ -371,10 +392,10 @@ export function createNeoQuestionOperations(
       'outcome',
       'outcome'
     )
-    .end('outcome') as (
+    .endAsync('outcome') as (
     input: z.infer<typeof Ask>,
     caller: OperationCaller
-  ) => QuestionReceipt | Rejection;
+  ) => Promise<QuestionReceipt | Rejection>;
 
   const retire = (superpipe({})('neo.question.retire') as PipelineAPI)
     .input(['input', 'caller'])
@@ -456,7 +477,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

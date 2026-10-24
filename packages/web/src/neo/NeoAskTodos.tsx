@@ -249,12 +249,14 @@ function QuestionBox({
   disabled,
   onAnswer,
   onReply,
+  onOpen,
 }: {
   question: NeoQuestionEntry;
   todos: readonly NeoTodoEntry[];
   disabled?: boolean;
   onAnswer: (answer: NeoQuestionAnswer) => void;
   onReply?: () => void;
+  onOpen?: (link: string, title: string) => void;
 }) {
   const listed = (question.startTodos ?? []).flatMap(
     (id) => todos.find((todo) => todo.id === id) ?? []
@@ -284,6 +286,27 @@ function QuestionBox({
       data-question-kind={question.kind}
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
+      {question.sourceSession?.link && onOpen && (
+        <div class="mb-2 flex flex-wrap items-center justify-end gap-2" data-question-source>
+          <span class="min-w-0 break-words text-right text-xs text-fg-muted">
+            {question.sourceSession.name ?? question.sourceSession.id} ·{' '}
+            {question.sourceSession.provider}
+          </span>
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            aria-label={t('question.openSessionTitle', {
+              name: question.sourceSession.name ?? question.sourceSession.id,
+            })}
+            onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
+          >
+            <NeoSessionMark
+              kind={neoSessionKind(question.sourceSession.adapter, question.sourceSession.link)}
+            />
+            {t('question.openSession')}
+          </button>
+        </div>
+      )}
       <MarkdownRenderer
         content={neoQuestionText(question)}
         class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
@@ -531,6 +554,7 @@ export function NeoAskTodos({
         <QuestionBox
           key={question.id}
           question={question}
+          onOpen={onOpen}
           todos={todos}
           disabled={disabled}
           onAnswer={(answer) => onAnswer(question.id, answer)}
