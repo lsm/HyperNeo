@@ -67,6 +67,11 @@ const RemoteDaemonsSettings = lazy(() =>
 const SkillsRegistry = lazy(() =>
   import('../components/settings/SkillsRegistry.tsx').then((m) => ({ default: m.SkillsRegistry }))
 );
+const CodingPackSettings = lazy(() =>
+  import('../components/settings/CodingPackSettings.tsx').then((m) => ({
+    default: m.CodingPackSettings,
+  }))
+);
 const NeoModelSettings = lazy(() =>
   import('../components/settings/NeoModelSettings.tsx').then((m) => ({
     default: m.NeoModelSettings,
@@ -452,6 +457,7 @@ export default function MainContent() {
                 {settingsSection === 'devices' && <DevicesSettings />}
                 {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
                 {settingsSection === 'skills' && <SkillsRegistry />}
+                {settingsSection === 'coding-pack' && <CodingPackSettings />}
                 {settingsSection === 'neo-model' && <NeoModelSettings />}
                 {settingsSection === 'models' && <ModelsSettings />}
                 {settingsSection === 'usage' && <UsageAnalytics />}

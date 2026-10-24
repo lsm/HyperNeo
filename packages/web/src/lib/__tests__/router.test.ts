@@ -302,7 +302,7 @@ describe('router', () => {
     );
   });
 
-  it.each(['providers', 'neo-model'])(
+  it.each(['providers', 'neo-model', 'coding-pack'])(
     'initializes settings route %s from tab query parameters',
     (section) => {
       setPath(`/settings?tab=${section}`);
