@@ -1,3 +1,4 @@
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { decodeTaskCoreRow } from '../tasks/task-row.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
@@ -1045,3 +1046,18 @@ function parseRestrictions(raw: unknown): TaskRestriction | null {
     return null;
   }
 }
+
+export const spaceTaskWrites = defineRepositoryOp(
+  'space_tasks.write',
+  'write',
+  SpaceTaskRepository,
+  [
+    'createTask',
+    'updateTask',
+    'deleteTask',
+    'promoteDraftTasksByCreator',
+    'casStatus',
+    'clearAllSpawnReservations',
+    'markReconcileCheckedAt',
+  ]
+);
