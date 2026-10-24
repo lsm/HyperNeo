@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
-import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
+import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants.ts';
 import {
   NeoConversationAskRepository,
@@ -47,7 +47,7 @@ describe('atomic public ask intake primitive', () => {
     message = prompt(),
     hold: 'immediate' | 'manual' = 'immediate',
     id = conversationId
-  ) => ledger.acceptPrompt(id, message, hold, mailbox.sdkMessageRepo, mailbox.jobQueue);
+  ) => ledger.acceptPromptSync(id, message, hold, mailbox.sdkMessageRepo, mailbox.jobQueue);
   const legacy = (message = prompt()) =>
     ensurePrompt({
       db: mailbox.db,
@@ -298,7 +298,7 @@ describe('atomic public ask intake primitive', () => {
   });
 });
 
-test('joint intake publishes only once all three records are visible from another connection', () => {
+test('joint intake publishes only once all three records are visible from another connection', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'neo-atomic-intake-'));
   const path = join(directory, 'fixture.db');
   const writer = new Database(path);
@@ -327,12 +327,16 @@ test('joint intake publishes only once all three records are visible from anothe
         )
       );
     });
-    expect(ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)).toMatchObject({
+    expect(
+      await ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)
+    ).toMatchObject({
       accepted: true,
       created: true,
     });
     expect(observed).toEqual([[1, 1, 1]]);
-    expect(ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)).toMatchObject({
+    expect(
+      await ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)
+    ).toMatchObject({
       accepted: true,
       created: false,
     });

@@ -1,3 +1,4 @@
+import type { SdkMessageWriteMethod } from './sdk-message-writes.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { toSqlStringList } from '../sql-string-list.ts';
 import type {
@@ -622,6 +623,14 @@ export class SDKMessageRepository {
     private db: BunDatabase,
     private reactiveDb?: SdkMessageChanges
   ) {}
+
+  write<K extends SdkMessageWriteMethod>(
+    method: K,
+    ...args: Parameters<SDKMessageRepository[K]>
+  ): Promise<ReturnType<SDKMessageRepository[K]>> {
+    const write = this[method] as (...args: unknown[]) => unknown;
+    return Promise.resolve(write.apply(this, args)) as Promise<ReturnType<SDKMessageRepository[K]>>;
+  }
 
   private hasMessageSearchIndex(): boolean {
     return this.tableExists('message_search_content');

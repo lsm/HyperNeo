@@ -644,8 +644,7 @@ export class Database {
     method: K,
     ...args: Parameters<SDKMessageRepository[K]>
   ): Promise<ReturnType<SDKMessageRepository[K]>> {
-    const write = this.sdkMessageRepo[method] as (...args: unknown[]) => unknown;
-    return write.apply(this.sdkMessageRepo, args) as ReturnType<SDKMessageRepository[K]>;
+    return this.sdkMessageRepo.write(method, ...args);
   }
 
   getSpaceTaskRepo(): SpaceTaskRepository {

@@ -88,7 +88,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         return;
       }
     };
-    const ensured = ensurePrompt({
+    const ensured = await ensurePrompt({
       ...plan,
       db: deps.db,
       sdkMessageRepo: deps.sdkMessageRepo,
@@ -128,8 +128,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       !deps.sdkMessageRepo.hasConsumptionEvidence(target, messageUuid) &&
       deps.sdkMessageRepo.getSettledDeliveryMessageId(target, messageUuid) === null
     ) {
-      deps.sdkMessageRepo.reopenDeliveryByUuid(target, messageUuid);
-      deps.sdkMessageRepo.markDeliveryDeferredByUuid(target, messageUuid);
+      await deps.sdkMessageRepo.write('reopenDeliveryByUuid', target, messageUuid);
+      await deps.sdkMessageRepo.write('markDeliveryDeferredByUuid', target, messageUuid);
     }
     if (entry.deliveryMode === 'defer' && deps.publishDeferredStatus) {
       const deferredDbId = deps.sdkMessageRepo.findMessageIdByUuid(target, messageUuid);
@@ -141,7 +141,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       }
     }
     if (deps.isSessionArchived(target)) {
-      const failedId = deps.sdkMessageRepo.markDeliveryFailedByUuid(target, messageUuid);
+      const failedId = await deps.sdkMessageRepo.write(
+        'markDeliveryFailedByUuid',
+        target,
+        messageUuid
+      );
       if (failedId !== null) {
         await deps.publishFailed?.(target, failedId);
       }

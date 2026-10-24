@@ -6,7 +6,7 @@ import {
 } from '../../../../src/lib/agent/message-delivery';
 import {
   PromptContentConflictError,
-  ensurePrompt,
+  ensurePromptInTransaction as ensurePrompt,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';

@@ -248,13 +248,13 @@ export function requireNeoRootTarget(
     : { reason: { ok: false, reason: 'This Neo conversation is no longer available.' } };
 }
 
-function persistNeoIntake(
+async function persistNeoIntake(
   message: ReturnType<typeof neoIntakeMessage>,
   session: Target,
   db: Database,
   conversationId: string
-): IntakeResult {
-  const receipt = new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
+): Promise<IntakeResult> {
+  const receipt = await new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
     conversationId,
     message,
     session.config.queryMode === 'manual' ? 'manual' : 'immediate',

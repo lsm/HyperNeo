@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { ensurePrompt, retryPrompt } from '../../../../src/lib/agent/message-delivery-outbox';
+import {
+  ensurePromptInTransaction as ensurePrompt,
+  retryPrompt,
+} from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';

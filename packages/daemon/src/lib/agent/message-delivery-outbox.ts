@@ -661,7 +661,11 @@ const runEnsurePrompt = (superpipe({})('ensure-prompt') as PipelineAPI)
   .pipe(publishEnsuredPrompt, 'ctx', 'ctx')
   .end('ctx') as (ctx: PromptCtx & PersistPromptArgs) => EnsurePromptAppliedCtx;
 
-export function ensurePrompt(args: PersistPromptArgs): EnsurePromptResult {
+export async function ensurePrompt(args: PersistPromptArgs): Promise<EnsurePromptResult> {
+  return ensurePromptInTransaction(args);
+}
+
+export function ensurePromptInTransaction(args: PersistPromptArgs): EnsurePromptResult {
   const deps: PromptDeps = {
     runPostSaveSideEffects: (sessionId, id, countsTowardsBadge) =>
       args.sdkMessageRepo.runPostSaveSideEffects(sessionId, id, countsTowardsBadge),

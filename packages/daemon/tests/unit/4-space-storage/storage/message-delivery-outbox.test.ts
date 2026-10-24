@@ -6,7 +6,8 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   activatePrompts,
-  ensurePrompt,
+  ensurePrompt as ensurePromptAsync,
+  ensurePromptInTransaction as ensurePrompt,
   PromptContentConflictError,
   retryPrompt,
   verifyPromptContent,
@@ -100,6 +101,42 @@ describe('transactional outbox (ensurePrompt)', () => {
     ({ db, sdkRepo, jobQueue } = setup());
   });
   afterEach(() => db.close());
+
+  it('the async facade resolves after both outbox writes commit', async () => {
+    const pending = ensurePromptAsync({
+      db,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('async-commit'),
+      delivery: { origin: 'chat' },
+    });
+    expect(pending).toBeInstanceOf(Promise);
+    const { dbMessageId } = await pending;
+    expect(sdkRepo.getDeliveryContent(SESSION, 'async-commit')?.sendStatus).toBe('enqueued');
+    expect(jobPayload(db, SESSION, 'async-commit')?.messageUuid).toBe('async-commit');
+    expect(dbMessageId).toBeTruthy();
+  });
+
+  it('the async facade rejects after rolling back a failed enqueue', async () => {
+    const failingQueue = {
+      enqueue: () => {
+        throw new Error('async enqueue failed');
+      },
+    } as unknown as JobQueueRepoType;
+    await expect(
+      ensurePromptAsync({
+        db,
+        sdkMessageRepo: sdkRepo,
+        jobQueue: failingQueue,
+        sessionId: SESSION,
+        message: userMessage('async-rollback'),
+        delivery: { origin: 'chat' },
+      })
+    ).rejects.toThrow('async enqueue failed');
+    expect(sdkRepo.getDeliveryContent(SESSION, 'async-rollback')).toBeNull();
+    expect(jobPayload(db, SESSION, 'async-rollback')).toBeNull();
+  });
 
   it('saves the user message AND enqueues a turn delivery job atomically', () => {
     const uuid = 'msg-1';

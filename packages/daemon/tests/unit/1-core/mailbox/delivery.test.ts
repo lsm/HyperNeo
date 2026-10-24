@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test, spyOn } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox';
+import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
@@ -315,7 +315,34 @@ describe('createMailboxDeliveryHandler', () => {
       const entry = makeEntry({ messageUuid: 'seeded-message' });
       const job = claimMailboxJob(mailbox, entry);
 
-      await expect(handler(job)).rejects.toThrow('mailbox: target session archived');
+      let release!: () => void;
+      let entered!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const writing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const write = mailbox.sdkMessageRepo.write.bind(mailbox.sdkMessageRepo);
+      const delayed = spyOn(mailbox.sdkMessageRepo, 'write').mockImplementation((...args) => {
+        entered();
+        return held.then(() => write(...args));
+      });
+      let settled = false;
+      const pending = handler(job).finally(() => {
+        settled = true;
+      });
+      const rejected = expect(pending).rejects.toThrow('mailbox: target session archived');
+      try {
+        await writing;
+        expect(settled).toBe(false);
+        expect(publishFailed).not.toHaveBeenCalled();
+        expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+      } finally {
+        release();
+      }
+      await rejected;
+      delayed.mockRestore();
 
       const row = mailbox.sdkRows()[0];
       expect(row.send_status).toBe('failed');
