@@ -64,7 +64,7 @@ describe('claude-desktop start', () => {
     inbox = [];
     handoffs = 0;
     vi.stubEnv('HYPERNEO_DATA_DIR', join(dir, 'data'));
-    mkdirSync(join(dir, 'prepared'), { recursive: true });
+    mkdirSync(join(dir, 'prepared/.git/info'), { recursive: true });
   });
 
   afterEach(() => {
@@ -464,7 +464,7 @@ describe('claude-desktop start', () => {
       const result = await adapter({
         prepareExecution: async (_preparation, location) => {
           destination = location.destination;
-          mkdirSync(destination, { recursive: true });
+          mkdirSync(join(destination, '.git/info'), { recursive: true });
           return { ok: true, value: { directory: destination, release: async () => {} } };
         },
       }).start!(
@@ -489,7 +489,7 @@ describe('claude-desktop start', () => {
       disableBypassPermissionsMode: 'disable',
     });
     const sibling = join(dir, 'data/worktrees/source/second');
-    mkdirSync(sibling, { recursive: true });
+    mkdirSync(join(sibling, '.git/info'), { recursive: true });
     const secondDriver = adapter({
       prepareExecution: async () => ({
         ok: true,
@@ -521,6 +521,30 @@ describe('claude-desktop start', () => {
     const reloaded = adapter();
     expect((await reloaded.status!({ adapter: 'claude-desktop', id: 'local_u1' })).ok).toBe(true);
     expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+  });
+
+  test('preparing from a linked checkout also protects its main repository', async () => {
+    const main = join(dir, 'main');
+    const source = join(dir, 'linked');
+    const worker = join(dir, 'prepared');
+    const result = await adapter({
+      checkout: { repo: main, linked: true },
+      prepareExecution: async () => ({
+        ok: true,
+        value: { directory: worker, release: async () => {} },
+      }),
+    }).start!(
+      {
+        ...request,
+        place: { ...place, folder: source },
+        preparation: { pack: 'coding', parameters: {} },
+      },
+      user
+    );
+    expect(result.ok).toBe(true);
+    const policy = JSON.parse(readFileSync(join(worker, '.claude/settings.local.json'), 'utf8'));
+    expect(policy.permissions.deny).toContain(`Edit(/${main}/**)`);
+    expect(policy.permissions.deny).toContain(`Edit(/${source}/**)`);
   });
 
   test('a native-policy setup failure is visible and releases only the unused clone', async () => {
