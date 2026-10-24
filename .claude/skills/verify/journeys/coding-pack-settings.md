@@ -37,3 +37,11 @@ saved list. Clearing the field stores `[]`, and reload stays empty. The desktop
 and mobile screenshots show the saved list and controls fitting the viewport.
 The helper also retains the initial screenshot so the missing-control regression
 can be inspected. No automatic repository enrolment is exercised.
+
+Keep the form open with an unsaved watch edit, then forget a synthetic project
+through the real RPC operation. Save must warn that watches changed elsewhere,
+refresh the list, and leave the forgotten repository unwatched. The helper
+retains `coding-watch-stale-save.png` plus `afterStaleSave`/`staleSaveRefused` in
+the evidence. A new save based on the refreshed list remains usable. This checks
+a stale form against a completed change; it does not claim atomic compare-and-set
+between concurrent clients.

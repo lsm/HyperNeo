@@ -117,6 +117,26 @@ try {
     await page.screenshot({ path: `${run}/evidence/coding-pack-settings-${width}.png`, animations: 'disabled' });
     evidence.observations.push({ width, states: await states(), controlsFit: true });
   }
+  execFileSync('sqlite3', [`${run}/data/daemon.db`, `
+    INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at)
+      VALUES ('watch-forget','Synthetic watch project','','',1,1,1);
+    INSERT INTO neo_project_workspaces (alias,project_id)
+      VALUES ('repository:github.com/acme/app','watch-forget');
+  `]);
+  await watchBox.fill('acme/app\nother/repo\nnew/repo');
+  assert.equal(rpc('neo.project.forget', { projectId: 'watch-forget' }).ok, true);
+  assert.deepEqual(get(global, 'watchedRepos').value, ['other/repo']);
+  await saveWatches.click();
+  try {
+    await section.getByRole('alert').waitFor({ timeout: 5000 });
+  } finally {
+    evidence.afterStaleSave = get(global, 'watchedRepos').value;
+    await page.screenshot({ path: `${run}/evidence/coding-watch-stale-save.png`, animations: 'disabled' });
+  }
+  assert.equal(await section.getByRole('alert').innerText(), 'Watched repositories changed elsewhere. Review the refreshed list and save again.');
+  assert.deepEqual(evidence.afterStaleSave, ['other/repo']);
+  assert.equal(await watchBox.inputValue(), 'other/repo');
+  evidence.staleSaveRefused = true;
   await watchBox.fill('');
   await saveWatches.click();
   await section.getByText('No repositories watched.', { exact: true }).waitFor();

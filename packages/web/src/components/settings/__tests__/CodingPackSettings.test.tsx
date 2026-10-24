@@ -208,3 +208,32 @@ test('a refused watch-list edit shows the reason and preserves the saved list', 
   );
   expect(rows.find((row) => row.key === 'watchedRepos')?.value).toEqual(['acme/app']);
 });
+
+test('a stale watch-list save refreshes and warns instead of restoring a forgotten repository', async () => {
+  seed('watchedRepos', global, ['acme/app']);
+  const ui = await page();
+  fireEvent.input(ui.getByRole('textbox', { name: 'Watched repositories' }), {
+    target: { value: 'acme/app\nother/repo' },
+  });
+  rows.find((row) => row.key === 'watchedRepos')!.value = [];
+  fireEvent.click(ui.getByRole('button', { name: 'Save watched repositories' }));
+  expect((await ui.findByRole('alert')).textContent).toBe(
+    'Watched repositories changed elsewhere. Review the refreshed list and save again.'
+  );
+  expect(sets()).toHaveLength(0);
+  expect(
+    (ui.getByRole('textbox', { name: 'Watched repositories' }) as HTMLTextAreaElement).value
+  ).toBe('');
+  expect(rows.find((row) => row.key === 'watchedRepos')?.value).toEqual([]);
+  fireEvent.input(ui.getByRole('textbox', { name: 'Watched repositories' }), {
+    target: { value: 'other/repo' },
+  });
+  fireEvent.click(ui.getByRole('button', { name: 'Save watched repositories' }));
+  await waitFor(() => expect(sets()).toHaveLength(1));
+  expect(sets()[0][1].input).toEqual({
+    pack: 'coding',
+    scope: global,
+    key: 'watchedRepos',
+    value: ['other/repo'],
+  });
+});
