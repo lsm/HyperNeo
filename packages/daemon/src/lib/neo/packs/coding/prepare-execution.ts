@@ -3,12 +3,20 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { gitWorktreeProject } from '../../../drivers/acp-agent-adapter.ts';
 import type { NeoExecutionPreparation } from '../../pack-contract.ts';
+import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 
 type Request = Parameters<NeoExecutionPreparation>[0];
 type Effects = Parameters<NeoExecutionPreparation>[1];
 type Failure = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Failure };
-type Plan = { directory: string; destination: string; ref: string; commits: string[] };
+type Plan = {
+  directory: string;
+  destination: string;
+  ref: string;
+  commits: string[];
+  pullRequest?: number;
+  role?: 'review' | 'verify';
+};
 type CommandResult = Awaited<ReturnType<Effects['run']>>;
 
 function refuse(reason: string): { reason: Failure } {
@@ -17,6 +25,14 @@ function refuse(reason: string): { reason: Failure } {
 
 function planPreparation(request: Request): Gate<Plan> {
   const { target = 'HEAD', prerequisiteCommits = [] } = request.parameters;
+  const { pullRequest, head, role } = request.parameters;
+  if (
+    (pullRequest !== undefined &&
+      (!Number.isSafeInteger(pullRequest) || Number(pullRequest) <= 0)) ||
+    (head !== undefined && (typeof head !== 'string' || !/^[a-f\d]{40}$/i.test(head))) ||
+    (role !== undefined && ((role !== 'review' && role !== 'verify') || !pullRequest || !head))
+  )
+    return refuse('Invalid pinned coding actor configuration.');
   if (
     !isAbsolute(request.directory) ||
     !isAbsolute(request.destination) ||
@@ -47,8 +63,14 @@ function planPreparation(request: Request): Gate<Plan> {
     value: {
       directory: request.directory,
       destination: request.destination,
-      ref: request.parameters.target === undefined ? '' : `refs/remotes/origin/${target}`,
+      ref: pullRequest
+        ? `refs/remotes/origin/pull/${pullRequest}/head`
+        : request.parameters.target === undefined
+          ? ''
+          : `refs/remotes/origin/${target}`,
       commits: [...prerequisiteCommits],
+      pullRequest: pullRequest as number | undefined,
+      role: role as Plan['role'],
     },
   };
 }
@@ -198,6 +220,13 @@ async function prepareClone(
       join(plan.destination, '.git', 'hyperneo-source-checkout'),
       await gitWorktreeProject(plan.directory)
     );
+    if (plan.role)
+      await writeFile(
+        join(plan.destination, '.git', 'hyperneo-stage-contract.md'),
+        plan.role === 'review'
+          ? REVIEWER_SYSTEM_CONTRACT
+          : `${QA_SYSTEM_CONTRACT}\n\n## Coding-pack Verify override\n\nFor this coding-pack Verify run only, pin the assigned PR head and use the repository's verify skill to run the change in an isolated environment, checking each acceptance criterion with evidence; missing or uncertain evidence is not a pass. CI covers base integration, so skip the shared contract's base-integration checkout and base-OID revalidation requirements; a rebase or any new head requires Verify again.\n`
+      );
     ready = true;
     return {
       value: {
@@ -245,7 +274,7 @@ export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-executi
           'fetch',
           '--no-tags',
           'origin',
-          `+refs/heads/${plan.ref.slice('refs/remotes/origin/'.length)}:${plan.ref}`,
+          `+${plan.pullRequest ? `refs/pull/${plan.pullRequest}/head` : `refs/heads/${plan.ref.slice('refs/remotes/origin/'.length)}`}:${plan.ref}`,
         ],
         plan.directory
       ),
@@ -269,6 +298,14 @@ export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-executi
     'result:prepared'
   )
   .pipe(requireCommit, 'prepared', 'result:prepared')
+  .pipe(
+    (commit: string, request: Request): Gate<string> =>
+      request.parameters.head && request.parameters.head !== commit
+        ? refuse('The PR head changed during checkout preparation.')
+        : { value: commit },
+    ['prepared', 'request'],
+    'result:prepared'
+  )
   .pipe((prepared: string) => prepared, 'prepared', 'commit')
   .pipe(
     async (plan: Plan, commit: string, effects: Effects): Promise<Gate<string>> => {
