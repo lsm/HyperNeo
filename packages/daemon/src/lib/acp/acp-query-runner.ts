@@ -1104,7 +1104,7 @@ export class AcpQueryRunner {
           }
         } finally {
           if (!accepted && attemptOwnsRun()) {
-            this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
+            await this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
           }
         }
       }
@@ -1207,17 +1207,17 @@ export class AcpQueryRunner {
     }
   }
 
-  private reopenConsumedDelivery(messageUuid: string): boolean {
+  private async reopenConsumedDelivery(messageUuid: string): Promise<boolean> {
     const sessionId = this.ctx.session.id;
-    const deliveryRepo = this.ctx.db.getSDKMessageRepo?.();
+    const { db } = this.ctx;
     const batchMembers =
       this.ctx.db.getJobQueueRepo?.()?.getActiveDeliveryBatchUuids?.(sessionId, messageUuid) ?? [];
     const uuidsToRestore = [messageUuid, ...batchMembers.filter((u) => u !== messageUuid)];
     const restoredIds: string[] = [];
     for (const uuid of uuidsToRestore) {
       const restoredId =
-        deliveryRepo?.reopenDeliveryByUuid(sessionId, uuid) ??
-        deliveryRepo?.markDeliveryRetryableByUuid(sessionId, uuid) ??
+        (await db.writeSDKMessage?.('reopenDeliveryByUuid', sessionId, uuid)) ??
+        (await db.writeSDKMessage?.('markDeliveryRetryableByUuid', sessionId, uuid)) ??
         null;
       if (restoredId) restoredIds.push(restoredId);
     }
@@ -1276,7 +1276,7 @@ export class AcpQueryRunner {
       logger.warn(`Model provider unreachable; pausing the ACP turn: ${errorMessage}`);
       const heldPrompt = this._lastConsumedUserMessage;
       if (await this.ctx.onNetworkOutage?.(errorMessage, heldPrompt, queryGeneration)) {
-        if (heldPrompt) this.reopenConsumedDelivery(heldPrompt.uuid);
+        if (heldPrompt) await this.reopenConsumedDelivery(heldPrompt.uuid);
         recoveryState.rateLimitCooldownScheduled = true;
         return;
       }
@@ -1306,7 +1306,7 @@ export class AcpQueryRunner {
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
-        if (this.reopenConsumedDelivery(lastMsg.uuid)) {
+        if (await this.reopenConsumedDelivery(lastMsg.uuid)) {
           messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
         } else if (messageQueue.requeueYielded(lastMsg.uuid)) {

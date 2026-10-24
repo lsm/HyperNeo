@@ -2937,9 +2937,11 @@ export class AgentSession
   async deliverChatMessage(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, async () => {
       if (this.db.getSession(this.session.id)?.status === 'archived') {
-        const failedDbId = this.db
-          .getSDKMessageRepo()
-          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        const failedDbId = await this.db.writeSDKMessage(
+          'markDeliveryFailedByUuid',
+          this.session.id,
+          messageUuid
+        );
         if (failedDbId) {
           void this.internalEventBus
             .publish('messages.statusChanged', {
@@ -2956,9 +2958,11 @@ export class AgentSession
           origin: 'chat',
         });
       } catch (err) {
-        const failedDbId = this.db
-          .getSDKMessageRepo()
-          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        const failedDbId = await this.db.writeSDKMessage(
+          'markDeliveryFailedByUuid',
+          this.session.id,
+          messageUuid
+        );
         if (failedDbId) {
           void this.internalEventBus
             .publish('messages.statusChanged', {
@@ -2997,9 +3001,11 @@ export class AgentSession
   }
 
   private async markDeliveryConsumed(uuids: string[]): Promise<void> {
-    const flippedIds = this.db
-      .getSDKMessageRepo()
-      .markDeliveryConsumedByUuids(this.session.id, uuids);
+    const flippedIds = await this.db.writeSDKMessage(
+      'markDeliveryConsumedByUuids',
+      this.session.id,
+      uuids
+    );
     if (flippedIds.length > 0) {
       const now = Date.now();
       for (const dbId of flippedIds) {
@@ -3046,7 +3052,6 @@ export class AgentSession
       return stranded.length;
     });
     let settled = 0;
-    const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
       if (!this.stateManager.isIdleOwnerCurrent(owner)) return;
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
@@ -3055,7 +3060,11 @@ export class AgentSession
         activeNow
       );
       for (const uuid of staleSubmitted) {
-        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, uuid);
+        const dbId = await this.db.writeSDKMessage(
+          'markDeliveryFailedByUuid',
+          this.session.id,
+          uuid
+        );
         if (dbId) {
           settled++;
           void this.internalEventBus

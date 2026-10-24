@@ -4158,7 +4158,7 @@ export class TaskAgentManager {
         await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
       }
       if (existing && existing.sendStatus !== 'deferred') {
-        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+        await this.config.db.writeSDKMessage('markDeliveryDeferredByUuid', sessionId, messageId);
       }
       await settleDeliveryRowStatus(deliveryRows, {
         sessionId,
@@ -4179,7 +4179,7 @@ export class TaskAgentManager {
         await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
       }
       if (existing && existing.sendStatus !== 'deferred') {
-        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+        await this.config.db.writeSDKMessage('markDeliveryDeferredByUuid', sessionId, messageId);
       }
       await settleDeliveryRowStatus(deliveryRows, {
         sessionId,
@@ -4330,9 +4330,9 @@ export class TaskAgentManager {
       saveUserMessage: (sessionId, message, sendStatus, origin) =>
         this.config.db.saveUserMessage(sessionId, message, sendStatus, origin),
       reopenDeliveryByUuid: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, uuid),
+        this.config.db.writeSDKMessage('reopenDeliveryByUuid', sessionId, uuid),
       markDeliveryDeferredByUuid: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, uuid),
+        this.config.db.writeSDKMessage('markDeliveryDeferredByUuid', sessionId, uuid),
     };
   }
 

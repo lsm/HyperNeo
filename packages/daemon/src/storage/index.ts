@@ -31,6 +31,7 @@ import type {
   SessionRuntimeSettingsSnapshot,
 } from './repositories/session-runtime-settings-write.ts';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository.ts';
+import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
 import {
   InboxItemRepository,
@@ -609,6 +610,14 @@ export class Database {
 
   getSDKMessageRepo(): SDKMessageRepository {
     return this.sdkMessageRepo;
+  }
+
+  async writeSDKMessage<K extends SdkMessageWriteMethod>(
+    method: K,
+    ...args: Parameters<SDKMessageRepository[K]>
+  ): Promise<ReturnType<SDKMessageRepository[K]>> {
+    const write = this.sdkMessageRepo[method] as (...args: unknown[]) => unknown;
+    return write.apply(this.sdkMessageRepo, args) as ReturnType<SDKMessageRepository[K]>;
   }
 
   getSpaceTaskRepo(): SpaceTaskRepository {

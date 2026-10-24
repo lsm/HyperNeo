@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { McpServerConfig, MessageHub, Session } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
@@ -34,6 +35,7 @@ describe('SessionManager', () => {
     eventHandlers = new Map();
 
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       getDataMigrationStatus: mock(() => ({ state: 'complete' })),
       waitForSdkMessageColumns: mock(async () => {}),
       createSession: mock(() => {}),

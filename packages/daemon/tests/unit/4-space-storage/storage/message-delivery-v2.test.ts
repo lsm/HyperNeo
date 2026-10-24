@@ -603,7 +603,7 @@ describe('handler — status-aware delivery (§8)', () => {
   it('archived session is rejected, terminalized, and not driven (#3742616723/#3744225587)', async () => {
     const session = new MockSession();
     const job = turnJob(repo, 'msg-archived');
-    const markFailed = mock(() => {});
+    const markFailed = mock(async () => null);
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,

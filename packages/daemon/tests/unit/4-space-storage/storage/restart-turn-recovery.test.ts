@@ -49,7 +49,7 @@ describe('recoverRestartCutTurns', () => {
             ? { promptUuid: 'p2', workedAfter: true }
             : null,
       hasActiveDelivery: () => false,
-      resend: (id, uuid, enqueueDelivery) => {
+      resend: async (id, uuid, enqueueDelivery) => {
         calls.push(`resend ${id} ${uuid} ${enqueueDelivery}`);
         return true;
       },
@@ -194,7 +194,7 @@ describe('restart recovery reads', () => {
         return sdk.readRestartRecoveryEvidence('asked');
       },
       hasActiveDelivery: () => false,
-      resend: (_id: string, uuid: string) => {
+      resend: async (_id: string, uuid: string) => {
         resent.push(uuid);
         return true;
       },

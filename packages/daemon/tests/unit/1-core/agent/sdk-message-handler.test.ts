@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
@@ -151,6 +152,7 @@ describe('SDKMessageHandler', () => {
     getMessageByStatusAndUuidSpy = mock(() => null);
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       saveSDKMessage: saveSDKMessageSpy,
       updateSession: updateSessionSpy,
       getUserMessagesByStatus: getUserMessagesByStatusSpy,

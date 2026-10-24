@@ -346,7 +346,7 @@ export class NeoService {
     this.triggerTimer = undefined;
     this.triggerDeliveryRetryAt.clear();
     if (this.watching) await this.watching;
-    this.sessionWatcher.flushSessionNoticeGroup();
+    await this.sessionWatcher.flushSessionNoticeGroup();
   }
 
   readWorker(ref: WorkRef) {
