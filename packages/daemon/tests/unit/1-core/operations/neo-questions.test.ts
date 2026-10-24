@@ -78,6 +78,39 @@ function setup(artifact?: ArtifactRefReader) {
 }
 
 describe('neo.question operations', () => {
+  test('retains one explicit source session through read, answer and list payloads', async () => {
+    const { asked, call, store } = setup();
+    const source = { adapter: 'codex-desktop', id: 'source-worker', daemon: 'remote-machine' };
+    const question = await asked({
+      kind: 'yesno',
+      text: 'Review the worker output?',
+      noLabel: 'Wait',
+      yesLabel: 'Approve',
+      sourceSession: source,
+    });
+    expect(question).toMatchObject({ sourceSession: source });
+    expect(store.getQuestion(question.id)).toMatchObject({ sourceSession: source });
+    expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
+      question: { sourceSession: source },
+    });
+    expect(
+      await call('neo.question.answer', { questionId: question.id, answer: 'yes' }, human)
+    ).toMatchObject({ question: { state: 'answered', answer: 'yes', sourceSession: source } });
+    expect(store.listQuestionsForAsks(['ask'])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: question.id,
+          sourceSession: expect.objectContaining(source),
+        }),
+      ])
+    );
+    const ordinary = await asked({
+      kind: 'reply',
+      text: 'No single worker produced this question',
+    });
+    expect(ordinary).not.toHaveProperty('sourceSession');
+  });
+
   test('keeps registered artifact references on the question card', async () => {
     const artifact = {
       daemonId: '10000000-0000-4000-8000-000000000001',

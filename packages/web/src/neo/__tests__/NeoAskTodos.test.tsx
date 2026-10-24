@@ -118,6 +118,55 @@ describe('NeoAskTodos', () => {
     expect(reply).not.toHaveBeenCalled();
   });
 
+  it('opens a question source through the existing opener without changing its answer controls', async () => {
+    locale.value = 'en';
+    const onOpen = vi.fn();
+    const onAnswer = vi.fn();
+    const sourceSession = {
+      adapter: 'codex-desktop',
+      id: 'worker',
+      name: 'Review worker',
+      label: 'Codex · Review worker',
+      provider: 'Codex',
+      link: 'codex://threads/worker',
+    };
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('source', {
+              kind: 'yesno',
+              noLabel: 'Wait',
+              yesLabel: 'Approve',
+              ...{ sourceSession },
+            }),
+          ],
+        })}
+        onOpen={onOpen}
+        onAnswer={onAnswer}
+      />
+    );
+    const body = app.container.querySelector('#neo-ref-question-source')!;
+    expect(body.textContent).toContain('Review worker');
+    expect(body.textContent).toContain('Codex');
+    fireEvent.click(app.getByRole('button', { name: 'Open session: Review worker' }));
+    expect(onOpen).toHaveBeenCalledWith('codex://threads/worker', 'Codex · Review worker');
+    fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
+    expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
+  });
+
+  it('offers no session opener for a question without one source', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ questions: [question('general', {})] })}
+        onOpen={vi.fn()}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+  });
+
   it.each(guidanceQuestions)('renders the concise guidance example: $title', async (fixture) => {
     const app = render(
       <NeoAskTodos
