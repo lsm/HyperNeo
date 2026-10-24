@@ -40,6 +40,20 @@ describe('resolveArtifactReference', () => {
     });
   });
 
+  it('keeps one retry ID for the same tap but gives a new tap its own identity', async () => {
+    const { hub: h, request } = hub({ accepted: true, artifact: { artifactId: 'a1' } });
+    const target = { source, reference: 'docs/a.md' };
+    await resolveArtifactReference(h, target);
+    await resolveArtifactReference(h, target);
+    const first = request.mock.calls[0][1] as { input: { requestId: string } };
+    const retry = request.mock.calls[1][1] as { input: { requestId: string } };
+    expect(first.input.requestId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(retry.input.requestId).toBe(first.input.requestId);
+    await resolveArtifactReference(h, { ...target });
+    const next = request.mock.calls[2][1] as { input: { requestId: string } };
+    expect(next.input.requestId).not.toBe(first.input.requestId);
+  });
+
   it('returns a PR summary for a PR link', async () => {
     expect(
       await resolveArtifactReference(hub({ accepted: true, pr }).hub, { source, reference: pr.url })
