@@ -34,6 +34,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
   const receipts: unknown[] = [];
   let rounds = 0;
   let finished = false;
+  let phase: 'reply' | 'background' | 'later' = 'reply';
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
       res.setHeader('content-type', 'application/json');
@@ -53,25 +54,25 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
       return;
     }
     const active = JSON.stringify(body.messages ?? []).includes(requestId);
-    if (active && rounds === 0) {
+    const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
+    if (active && invoke && rounds === 0 && phase === 'reply') {
       firstModel.resolve();
       await releaseModel.promise;
     }
     for (const message of body.messages ?? [])
       if (Array.isArray(message.content))
         for (const block of message.content) if (block.type === 'tool_result') receipts.push(block);
-    const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
-    const asking = active && invoke && rounds < 2;
+    const asking = active && invoke && rounds < (phase === 'reply' ? 2 : 1);
     const block = asking
       ? {
           type: 'tool_use',
-          id: `costco-${++rounds}`,
+          id: `costco-${phase}-${++rounds}`,
           name: invoke.name,
           input: {
             name: 'neo.question.ask',
             input: {
               askId: 'costco',
-              text: '周六还是周日去 Costco？',
+              text: phase === 'reply' ? '周六还是周日去 Costco？' : `Costco ${phase}`,
               kind: 'choice',
               options: ['周六', '周日'],
             },
@@ -165,7 +166,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
   let daemon: Awaited<ReturnType<typeof import('../../../src/app.ts').createDaemonApp>> | undefined;
   const hub = new MessageHub({ defaultSessionId: 'global' });
   let transport: WebSocketClientTransport | undefined;
-  let evidence: unknown;
+  let evidence: Record<string, unknown> | undefined;
   try {
     const { createDaemonApp } = await import('../../../src/app.ts');
     const { getConfig } = await import('../../../src/config.ts');
@@ -245,6 +246,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     await until(() => !!daemon!.db.getMessageByStatusAndUuid(root, 'consumed', systemId));
     const during = daemon.sessionManager.getCachedSession(root)!.getProcessingState();
     expect(during).toMatchObject({ status: 'processing', messageId: systemId });
+    daemon.sessionManager.getCachedSession(root)!.reconcileEffectiveMcpServers();
     releaseModel.resolve();
     await until(() => finished);
     await until(
@@ -289,6 +291,56 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
       items: [expect.objectContaining({ requestId, messageStatus: 'read' })],
     });
     expect((await read()).items).toEqual(page.items);
+    phase = 'background';
+    rounds = 0;
+    finished = false;
+    const backgroundId = crypto.randomUUID();
+    await handoffPromptToMailbox({
+      to: renderAddress({ kind: 'session', sessionId: root }),
+      origin: 'session:synthetic-teammate',
+      messageUuid: backgroundId,
+      message: {
+        type: 'user',
+        parent_tool_use_id: null,
+        inputKind: 'task',
+        message: {
+          role: 'user',
+          content: 'Synthetic background-only turn; open a background card.',
+        },
+      },
+      jobQueue: daemon.db.getJobQueueRepo(),
+    });
+    await until(() => finished);
+    await until(
+      () => daemon!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle'
+    );
+    const afterBackground = await read();
+    expect(todos.listQuestions('costco')).toHaveLength(2);
+    expect(afterBackground.items).toEqual(page.items);
+    phase = 'later';
+    rounds = 0;
+    finished = false;
+    const laterId = crypto.randomUUID();
+    expect(
+      await hub.request('operation.invoke', {
+        name: 'neo.message.send',
+        input: {
+          sessionId: root,
+          requestId: laterId,
+          content: 'A distinct later Costco reply; ask again.',
+        },
+      })
+    ).toMatchObject({ ok: true, messageId: laterId });
+    await until(() => finished);
+    await until(
+      () => daemon!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle'
+    );
+    const afterLater = await read();
+    expect(
+      afterLater.items.filter((row) => row.cardReply).map((row) => row.cardReply!.sourceMessageIds)
+    ).toEqual([[requestId], [laterId]]);
+    expect(todos.listQuestions('costco')).toHaveLength(3);
+    evidence = { ...evidence, afterBackground, laterId, afterLater };
   } finally {
     releaseModel.resolve();
     QueryOptionsBuilder.prototype.build = build;

@@ -1,0 +1,42 @@
+# An actual Neo turn asks a card without replyTo (#8600)
+
+Follow the shared isolation rules in `../SKILL.md`. From the worktree root:
+
+```sh
+RUN=$(mktemp -d /private/tmp/hn-card-consumed-turn-XXXXXX)
+mkdir -p "$RUN/home"
+cd packages/daemon
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error VERIFY_EVIDENCE_DIR="$RUN/evidence" \
+  node_modules/.bin/vitest run --config vitest.online.config.ts \
+  tests/online/convo/neo-card-reply-turn.test.ts > "$RUN/test.log" 2>&1
+```
+
+This uses the installed SDK and a real isolated daemon with ephemeral loopback
+model/daemon listeners, synthetic provider credentials registered in its own DB,
+an empty HOME and an SDK config directory under the fixture. External registry
+MCP servers are disabled and the fixture's gh stub refuses every call. No real
+provider, credential file, live DB/daemon, port 8399 or GUI is used. The fixture
+disables SDK OS sandboxing for this transport/operation proof; it does not prove
+sandbox enforcement. Its finally block closes the daemon, SDK and HTTP resources.
+
+The human sends “周六还是周日去 Costco？用卡片问我” through `neo.message.send`.
+The loopback model waits while a teammate/task prompt is consumed in the same
+turn. The processing status now names the teammate input. A live MCP reconcile
+must retain the attempt-bound operation server. The model calls the
+actual MCP `neo.question.ask` twice with identical inputs and no `replyTo`.
+The public publication read must contain exactly one typed, localized notice
+associated with the original human UUID and one open question. The human message
+remains read, not answered. Repeated publication reads retain the same row.
+
+A subsequent background-only turn asks another question and creates no notice;
+a distinct later human input gets its own notice. Evidence in
+`$RUN/evidence/card-reply-consumed-turn.json` includes the model calls, actual MCP
+receipts, processing status, questions, public pages and human status. These are
+runtime/public-reader observations, not an injected consumedInputId. On the
+pre-fix commit the first notice-count assertion fails with expected 1, actual 0.
+
+Keep running `card-reply-daemon.md` as the separate atomicity, replacement,
+retry/restart and explicit caller-context contract. Its injected identity alone
+does not prove this real-turn fallback. No web/iOS rendering or post-deploy phone
+retry is claimed by either daemon-only journey.
