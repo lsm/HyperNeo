@@ -66,6 +66,16 @@ try {
         assert.deepEqual(await pack.recordSmoke(repo, 'todo', url, qa.head, { ...smoke, verdict: 'inapplicable', build: undefined, reason: 'Docs-only change; no deployed behavior' }, deploys), { accepted: true });
       }
       assert.deepEqual(todos.stageFacts.read(url)[0].ref, qaRef);
+      if (phase === 'restart') {
+        const realWrite = repo.write.bind(repo);
+        repo.write = (method, ...args) => {
+          if (method === 'recordSmoke') db.prepare("DELETE FROM pack_coding_delivery_facts WHERE todo_id = 'todo'").run();
+          return realWrite(method, ...args);
+        };
+        const vanishedGate = await pack.recordSmoke(repo, 'todo', url, qa.head, smoke, deploys);
+        evidence.push({ vanishedGate });
+        assert.deepEqual(vanishedGate, { accepted: false, reason: 'matching_merge_gate_required' });
+      }
       const stored = repo.read('todo', url, qa.head);
       const state = db.prepare("SELECT state FROM neo_todos WHERE id = 'todo'").get() as { state: string };
       assert.equal(state.state, 'doing');

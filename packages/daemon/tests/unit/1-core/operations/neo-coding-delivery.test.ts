@@ -193,3 +193,13 @@ test('stage facts preserve full refs while accepting historical unbound facts', 
   expect(CodingStageFact.parse(fact).ref).toBeUndefined();
   expect(CodingStageFact.parse({ ...fact, ref: gate.qa }).ref).toEqual(gate.qa);
 });
+
+test('a removed gate cannot acknowledge a smoke write', async () => {
+  const { db, repo } = setup();
+  try {
+    await repo.write('recordGate', 'todo', gate);
+    db.prepare('DELETE FROM pack_coding_delivery_facts WHERE todo_id = ?').run('todo');
+    expect(await repo.write('recordSmoke', 'todo', gate, smoke)).toBe(false);
+    expect(repo.read('todo', url, gate.head)).toBeNull();
+  } finally { db.close(); }
+});
