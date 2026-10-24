@@ -167,6 +167,7 @@ export function codingPrState(
     !!policy.humanSignoff?.length &&
     (!pr.files ||
       pr.files.pageInfo.hasNextPage ||
+      policy.humanSignoff.some((pattern) => pattern.startsWith('label:')) ||
       pr.files.nodes.some((file) =>
         policy.humanSignoff!.some((pattern) => posix.matchesGlob(file.path, pattern))
       ));
