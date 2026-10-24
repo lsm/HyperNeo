@@ -155,7 +155,8 @@ export class SDKStatusReader {
     private readonly createWorker = () =>
       new Worker(new URL('./sdk-status-worker.ts', import.meta.url).href, { type: 'module' }),
     private readonly timeoutMs = 30_000,
-    private readonly queryObservability?: SQLiteQueryObservabilityOptions
+    private readonly queryObservability?: SQLiteQueryObservabilityOptions,
+    private readonly beforeRead?: (args: SDKReadArgs) => Promise<void>
   ) {}
 
   read(args: SDKStatusArgs): Promise<SDKStatusPage> {
@@ -190,7 +191,8 @@ export class SDKStatusReader {
     return this.enqueue({ codexSnapshot: { statePath, includeClosed } }) as Promise<CodexSnapshot>;
   }
 
-  private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
+  private async enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
+    if (this.beforeRead) await this.beforeRead(args);
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     const search = 'query' in args;
     if ((search ? this.searches : this.waiting) >= (search ? 3 : 16))

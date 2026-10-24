@@ -648,6 +648,8 @@ describe('StateProjectionService — session error persistence', () => {
       getDatabase: () => memDb,
       setSessionLastError: async (id: string, value: string | null) =>
         new SessionRepository(memDb, { notifyChange }).setLastError(id, value),
+      waitForSdkMessageColumns: async () => {},
+      getDataMigrationStatus: () => undefined,
     } as unknown as Database;
     const reactiveDb = { notifyChange } as unknown as ReactiveDatabase;
 

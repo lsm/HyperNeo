@@ -407,7 +407,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     () => deps.sessionManager.getOperationRegistry(),
     deps.deviceOf
   );
-  setupSystemHandlers(deps.messageHub, deps.sessionManager);
+  setupSystemHandlers(deps.messageHub, deps.sessionManager, () => deps.db.getDataMigrationStatus());
   setupAuthHandlers(
     deps.messageHub,
     deps.authManager,

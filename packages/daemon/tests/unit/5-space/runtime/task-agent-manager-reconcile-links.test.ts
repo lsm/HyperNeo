@@ -23,7 +23,7 @@ describe('TaskAgentManager.rehydrate', () => {
       name: 'Rehydrate links',
     }).id;
     manager = new TaskAgentManager({
-      db: { getDatabase: () => db },
+      db: { getDatabase: () => db, waitForSdkMessageColumns: async () => {} },
       internalEventBus: { subscribe: () => () => {} },
       taskRepo: repo,
     } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);

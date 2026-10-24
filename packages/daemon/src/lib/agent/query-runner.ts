@@ -25,6 +25,7 @@ import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import type { ProviderEnvVars } from '../provider-service.ts';
+import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import {
@@ -969,6 +970,7 @@ export class QueryRunner {
           session.id,
           optionsBuilder.getEffectiveThinkingLevel()
         );
+        setKeyBridgeThinkingOff(session.id, queryOptions.thinking?.type === 'disabled');
         const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
         );

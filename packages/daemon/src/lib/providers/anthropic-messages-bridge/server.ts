@@ -31,6 +31,8 @@ export type AnthropicMessagesBridgeConfig = {
   thinkingSupported?: boolean;
   accessToken?: string;
   forwardHeaders?: string[];
+  sessionHeader?: string;
+  disableThinkingFor?: (sessionId: string) => boolean;
 };
 
 export function buildUpstreamUrl(
@@ -77,6 +79,14 @@ function presentsToken(req: Request, token: string): boolean {
   return (
     req.headers.get('Authorization') === `Bearer ${token}` || req.headers.get('x-api-key') === token
   );
+}
+
+function disableThinking(bodyBytes: ArrayBuffer): ArrayBuffer {
+  const body: Partial<AnthropicRequest> = JSON.parse(new TextDecoder().decode(bodyBytes));
+  const encoded = new TextEncoder().encode(
+    JSON.stringify({ ...body, thinking: { type: 'disabled' } })
+  );
+  return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
 }
 
 function enforceThinking(bodyBytes: ArrayBuffer, desired: SessionThinkingConfig): ArrayBuffer {
@@ -159,6 +169,15 @@ export async function createAnthropicMessagesBridgeServer(
           config.thinkingSupported === false ? undefined : sessionThinking.get(sessionId);
         try {
           bodyBytes = enforceThinking(bodyBytes, desired);
+        } catch {
+          return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
+        }
+      }
+
+      const policySession = config.sessionHeader ? req.headers.get(config.sessionHeader) : null;
+      if (isMessages && policySession && config.disableThinkingFor?.(policySession)) {
+        try {
+          bodyBytes = disableThinking(bodyBytes);
         } catch {
           return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
         }
