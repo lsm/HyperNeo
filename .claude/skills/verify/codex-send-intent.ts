@@ -44,6 +44,7 @@ INSERT INTO threads VALUES ('synthetic', 'Synthetic', '', '', '/tmp/synthetic', 
 db.prepare('UPDATE threads SET rollout_path = ?').run(rollout);
 db.close();
 let owner = 'missing';
+let ownerReadyAt = 0;
 let active = true;
 let loaded = true;
 let resumeError = '';
@@ -66,10 +67,11 @@ const desktop = createServer((socket) => {
       const request = JSON.parse(buffer.subarray(4, size + 4).toString());
       buffer = buffer.subarray(size + 4);
       calls.push({ desktop: request.method, version: request.version, params: request.params });
+      if(owner==='delayed' && Date.now()>=ownerReadyAt)owner='owned';
       if(request.method==='thread-owner-discovery' && owner==='missing' && !existsSync(refuseOpen)
         && existsSync(openLog) && readFileSync(openLog,'utf8').includes('codex://threads/synthetic')) owner='owned';
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
-        : request.method === 'thread-owner-discovery' ? (owner === 'owned' || request.params?.conversationId === 'new-handoff-control') ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
+        : request.method === 'thread-owner-discovery' ? (owner === 'owned' || request.params?.conversationId === 'new-handoff-control') ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: (owner === 'missing' || owner === 'delayed') ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
         : refuse ? { resultType: 'error', error: 'NoActiveTurn' } : { resultType: 'success', result: { result: { turnId: 'desktop-active' } } };
       const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
@@ -144,6 +146,18 @@ try {
   assert.equal((await send()).reason,'not_delivered');
   assert(!calls.slice(refusedBefore).some(call=>(call as {server?:string}).server));
   unlinkSync(refuseOpen);
+  owner='delayed'; ownerReadyAt=Date.now()+11_000;
+  const delayedBefore=calls.length, delayedStarted=performance.now();
+  let callerTimer: ReturnType<typeof setTimeout> | undefined;
+  let delayedResult;
+  try {
+    delayedResult = await Promise.race([send(), new Promise<never>((_, reject) => { callerTimer=setTimeout(()=>reject(new Error('Default 10s RPC caller timed out')),10_000); })]);
+  } finally { clearTimeout(callerTimer); }
+  assert.equal(delayedResult.reason,'not_delivered');
+  assert(performance.now()-delayedStarted<10_000,'Admission settles before the default caller timeout');
+  await new Promise(done=>setTimeout(done,Math.max(0,ownerReadyAt-Date.now()+100)));
+  assert(!calls.slice(delayedBefore).some(call=>['thread-follower-steer-turn','thread-follower-start-turn'].includes((call as {desktop?:string}).desktop??'') || (call as {server?:string}).server),'A late owner must not receive a turn after refusal');
+  owner='missing';
   const desktopPath = join(home, 'ipc/ipc.sock');
   const stalePath = join(home, 'ipc/stale.sock');
   renameSync(desktopPath, stalePath);

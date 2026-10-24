@@ -1,3 +1,9 @@
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -172,6 +178,36 @@ describe('connectCodexAppServer', () => {
       }
     }
   );
+
+  test('logs unrecognized completion shape without its contents', async () => {
+    const { path } = await listen();
+    const config = getLoggerConfig();
+    configureLogger({ level: LogLevel.WARN, filter: ['*'], excludeFilter: [] });
+    const logs: string[] = [];
+    const off = subscribeToStructuredLogs((event) => {
+      if (event.message.startsWith('work.send app-server completion unrecognized'))
+        logs.push(event.message);
+    });
+    const client = await connectCodexAppServer(path);
+    try {
+      for (const peer of sockets.clients)
+        peer.send(
+          JSON.stringify({
+            method: 'turn/completed',
+            params: { threadId: 'synthetic-thread', turn: {}, privateMarker: 'MUST_NOT_BE_LOGGED' },
+          })
+        );
+      await new Promise((done) => setTimeout(done, 20));
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain('"hasThreadId":true');
+      expect(logs[0]).toContain('"hasTurnId":false');
+      expect(logs[0]).not.toContain('MUST_NOT_BE_LOGGED');
+    } finally {
+      client.close();
+      off();
+      configureLogger(config);
+    }
+  });
 
   test('fails to connect when nothing listens on the socket', async () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-app-server-'));

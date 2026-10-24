@@ -126,6 +126,29 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
+    test.each(['linux', 'win32', 'darwin'] as const)(
+      'probe launch failure respects the host contract: %s',
+      async (platform) => {
+        const result = await steerCodexDesktopTurn(
+          undefined,
+          () => {
+            throw new Error('Synthetic ps missing');
+          },
+          'thread-1',
+          'marker',
+          'input-1',
+          'auto',
+          undefined,
+          platform
+        );
+        expect(result).toMatchObject(
+          platform === 'darwin'
+            ? { reason: { ok: false, reason: 'not_delivered' } }
+            : { value: 'app-server' }
+        );
+      }
+    );
+
     test('refuses when an opened Desktop never acquires the thread', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
@@ -422,6 +445,24 @@ describe('withCodexDesktopIpc', () => {
         }
       }
     );
+  });
+
+  test('an absolute IPC deadline prevents a delayed turn dispatch', async () => {
+    const f = await fixture((message, _socket, send) =>
+      send({ type: 'response', requestId: message.requestId, resultType: 'success' })
+    );
+    await expect(
+      withCodexDesktopIpc(
+        f.path,
+        async ({ call }) => {
+          await new Promise((done) => setTimeout(done, 100));
+          return call('thread-follower-start-turn', {}, 2);
+        },
+        Date.now() + 25
+      )
+    ).rejects.toThrow('timed out');
+    await f.closed;
+    expect(f.seen.some((message) => message.method === 'thread-follower-start-turn')).toBe(false);
   });
 
   test('correlates out-of-order fragmented replies and declines discovery requests', async () => {
