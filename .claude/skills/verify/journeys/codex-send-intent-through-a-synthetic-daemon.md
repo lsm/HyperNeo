@@ -99,3 +99,29 @@ completion logs only field-presence booleans and tracked-turn count, never its
 contents. Unit tests retain that warning and assert a synthetic private marker
 is absent. Installed-schema verification does not prove every running server uses
 the installed version.
+
+### Required Deno CI gate
+
+The ownership change passed its driver and online suites, but its required Deno
+Boot Smoke gate failed at the existing job-claim fixture INSERT with
+`database is locked` ([failed job](https://github.com/lsm/HyperNeo/actions/runs/40043116800/job/120718534236)).
+The smoke repair is test-only: a controlled 200 ms writer reproduces the same
+fixture race, and the claim-seed connection’s 5000 ms busy timeout lets that
+fixture wait. The claim/fencing assertions and all production settings remain
+unchanged. This is regression coverage for the CI failure blocking this PR,
+not an additional job-queue implementation or performance fix.
+
+With Deno 2.9.4 available on PATH, repeat from the worktree root:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-deno-gate-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test DENO_SMOKE_PORT=9387 \
+  ./scripts/deno-smoke.sh >"$RUN/deno-smoke.log" 2>&1
+```
+
+Use a free non-8399 port. The script creates its own synthetic DB/daemon and
+cleans up its holder and daemon. It must pass the existing claim/fencing checks
+and graceful SIGTERM shutdown with the contender present. Red/green receipts
+are retained under `/Users/lsm/focus/verification/codex-unloaded-owner/` as
+`review5-ci-failed.log`, `review5-red.log` and `review5-final-deno.log`.
