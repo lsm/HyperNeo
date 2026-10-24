@@ -42,7 +42,7 @@ export function ArtifactPreviewPanel({
   const selectedId = top?.kind === 'artifact' ? top.artifactId : null;
   const workActive = tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top;
   const open = !!top || workActive;
-  const showWork = tabbed && work?.showTab;
+  const showWork = tabbed && work?.showTab && top?.kind !== 'reference';
   const focusEntry = workActive ? artifactWorkTabId : tabbed && selectedId ? open : stack[0];
   const dialog = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
