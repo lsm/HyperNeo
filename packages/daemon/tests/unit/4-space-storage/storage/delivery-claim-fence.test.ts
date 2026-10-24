@@ -56,7 +56,7 @@ const cases = (['live', 'stale', 'cancelled'] as const).flatMap((claim) =>
 
 describe('activatePrompts and retryPrompt claim fence', () => {
   test.each(cases)(
-    'activatePrompts with a $claim claim and a $kind gate matches the claimValid predicate',
+    'activatePrompts with a $claim claim and a $kind gate matches the old isClaimCurrent && canDeliver outcome',
     async ({ claim, kind }) => {
       const { db, jobQueue, claim: fence } = setup(claim, 'deferred');
       const calls: string[] = [];
@@ -78,7 +78,7 @@ describe('activatePrompts and retryPrompt claim fence', () => {
   );
 
   test.each(cases)(
-    'retryPrompt with a $claim claim and a $kind gate matches the claimValid predicate',
+    'retryPrompt with a $claim claim and a $kind gate matches the old isClaimCurrent && canDeliver outcome',
     async ({ claim, kind }) => {
       const { db, jobQueue, claim: fence } = setup(claim, 'failed');
       const calls: string[] = [];

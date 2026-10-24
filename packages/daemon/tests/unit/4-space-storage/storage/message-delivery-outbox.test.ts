@@ -576,7 +576,7 @@ describe('transactional outbox (ensurePrompt)', () => {
         sessionId: SESSION,
         messageUuids: ['act-fenced'],
         origin: 'recovery',
-        claimValid: () => false,
+        canDeliver: () => false,
       });
 
       expect(denied.activated).toEqual([]);
@@ -589,7 +589,7 @@ describe('transactional outbox (ensurePrompt)', () => {
         sessionId: SESSION,
         messageUuids: ['act-fenced'],
         origin: 'recovery',
-        claimValid: () => true,
+        canDeliver: () => true,
       });
 
       expect(activated.map((entry) => entry.messageUuid)).toEqual(['act-fenced']);
@@ -759,7 +759,7 @@ describe('transactional outbox (ensurePrompt)', () => {
         sessionId: SESSION,
         messageUuid: 'retry-fenced',
         origin: 'chat',
-        claimValid: () => false,
+        canDeliver: () => false,
       });
 
       expect(denied).toBeNull();
@@ -772,7 +772,7 @@ describe('transactional outbox (ensurePrompt)', () => {
         sessionId: SESSION,
         messageUuid: 'retry-fenced',
         origin: 'chat',
-        claimValid: () => true,
+        canDeliver: () => true,
       });
 
       expect(retried?.dbId).toBeTruthy();

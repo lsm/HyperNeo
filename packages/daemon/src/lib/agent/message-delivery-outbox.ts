@@ -63,6 +63,11 @@ export interface EnsurePromptResult {
   created: boolean;
 }
 
+export interface DeliveryClaim {
+  jobId: string;
+  claimToken: string | null;
+}
+
 export interface ActivatePromptsArgs {
   db: BunDatabase;
   jobQueue: JobQueueRepository;
@@ -74,7 +79,8 @@ export interface ActivatePromptsArgs {
   admittedAt?: number;
   admissionRowid?: number;
   publishStatusChanged?: OutboxStatusPublisher;
-  claimValid?: () => boolean;
+  claim?: DeliveryClaim;
+  canDeliver?: () => boolean;
 }
 
 export interface ActivatedPromptEntry {
@@ -99,7 +105,8 @@ export interface RetryPromptArgs {
   admittedAt?: number;
   admissionRowid?: number;
   publishStatusChanged?: OutboxStatusPublisher;
-  claimValid?: () => boolean;
+  claim?: DeliveryClaim;
+  canDeliver?: () => boolean;
 }
 
 export interface RetryPromptResult {
@@ -684,10 +691,21 @@ function normalizeActivateUuids(ctx: ActivatePromptsArgs): ActivatePromptsCtx {
   return { ...ctx, uuids, rowIds };
 }
 
+type ClaimFenced = Pick<ActivatePromptsArgs, 'jobQueue' | 'claim' | 'canDeliver'>;
+
+function holdsDeliveryClaim({ jobQueue, claim }: ClaimFenced): boolean {
+  return !claim || jobQueue.isClaimCurrent(claim.jobId, claim.claimToken);
+}
+
+function admitsDeliveryClaim(ctx: ClaimFenced): boolean {
+  return holdsDeliveryClaim(ctx) && ctx.canDeliver?.() !== false;
+}
+
 function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommittedCtx {
   const activated: ActivatedPromptEntry[] = [];
+  if (!admitsDeliveryClaim(ctx)) return { ...ctx, activated };
   const txn = ctx.db.transaction(() => {
-    if (ctx.claimValid?.() === false) return;
+    if (!holdsDeliveryClaim(ctx)) return;
     const rowByIdStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_ID_SQL);
     const rowByUuidStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_UUID_SQL);
     ctx.uuids.forEach((messageUuid, index) => {
@@ -752,9 +770,10 @@ function validateRetryPromptUuid(ctx: RetryPromptArgs): RetryPromptCtx {
 }
 
 function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
+  if (!admitsDeliveryClaim(ctx)) return { ...ctx, retried: null };
   const retried = withBusyRetry(() =>
     ctx.db.transaction(() => {
-      if (ctx.claimValid?.() === false) return null;
+      if (!holdsDeliveryClaim(ctx)) return null;
       const rows = (
         ctx.dbId !== undefined
           ? ctx.db

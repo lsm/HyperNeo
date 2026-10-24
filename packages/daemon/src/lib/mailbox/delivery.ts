@@ -105,7 +105,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
-        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken) && canDeliver(),
+        claim: { jobId: job.id, claimToken: job.claimToken },
+        canDeliver,
       });
       if (retried) publish(retried.dbId);
     } else if (existing?.sendStatus === 'deferred' && entry.deliveryMode !== 'defer') {
@@ -117,7 +118,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         origin: plan.delivery.origin,
         admittedAt: plan.delivery.admittedAt,
         ...(admissionRowid !== undefined ? { admissionRowid } : {}),
-        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken) && canDeliver(),
+        claim: { jobId: job.id, claimToken: job.claimToken },
+        canDeliver,
       });
       if (activated[0]) publish(activated[0].dbId);
     } else if (
