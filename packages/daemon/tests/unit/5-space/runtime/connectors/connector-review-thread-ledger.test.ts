@@ -201,3 +201,23 @@ test('a delayed thread read cannot replace a newer persisted observation', async
     db.close();
   }
 });
+
+test('transport stderr ending with partial stays a failed observation', async () => {
+  const { db, read, facts } = fixture(() => ({
+    ...response(null),
+    stderr: new Response('Synthetic transport failure: partial').body!,
+    exited: Promise.resolve(1),
+  }));
+  try {
+    expect(await read(url, '/tmp')).toMatchObject({
+      ok: false,
+      error: 'Synthetic transport failure: partial',
+    });
+    expect(facts.read(subject, 200, Infinity).page).toMatchObject({
+      status: 'unknown',
+      reason: 'failed',
+    });
+  } finally {
+    db.close();
+  }
+});
