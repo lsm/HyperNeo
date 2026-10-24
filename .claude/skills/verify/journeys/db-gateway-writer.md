@@ -15,4 +15,4 @@ Claude feed purge deletes in batches and keeps the Codex row, a job claim sent
 during the purge completes on the same writer, cleanup keeps young jobs, a
 Claude Desktop outbox prompt and its mailbox report commit together, and a
 bridge exchange journals its event and hands out that prompt.
-`scripts/deno-smoke.sh` runs the same ops under Deno in CI.
+`scripts/deno-smoke.sh` runs the same six checks under Deno in CI.

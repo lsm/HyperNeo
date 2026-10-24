@@ -287,6 +287,14 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
         if (claimed.length !== 1 || again.length !== 0 || !claimed[0].claimToken || claimed[0].payload.body !== "complete claim payload") Deno.exit(1);
       } finally { holder.terminate(); }
       console.log("[deno-smoke] gateway claim is fenced and not duplicated");
+      const { claudeDesktopOutboxWrites } = await import(src + "/storage/repositories/claude-desktop-outbox-repository.ts");
+      const sid = "3b286924-739c-487d-82d2-c3e36fd5ed36";
+      const queued = await gateway.call(claudeDesktopOutboxWrites, "enqueueReported", sid, "session:neo", {kind:"submit",text:"complete synthetic prompt"});
+      const reported = db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue = ? AND payload LIKE ?").get("mailbox", "%driver:claude-desktop:" + sid + "%");
+      const reply = await gateway.call(claudeDesktopOutboxWrites, "exchange", {version:1,sessionId:sid,instanceId:sid+":1:1",events:[{sequence:1,kind:"session.start"}]}, 4242, true);
+      const journal = db.prepare("SELECT last_sequence FROM claude_desktop_bridge_instances WHERE session_id = ?").get(sid);
+      if (!queued.id || reported.n !== 1 || reply.ack !== 1 || reply.command?.id !== queued.id || journal?.last_sequence !== 1) Deno.exit(1);
+      console.log("[deno-smoke] Claude Desktop outbox report and bridge exchange commit on the gateway");
     } finally { db.close(); }
     console.log("[deno-smoke] session event ingest commit/dedupe ok");
   } finally { await gateway.close(); }
