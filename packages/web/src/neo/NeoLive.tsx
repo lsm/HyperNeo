@@ -90,6 +90,7 @@ export function NeoLive() {
   const shell = useRef<HTMLDivElement>(null);
   const rail = useRef<HTMLDivElement>(null);
   const sceneSheet = useRef<HTMLDivElement>(null);
+  const workScrollTop = useRef(0);
   const nearBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
@@ -154,6 +155,10 @@ export function NeoLive() {
     artifactPreviewStack.value.length > 0 || artifactPreviewWorkspace.state.value.open;
   const focusPreview = columns && !chat && previewDesktop && previewOpen;
   const previewWork = focusPreview && artifactPreviewStack.value.length === 0;
+  const workHidden = focusPreview && !roomy && !previewWork;
+  useLayoutEffect(() => {
+    if (!workHidden && sceneSheet.current) sceneSheet.current.scrollTop = workScrollTop.current;
+  }, [workHidden]);
   const setScenesOpen = useCallback(
     (open: boolean) => {
       if (open && focusPreview) artifactPreviewWorkspace.select(null);
@@ -643,7 +648,10 @@ export function NeoLive() {
           id="neo-preview-work-panel"
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
           role={previewWork ? 'tabpanel' : 'region'}
-          hidden={focusPreview && !roomy && !previewWork}
+          hidden={workHidden}
+          onScroll={(event) => {
+            if (!event.currentTarget.hidden) workScrollTop.current = event.currentTarget.scrollTop;
+          }}
           aria-labelledby={previewWork ? artifactWorkTabId : undefined}
           tabIndex={previewWork ? 0 : undefined}
           onKeyDown={(event) => {
