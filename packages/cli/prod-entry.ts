@@ -37,7 +37,8 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
     process.exit(0);
   }
 
-  process.env.NODE_ENV = 'production';
+  const environment = process.env;
+  if (environment.NODE_ENV !== 'test') environment.NODE_ENV = 'production';
 
   const config = getConfig(cliOptions);
 

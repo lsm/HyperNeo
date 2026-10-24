@@ -17,9 +17,12 @@ env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/
 Use the appropriate local platform target and run again with a fresh RUN for
 hyperneod. The proof checks HTTP readiness, system.build over the actual operation
 door and its PID/health, then rejects missing gateway/embedding modules and a raw
-TypeScript watchdog. Retain build.json, daemon.log and cleanup.json. The compiled
-entrypoint selects production mode internally; all state still belongs to this
-disposable test HOME and DB. This checks startup/worker loading, not embedding
+TypeScript watchdog. Retain build.json, daemon.log and cleanup.json. The compiled entrypoint preserves exact NODE_ENV=test; all other values still
+select production. The actual compiled human-login gate must report its test-mode
+skip; a synthetic security executable records any unexpected credential-discovery
+attempt, and the test config must suppress its default structured-log file.
+Other direct NODE_ENV reads remain build-folded; this is not a claim that every
+background test guard is dynamic. All state belongs to the disposable HOME and DB. This checks startup/worker loading, not embedding
 inference or native Desktop UI. Every owned child stops in finally.
 
 ## Windows

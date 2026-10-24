@@ -69,7 +69,8 @@ function isExplicitlyDisabled(raw: string | undefined): boolean {
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {
-  const nodeEnv = process.env.NODE_ENV || 'development';
+  const environment = process.env;
+  const nodeEnv = environment.NODE_ENV || 'development';
 
   const defaultDbPath = join(getDataDir(), 'data', 'daemon.db');
   const configuredLogPath = hyperneoEnv('LOG_FILE');
