@@ -60,6 +60,8 @@ try {
         const prepared = await prepare(qa.head); evidence.push({ prepared });
         assert(prepared.accepted);
         assert.deepEqual(prepared.command, ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', qa.head]);
+        const wrongHead = await pack.recordSmoke(repo, 'todo', url, qa.head, smoke, { ...deploys, prs: [{ url, head: 'head-b', mergeCommit: smoke.mergeCommit }] });
+        evidence.push({ wrongHead }); assert.deepEqual(wrongHead, { accepted: false, reason: 'matching_merge_commit_required' });
         const absent = await pack.recordSmoke(repo, 'todo', url, qa.head, smoke, { ...deploys, daemons: [] });
         evidence.push({ absent }); assert.deepEqual(absent, { accepted: false, reason: 'running_build_must_contain_merge' });
         const self = await pack.recordSmoke(repo, 'todo', url, qa.head, { ...smoke, ref: write }, deploys);

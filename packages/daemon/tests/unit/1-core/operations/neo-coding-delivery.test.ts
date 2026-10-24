@@ -375,3 +375,31 @@ describe('coding manual merge preparation', () => {
     }
   });
 });
+
+
+describe('delivery exact-head and full-reference regressions', () => {
+  test('rejects a containing build when the actual merged PR head was not gated', async () => {
+    const { db, repo, record } = setup();
+    try {
+      await repo.write('recordGate', 'todo', gate);
+      const actualMerge = { ...deploys, prs: [{ url, mergeCommit: smoke.mergeCommit, head: 'head-b' }] };
+      expect(await record(smoke, actualMerge)).toEqual({ accepted: false, reason: 'matching_merge_commit_required' });
+      expect(repo.read('todo', url, gate.head)?.smoke).toBeNull();
+    } finally { db.close(); }
+  });
+
+  test('same local actor id on another harness or daemon cannot supply QA evidence', async () => {
+    const { db, repo } = setup();
+    try {
+      for (const ref of [{ ...contract.qa, adapter: 'other' }, { ...contract.qa, daemon: 'other' }]) {
+        const wrong = { ...qa, ref };
+        expect(await prepareCodingMerge(repo, 'todo', candidate, contract, review, [wrong], async () => gate.head))
+          .toEqual({ accepted: false, reason: 'independent_matching_head_qa_required' });
+      }
+      const wrongHarness = { ...qa, ref: contract.qa, actor: { ...smoke.actor, harness: 'other' } };
+      expect(await prepareCodingMerge(repo, 'todo', candidate, contract, review, [wrongHarness], async () => gate.head))
+        .toEqual({ accepted: false, reason: 'independent_matching_head_qa_required' });
+      expect(repo.read('todo', url, gate.head)).toBeNull();
+    } finally { db.close(); }
+  });
+});
