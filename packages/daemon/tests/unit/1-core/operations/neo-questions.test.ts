@@ -118,6 +118,12 @@ describe('neo.question operations', () => {
       sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
       startTodos: ['t1'],
     });
+    const general = await asked({
+      kind: 'start',
+      text: 'A combined start question without one source',
+    });
+    expect(general.id).toBe(initial.id);
+    expect(general).not.toHaveProperty('sourceSession');
   });
 
   test('retains one explicit source session through read, answer and list payloads', async () => {

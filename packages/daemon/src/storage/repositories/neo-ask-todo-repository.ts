@@ -584,7 +584,7 @@ export class NeoAskTodoRepository {
     if (!question) return;
     this.db
       .prepare(
-        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json), source_session_json = COALESCE(?, source_session_json) WHERE id = ? AND state = 'open'"
+        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json), source_session_json = ? WHERE id = ? AND state = 'open'"
       )
       .run(
         JSON.stringify(startTodos),
