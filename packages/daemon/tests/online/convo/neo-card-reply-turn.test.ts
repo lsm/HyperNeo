@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -195,18 +196,23 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     const { servers } = await hub.request<{ servers: { id: string }[] }>('mcp.registry.list', {});
     for (const server of servers)
       await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
-    await hub.request('providers.create', {
-      params: {
-        providerId: 'anthropic',
-        displayName: 'Synthetic loopback',
-        kind: 'built_in',
-        authType: 'api_key',
-        isEnabled: true,
-        isDefault: true,
-        sortOrder: 0,
-      },
-      credentials: { apiKey: 'sk-synthetic-loopback-only' },
-    });
+    const params = {
+      providerId: 'anthropic',
+      displayName: 'Synthetic loopback',
+      kind: 'built_in',
+      authType: 'api_key',
+      isEnabled: true,
+      isDefault: true,
+      sortOrder: 0,
+    };
+    const credentials = { apiKey: 'sk-synthetic-loopback-only' };
+    const { providers } = await hub.request<{ providers: { id: string; providerId: string }[] }>(
+      'providers.list',
+      {}
+    );
+    const existing = providers.find((provider) => provider.providerId === 'anthropic');
+    if (existing) await hub.request('providers.update', { id: existing.id, params, credentials });
+    else await hub.request('providers.create', { params, credentials });
     const opened = await hub.request<{ ok: boolean; sessionId: string }>('operation.invoke', {
       name: 'neo.open',
       input: {},
@@ -362,3 +368,23 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     }
   }
 }, 90000);
+
+test('ACP Neo persists a no-replyTo card notice through its real operation proxy', async () => {
+  const run = await mkdtemp(join(tmpdir(), 'neo-card-reply-acp-'));
+  await mkdir(join(run, 'home'));
+  const proof = fileURLToPath(
+    new URL('../../../../../.claude/skills/verify/card-reply-acp.ts', import.meta.url)
+  );
+  const output = execFileSync('bun', [proof, run], {
+    env: {
+      HOME: join(run, 'home'),
+      PATH: process.env.PATH,
+      NODE_ENV: 'test',
+      HYPERNEO_DATA_DIR: join(run, 'data'),
+      LOG_LEVEL: 'error',
+    },
+    timeout: 60000,
+    encoding: 'utf8',
+  });
+  expect(output).toContain('PASS ACP card reply');
+}, 70000);

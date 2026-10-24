@@ -313,7 +313,14 @@ describe('QueryRunner startup gate', () => {
     sqlite.exec(
       "INSERT INTO neo_session_bindings(session_id,concern_id,kind) VALUES ('neo:root',NULL,'neo')"
     );
-    Object.assign(ctx.db, { getDatabase: () => sqlite });
+    Object.assign(ctx.db, {
+      getDatabase: () => sqlite,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) => ({
+          inputKind: uuid === 'human-input' ? 'human' : 'task',
+        }),
+      }),
+    });
     const first = queue.enqueueWithId('system-event', 'First', false, { durable: true });
     const second = queue.enqueueWithId('human-input', 'Second', false, { durable: true });
     try {
