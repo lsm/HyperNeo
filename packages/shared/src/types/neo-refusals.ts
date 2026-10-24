@@ -1,4 +1,14 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  matching_merge_gate_required:
+    'Record a passing merge gate for this todo, pull request and exact head before recording smoke.',
+  independent_qa_required:
+    'Only the assigned QA session, distinct from the author and reviewer by full work reference, can record smoke.',
+  matching_merge_commit_required:
+    'Read the merged pull request again; its head and merge commit must match the authorized gate and smoke.',
+  inapplicability_reason_required:
+    'Explain why this change has no deployable behavior before recording smoke as inapplicable.',
+  running_build_must_contain_merge:
+    'Observe the named running build and confirm it contains the merge commit before recording smoke.',
   already_claimed:
     'Another start already claimed this card. Read the card with neo.snapshot and wait for that start to finish instead of starting it again.',
   already_corrected:
@@ -43,6 +53,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The proposal lists the same pack, scope and key more than once. Include each setting once.',
   edit_unchanged:
     'The edit leaves the reply exactly as it was. Pass the changed wording, or skip the edit.',
+  head_changed_or_failed_stage:
+    'The PR head changed or this stage already failed. Read the current assignment and findings; validate the current head rather than replacing a failure with a pass.',
   epic_unavailable:
     'The GitHub epic could not be read or has no title. Check the URL and access, then try again.',
   handoff_uncertain:
@@ -127,6 +139,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Only main Neo or the human can change the project tree. Ask main Neo to do it.',
   self_dependency: 'A card cannot depend on itself. Remove its own id from dependsOn.',
   session_not_found: 'No Neo session has that sessionId. Pass the id of an existing Neo session.',
+  stage_assignment_mismatch:
+    'The result does not match the assigned coding actor, worker ref, PR head or acceptance contract. Submit evidence for the exact persisted assignment.',
   stale_ask_revision:
     'The ask changed since you read it. Read it again with neo.snapshot and pass its current revision.',
   submitted: 'That draft was already sent as a message, so there is nothing to recover.',

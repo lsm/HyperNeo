@@ -1,3 +1,4 @@
+import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -59,7 +60,7 @@ function refineNeoTodoDraft(
   input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target' | 'start'>,
   context: z.RefinementCtx
 ): void {
-  if (!input.instruction !== !input.target)
+  if (input.target?.verb !== 'bind' && !input.instruction !== !input.target)
     context.addIssue({
       code: 'custom',
       message: 'A todo with an instruction needs a target, and a target needs an instruction.',
@@ -119,6 +120,7 @@ export async function addNeoTodo(
   const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
   if ('reason' in accepted) return accepted.reason;
   const added = todos.addTodo(crypto.randomUUID(), home.id, draft, Date.now(), repo);
+  if (draft.target?.verb === 'bind') return bindNeoTodo(todos, sessions, added, draft.target.ref);
   if (draft.target) sessions.create(added.id, draft.target);
   if (draft.start) return start(added.id);
   if (added.instruction) joinNeoStartQuestion(todos, added);
@@ -131,6 +133,56 @@ function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void 
   const blocked = planNeoTodoAwaitingStart(todo);
   if (blocked) todos.updateTodo(todo, blocked, now);
 }
+
+const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
+  .input(['todos', 'sessions', 'todo', 'ref'])
+  .pipe(
+    (todo: NeoTodo): Gate<NeoTodo> =>
+      ['done', 'removed'].includes(todo.state)
+        ? fail(`todo_settled: cannot bind a ${todo.state} todo.`)
+        : { value: todo },
+    'todo',
+    'result:bound'
+  )
+  .pipe(
+    (
+      todos: NeoAskTodoRepository,
+      sessions: NeoTodoSessionRepository,
+      todo: NeoTodo,
+      ref: WorkRef
+    ) => {
+      const now = Date.now();
+      sessions.bind(todo.id, ref, now);
+      return {
+        ok: true as const,
+        todo: todos.updateTodo(
+          todo,
+          {
+            state: 'doing',
+            startedAt: todo.startedAt ?? now,
+            finishedAt: null,
+            reason: null,
+            report: null,
+            evidence: null,
+            blockedBy: null,
+            blockedReason: null,
+            nextAction: null,
+          },
+          now
+        ),
+      };
+    },
+    ['todos', 'sessions', 'bound', 'ref'],
+    'bound'
+  )
+  .end('bound') as (
+  todos: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  todo: NeoTodo,
+  ref: WorkRef
+) => { ok: true; todo: NeoTodo } | Rejection;
+
+const Bind = z.object({ todoId: Text, ref: WorkRefSchema });
 
 const Edit = z.object({
   todoId: Text,
@@ -366,6 +418,18 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
+  const bind = owned(superpipe({})('neo.todo.bind') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo, input: z.infer<typeof Bind>) =>
+        ran(bindNeoTodo(todos, sessions, todo, input.ref)),
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .endAsync('outcome') as (
+    input: z.infer<typeof Bind>,
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
+
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
     .pipe(
       (todo: NeoTodo, input: z.infer<typeof Edit>) =>
@@ -436,11 +500,20 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own. A coding PR already tracked by another live todo on that ask is refused; pin URLs with neo.todo.edit addUrls on the original instead. Pass title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it; a pack may refuse a check, or write doneWhen from it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
+        'Add a todo to an open ask you own. A coding PR already tracked by another live todo on that ask is refused; pin URLs with neo.todo.edit addUrls on the original instead. Pass title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it; a pack may refuse a check, or write doneWhen from it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); use target {verb: bind, ref} to bind already running work immediately without dispatch, with no instruction or start flag needed; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await add(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.todo.bind',
+      description:
+        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker.',
+      inputSchema: Bind,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => present(await bind(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.edit',
@@ -472,7 +545,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.retry',
       description:
-        'Retry a failed todo in place with a new attempt, keeping its todoId. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. To use another target, ask the human.',
+        'Retry a failed todo in place with a new attempt, keeping its todoId. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. Choose the delivery channel or adapter for reaching the same worker session yourself; never ask the human to choose it. Ask the human before changing which worker or target does the work.',
       inputSchema: Retry,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

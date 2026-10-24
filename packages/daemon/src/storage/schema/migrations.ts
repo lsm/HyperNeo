@@ -1,3 +1,5 @@
+import { runMigration452 } from './m452-neo-question-source.ts';
+import { runMigration451 } from './m451-stalled-ask-wake.ts';
 import { runMigration450 } from './m450-neo-question-artifacts.ts';
 import { runMigration449 } from './m449-retire-stale-sdk-indexes.ts';
 import { runMigration448 } from './m448-session-schedule-quiet-count.ts';
@@ -955,6 +957,8 @@ export function runMigrations(
   run(migrationMarkerKey(448), () => runMigration448(db));
   run(migrationMarkerKey(449), () => runMigration449(db));
   run(migrationMarkerKey(450), () => runMigration450(db));
+  run(migrationMarkerKey(451), () => runMigration451(db));
+  run(migrationMarkerKey(452), () => runMigration452(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

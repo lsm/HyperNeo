@@ -142,3 +142,29 @@ test('ancestry cache distinguishes ordered merge/build pairs and retries command
   expect(ahead.calls).toHaveLength(2);
   expect(behind.calls).toHaveLength(1);
 });
+
+test('delivery observations include a merged PR head when requested and fail closed on missing head', async () => {
+  const url = pull(601);
+  for (const state of ['MERGED', 'OPEN'] as const) {
+    const observed = await readGithubDeploys(
+      [url],
+      async () => [],
+      github(null).spawn,
+      async () => 'merge',
+      async () => true,
+      async () => [{ url, head: 'actual-head', state, checks: 'passing', review: 'approved' }]
+    );
+    expect(observed.prs).toEqual([
+      { url, mergeCommit: 'merge', head: state === 'MERGED' ? 'actual-head' : null },
+    ]);
+  }
+  const absent = await readGithubDeploys(
+    [url],
+    async () => [],
+    github(null).spawn,
+    async () => 'merge',
+    async () => true,
+    async () => null
+  );
+  expect(absent.prs[0].head).toBeNull();
+});

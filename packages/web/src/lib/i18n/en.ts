@@ -74,6 +74,8 @@ export const en = {
   'todo.hideDetails': 'Hide details: {title}',
   'todo.openTitle': 'Open {title}',
   'todo.startTitle': 'Start {title}',
+  'question.openSession': 'Open session',
+  'question.openSessionTitle': 'Open session: {name}',
   'question.document': 'View full versions',
   'question.reply': 'Reply in chat',
   'question.confirm': 'Confirm',

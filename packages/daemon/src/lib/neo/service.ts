@@ -1,7 +1,10 @@
+import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
-import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { workerIdentity, workerEngine } from '@hyperneo/shared/types/worker-identity';
+import { z } from 'zod';
+import { WorkSummarySchema } from '../drivers/types.ts';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
 import type {
   GlobalSettings,
@@ -10,7 +13,7 @@ import type {
   Session,
   SessionConfig,
 } from '@hyperneo/shared';
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
@@ -21,7 +24,10 @@ import { NeoConversationAskRepository } from '../../storage/repositories/neo-con
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
-import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import {
+  NeoTodoSessionRepository,
+  neoSafeSessionLink,
+} from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -362,6 +368,27 @@ export class NeoService {
     );
   }
 
+  async readQuestionSource(ref: WorkRef): Promise<NeoQuestionSource | null> {
+    const result = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.status',
+      { ref },
+      { source: 'internal' }
+    );
+    const current = z
+      .object({ ok: z.literal(true), value: WorkSummarySchema })
+      .safeParse(result.kind === 'completed' ? result.value : null);
+    if (!current.success) return null;
+    const local = ref.adapter === 'hyperneo' && !ref.daemon ? this.db.getSession(ref.id) : null;
+    return {
+      ...workerIdentity(ref, current.data.value.title),
+      provider: local?.config.provider ?? workerEngine(ref.adapter),
+      link:
+        neoSafeSessionLink(current.data.value.link, !!ref.daemon) ??
+        neoSafeSessionLink(current.data.value.remoteLink, true),
+    };
+  }
+
   readSessionWorker(id: string) {
     return this.readWorker(sessionWorkerRef(id, !!this.db.getSession(id)));
   }
@@ -494,10 +521,13 @@ export class NeoService {
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))
     );
     if (this.watching || this.disposed) return;
-    this.watching = runLagPhase('neo:driver:session_watch', () =>
-      this.sessionWatcher.watchSessions(Date.now())
-    )
-      .catch((error) => this.log.warn('Session watch pending', error))
+    this.watching = runLagPhase('neo:driver:session_watch', async () => {
+      await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
+        this.log.warn('Stalled ask wake pending', error)
+      );
+      await this.sessionWatcher.watchSessions(Date.now());
+    })
+      .catch((error) => this.log.warn('Neo refresh pending', error))
       .finally(() => {
         this.watching = null;
       });

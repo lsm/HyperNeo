@@ -1,3 +1,4 @@
+import { WorkRefSchema } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -17,6 +18,7 @@ export const CodingStageFact = z.object({
   head: z.string().trim().min(1),
   stage: z.enum(['review', 'qa']),
   actor: CodingActor,
+  ref: WorkRefSchema.optional(),
   verdict: z.enum(['pass', 'fail', 'inconclusive']),
   acceptanceContract: z.string().trim().min(1),
   evidence: z.array(z.string().trim().min(1)).min(1),
