@@ -8,9 +8,13 @@ import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-test.each(['ordinary', 'neo'] as const)(
+test.each(['ordinary', 'neo', 'opus1m'] as const)(
   '%s SDK compacts mid-turn without cancelling tools or losing queued inputs',
   async (kind) => {
+    const oneM = kind === 'opus1m';
+    const model = oneM ? 'claude-opus-5-5' : 'claude-haiku-4-5-20251001';
+    const percent = oneM ? 90 : 60;
+    const capacity = oneM ? 1_000_000 : 200000;
     const run = await mkdtemp(join(tmpdir(), 'sdk-auto-compact-'));
     await mkdir(join(run, 'workspace'));
     await mkdir(join(run, 'home'));
@@ -67,7 +71,7 @@ test.each(['ordinary', 'neo'] as const)(
           held = true;
           await gate;
         }
-        usage = turn === 2 ? 125000 : 1000;
+        usage = turn === 2 ? (oneM ? 905000 : 125000) : 1000;
         content =
           turn <= 2
             ? [
@@ -153,6 +157,7 @@ test.each(['ordinary', 'neo'] as const)(
       const options = await build.apply(this, args);
       built.push({
         cli: options.pathToClaudeCodeExecutable,
+        model: options.model,
         settings: options.settings,
         env: Object.fromEntries(
           Object.entries(options.env ?? {}).filter(([key]) => /COMPACT/.test(key))
@@ -227,30 +232,21 @@ test.each(['ordinary', 'neo'] as const)(
       if (existing) await hub.request('providers.update', { id: existing.id, params, credentials });
       else await hub.request('providers.create', { params, credentials });
       const { setModelsCache } = await import('../../../src/lib/model-service.ts');
-      setModelsCache(
-        new Map([
-          [
-            'global',
-            [
-              {
-                id: 'claude-haiku-4-5-20251001',
-                name: 'Synthetic Haiku',
-                provider: 'anthropic',
-                available: true,
-                contextWindow: 200000,
-              },
-            ],
-          ],
-        ])
+      const { AnthropicProvider } = await import(
+        '../../../src/lib/providers/anthropic-provider.ts'
       );
+      const catalog = new AnthropicProvider().convertSdkModels([
+        { value: model, displayName: 'Synthetic model', description: '' },
+      ]);
+      setModelsCache(new Map([['global', catalog]]));
       const call = (name: string, input: unknown = {}) =>
         hub.request<Record<string, unknown>>('operation.invoke', { name, input });
       if (kind === 'neo')
         expect(
           await call('neo.preferences.set', {
-            model: 'claude-haiku-4-5-20251001',
+            model: model,
             provider: 'anthropic',
-            autoCompactPercent: 60,
+            autoCompactPercent: percent,
             thinkingLevel: 'off',
           })
         ).toMatchObject({ ok: true });
@@ -262,16 +258,16 @@ test.each(['ordinary', 'neo'] as const)(
                 workspacePath: join(run, 'workspace'),
                 title: 'SDK compaction proof',
                 config: {
-                  model: 'claude-haiku-4-5-20251001',
+                  model: model,
                   provider: 'anthropic',
-                  autoCompactPercent: 60,
+                  autoCompactPercent: percent,
                   sdkToolsPreset: ['Read'],
                   permissionMode: 'bypassPermissions',
                 },
               })
             ).sessionId;
       const send = async (content: string) => {
-        if (kind === 'ordinary')
+        if (kind !== 'neo')
           return hub.request<{ messageId: string }>('message.send', { sessionId, content });
         const requestId = randomUUID();
         expect(await call('neo.message.send', { sessionId, requestId, content })).toMatchObject({
@@ -295,7 +291,7 @@ test.each(['ordinary', 'neo'] as const)(
       const live = await app.sessionManager.getSessionForControl(sessionId);
       beforeCrossing = await live?.queryObject?.getContextUsage();
       expect(beforeCrossing).toMatchObject({
-        autoCompactThreshold: 120000,
+        autoCompactThreshold: (capacity * percent) / 100,
         isAutoCompactEnabled: true,
       });
       await new Promise((resolve) => setTimeout(resolve, 11000));
