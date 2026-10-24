@@ -78,6 +78,7 @@ describe('bind an already running worker without dispatch', () => {
         });
         expect(result.ok).toBe(true);
         expect(result.todos[0].state).toBe('doing');
+        expect(result.todos[0].instruction).toBe(options.instruction ?? null);
         expect(sessions.readRef(result.todos[0].id)).toEqual(ref);
         expect(calls).toEqual([]);
       } finally {
