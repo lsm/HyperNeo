@@ -148,15 +148,16 @@ export function handleTaskTerminal(
     };
   }
   const result = runAtomic(deps, () => {
+    const current = deps.taskRepo.getTask(taskId);
     const applied =
-      existing.status === nextStatus && existing.status !== transition?.fromStatus
-        ? existing
+      current && current.status === nextStatus && current.status !== transition?.fromStatus
+        ? current
         : null;
     const task =
       applied ??
       (transition?.updates && Object.keys(transition.updates).length > 0
         ? deps.taskRepo.updateTask(taskId, transition.updates, transition.fromStatus ?? undefined)
-        : existing);
+        : current);
     if (!task) throw new Error(`Task ${taskId} left ${transition?.fromStatus} before its update`);
     if (!isTerminalTaskStatus(task.status)) {
       return {
