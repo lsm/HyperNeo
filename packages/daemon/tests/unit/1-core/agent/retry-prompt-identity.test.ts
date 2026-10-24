@@ -34,4 +34,27 @@ describe('RetryPromptIdentity', () => {
     expect(ids.outgoing(input).uuid).not.toBe(wire.uuid);
     expect(ids.outgoing(input)).toBe(input);
   });
+  test('coordinator deliveries keep durable attribution but use a fresh identity on every SDK attempt', () => {
+    const input = {
+      type: 'user',
+      uuid: crypto.randomUUID(),
+      session_id: 'neo:synthetic',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Recovered human input' },
+    } as SDKUserMessage;
+    const first = new RetryPromptIdentity();
+    const wire = first.outgoing(input, true);
+    expect(wire.uuid).not.toBe(input.uuid);
+    expect(first.incoming(wire)).toEqual(input);
+    const restarted = new RetryPromptIdentity();
+    const replay = restarted.outgoing(input, true);
+    expect(replay.uuid).not.toBe(wire.uuid);
+    expect(replay.uuid).not.toBe(input.uuid);
+    expect(restarted.incoming(replay)).toEqual(input);
+    const steering = restarted.outgoing({ ...input, uuid: crypto.randomUUID() }, true);
+    expect(steering.uuid).not.toBe(replay.uuid);
+    restarted.retry(input.uuid!);
+    restarted.outgoing(input, true);
+    expect(restarted.outgoing(input)).toBe(input);
+  });
 });

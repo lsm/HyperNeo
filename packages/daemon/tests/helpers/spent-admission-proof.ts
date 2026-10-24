@@ -34,6 +34,7 @@ export async function verifySpentAdmission(
   let midTurnSeen = false;
   const sdkErrors: string[] = [];
   const allRequests: string[] = [];
+  const transportInputs: Array<{ uuid: string; restarted: boolean }> = [];
   const evidence: Record<string, unknown> = {
     run,
     kind,
@@ -43,6 +44,7 @@ export async function verifySpentAdmission(
     stages,
     sdkErrors,
     allRequests,
+    transportInputs,
   };
   const fixture = createServer(async (req, res) => {
     allRequests.push(req.url ?? '');
@@ -161,13 +163,29 @@ export async function verifySpentAdmission(
         sdkErrors.push(data);
         options.stderr?.(data);
       },
-      spawnClaudeCodeProcess: (opts) =>
-        spawn(opts.command, opts.args, {
+      spawnClaudeCodeProcess: (opts) => {
+        const child = spawn(opts.command, opts.args, {
           cwd: opts.cwd,
           env: { ...opts.env, ANTHROPIC_BASE_URL: environment.ANTHROPIC_BASE_URL },
           stdio: ['pipe', 'pipe', 'pipe'],
           signal: opts.signal,
-        }),
+        });
+        const write = child.stdin!.write.bind(child.stdin);
+        let pending = '';
+        child.stdin!.write = (...args) => {
+          pending += String(args[0]);
+          while (pending.includes('\n')) {
+            const end = pending.indexOf('\n');
+            const line = pending.slice(0, end);
+            pending = pending.slice(end + 1);
+            const message = JSON.parse(line);
+            if (message.type === 'user' && message.uuid)
+              transportInputs.push({ uuid: message.uuid, restarted });
+          }
+          return Reflect.apply(write, child.stdin, args);
+        };
+        return child;
+      },
     };
   };
   try {
@@ -441,6 +459,24 @@ export async function verifySpentAdmission(
         'read-only coverage worker did not complete successfully'
       );
       evidence.coverageVerified = true;
+    }
+    if (kind === 'neo' && scenario === 'interrupted') {
+      const previous = new Set(
+        transportInputs.filter((input) => !input.restarted).map((input) => input.uuid)
+      );
+      const replayed = transportInputs.filter((input) => input.restarted);
+      assert(replayed.length > 0, 'restart must feed actual SDK input');
+      assert.deepEqual(
+        replayed.filter((input) => previous.has(input.uuid)),
+        [],
+        'recovery reused an SDK transport identity already in history'
+      );
+      assert.equal(
+        rows().find((row) => row.sdk_uuid === originalId)?.send_status,
+        'consumed',
+        'durable input attribution must survive fresh SDK identity'
+      );
+      evidence.freshRecoveryIdentities = true;
     }
     evidence.afterDelivery = sample();
     evidence.messages = await read();
