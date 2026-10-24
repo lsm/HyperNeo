@@ -24,6 +24,7 @@ import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
+import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stage-preferences.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -61,6 +62,7 @@ export function createCodingPack(deps: {
     recordSmoke: recordCodingSmoke,
     prepareMerge: prepareCodingMerge,
     operations: [
+      createCodingWritePlanOperation(deps.database),
       createCodingPrFileOperation(deps.database),
       createCodingGithubReadOperation({
         readPrs: deps.readPrs,
@@ -71,6 +73,7 @@ export function createCodingPack(deps: {
       }),
     ],
     preferences: {
+      ...CODING_STAGE_PREFERENCES,
       provenance: {
         label: { en: 'Independent model provenance', 'zh-Hans': '独立模型来源' },
         valueLabels: {

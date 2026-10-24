@@ -38,6 +38,8 @@ function valueSchema(type: NeoPackPreferenceDeclaration['type']): z.ZodType {
         );
     case 'globs':
       return z.array(z.string().min(1));
+    case 'text':
+      return z.string().max(200);
     case 'login':
       return z.string().regex(/^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i);
   }
