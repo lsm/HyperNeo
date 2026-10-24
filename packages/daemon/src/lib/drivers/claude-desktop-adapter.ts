@@ -1533,7 +1533,7 @@ export async function startClaudeSession(
   const prepared = request.preparation
     ? await deps.prepareExecution!(request.preparation, {
         directory: folder,
-        destination: join(getDataDir(), 'worktrees', basename(folder), cliSessionId),
+        destination: join(getDataDir(), 'claude-worktrees', basename(folder), cliSessionId),
       })
     : null;
   if (prepared && !prepared.ok) return prepared;

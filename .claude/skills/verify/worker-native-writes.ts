@@ -1,12 +1,13 @@
 import { strict as assert } from 'node:assert';
 import { execFile, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { neoReadCheckoutPaths } from '../../../packages/daemon/src/lib/neo/read-access.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const run = resolve(process.argv[2]);
@@ -28,15 +29,22 @@ const git = (cwd: string, ...args: string[]) => {
   return r.stdout.trim();
 };
 const remote = join(run, 'remote');
-const main = join(run, 'main [fixture]');
+const mainName = 'main [café]';
+const main = join(run, mainName);
+const caseMain = join(run, mainName.toUpperCase());
+const unicodeMain = join(run, mainName.normalize('NFD'));
 git(run, 'init', '--initial-branch=dev', remote);
 git(remote, 'config', 'user.name', 'Synthetic');
 git(remote, 'config', 'user.email', 'synthetic@example.invalid');
 writeFileSync(join(remote, 'AGENTS.md'), '## Verify\nRun the synthetic file-tool proof.\n');
 writeFileSync(join(remote, 'code.txt'), 'original\n');
+mkdirSync(join(remote, 'neo-read'));
+writeFileSync(join(remote, 'neo-read/keep.txt'), 'synthetic tracked namespace trap\n');
 git(remote, 'add', '.');
 git(remote, 'commit', '-m', 'synthetic');
 git(run, 'clone', remote, main);
+for (const alias of [caseMain, unicodeMain]) assert.equal(statSync(join(alias, 'code.txt')).ino, statSync(join(main, 'code.txt')).ino, 'this journey requires a case/normalization-insensitive volume');
+const protectedMain = [{ path: caseMain, denied: true }, { path: unicodeMain, denied: true }, { path: main, denied: true }];
 const unlisted = join(run, 'unlisted');
 mkdirSync(unlisted);
 writeFileSync(join(unlisted, 'code.txt'), 'original\n');
@@ -85,11 +93,11 @@ const rpc = (name: string, input: unknown) => new Promise<unknown>((done, fail) 
   ws!.addEventListener('message', receive);
   ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
 });
-async function start(title: string) {
-  const result = await rpc('work.start', { adapter: 'claude-desktop', place: { machine: hostname(), folder: main, name: 'Synthetic fixture' }, title, message: 'Synthetic task only', preparation: { pack: 'coding', parameters: { target: 'dev' } } }) as Result<WorkStarted>;
+async function start(title: string, folder = main) {
+  const result = await rpc('work.start', { adapter: 'claude-desktop', place: { machine: hostname(), folder, name: 'Synthetic fixture' }, title, message: 'Synthetic task only', preparation: { pack: 'coding', parameters: { target: 'dev' } } }) as Result<WorkStarted>;
   assert(result.ok, JSON.stringify(result));
   const root = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
-  assert.equal(dirname(root), join(run, 'data/worktrees', 'main [fixture]'));
+  assert.equal(dirname(root), join(run, 'data/claude-worktrees', basename(folder)));
   assert.equal(git(root, 'status', '--porcelain'), '', 'generated native policy stays out of worker commits');
   return root;
 }
@@ -123,23 +131,33 @@ try {
   await open();
   const first = await start('First synthetic worker');
   const session = crypto.randomUUID();
-  await exercise(first, [{ path: main, denied: true }, { path: first, denied: false }, { path: unlisted, denied: false }], session, false);
+  await exercise(first, [...protectedMain, { path: first, denied: false }, { path: unlisted, denied: false }], session, false);
   ws!.close();
   await app!.cleanup();
   app = undefined;
   await open();
   const second = await start('Second synthetic worker');
+  const siblingAliases = [second, join(dirname(second), basename(second).toUpperCase()), second.normalize('NFD')];
+  for (const alias of siblingAliases) assert.equal(statSync(join(alias, 'code.txt')).ino, statSync(join(second, 'code.txt')).ino);
+  const protectedRoots = [...protectedMain, ...siblingAliases.map(path => ({ path, denied: true })), { path: first, denied: false }];
   writeFileSync(join(first, 'code.txt'), 'original\n');
-  await exercise(first, [{ path: main, denied: true }, { path: second, denied: true }, { path: first, denied: false }], session, true);
+  await exercise(first, protectedRoots, session, true);
   writeFileSync(join(first, 'code.txt'), 'original\n');
-  await exercise(first, [{ path: main, denied: true }, { path: second, denied: true }, { path: first, denied: false }], session, true, 'bypassPermissions');
+  await exercise(first, protectedRoots, session, true, 'bypassPermissions');
+  const plainMain = join(run, 'plain-source');
+  git(run, 'clone', remote, plainMain);
+  const neoRead = join(run, 'data/worktrees/acme/demo/neo-read');
+  mkdirSync(neoRead, { recursive: true });
+  const third = await start('Namespace trap worker', plainMain);
+  assert(existsSync(join(third, 'neo-read/keep.txt')));
+  assert.deepEqual(neoReadCheckoutPaths(), [neoRead], 'tracked neo-read directory must not enter Neo writable roots');
   const handoffs = readFileSync(join(run, 'evidence/handoffs.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-  assert.equal(handoffs.length, 2);
-  for (const [i, root] of [first, second].entries()) {
+  assert.equal(handoffs.length, 3);
+  for (const [i, root] of [first, second, third].entries()) {
     assert.equal(handoffs[i].cwd, root);
     assert.equal(handoffs[i].args.slice(0, 6).join(' '), '-q /dev/null claude --desktop --resume ' + root.split('/').at(-1));
   }
-  evidence.push({ daemonRestarted: true, sessionResumed: session, desktopHandoffs: 2, protectedMainAndLaterSibling: true, ownEditsAndWrites: true, unlistedOutsideAllowed: true, actualDesktopRendering: 'not tested; synthetic handoff', bashAndMcpContainment: 'not tested; next OS sandbox slice' });
+  evidence.push({ daemonRestarted: true, sessionResumed: session, desktopHandoffs: 3, neoReadNamespaceIsolated: true, protectedMainAndLaterSibling: true, caseAndUnicodeAliasesDenied: true, ownEditsAndWrites: true, unlistedOutsideAllowed: true, actualDesktopRendering: 'not tested; synthetic handoff', bashAndMcpContainment: 'not tested; next OS sandbox slice' });
   console.log(`PASS: persistent native denials, own edits/writes, later sibling after daemon restart, same CLI session resumed; unlisted outside remains allowed. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();

@@ -482,7 +482,7 @@ describe('claude-desktop start', () => {
       return destination;
     };
     const first = await start('First worker');
-    expect(first).toBe(join(dir, 'data/worktrees/source/u1'));
+    expect(first).toBe(join(dir, 'data/claude-worktrees/source/u1'));
     const settingsPath = join(first, '.claude/settings.local.json');
     const initial = readFileSync(settingsPath, 'utf8');
     expect(JSON.parse(initial).permissions).toMatchObject({
@@ -490,7 +490,7 @@ describe('claude-desktop start', () => {
       deny: expect.arrayContaining([`Edit(/${main}/**)`]),
       disableBypassPermissionsMode: 'disable',
     });
-    const sibling = join(dir, 'data/worktrees/source/second');
+    const sibling = join(dir, 'data/claude-worktrees/source/second');
     mkdirSync(join(sibling, '.git/info'), { recursive: true });
     const secondDriver = adapter({
       prepareExecution: async () => ({

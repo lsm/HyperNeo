@@ -2,7 +2,8 @@
 
 Read shared SKILL.md first. Supply the installed Claude Code binary explicitly;
 only that executable is used, never its host configuration or credentials.
-Run from the worktree root with a fresh synthetic directory:
+Run on a case/normalization-insensitive macOS volume from the worktree root
+with a fresh synthetic directory; the helper fails if the variants are not aliases:
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-native-writes-XXXXXX)
@@ -22,8 +23,14 @@ Edit(path) policy. The installed headless CLI loads that file normally, with no
 --settings policy argument. Native Edit and Write into main both return visible
 permission errors; own-file edits/writes succeed. Replacing the policy is denied.
 The helper restarts only its isolated daemon, creates a later sibling, and resumes
-the same real CLI session, including a requested bypass mode that the policy disables. The older clone must now deny the sibling too. Generated
-settings remain excluded from Git status. Paths include literal glob metacharacters.
+the same real CLI session, including a requested bypass mode that the policy
+disables. The older clone must now deny the sibling too. Generated settings remain
+excluded from Git status. Paths include literal glob metacharacters. Case and
+NFC/NFD spellings of main and sibling must name the same physical files and both
+native Edit/Write attempts must be visibly denied. An additional ASCII-named repo
+tracks neo-read/; its prepared clone must stay outside Neo’s writable-root discovery
+while a legitimate Neo checkout remains discoverable. Claude clones live under
+the separate claude-worktrees root.
 
 Preserve evidence/observed.json and CLI stdout/stderr. Unlisted outside directories
 are explicitly writable in this slice, as the proof records. Bash/MCP containment
