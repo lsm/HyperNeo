@@ -143,7 +143,7 @@ describe('Claude Desktop mods control', () => {
       runtime.outbox.get(sid, context.from, result.value.queuedSubmissionId!)?.payload.text
     ).toBe('peer\n"text"');
     expect(facts()).toEqual([expect.objectContaining({ operation: 'submit', status: 'pending' })]);
-    control.report(sid);
+    await control.report(sid);
     expect(mailbox()).toHaveLength(1);
     const response = await send([{ kind: 'turn.complete', turnId: 'old', reason: 'completed' }]);
     expect(response.reply.command).toMatchObject({
@@ -364,21 +364,21 @@ describe('Claude Desktop mods control', () => {
     expect(mailbox()).toHaveLength(1);
   });
 
-  test('report failure rolls back prior batch entries and markers, then retries without duplicates', () => {
+  test('report failure rolls back prior batch entries and markers, then retries without duplicates', async () => {
     for (let i = 0; i < 3; i++)
       runtime.outbox.enqueue(sid, context.from, { kind: 'submit', text: String(i) });
     db.exec(
       "CREATE TRIGGER fail_second BEFORE INSERT ON job_queue WHEN NEW.queue = 'mailbox' AND (SELECT COUNT(*) FROM job_queue WHERE queue = 'mailbox') > 0 BEGIN SELECT RAISE(ABORT, 'second report failed'); END"
     );
-    expect(() => control.report(sid)).toThrow('second report failed');
+    await expect(control.report(sid)).rejects.toThrow('second report failed');
     expect(mailbox()).toEqual([]);
     expect(commands().every((job) => job.payload.reportState === undefined)).toBe(true);
     db.exec('DROP TRIGGER fail_second');
-    control.report(sid);
+    await control.report(sid);
     const ids = mailbox()
       .map((job) => job.payload.messageUuid)
       .sort();
-    control.report(sid);
+    await control.report(sid);
     expect(
       mailbox()
         .map((job) => job.payload.messageUuid)
@@ -387,18 +387,18 @@ describe('Claude Desktop mods control', () => {
     expect(ids).toHaveLength(3);
   });
 
-  test('reports past the first page without repeated notifications', () => {
+  test('reports past the first page without repeated notifications', async () => {
     for (let i = 0; i < 105; i++)
       runtime.outbox.enqueue(sid, context.from, { kind: 'submit', text: String(i) });
-    control.report(sid);
+    await control.report(sid);
     expect(mailbox()).toHaveLength(105);
-    control.report(sid);
+    await control.report(sid);
     expect(mailbox()).toHaveLength(105);
   });
 
-  test('report markers survive a repository reopen', () => {
+  test('report markers survive a repository reopen', async () => {
     runtime.outbox.enqueue(sid, context.from, { kind: 'submit', text: 'once' });
-    control.report(sid);
+    await control.report(sid);
     const reopened = new Database(join(dir, 'db.sqlite'));
     try {
       new ClaudeDesktopOutboxRepository(reopened).reportChanges(sid, () => {
