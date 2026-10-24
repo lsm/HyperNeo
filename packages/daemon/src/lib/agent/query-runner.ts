@@ -714,11 +714,11 @@ export class QueryRunner {
       if (!startupPermit) return;
       const permit = startupPermit;
       startupPermit = null;
-      logger.debug(
+      if (!permit.release()) return;
+      logger.warn(
         `SDK startup gate: slot released (session=${session.id} reason=${reason} ` +
           `heldMs=${Date.now() - permit.admittedAt})`
       );
-      permit.release();
     };
 
     let runAbortController: AbortController | null = null;
@@ -925,8 +925,8 @@ export class QueryRunner {
           sessionId: session.id,
           signal: runAbortController.signal,
         });
-        if (startupPermit.queuedBehind > 0) {
-          logger.info(
+        if (startupPermit.waitedMs > 0) {
+          logger.warn(
             `SDK startup gate: session ${session.id} admitted after waiting ` +
               `${startupPermit.waitedMs}ms behind ${startupPermit.queuedBehind} session(s) ` +
               `(gate=${JSON.stringify(startupGate.getStats())})`
@@ -999,6 +999,7 @@ export class QueryRunner {
         throw envAbort;
       }
 
+      startupPermit?.setPhase('sdk_first_message');
       removeFlagSettingsFile = runLagPhase('sdk:flag_settings', () =>
         writeFlagSettingsFile(queryOptions, session.id)
       );
@@ -1088,7 +1089,7 @@ export class QueryRunner {
             `Model: ${queryOptions.model}, ${workspaceDesc}` +
             (isRootWorkspace ? ' — running on root workspace (not a worktree)' : '') +
             ` The SDK subprocess did not emit its first message within the startup window; ` +
-            `concurrent cold-start load is bounded by the startup gate.` +
+            `Startup permits expire independently of query recovery; slow startups may overlap after lease expiry.` +
             ` (Hint: set HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS to increase timeout, currently ${inactivityBackstopMs}ms)`
         );
         logger.error(
@@ -2396,7 +2397,7 @@ export class QueryRunner {
       return (
         `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
         `The SDK subprocess did not emit its first message within the startup window ` +
-        `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
+        `(after one automatic retry); Startup permits expire independently of query recovery; slow startups may overlap after lease expiry. ` +
         `Try: resending your message, or increase the timeout with ` +
         `HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS (current: ${startupTimeoutMs}ms).`
       );

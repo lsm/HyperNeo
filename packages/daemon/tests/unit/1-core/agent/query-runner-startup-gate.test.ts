@@ -358,6 +358,40 @@ describe('QueryRunner startup gate', () => {
     expect(getSdkStartupGate().getStats().active).toBe(2);
   });
 
+  it('does not log a slot release when the gate already released the permit', async () => {
+    process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
+    const gate = getSdkStartupGate();
+    const acquire = gate.acquire.bind(gate);
+    let firstPermit: Awaited<ReturnType<typeof acquire>> | undefined;
+    gate.acquire = async (options) => {
+      const permit = await acquire(options);
+      firstPermit ??= permit;
+      return permit;
+    };
+    const first = createRunner('expired-startup');
+    const second = createRunner('next-startup');
+    const warn = mock(() => {});
+    first.ctx.logger.warn = warn;
+    try {
+      first.runner.start();
+      second.runner.start();
+      await waitFor(() => spawned.length === 1 && gate.getStats().queued === 1);
+      expect(firstPermit?.release()).toBe(true);
+      await waitFor(() => spawned.length === 2);
+      deliverFirstMessage(spawned[0]);
+      await waitFor(() => first.ctx.firstMessageReceived);
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('slot released');
+      expect(gate.getStats().active).toBe(1);
+      deliverFirstMessage(spawned[1]);
+      await waitFor(() => gate.getStats().active === 0);
+    } finally {
+      gate.acquire = acquire;
+      first.ctx.queryAbortController?.abort();
+      second.ctx.queryAbortController?.abort();
+      await Promise.allSettled([first.ctx.queryPromise, second.ctx.queryPromise]);
+    }
+  });
+
   it('does not starve queued starts while earlier sessions stream', async () => {
     process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
     const [first, second] = ['s1', 's2'].map((id) => createRunner(id));
