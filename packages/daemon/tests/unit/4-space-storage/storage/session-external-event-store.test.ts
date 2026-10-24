@@ -56,6 +56,37 @@ describe('SessionExternalEventStore', () => {
 });
 
 describe('session-scoped publishing', () => {
+  test('retries a failed terminal publication with the committed canonical bytes', async () => {
+    const bus = createInternalEventBus<{
+      'externalEvent.published': ExternalEventPublishedPayload;
+    }>();
+    const seen: ExternalEventPublishedPayload[] = [];
+    let fail = true;
+    bus.subscribe(
+      'externalEvent.published',
+      (payload) => {
+        if (fail) throw new Error('synthetic destination rejected');
+        seen.push(payload);
+      },
+      { subscriberName: 'terminal-destination' }
+    );
+    const service = new ExternalEventService(store, bus);
+    const terminal = event({
+      topic: 'github/acme/widgets/pull_request/7.closed',
+      payload: { state: 'closed' },
+    });
+    await expect(service.publish(terminal)).rejects.toThrow('handler failure');
+    const canonical = store.getById(terminal.id);
+    fail = false;
+    expect(
+      await service.publish({ ...terminal, id: 'changed-id', payload: { state: 'open' } })
+    ).toEqual({ outcome: 'retryable_duplicate', eventId: terminal.id });
+    expect(seen.map((payload) => [payload.eventId, payload.payload])).toEqual([
+      [terminal.id, terminal.payload],
+    ]);
+    expect(store.getById(terminal.id)).toEqual(canonical);
+  });
+
   test('publishes a new event once and drops a repeat', async () => {
     const bus = createInternalEventBus<{
       'externalEvent.published': ExternalEventPublishedPayload;
