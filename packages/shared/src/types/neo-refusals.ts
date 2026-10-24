@@ -1,4 +1,16 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  merge_receipt_changed:
+    'The durable merge receipt does not match these assignments. Re-read the todo and its current-head assignments before preparing a merge.',
+  head_changed_before_manual_merge:
+    'The head changed during merge preparation. Repeat review, QA and CI gates for the new head.',
+  merge_evidence_required:
+    'Record the acceptance contract, actor identities and durable review, QA and CI evidence before preparing a merge.',
+  independent_matching_head_qa_required:
+    'Obtain passing QA evidence from the assigned independent session for this PR, head and acceptance contract.',
+  matching_head_review_required:
+    'Obtain passing review on the exact current head; a configured bot rejection has no session fallback.',
+  merge_requirements_not_satisfied:
+    'Keep the pull request open until required CI is green, findings are resolved and repository sign-off is satisfied.',
   matching_merge_gate_required:
     'Record a passing merge gate for this todo, pull request and exact head before recording smoke.',
   independent_qa_required:

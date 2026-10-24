@@ -19,6 +19,7 @@ import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } fr
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
+import { prepareCodingMerge } from './merge-gates.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -40,6 +41,7 @@ export function createCodingPack(deps: {
   readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack & {
   recordSmoke: typeof recordCodingSmoke;
+  prepareMerge: typeof prepareCodingMerge;
 } {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const ledgerSkips = new Map<string, number>();
@@ -52,6 +54,7 @@ export function createCodingPack(deps: {
   return {
     ...CODING_PACK_BRIEF,
     recordSmoke: recordCodingSmoke,
+    prepareMerge: prepareCodingMerge,
     operations: [
       createCodingGithubReadOperation({
         readPrs: deps.readPrs,
