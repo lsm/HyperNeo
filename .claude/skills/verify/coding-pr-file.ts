@@ -77,6 +77,19 @@ try {
     const added = readFileSync(join(run, 'evidence/gh.log'), 'utf8').slice(before.length);
     assert(!added.includes('"api"'));
   }
+  const nextSha = 'd'.repeat(40);
+  const nextCommit = `repos/example/project/git/commits/${nextSha}`;
+  writeFileSync(join(run, 'git-fixtures.json'), JSON.stringify({ ...fixtures, [nextCommit]: { url: `https://api.github.com/${nextCommit}`, sha: nextSha, tree: { sha: tree } } }));
+  writeFileSync(join(run, 'pr.json'), JSON.stringify({ ...pr, headRefOid: nextSha }));
+  const changedRequest = await call('neo.coding.pr.file', { ...input, headSha: nextSha });
+  assert.equal(changedRequest.accepted, false);
+  assert.equal(changedRequest.reason, 'source_changed');
+  const next = await call('neo.coding.pr.file', { ...input, headSha: nextSha, requestId: randomUUID() });
+  assert(next.accepted);
+  assert.notEqual(next.artifact.artifactId, captured.artifact.artifactId);
+  assert.equal((await call('artifact.file.get', { artifactId: next.artifact.artifactId })).metadata.revision.commitSha, nextSha);
+  assert.equal((await call('artifact.file.get', { artifactId: captured.artifact.artifactId })).metadata.revision.commitSha, sha);
+  writeFileSync(join(run, 'pr.json'), JSON.stringify(pr));
   const todo = await call('neo.coding.pr.file', { ...input, context: { kind: 'todo', id: 'synthetic-todo' }, pr: pr.url, requestId: randomUUID() });
   assert(todo.accepted, JSON.stringify(todo));
   const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: 'synthetic-neo' };
