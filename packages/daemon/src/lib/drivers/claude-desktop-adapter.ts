@@ -1076,13 +1076,23 @@ async function sendOwnedClaudeMessage(
   deps: ClaudeDesktopAdapterDeps,
   context?: WorkCallContext
 ): Promise<Result<WorkDelivery>> {
-  if (!deps.sendInbox)
+  const desktop = liveSessions.some(
+    (session) => session.sessionId === record.cliSessionId && session.owner === 'desktop'
+  );
+  if (!desktop && !deps.sendInbox)
     return reject('unsupported', 'The direct Claude inbox transport is unavailable.');
-  if (!context)
+  if (!desktop && !context)
     return reject('unsupported', 'The Claude inbox requires a session reply destination.');
   const path = await locateClaudeTranscript(deps.projectsDir, record);
   const before = await transcriptSize(path);
-  const direct = await deps.sendInbox(record.cliSessionId, message, context);
+  const direct =
+    deps.sendInbox && context
+      ? await deps
+          .sendInbox(record.cliSessionId, message, context)
+          .catch((error: unknown) =>
+            reject('not_delivered', error instanceof Error ? error.message : String(error))
+          )
+      : reject('unsupported', 'No direct inbox with a session reply destination.');
   const receipt = direct.ok ? direct.value.receipt : undefined;
   const confirmed =
     receipt &&
@@ -1096,8 +1106,27 @@ async function sendOwnedClaudeMessage(
       ok: true,
       value: { delivered: true, receipt, confirmedAt: confirmed.at ?? deps.now() },
     };
-  if (receipt) return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
-  const relayed = await relayClaudeMessage(record, liveSessions, message, path, deps);
+  if (receipt && !desktop)
+    return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
+  const current = desktop
+    ? (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+        (candidate) =>
+          candidate.sessionId === record.sessionId && candidate.cliSessionId === record.cliSessionId
+      )
+    : record;
+  if (!current)
+    return reject(
+      'not_delivered',
+      `${record.title}: receiver mode unknown; current Desktop metadata is unavailable, so no relay was sent.`
+    );
+  const receiverMode = current.permissionMode ?? 'default';
+  const relayRecord = desktop
+    ? {
+        ...record,
+        permissionMode: receiverMode === 'bypassPermissions' ? 'bypassPermissions' : 'auto',
+      }
+    : record;
+  const relayed = await relayClaudeMessage(relayRecord, liveSessions, message, path, deps);
   if (relayed.ok)
     return {
       ok: true,
@@ -1111,7 +1140,7 @@ async function sendOwnedClaudeMessage(
     };
   return reject(
     relayed.reason === 'claude_cli_login_expired' ? relayed.reason : 'not_delivered',
-    `${record.title} did not receive the message: the direct inbox message failed (${direct.ok ? 'no receipt' : direct.detail}); the relay failed: ${relayed.detail}`
+    `${record.title} did not receive the message${desktop ? ` (receiver mode: ${receiverMode})` : ''}: the direct inbox message failed (${direct.ok ? (receipt ? 'not confirmed in receiver transcript' : 'no receipt') : direct.detail}); the relay failed: ${relayed.detail}`
   );
 }
 
@@ -1166,8 +1195,9 @@ export async function resumeIdleClaudeSession(
       ),
     };
   const path = await locateClaudeTranscript(deps.projectsDir, record);
-  const mode =
-    record.permissionMode && HEADLESS_PERMISSION_MODES.has(record.permissionMode)
+  const mode = record.desktopRegistered
+    ? 'auto'
+    : record.permissionMode && HEADLESS_PERMISSION_MODES.has(record.permissionMode)
       ? record.permissionMode
       : claudeHeadlessStartMode(await readHeadLines(path));
   if (!mode)
@@ -1187,6 +1217,17 @@ export async function resumeIdleClaudeSession(
     deps,
     DELIVERY_POLLS
   );
+  if (!turn.ok && record.desktopRegistered) {
+    const current = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+      (candidate) => candidate.sessionId === record.sessionId
+    );
+    return {
+      reason: reject(
+        turn.reason,
+        `${record.title} (receiver mode: ${current?.permissionMode ?? 'unknown'}): auto headless turn failed: ${turn.detail} Desktop warm spawn was not attempted because its process cap can refuse stopped sessions.`
+      ),
+    };
+  }
   return {
     reason: turn.ok
       ? {

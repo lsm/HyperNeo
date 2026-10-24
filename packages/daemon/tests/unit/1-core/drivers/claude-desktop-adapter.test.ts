@@ -922,13 +922,13 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(spawned).toEqual(resumed('auto'));
     });
 
-    test('a session Neo started headless keeps the mode it started in after Desktop relabels it', async () => {
+    test('a stopped Desktop session uses auto instead of its historical bypass mode', async () => {
       const driver = resumeAs('acceptEdits', {
         entrypoint: 'sdk-cli',
         permissionMode: 'bypassPermissions',
       });
       expect(await driver.send?.(ref, 'run the audit', context)).toEqual(delivered);
-      expect(spawned).toEqual(resumed('bypassPermissions'));
+      expect(spawned).toEqual(resumed('auto'));
     });
 
     test.each([
@@ -936,14 +936,12 @@ describe('claude-desktop adapter against the app session records', () => {
       ['default', undefined],
       ['acceptEdits', { entrypoint: 'sdk-cli', permissionMode: 'acceptEdits' }],
     ] as const)(
-      'a session in %s that did not start headless in a free mode is sent to Desktop, never escalated',
+      'a stopped Desktop session recorded as %s uses the authorized auto headless route',
       async (mode, firstTurn) => {
-        expect(await resumeAs(mode, firstTurn).send?.(ref, 'run the audit', context)).toEqual({
-          ok: false,
-          reason: 'unreachable',
-          detail: `woodpecker is not running, and in ${mode} permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2`,
-        });
-        expect(spawned).toEqual([]);
+        expect(await resumeAs(mode, firstTurn).send?.(ref, 'run the audit', context)).toEqual(
+          delivered
+        );
+        expect(spawned).toEqual(resumed('auto'));
       }
     );
 
@@ -995,7 +993,7 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
-  test.each(['desktop', 'unknown', undefined] as const)(
+  test.each(['unknown', undefined] as const)(
     'send does not relay or resume a live %s owner',
     async (owner) => {
       const driver = adapter([
@@ -1005,13 +1003,13 @@ describe('claude-desktop adapter against the app session records', () => {
         await driver.send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
       ).toMatchObject({
         ok: false,
-        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+        reason: 'unreachable',
       });
       expect(
         await driver.steer!({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
       ).toMatchObject({
         ok: false,
-        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+        reason: 'unreachable',
       });
       expect(spawned).toEqual([]);
     }

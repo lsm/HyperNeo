@@ -13,7 +13,6 @@ import {
   runToExit,
   requireClaudeRecord,
   requireOpenClaudeRecord,
-  relayNativeDesktopMessage,
   sendClaudeMessage,
   waitUntilLive,
   withRemoteControl,
@@ -233,48 +232,7 @@ export const runClaudeDesktopWake = (superpipe({})('claude-desktop-native-wake')
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
   .pipe(requireDesktopWakeOwner, ['record', 'liveSessions'], 'result:outcome')
-  .pipe(
-    async (
-      record: RcToggle['record'],
-      live: readonly ClaudeLiveSession[],
-      message: string,
-      deps: ClaudeDesktopAdapterDeps,
-      context?: WorkCallContext
-    ) =>
-      context &&
-      deps.sendInbox &&
-      (!deps.admitInbox || 'value' in deps.admitInbox(context)) &&
-      live.some((session) => session.sessionId === record.cliSessionId && session.pid)
-        ? {
-            reason: await withRemoteControl(
-              await sendClaudeMessage(record, live, message, deps, context),
-              record,
-              deps
-            ),
-          }
-        : { value: record },
-    ['outcome', 'liveSessions', 'message', 'deps', 'context'],
-    'result:outcome'
-  )
-  .pipe(
-    (
-      records: readonly ClaudeDesktopRecord[],
-      live: readonly ClaudeLiveSession[],
-      deps: ClaudeDesktopAdapterDeps
-    ) => openRcToggle(records, live, deps, 'desktop-wake'),
-    ['records', 'liveSessions', 'deps'],
-    'result:outcome'
-  )
-  .pipe(
-    (
-      helper: { record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] },
-      record: RcToggle['record'],
-      message: string,
-      deps: ClaudeDesktopAdapterDeps
-    ) => relayNativeDesktopMessage(record, helper.record, helper.liveSessions, message, deps),
-    ['outcome', 'record', 'message', 'deps'],
-    'outcome'
-  )
+  .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
   .pipe(withRemoteControl, ['outcome', 'record', 'deps'], 'outcome')
   .endAsync('outcome') as (
   target: RemoteControlTarget,

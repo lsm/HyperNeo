@@ -102,7 +102,7 @@ try {
     const before = events().length;
     const direct = await rpc<Result<WorkDelivery>>('work.send', { ref, from: `session:${caller}`, message: 'Confirmed direct marker' });
     assert(direct.ok && direct.value.delivered, JSON.stringify(direct));
-    assert.equal(events().length, before);
+    assert.equal(events().slice(before).filter(e => e.kind === 'target-relay' || (e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake'))).length, 0);
     for (const mode of ['auto', 'default', 'acceptEdits', 'bypassPermissions']) {
       writeFileSync(recordPath, JSON.stringify({ ...JSON.parse(readFileSync(recordPath, 'utf8')), permissionMode: mode === 'bypassPermissions' ? 'auto' : 'bypassPermissions' }));
       changeMode = mode;
@@ -120,6 +120,7 @@ try {
     const failed = await rpc<Result<WorkDelivery>>('work.send', { ref, from: `session:${caller}`, message: 'Both routes refuse marker' });
     assert(!failed.ok && failed.reason === 'not_delivered', JSON.stringify(failed));
     assert.match(failed.detail, /acceptEdits/); assert.match(failed.detail, /held/);
+    assert(!readFileSync(transcript, 'utf8').includes('Both routes refuse marker'));
     writeFileSync(join(run, 'evidence/fault'), '');
     changeMode = undefined;
     const latest = JSON.parse(readFileSync(statePath, 'utf8')) as Array<{ id: string; pid: number }>;

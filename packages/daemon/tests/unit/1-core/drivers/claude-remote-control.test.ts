@@ -172,12 +172,12 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(spawned).toEqual([]);
   });
 
-  test('refuses a CLI relay after opening rc-toggle in Desktop', async () => {
+  test('reports a failed auto relay after opening rc-toggle in Desktop', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(outcome).toMatchObject({ ok: false, reason: 'not_delivered' });
     expect(spawned[0].args.slice(-3)).toEqual(['--desktop', '--resume', 'cli-rc']);
-    expect(relayed()).toBeUndefined();
+    expect(relayed()).toContain('Please turn on Remote Control');
   });
 
   test('requires the existing authorized rc-toggle instead of creating a replacement', async () => {
