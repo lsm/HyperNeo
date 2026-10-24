@@ -27,7 +27,7 @@ describe('root Neo system prompt', () => {
   });
 
   test('routes continuing discussion into a fresh prepared session using existing flows', () => {
-    expect(NEO_FOCUSED_DISCUSSION.split(/\s+/).length).toBeLessThan(180);
+    expect(NEO_FOCUSED_DISCUSSION.split(/\s+/).length).toBeLessThan(250);
     for (const prompt of [neoPrompt([]), neoPrompt(neoSettingsPackBriefs())]) {
       for (const rule of [
         'fresh focused session',
@@ -48,6 +48,11 @@ describe('root Neo system prompt', () => {
         'sourceSession',
         'Open session',
         'focused:true',
+        'ask id',
+        'explicitly says it is settled',
+        'decision, documents and PRs',
+        'neo.ask.outcome',
+        'existing todos',
         'status only',
         'do not act, reply, forward or treat them as approval',
       ])

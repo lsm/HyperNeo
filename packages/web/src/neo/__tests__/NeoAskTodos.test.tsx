@@ -118,6 +118,30 @@ describe('NeoAskTodos', () => {
     expect(reply).not.toHaveBeenCalled();
   });
 
+  it('renders settled discussion document and PR links without completing execution', async () => {
+    locale.value = 'en';
+    const original = entry({
+      todos: [todo('execute', { title: 'Implement positioning', state: 'todo' })],
+    });
+    const outcome =
+      'Decision: beginner gardeners.\n\n[Positioning document](https://example.test/positioning.md) · [Implementation PR](https://github.com/example/project/pull/8)';
+    const app = render(
+      <NeoAskTodos entry={{ ...original, ask: { ...original.ask, outcome } }} onAnswer={vi.fn()} />
+    );
+    fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+    await waitFor(() =>
+      expect(app.getByRole('link', { name: 'Positioning document' }).getAttribute('href')).toBe(
+        'https://example.test/positioning.md'
+      )
+    );
+    expect(app.getByRole('link', { name: 'Implementation PR' }).getAttribute('href')).toBe(
+      'https://github.com/example/project/pull/8'
+    );
+    expect(
+      app.container.querySelector('[data-ask-todo="execute"]')?.getAttribute('data-todo-state')
+    ).toBe('todo');
+  });
+
   it('keeps the focused session opener on the ask after its question is retired', () => {
     locale.value = 'en';
     const onOpen = vi.fn();

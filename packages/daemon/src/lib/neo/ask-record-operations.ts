@@ -31,6 +31,8 @@ const Open = z.object({
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
 });
 
+const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
+
 const Settle = z.object({
   askId: Text,
   status: z.enum(['done', 'dropped']),
@@ -238,6 +240,55 @@ export function createNeoAskRecordOperations(
     caller: OperationCaller
   ) => Promise<AskReceipt | Rejection>;
 
+  const recordOutcome = (superpipe({})('neo.ask.outcome') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) =>
+        caller.source === 'mcp'
+          ? requireNeoAskSession(caller, isNeoSession)
+          : {
+              reason: {
+                ok: false as const,
+                reason: 'neo_required: the owning Neo records the discussion outcome.',
+              },
+            },
+      'caller',
+      'result:outcome'
+    )
+    .pipe(
+      (input: z.infer<typeof Outcome>) => requireNeoOpenAsk(store.getAsk(input.askId)),
+      'input',
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk, caller: OperationCaller): Gate<NeoAsk> =>
+        ask.sessionId !== caller.sessionId
+          ? { reason: { ok: false, reason: 'not_owned: this ask belongs to another Neo.' } }
+          : ask.focusedSession
+            ? { value: ask }
+            : {
+                reason: {
+                  ok: false,
+                  reason: 'not_focused: this ask has no focused discussion session.',
+                },
+              },
+      ['outcome', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk, input: z.infer<typeof Outcome>): AskReceipt => ({
+        ok: true,
+        ask: store.recordAskOutcome(ask.id, input.outcome, Date.now()),
+        todos: store.listTodos(ask.id),
+      }),
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .end('outcome') as (
+    input: z.infer<typeof Outcome>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
+
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -293,6 +344,15 @@ export function createNeoAskRecordOperations(
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await open(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.ask.outcome',
+      description:
+        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle still requires them finished.',
+      inputSchema: Outcome,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => present(recordOutcome(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.settle',

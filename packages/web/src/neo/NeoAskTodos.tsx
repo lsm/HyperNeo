@@ -690,7 +690,10 @@ export function NeoAskTodos({
           {ask.outcome && (
             <div>
               <p class="text-xs font-medium text-fg-faint">{t('ask.outcome')}</p>
-              <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
+              <MarkdownRenderer
+                content={ask.outcome}
+                class="neo-markdown neo-markdown-assistant mt-1 min-w-0 text-sm leading-relaxed"
+              />
             </div>
           )}
         </div>
