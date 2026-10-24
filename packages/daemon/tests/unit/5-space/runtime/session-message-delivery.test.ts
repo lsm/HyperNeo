@@ -6,7 +6,7 @@ import {
 } from '../../../../src/lib/agent/message-delivery';
 import {
   PromptContentConflictError,
-  persistPrompt,
+  ensurePrompt,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
@@ -127,7 +127,7 @@ describe('deliverSpaceAgentMessage', () => {
 
   it('short-circuits matching consumed content without touching the mailbox', async () => {
     const h = makeHarness();
-    const persisted = persistPrompt({
+    const persisted = ensurePrompt({
       db: h.db,
       sdkMessageRepo: h.sdkRepo,
       jobQueue: h.jobQueue,
@@ -154,7 +154,7 @@ describe('deliverSpaceAgentMessage', () => {
 
   it('does not dead-letter a conflicting consumed row', async () => {
     const h = makeHarness();
-    const persisted = persistPrompt({
+    const persisted = ensurePrompt({
       db: h.db,
       sdkMessageRepo: h.sdkRepo,
       jobQueue: h.jobQueue,
@@ -176,7 +176,7 @@ describe('deliverSpaceAgentMessage', () => {
 
   it('rejects conflicting content against an unconsumed row before the mailbox handoff', async () => {
     const h = makeHarness();
-    persistPrompt({
+    ensurePrompt({
       db: h.db,
       sdkMessageRepo: h.sdkRepo,
       jobQueue: h.jobQueue,
@@ -278,7 +278,7 @@ describe('deliverSpaceAgentMessage', () => {
 
   it('short-circuits consumption evidence on a failed row without waking the session', async () => {
     const h = makeHarness();
-    const persisted = persistPrompt({
+    const persisted = ensurePrompt({
       db: h.db,
       sdkMessageRepo: h.sdkRepo,
       jobQueue: h.jobQueue,
@@ -307,7 +307,7 @@ describe('deliverSpaceAgentMessage', () => {
 
   it('does not fire late failure while a failed row awaits mailbox retry admission', async () => {
     const h = makeHarness();
-    const persisted = persistPrompt({
+    const persisted = ensurePrompt({
       db: h.db,
       sdkMessageRepo: h.sdkRepo,
       jobQueue: h.jobQueue,
@@ -345,7 +345,7 @@ describe('deliverSpaceAgentMessage', () => {
 
   it('treats a retried row as terminally failed once no mailbox or delivery work remains', async () => {
     const h = makeHarness();
-    const persisted = persistPrompt({
+    const persisted = ensurePrompt({
       db: h.db,
       sdkMessageRepo: h.sdkRepo,
       jobQueue: h.jobQueue,
@@ -384,7 +384,7 @@ describe('deliverSpaceAgentMessage', () => {
 
   it('rechecks settlement while awaiting admission and settles without waking', async () => {
     const h = makeHarness();
-    const persisted = persistPrompt({
+    const persisted = ensurePrompt({
       db: h.db,
       sdkMessageRepo: h.sdkRepo,
       jobQueue: h.jobQueue,

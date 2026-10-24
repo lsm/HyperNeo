@@ -401,6 +401,7 @@ export function NeoAskTodos({
   disabled,
   onAnswer,
   onReply,
+  onReplyAsk,
   onOpen,
   onSettle,
   onLoadDone,
@@ -409,6 +410,7 @@ export function NeoAskTodos({
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onReply?: (question: NeoQuestionEntry) => void;
+  onReplyAsk?: () => void;
   onOpen?: (link: string, title: string) => void;
   onSettle?: (status: 'done' | 'dropped') => void | Promise<void>;
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
@@ -492,17 +494,22 @@ export function NeoAskTodos({
       <div class="flex min-h-7 items-center gap-2">
         <span class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{t(label)}</span>
         <span class="flex-1" />
-        {onSettle && ask.status === 'open' && (
+        {(onReplyAsk || (onSettle && ask.status === 'open')) && (
           <Dropdown
             position="right"
             items={[
-              { label: t('ask.markDone'), onClick: () => void settle('done'), disabled },
-              {
-                label: t('ask.drop'),
-                onClick: () => void settle('dropped'),
-                danger: true,
-                disabled,
-              },
+              ...(onReplyAsk ? [{ label: t('chat.reply'), onClick: onReplyAsk, disabled }] : []),
+              ...(onSettle && ask.status === 'open'
+                ? [
+                    { label: t('ask.markDone'), onClick: () => void settle('done'), disabled },
+                    {
+                      label: t('ask.drop'),
+                      onClick: () => void settle('dropped'),
+                      danger: true,
+                      disabled,
+                    },
+                  ]
+                : []),
             ]}
             trigger={
               <IconButton title={t('ask.actions')} size="sm" class="text-fg-faint">

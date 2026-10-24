@@ -5868,7 +5868,7 @@ describe('SDKMessageRepository', () => {
         n: 2,
       });
 
-      expect(repository.flushMessageSearchIndex(1)).toBe(1);
+      expect(repository.flushMessageSearchIndex(1)).toEqual({ attempted: 1, failed: 0 });
       expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
         n: 1,
       });
@@ -5877,6 +5877,26 @@ describe('SDKMessageRepository', () => {
       expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
         n: 0,
       });
+    });
+
+    it('reports failed rows so a later batch can skip past them', () => {
+      createSearchIndex();
+      const poisoned = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('poisoned marker'),
+        'consumed'
+      );
+      repository.saveUserMessage('session-1', createUserMessage('skip past marker'), 'consumed');
+      db.prepare(`UPDATE sdk_messages SET sdk_message = 'null' WHERE id = ?`).run(poisoned);
+      mirrorSdkMessageFixtureBodies(db);
+
+      expect(repository.flushMessageSearchIndex(1)).toEqual({ attempted: 1, failed: 1 });
+      expect(repository.flushMessageSearchIndex(1, 1)).toEqual({ attempted: 1, failed: 0 });
+
+      expect(repository.searchMessages({ query: 'skip past marker' }).results).toHaveLength(1);
+      expect(db.prepare(`SELECT message_id FROM message_search_pending`).all()).toEqual([
+        { message_id: poisoned },
+      ]);
     });
 
     it('indexes synchronously when the pending queue table is absent', () => {

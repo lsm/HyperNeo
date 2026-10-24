@@ -11,6 +11,7 @@ import {
 } from '../../drivers/start-preparation.ts';
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
+import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { codexStatePath } from '../../../storage/codex-desktop-read.ts';
 import { homedir, hostname } from 'node:os';
@@ -563,6 +564,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     adapters: () => adapters,
     remote: remoteDaemons,
     daemonName: machine,
+    isOpenTodo: (todoId: string, sessionId: string) => {
+      const store = new NeoAskTodoRepository(db());
+      const todo = store.getTodo(todoId);
+      const ask = todo ? store.getAsk(todo.askId) : null;
+      return ask?.status === 'open' && ask.sessionId === sessionId;
+    },
     namedFolder: {
       machine,
       homeDir: homedir(),

@@ -56,6 +56,7 @@ export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
   daemonName: string;
+  isOpenTodo?: (todoId: string, sessionId: string) => boolean;
 }
 
 export const WORK_MESSAGE_MAX = 20_000;
@@ -77,6 +78,7 @@ const REMOTE_SEND_TIMEOUT_MS = 180_000;
 const ForwardedOriginSchema = z.string().min(1).max(REPLY_ORIGIN_MAX).optional();
 
 export const StartWorkInputSchema = z.object({
+  todoId: z.string().trim().min(1).optional().describe('Neo: todo belonging to an open ask.'),
   adapter: z.string().min(1),
   place: PlaceSchema,
   title: z.string().trim().min(1).max(200),
@@ -88,6 +90,12 @@ export const StartWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const SendWorkInputSchema = z.object({
+  todoId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe('Neo: todo belonging to an open ask, including follow-ups.'),
   ref: WorkRefSchema,
   message: MessageSchema,
   mode: z.enum(['auto', 'steer', 'queue']).optional(),
@@ -161,6 +169,24 @@ type StartResult = z.infer<typeof StartWorkResultSchema>;
 type SendResult = z.infer<typeof SendWorkResultSchema>;
 type StatusResult = z.infer<typeof WorkStatusResultSchema>;
 type StopResult = z.infer<typeof StopWorkResultSchema>;
+
+function admitNeoTodo(
+  input: StartInput | QueuedInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+): Gate<true> {
+  return !('message' in input) ||
+    caller.role !== 'neo' ||
+    caller.source === 'internal' ||
+    (input.todoId && caller.sessionId && deps.isOpenTodo?.(input.todoId, caller.sessionId))
+    ? { value: true }
+    : {
+        reason: reject(
+          'todo_required',
+          'Neo work needs todoId belonging to an open ask owned by this session. Start a todo with neo.todo.add {start:true}; use neo.todo.continue or reference that todoId for follow-ups.'
+        ),
+      };
+}
 
 function workReplyInput<T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>>(
   input: T,
@@ -413,6 +439,7 @@ function presentWorkIdentity<T extends WorkSummary>(result: Result<T>): Result<T
 
 const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
+  .pipe(admitNeoTodo, ['input', 'caller', 'deps'], 'result:outcome')
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
@@ -440,6 +467,7 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
 
 const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
+  .pipe(admitNeoTodo, ['input', 'caller', 'deps'], 'result:outcome')
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
@@ -507,6 +535,7 @@ async function changeQueuedInput(
 }
 const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
+  .pipe(admitNeoTodo, ['input', 'caller', 'deps'], 'result:outcome')
   .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')

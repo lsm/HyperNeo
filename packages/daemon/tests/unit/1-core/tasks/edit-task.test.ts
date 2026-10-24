@@ -5,6 +5,7 @@ import { editStandaloneTaskWithDependencies } from '../../../../src/storage/task
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { runDbOpOn, fixtureChanges } from '../../helpers/run-db-op';
 import { createTestDb } from '../../../helpers/database';
 
 describe('standalone task metadata editing', () => {
@@ -15,30 +16,31 @@ describe('standalone task metadata editing', () => {
   afterEach(() => db.close());
 
   function create() {
-    return createStandaloneTask(
+    return createStandaloneTask.run(
       db.getDatabase(),
       {
-        title: 'Work',
-        description: 'Details',
-        priority: 'high',
-        labels: ['one'],
+        input: {
+          title: 'Work',
+          description: 'Details',
+          priority: 'high',
+          labels: ['one'],
+        },
+        creatorSessionId: 'creator',
       },
-      'creator',
-      () => {}
+      fixtureChanges()
     );
   }
 
-  test('persists a partial edit before notifying and preserves other task fields', () => {
+  test('persists a partial edit before notifying and preserves other task fields', async () => {
     const task = create();
     db.getDatabase().prepare('UPDATE space_tasks SET updated_at = 1 WHERE id = ?').run(task.id);
     const notify = mock(() => {
       expect(readTaskCore(db.getDatabase(), task.id)?.title).toBe("Work's new title");
     });
-    const edited = editStandaloneTaskWithDependencies(
-      db.getDatabase(),
-      { taskId: task.id, title: "Work's new title" },
-      notify
-    );
+    const edited = await runDbOpOn(db.getDatabase(), notify)(editStandaloneTaskWithDependencies, {
+      taskId: task.id,
+      title: "Work's new title",
+    });
     expect(edited).toEqual({ ...task, title: "Work's new title", updatedAt: expect.any(Number) });
     expect(edited!.updatedAt).toBeGreaterThan(1);
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(edited);
@@ -51,24 +53,19 @@ describe('standalone task metadata editing', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  test('supports clearing metadata and leaves separately edited fields intact', () => {
+  test('supports clearing metadata and leaves separately edited fields intact', async () => {
     const task = create();
-    editStandaloneTaskWithDependencies(
-      db.getDatabase(),
-      { taskId: task.id, title: 'Renamed' },
-      () => {}
-    );
-    const edited = editStandaloneTaskWithDependencies(
-      db.getDatabase(),
-      {
-        taskId: task.id,
-        title: undefined,
-        description: '',
-        labels: [],
-        priority: 'low',
-      },
-      () => {}
-    );
+    await runDbOpOn(db.getDatabase())(editStandaloneTaskWithDependencies, {
+      taskId: task.id,
+      title: 'Renamed',
+    });
+    const edited = await runDbOpOn(db.getDatabase())(editStandaloneTaskWithDependencies, {
+      taskId: task.id,
+      title: undefined,
+      description: '',
+      labels: [],
+      priority: 'low',
+    });
     expect(edited).toMatchObject({
       title: 'Renamed',
       description: '',
@@ -77,7 +74,7 @@ describe('standalone task metadata editing', () => {
     });
   });
 
-  test('does not modify or notify for Space-owned or absent tasks', () => {
+  test('does not modify or notify for Space-owned or absent tasks', async () => {
     const space = new SpaceRepository(db.getDatabase()).createSpace({
       name: 'Test',
       slug: 'test',
@@ -88,29 +85,32 @@ describe('standalone task metadata editing', () => {
     const notify = mock(() => {});
     for (const taskId of [owned.id, 'absent']) {
       expect(
-        editStandaloneTaskWithDependencies(db.getDatabase(), { taskId, title: 'Changed' }, notify)
+        await runDbOpOn(db.getDatabase(), notify)(editStandaloneTaskWithDependencies, {
+          taskId,
+          title: 'Changed',
+        })
       ).toBeNull();
     }
     expect(tasks.getTask(owned.id)).toEqual(owned);
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test('rejects empty patches and keeps persistence failures atomic without notifying', () => {
+  test('rejects empty patches and keeps persistence failures atomic without notifying', async () => {
     const task = create();
     const notify = mock(() => {});
-    expect(() =>
-      editStandaloneTaskWithDependencies(db.getDatabase(), { taskId: task.id }, notify)
-    ).toThrow('at least one field');
+    await expect(
+      runDbOpOn(db.getDatabase(), notify)(editStandaloneTaskWithDependencies, { taskId: task.id })
+    ).rejects.toThrow('at least one field');
     db.getDatabase().exec(
       "CREATE TRIGGER reject_edit BEFORE UPDATE ON space_tasks BEGIN SELECT RAISE(ABORT, 'rejected'); END"
     );
-    expect(() =>
-      editStandaloneTaskWithDependencies(
-        db.getDatabase(),
-        { taskId: task.id, title: 'Changed', labels: [] },
-        notify
-      )
-    ).toThrow('rejected');
+    await expect(
+      runDbOpOn(db.getDatabase(), notify)(editStandaloneTaskWithDependencies, {
+        taskId: task.id,
+        title: 'Changed',
+        labels: [],
+      })
+    ).rejects.toThrow('rejected');
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
     expect(notify).not.toHaveBeenCalled();
   });

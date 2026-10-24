@@ -212,6 +212,7 @@ describe('Claude Desktop mods driver wiring', () => {
     const registry = createOperationRegistry(
       createWorkVerbOperations({
         adapters: () => [adapter],
+        isOpenTodo: (id) => id === 'open-todo',
         daemonName: 'test',
         remote: {
           list: () => [],
@@ -222,7 +223,12 @@ describe('Claude Desktop mods driver wiring', () => {
       })
     );
     const handler = createOperationMcpHandler(registry, () => ({ role: 'neo', sessionId: 'neo' }));
-    const outcome = await handler({ name, input });
+    const outcome = await handler({
+      name,
+      input: ['work.start', 'work.send', 'work.queue'].includes(name)
+        ? { ...(input as Data), todoId: 'open-todo' }
+        : input,
+    });
     if (outcome.isError) throw new Error(outcome.content[0].text);
     return JSON.parse(outcome.content[0].text) as T;
   }

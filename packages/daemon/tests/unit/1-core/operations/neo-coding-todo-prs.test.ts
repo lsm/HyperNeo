@@ -570,3 +570,22 @@ describe('coding pr_merged check wording and rules', () => {
     );
   });
 });
+
+test('merged PR completion ignores failing CI, requested changes and ledger human wait', async () => {
+  const merged = pr(42, 'MERGED', { checks: 'failing', review: 'changes_requested' });
+  const { db, repo, todo } = setup(async () => [merged]);
+  try {
+    const pack = createCodingTodoPack(
+      repo,
+      async () => [merged],
+      () => 'waiting_human'
+    );
+    const row = todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [merged.url] } });
+    const facts = await pack.readFacts(row);
+    expect(pack.judge(row, facts)).toEqual({ state: 'done', evidence: '#42 merged' });
+    expect(await pack.check(row)).toEqual({ done: true, evidence: '#42 merged' });
+    expect(pack.statusLine(row)?.status).toContain('waiting on the human');
+  } finally {
+    db.close();
+  }
+});

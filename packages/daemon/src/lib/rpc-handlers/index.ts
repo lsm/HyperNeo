@@ -1584,7 +1584,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       hasDirectWorkerProvenance: (sessionId) =>
         directTaskExecutionRepo.hasSessionProvenance(sessionId),
       resolveDirectWorker: directTaskWorkerResolver,
-      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      runOp: deps.db.runSpaceTaskOp,
       workflowRunRepo: spaceWorkflowRunRepo,
       getWorkflowForRun: (run) => spaceWorkflowManager.getWorkflowForRun(run),
       taskAgentManager,
@@ -1654,7 +1654,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       hasDirectWorkerProvenance: (sessionId) =>
         directTaskExecutionRepo.hasSessionProvenance(sessionId),
       resolveDirectWorker: directTaskWorkerResolver,
-      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      runOp: deps.db.runSpaceTaskOp,
       emitTaskUpdated: async (spaceId, task) => {
         await deps.internalEventBus.publish('space.task.updated', {
           sessionId: 'global',

@@ -15,6 +15,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createTestSession } from '../../../helpers/database';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { fixtureChanges } from '../../helpers/run-db-op';
 
 let db: Database;
 let spaces: SpaceRepository;
@@ -225,7 +226,7 @@ test('a null workflowId clears the selection without a workflow lookup', async (
 });
 
 test('a standalone task is out of scope and resolves to null', async () => {
-  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const task = createStandaloneTask.run(db, { input: { title: 'Solo' } }, fixtureChanges());
   expect(await invoke({ taskId: task.id, workflowId: null })).toEqual({
     kind: 'completed',
     value: null,

@@ -1,3 +1,9 @@
+import {
+  CodingStageFactsRepository,
+  codingReviewerPolicy,
+  type CodingStageFact,
+  type CodingActor,
+} from './stage-facts.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
@@ -123,6 +129,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 }
 
 export interface CodingMergePolicy {
+  provenance?: boolean;
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
   reviewBot?: string;
   humanSignoff?: readonly string[];
@@ -285,6 +292,7 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
 }
 
 export class CodingPrLedgerRepository {
+  readonly stageFacts: CodingStageFactsRepository;
   readonly pollFacts: CodingPollFactsRepository;
   readonly mergeFacts: CodingMergeFactsRepository;
   readonly ancestryFacts: CodingAncestryFactsRepository;
@@ -294,6 +302,7 @@ export class CodingPrLedgerRepository {
   readonly queryFacts: CodingQueryFactsRepository;
 
   constructor(private readonly db: Database) {
+    this.stageFacts = new CodingStageFactsRepository(db);
     this.pollFacts = new CodingPollFactsRepository(db);
     this.mergeFacts = new CodingMergeFactsRepository(db);
     this.ancestryFacts = new CodingAncestryFactsRepository(db);
@@ -312,6 +321,14 @@ export class CodingPrLedgerRepository {
     >;
   }
 
+  recordStage(fact: CodingStageFact): boolean {
+    return this.stageFacts.record(fact);
+  }
+
+  reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
+    return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
+  }
+
   policy(repo: string): CodingMergePolicy {
     const read = (key: string) => {
       const scope = this.db
@@ -326,13 +343,19 @@ export class CodingPrLedgerRepository {
       )?.value;
     };
     return {
+      provenance: read('provenance') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
       reviewBot: read('reviewBot') as string | undefined,
       humanSignoff: read('humanSignoff') as string[] | undefined,
     };
   }
 
-  replace(repo: string, rows: readonly CodingLedgerRow[], now: number): CodingPrTransition[] {
+  replace(
+    repo: string,
+    rows: readonly CodingLedgerRow[],
+    now: number,
+    observedAt = now
+  ): CodingPrTransition[] {
     const before = new Map(
       (
         this.db
@@ -340,7 +363,7 @@ export class CodingPrLedgerRepository {
           .all(repo) as { number: number; state: CodingPrState }[]
       ).map((row) => [row.number, row.state])
     );
-    this.upsert(rows, now);
+    this.upsert(rows, now, observedAt);
     this.db
       .prepare(
         `DELETE FROM pack_coding_pr_ledger WHERE repo = ? AND closed_at IS NULL
@@ -353,7 +376,7 @@ export class CodingPrLedgerRepository {
     });
   }
 
-  private upsert(rows: readonly CodingLedgerRow[], now: number): void {
+  private upsert(rows: readonly CodingLedgerRow[], now: number, observedAt: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
          (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at, created_at, author_is_bot)
@@ -373,7 +396,12 @@ export class CodingPrLedgerRepository {
          created_at = excluded.created_at, author_is_bot = excluded.author_is_bot,
          head = excluded.head, state = excluded.state`
     );
-    for (const row of rows)
+    for (const row of rows) {
+      this.stageFacts.observeHead(
+        `https://github.com/${row.repo}/pull/${row.number}`,
+        row.head,
+        observedAt
+      );
       insert.run(
         row.repo,
         row.number,
@@ -388,6 +416,7 @@ export class CodingPrLedgerRepository {
         row.createdAt ?? null,
         row.authorIsBot === false ? 0 : 1
       );
+    }
   }
 
   observeSessions(sessions: readonly NeoSessionFacts[], now: number): void {
@@ -523,6 +552,13 @@ export class CodingPrLedgerRepository {
 
   dropRepo(repo: string): void {
     this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
+    for (const table of ['pack_coding_stage_facts', 'pack_coding_stage_heads'])
+      this.db
+        .prepare(`DELETE FROM ${table} WHERE substr(url, 1, length(?)) = ?`)
+        .run(
+          `https://github.com/${repo.toLowerCase()}/pull/`,
+          `https://github.com/${repo.toLowerCase()}/pull/`
+        );
   }
 
   snapshot(
@@ -585,6 +621,12 @@ export class CodingPrLedgerRepository {
            OR repo NOT IN (SELECT value FROM json_each(?))`
       )
       .run(now - CODING_LEDGER_KEEP_MS, now - CODING_LEDGER_KEEP_MS, JSON.stringify(repos));
+    this.db
+      .prepare('DELETE FROM pack_coding_stage_heads WHERE observed_at < ?')
+      .run(now - CODING_LEDGER_KEEP_MS);
+    this.db.exec(
+      'DELETE FROM pack_coding_stage_facts WHERE url NOT IN (SELECT url FROM pack_coding_stage_heads)'
+    );
   }
 
   list(): (CodingLedgerRow & { stateSince: number; readAt: number })[] {
@@ -610,6 +652,7 @@ export async function reconcileCodingPrLedger(
   const last = ledger.lastReads();
   const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
   for (const repo of order) {
+    const observedAt = Date.now();
     const raw = await read(repo);
     const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
     const error = (raw as { error?: unknown } | null)?.error;
@@ -624,7 +667,9 @@ export async function reconcileCodingPrLedger(
     if (planned && planned.repo !== repo.toLowerCase())
       await ledger.write('dropRepo', repo.toLowerCase());
     if (planned && !seen.has(planned.repo))
-      transitions.push(...(await ledger.write('replace', planned.repo, planned.rows, now)));
+      transitions.push(
+        ...(await ledger.write('replace', planned.repo, planned.rows, now, observedAt))
+      );
     if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
@@ -635,6 +680,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'recordStage'
   | 'recordAlias'
   | 'dropRepo'
   | 'replace'
@@ -648,6 +694,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'recordStage',
     'recordAlias',
     'dropRepo',
     'replace',

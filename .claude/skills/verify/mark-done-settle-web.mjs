@@ -27,7 +27,11 @@ try {
         break;
       }
       await page.locator('[data-ask="finish"][data-ask-state="done"]:visible').waitFor();
-      assert.equal(await card('finish').getByRole('button', { name: 'Ask actions' }).count(), 0);
+      await card('finish').getByRole('button', { name: 'Ask actions' }).click();
+      evidence.settledActions = await page.getByRole('menuitem').allTextContents();
+      assert.deepEqual(evidence.settledActions, ['Reply']);
+      await page.keyboard.press('Escape');
+      await page.getByRole('menu').waitFor({ state: 'hidden' });
       await card('finish').screenshot({ path: `${run}/evidence/marked-done.png` });
     }
     await card('stop-failure').getByRole('button', { name: 'Ask actions' }).click();

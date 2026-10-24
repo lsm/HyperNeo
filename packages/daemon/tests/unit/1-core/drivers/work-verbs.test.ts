@@ -76,6 +76,7 @@ async function call(
       adapters: () => adapters,
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
       daemonName: 'imac',
+      isOpenTodo: (todoId) => todoId === 'open-todo',
     })
   );
   const outcome = await invokeOperation(registry, name, input, caller);
@@ -280,6 +281,7 @@ describe('work verb operations', () => {
     const registry = createOperationRegistry(
       createWorkVerbOperations({
         adapters: () => [adapter],
+        isOpenTodo: (id) => id === 'open-todo',
         daemonName: 'imac',
         remote: { list: () => [], invoke: async () => ({}) },
       })
@@ -294,7 +296,7 @@ describe('work verb operations', () => {
     expect(
       await call(
         'work.queue',
-        { ref, message: ' next ', from: 'session:forged' },
+        { ref, message: ' next ', from: 'session:forged', todoId: 'open-todo' },
         undefined,
         caller,
         [adapter]
@@ -330,7 +332,9 @@ describe('work verb operations', () => {
     async (verb) => {
       const input = {
         ref: { adapter: desktop.id, id: 'd1' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(await call(`work.${verb}`, input)).toMatchObject({ ok: false, reason: 'unsupported' });
     }
@@ -348,7 +352,9 @@ describe('work verb operations', () => {
       };
       const input = {
         ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(
         await call(`work.${verb}`, input, remote, {
@@ -384,7 +390,9 @@ describe('work verb operations', () => {
     async (verb) => {
       const input = {
         ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(
         await call(`work.${verb}`, input, async () => {
@@ -712,7 +720,11 @@ describe('work verb operations', () => {
     const forwarded: unknown[] = [];
     await call(
       'work.send',
-      { ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' }, message: 'hi' },
+      {
+        ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' },
+        message: 'hi',
+        todoId: 'open-todo',
+      },
       async (_daemonId, _name, input) => {
         forwarded.push(input);
         return { ok: true, value: { delivered: true } };

@@ -1,5 +1,6 @@
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { Logger } from '../logger.ts';
@@ -28,7 +29,7 @@ export interface SpaceCreateTaskDependencies extends SpaceMcpSessionPolicyContex
   db: Database;
   getSession: (sessionId: string) => Session | null;
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'createTask'>;
-  notifyStandalone: () => void;
+  runOp: RunDbOp;
   emitTaskCreated: (spaceId: string, task: SpaceTask) => Promise<void>;
   getSpace: (spaceId: string) => Promise<Space | null> | Space | null;
   validateDefaultTaskWorkspace: (spaceId: string) => Promise<string | null>;
@@ -56,14 +57,17 @@ function resolveCreateTarget(input: In, caller: Caller, session: Sess, deps: Dep
     ? { reason: { accepted: false, reason: target.reason } }
     : { value: target.value.spaceId };
 }
-function createStandaloneWhenUnowned(
+async function createStandaloneWhenUnowned(
   spaceId: Opt,
   input: In,
   caller: Caller,
   deps: Deps
-): OwnershipGate {
+): Promise<OwnershipGate> {
   if (spaceId !== undefined) return { value: spaceId };
-  const task = createStandaloneTask(deps.db, input, caller.sessionId, deps.notifyStandalone);
+  const task = await deps.runOp(createStandaloneTask, {
+    input,
+    creatorSessionId: caller.sessionId,
+  });
   return { reason: { ...task, standalone: true } };
 }
 function requireActiveCaller(spaceId: string, caller: Caller, session: Sess): TargetGate {

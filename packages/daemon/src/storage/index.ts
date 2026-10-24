@@ -1,8 +1,8 @@
 import { bindGateway, DbGateway } from './db-gateway/db-gateway.ts';
+import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
-import { runLagPhase } from '../lib/event-loop-activity.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { Logger } from '../lib/logger.ts';
 import type {
@@ -30,7 +30,11 @@ import type {
   RuntimeSettingsPatch,
   SessionRuntimeSettingsSnapshot,
 } from './repositories/session-runtime-settings-write.ts';
-import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository.ts';
+import {
+  messageSearchIndexWrites,
+  SDKMessageRepository,
+  type SendStatus,
+} from './repositories/sdk-message-repository.ts';
 import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
 import {
@@ -131,12 +135,14 @@ export class Database {
   private readonly embedder = new WorkerAgentMemoryEmbedder();
   private sdkStatusReader: SDKStatusReader | null = null;
   private dbGateway: DbGateway | null = null;
+  private spaceTaskLane!: DbGateway;
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
   private shortIdAllocator!: ShortIdAllocator;
   private reactiveDb?: ReactiveDatabase;
   private messageSearchIndexTimer: ReturnType<typeof setInterval> | null = null;
+  private messageSearchIndexFlushing = false;
   private readonly messageSearchIndexFlushIntervalMs: number;
 
   private static readonly MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS = 2_000;
@@ -154,6 +160,8 @@ export class Database {
     return this.core.getDbPath();
   }
 
+  readonly runSpaceTaskOp: RunDbOp = (op, args) => this.spaceTaskLane.run(op, args);
+
   notifyChange(table: string, scope?: { sessionId?: string; taskId?: string }): void {
     this.reactiveDb?.notifyChange(table, scope);
   }
@@ -162,12 +170,16 @@ export class Database {
     await this.core.initialize();
     this.reactiveDb = reactiveDb;
     bindGateway(this.core.getDb(), this.gateway);
-    if (reactiveDb)
-      this.gateway.onChanges = (changes) => {
+    this.spaceTaskLane = new DbGateway(':memory:', this.core.getDb());
+    if (reactiveDb) {
+      const replay = (changes: TableChange[]) => {
         reactiveDb.beginTransaction();
         for (const { table, scope } of changes) reactiveDb.notifyChange(table, scope);
         reactiveDb.commitTransaction();
       };
+      this.gateway.onChanges = replay;
+      this.spaceTaskLane.onChanges = replay;
+    }
 
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);
@@ -188,20 +200,35 @@ export class Database {
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
     this.agentMemoryRepo.backfillPendingEmbeddings();
-    try {
-      runLagPhase('search:index_flush', () => this.sdkMessageRepo.flushMessageSearchIndex());
-    } catch (err) {
-      this.logger.warn('startup message search index flush failed:', err);
-    }
+    await this.flushMessageSearchIndex();
     if (this.messageSearchIndexFlushIntervalMs > 0) {
-      this.messageSearchIndexTimer = setInterval(() => {
-        try {
-          runLagPhase('search:index_flush', () => this.sdkMessageRepo.flushMessageSearchIndex());
-        } catch (err) {
-          this.logger.warn('message search index flush failed:', err);
-        }
-      }, this.messageSearchIndexFlushIntervalMs);
+      this.messageSearchIndexTimer = setInterval(
+        () => void this.flushMessageSearchIndex(),
+        this.messageSearchIndexFlushIntervalMs
+      );
       this.messageSearchIndexTimer.unref?.();
+    }
+  }
+
+  private async flushMessageSearchIndex(): Promise<void> {
+    if (this.messageSearchIndexFlushing) return;
+    this.messageSearchIndexFlushing = true;
+    try {
+      let skip = 0;
+      for (let batch = 0; batch < 5; batch++) {
+        const { attempted, failed } = await this.gateway.call(
+          messageSearchIndexWrites,
+          'flushMessageSearchIndex',
+          100,
+          skip
+        );
+        if (attempted < 100) return;
+        skip += failed;
+      }
+    } catch (err) {
+      this.logger.warn('message search index flush failed:', err);
+    } finally {
+      this.messageSearchIndexFlushing = false;
     }
   }
 

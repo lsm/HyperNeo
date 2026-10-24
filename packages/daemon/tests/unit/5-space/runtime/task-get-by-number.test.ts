@@ -8,6 +8,7 @@ import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/d
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { fixtureChanges } from '../../helpers/run-db-op';
 
 const caller = { source: 'mcp' as const, sessionId: 'session-1' };
 
@@ -85,11 +86,10 @@ test('an unknown number reads as null rather than failing', async () => {
 });
 
 test('a standalone task has no number to look up', async () => {
-  const standalone = createStandaloneTask(
+  const standalone = createStandaloneTask.run(
     db,
-    { title: 'Loose', description: '' },
-    undefined,
-    () => {}
+    { input: { title: 'Loose', description: '' } },
+    fixtureChanges()
   );
   const byId = await invokeOperation(catalog(true), 'task.get', { taskId: standalone.id }, caller);
   expect((byId as { value: { id: string } }).value.id).toBe(standalone.id);

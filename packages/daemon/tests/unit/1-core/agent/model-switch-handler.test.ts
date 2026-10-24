@@ -691,6 +691,33 @@ describe('ModelSwitchHandler', () => {
     });
 
     describe('when the live query can switch models itself', () => {
+      it('switches a running Anthropic query to the 1M CLI model', async () => {
+        const id = 'claude-opus-5-5';
+        mockSession.config.model = 'claude-sonnet-5-5';
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                ...TEST_MODELS,
+                {
+                  ...TEST_MODELS[0],
+                  id: 'claude-sonnet-5-5',
+                  alias: 'claude-sonnet-5-5',
+                  contextWindow: 1_000_000,
+                },
+                { ...TEST_MODELS[0], id, alias: id, contextWindow: 1_000_000 },
+              ],
+            ],
+          ])
+        );
+        handler = createHandler({ queryObject: { setModel: setModelSpy } as unknown as Query });
+        const result = await handler.switchModel(id, 'anthropic');
+        expect(result.success).toBe(true);
+        expect(setModelSpy).toHaveBeenCalledWith(`${id}[1m]`);
+        expect(mockSession.config.model).toBe(id);
+      });
+
       it('switches the running anthropic query in place instead of restarting', async () => {
         const reevaluateSpy = mock(async () => {});
         handler = createHandler({

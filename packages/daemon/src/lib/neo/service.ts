@@ -1,4 +1,5 @@
 import { publishDroppedWork } from './dropped-work.ts';
+import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
@@ -496,10 +497,13 @@ export class NeoService {
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))
     );
     if (this.watching || this.disposed) return;
-    this.watching = runLagPhase('neo:driver:session_watch', () =>
-      this.sessionWatcher.watchSessions(Date.now())
-    )
-      .catch((error) => this.log.warn('Session watch pending', error))
+    this.watching = runLagPhase('neo:driver:session_watch', async () => {
+      await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
+        this.log.warn('Stalled ask wake pending', error)
+      );
+      await this.sessionWatcher.watchSessions(Date.now());
+    })
+      .catch((error) => this.log.warn('Neo refresh pending', error))
       .finally(() => {
         this.watching = null;
       });

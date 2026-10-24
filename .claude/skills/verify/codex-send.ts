@@ -122,6 +122,7 @@ if (action === 'prepare') {
     const registry = createOperationRegistry(
       createWorkVerbOperations({
         adapters: () => [createCodexDesktopAdapter(deps)],
+        isOpenTodo: (id, sessionId) => id === 'verify-codex-send-todo' && sessionId === 'verify-codex-send',
         daemonName: 'verify',
         remote: {
           list: () => [],
@@ -137,6 +138,7 @@ if (action === 'prepare') {
       {
         ref: { adapter: 'codex-desktop', id: threadId },
         message: `Reply with exactly ${marker}`,
+        todoId: 'verify-codex-send-todo',
       },
       { source: 'mcp', role: 'neo', sessionId: 'verify-codex-send' }
     );

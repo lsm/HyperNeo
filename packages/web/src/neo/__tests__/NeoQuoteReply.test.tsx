@@ -198,14 +198,16 @@ function deferredSend() {
 }
 
 describe('Neo quote reply through live chat and durable intake', () => {
-  it.each([
-    { desktop: false, draft: '' },
-    { desktop: true, draft: '' },
-    { desktop: false, draft: 'My existing draft' },
-    { desktop: true, draft: 'My existing draft' },
-  ])(
-    'replies to an open question with desktop=$desktop and draft="$draft"',
-    async ({ desktop, draft }) => {
+  it.each(
+    [
+      { desktop: false, draft: '' },
+      { desktop: true, draft: '' },
+      { desktop: false, draft: 'My existing draft' },
+      { desktop: true, draft: 'My existing draft' },
+    ].flatMap((test) => ['question', 'ask'].map((kind) => ({ ...test, kind })))
+  )(
+    'replies to $kind with desktop=$desktop and draft="$draft"',
+    async ({ desktop, draft, kind }) => {
       vi.stubGlobal('matchMedia', (query: string) => ({
         matches: query === '(min-width: 1120px)' && desktop,
         addEventListener() {},
@@ -271,10 +273,13 @@ describe('Neo quote reply through live chat and durable intake', () => {
       Object.defineProperty(scroll, 'scrollHeight', { value: 1600 });
       const scrollTo = vi.spyOn(scroll, 'scrollTo');
       const intoView = vi.spyOn(input, 'scrollIntoView');
-      fireEvent.click(screen.getByRole('button', { name: '在聊天里回复' }));
+      if (kind === 'ask') {
+        fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
+        fireEvent.click(screen.getByRole('menuitem', { name: '回复', exact: true }));
+      } else fireEvent.click(screen.getByRole('button', { name: '在聊天里回复' }));
       await waitFor(() => expect(document.activeElement).toBe(input));
       expect(screen.getByRole('region', { name: /^回复Neo：/ }).textContent).toContain(
-        'Which repo?'
+        kind === 'ask' ? 'Choose a repo' : 'Which repo?'
       );
       expect(input.value).toBe(draft);
       expect(scrollTo).toHaveBeenCalledWith({ top: 1600, behavior: 'smooth' });
@@ -286,7 +291,8 @@ describe('Neo quote reply through live chat and durable intake', () => {
       await waitFor(() => expect(calls()).toHaveLength(1));
       expect(calls()[0][1].input).toMatchObject({
         content: draft || 'Use lsm/HyperNeo.',
-        replyTo: { kind: 'question', id: 'q3' },
+        replyTo:
+          kind === 'ask' ? { kind: 'ask', id: 'question-ask' } : { kind: 'question', id: 'q3' },
       });
     }
   );

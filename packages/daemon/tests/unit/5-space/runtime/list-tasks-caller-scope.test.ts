@@ -17,6 +17,7 @@ import { createTestSession } from '../../../helpers/database';
 import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { fixtureChanges } from '../../helpers/run-db-op';
 
 let db: Database;
 let sessions: SessionRepository;
@@ -34,7 +35,7 @@ beforeEach(() => {
   tasks.createTask({ spaceId, title: 'Mine one', description: '' });
   tasks.createTask({ spaceId, title: 'Mine two', description: '' });
   tasks.createTask({ spaceId: otherSpaceId, title: 'Theirs', description: '' });
-  createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  createStandaloneTask.run(db, { input: { title: 'Loose' } }, fixtureChanges());
   sessions = new SessionRepository(db);
   admission = {
     getSession: (id: string) => sessions.getSession(id),

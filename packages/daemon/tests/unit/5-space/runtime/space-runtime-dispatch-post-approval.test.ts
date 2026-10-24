@@ -28,6 +28,7 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceTask } from '@hyperneo/shared';
 import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
+import { runDbOpOn } from '../../helpers/run-db-op';
 
 const SPACE_ID = 'space-dispatch-pa';
 
@@ -659,7 +660,7 @@ test.each(['rpc', 'mcp'] as const)(
           getSession: (id) => sessions.getSession(id),
           getTaskManager,
           taskRepo,
-          notifyStandalone: () => {},
+          runOp: runDbOpOn(db, () => {}),
           emitTaskUpdated,
           emitTaskCreated: async () => {},
           getSpace: async () => null,
@@ -698,7 +699,7 @@ test.each(['rpc', 'mcp'] as const)(
         {
           getSession: (id) => sessions.getSession(id),
           getTaskManager,
-          notifyStandalone: () => {},
+          runOp: runDbOpOn(db, () => {}),
           emitTaskUpdated,
           isWorkflowRunActive: () => false,
           hasDirectWorkerProvenance: (id) =>
