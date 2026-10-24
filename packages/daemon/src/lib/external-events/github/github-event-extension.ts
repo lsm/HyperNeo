@@ -17,10 +17,12 @@ import { isRateLimitError } from '../../session/rate-limit-detector.ts';
 import { ExternalEventStore } from '../external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../session-external-event-store.ts';
 import type {
+  ExternalEvent,
   ExternalEventExtensionContext,
   HttpExternalEventExtension,
   RpcExternalEventExtension,
 } from '../types.ts';
+import { normalizeSessionPrClosure } from './session-pr-closure.ts';
 import {
   checkRunAppKeyFrom,
   checkRunConclusionFrom,
@@ -115,6 +117,7 @@ const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'mer
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
+  recordSessionClosure?: (event: ExternalEvent) => Promise<unknown>;
   replaySessionTerminals?: () => Promise<unknown>;
   collectPollPage?: GitHubPollCollector;
   pollIntervalMs?: number;
@@ -3047,8 +3050,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         partialScan = true;
         break;
       }
+      const discoverClosure =
+        watched.spaceId === SESSION_EVENT_SCOPE &&
+        subscribedPullRequestNumbers.includes(prNumber) &&
+        !!this.options.recordSessionClosure;
       const mergeHeaders = gitHubPollingHeaders(token);
-      if (mergeConflictEtags[prNumber])
+      if (!discoverClosure && mergeConflictEtags[prNumber])
         mergeHeaders['If-None-Match'] = mergeConflictEtags[prNumber];
       let mergeResponse: Response;
       try {
@@ -3117,6 +3124,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (mergeEtag) mergeConflictEtags[prNumber] = mergeEtag;
       const pullDetail = asPollingObject(await mergeResponse.json());
       if (pullDetail.state !== 'open') {
+        if (discoverClosure) {
+          const closure = normalizeSessionPrClosure(watched, prNumber, pullDetail);
+          if (closure) await this.options.recordSessionClosure?.(closure);
+        }
         delete mergeConflictStates[prNumber];
         if (subscribedPullRequestNumbers.includes(prNumber))
           delete recentPullRequestHeadShas[prNumber];
