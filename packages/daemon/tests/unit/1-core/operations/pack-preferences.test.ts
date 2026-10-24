@@ -21,7 +21,7 @@ const scope = { kind: 'repo', key: 'synthetic/repo' };
 const setting = { pack: 'coding', scope, key: 'mergePolicy', value: 'review_bot' };
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession('neo:root'));
+  await db.createSession(createTestSession('neo:root'));
   service = createNeoService(
     db,
     {} as SessionManager,

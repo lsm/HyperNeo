@@ -66,7 +66,7 @@ describe('neo.conversation.read', () => {
     );
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession(root.sessionId));
+    await db.createSession(createTestSession(root.sessionId));
     repo = new NeoRepository(db.getDatabase());
     repo.reserveBinding(root);
     reader = new NeoConversationReader(db.getDatabase());

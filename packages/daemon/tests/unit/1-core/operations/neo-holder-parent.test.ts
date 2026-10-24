@@ -19,7 +19,7 @@ describe('Neo ordinary sessions', () => {
   let db: Database;
   let service: ReturnType<typeof createNeoService>;
   const createSession = vi.fn(async (params: { sessionId: string }) => {
-    db.createSession(createTestSession(params.sessionId));
+    await db.createSession(createTestSession(params.sessionId));
     return params.sessionId;
   });
   beforeEach(async () => {
@@ -55,7 +55,7 @@ describe('Neo ordinary sessions', () => {
     expect(createSession.mock.calls[0][0]).not.toHaveProperty('config.maxTurns');
     const base = db.getSession(root)!;
     const sdkSessionId = crypto.randomUUID();
-    db.updateSession(root, {
+    await db.updateSession(root, {
       sdkSessionId,
       config: { ...base.config, maxTurns: 32, systemPrompt: 'Stored context' },
     });

@@ -44,7 +44,7 @@ export interface SessionOperationDependencies {
   readonly getDatabase: () => BunDatabase;
   readonly getLiveSession: (sessionId: string) => AgentSession | null;
   readonly getSession: (sessionId: string) => Session | null;
-  readonly updateSession: (sessionId: string, updates: Partial<Session>) => Promise<void>;
+  readonly updateSession: (sessionId: string, updates: Partial<Session>) => Promise<unknown>;
   readonly sessionSpaceId: (session: Session) => string | undefined;
   readonly audit?: (entry: SessionAuditEntry) => void;
 }

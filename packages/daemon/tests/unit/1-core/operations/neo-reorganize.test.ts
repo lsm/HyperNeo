@@ -207,7 +207,7 @@ describe('ReturnType<typeof createNeoService>.moveAsk', () => {
       { event: vi.fn() } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    db.createSession(createTestSession(root));
+    await db.createSession(createTestSession(root));
   });
   afterEach(() => {
     service.dispose();
@@ -216,7 +216,7 @@ describe('ReturnType<typeof createNeoService>.moveAsk', () => {
 
   test('moved and forwarded notes use ordinary mailbox delivery without a human trigger', async () => {
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-    db.createSession(createTestSession('holder:drivers'));
+    await db.createSession(createTestSession('holder:drivers'));
     db.getSDKMessageRepo().saveSDKMessage(root, {
       type: 'user',
       uuid: 'm-a1',

@@ -14,7 +14,7 @@ describe('provider auth rejection delivery policy', () => {
     const db = await createTestDb();
     const session = createTestSession('rejected-key');
     session.config.provider = 'glm';
-    db.createSession(session);
+    await db.createSession(session);
     clearProviderFailure('glm');
     const agent = new AgentSession(
       session,

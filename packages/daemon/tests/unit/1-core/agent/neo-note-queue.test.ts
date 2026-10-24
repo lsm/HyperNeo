@@ -40,7 +40,7 @@ afterEach(() => {
 
 async function makeHarness(sessionId: string): Promise<Harness> {
   const db = await createTestDb();
-  db.createSession(createTestSession(sessionId));
+  await db.createSession(createTestSession(sessionId));
   new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', projectId: null });
   const events = new InternalEventBus<DaemonInternalEventMap>();
   const failed: string[][] = [];

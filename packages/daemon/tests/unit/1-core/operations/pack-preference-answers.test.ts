@@ -39,7 +39,7 @@ const values = [
 ];
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession('neo:root'));
+  await db.createSession(createTestSession('neo:root'));
   service = createNeoService(
     db,
     {} as SessionManager,

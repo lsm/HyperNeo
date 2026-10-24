@@ -33,30 +33,30 @@ describe('Database.countHumanSessions', () => {
     await db.initialize(createReactiveDatabase(db));
   });
 
-  it('matches the archived-inclusive session list across session kinds', () => {
-    db.createSession(session('plain'));
-    db.createSession(session('archived', { status: 'archived' }));
-    db.createSession(session('lobby', { type: 'lobby' }));
-    db.createSession(
+  it('matches the archived-inclusive session list across session kinds', async () => {
+    await db.createSession(session('plain'));
+    await db.createSession(session('archived', { status: 'archived' }));
+    await db.createSession(session('lobby', { type: 'lobby' }));
+    await db.createSession(
       session('space-chat', { type: 'space_chat', context: { spaceId: 'space-1' } })
     );
-    db.createSession(session('space-worker', { context: { spaceId: 'space-1' } }));
-    db.createSession(session('room-worker', { context: { roomId: 'room-1' } }));
+    await db.createSession(session('space-worker', { context: { spaceId: 'space-1' } }));
+    await db.createSession(session('room-worker', { context: { roomId: 'room-1' } }));
 
     expect(db.countHumanSessions()).toBe(2);
     expect(db.countHumanSessions()).toBe(db.listSessions({ includeArchived: true }).length);
   });
 
-  it('tracks archive and context changes', () => {
-    db.createSession(session('a'));
-    db.createSession(session('b'));
-    db.updateSession('a', { status: 'archived' });
-    db.updateSession('b', { context: { spaceId: 'space-1' } });
+  it('tracks archive and context changes', async () => {
+    await db.createSession(session('a'));
+    await db.createSession(session('b'));
+    await db.updateSession('a', { status: 'archived' });
+    await db.updateSession('b', { context: { spaceId: 'space-1' } });
 
     expect(db.countHumanSessions()).toBe(1);
     expect(db.countHumanSessions()).toBe(db.listSessions({ includeArchived: true }).length);
 
-    db.deleteSession('a');
+    await db.deleteSession('a');
 
     expect(db.countHumanSessions()).toBe(0);
   });

@@ -125,7 +125,7 @@ describe('ReturnType<typeof createNeoService> session ask links', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession('neo:root'));
+    await db.createSession(createTestSession('neo:root'));
     events.length = 0;
     sessions = [];
     status = { status: 'running', lastActivityAt: 0 };
@@ -176,7 +176,7 @@ describe('ReturnType<typeof createNeoService> session ask links', () => {
     service.readRefStates = async () => [];
     service.readBranchPrs = async () => [];
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
-    db.createSession(createTestSession('neo:inbox'));
+    await db.createSession(createTestSession('neo:inbox'));
     service.repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
   });
   afterEach(() => {
