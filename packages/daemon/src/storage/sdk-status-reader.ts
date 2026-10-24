@@ -159,7 +159,7 @@ export class SDKStatusReader {
           './sdk-status-worker.ts',
           './daemon/src/storage/sdk-status-worker.ts',
           import.meta.url
-        ).href,
+        ).toString(),
         { type: 'module' }
       ),
     private readonly timeoutMs = 30_000,

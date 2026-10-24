@@ -41,7 +41,7 @@ function createDbQueryWorker(): Worker {
       './db-query-worker.ts',
       './daemon/src/lib/db-query/db-query-worker.ts',
       import.meta.url
-    ).href,
+    ).toString(),
     {
       type: 'module',
     }

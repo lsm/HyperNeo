@@ -150,6 +150,11 @@ the browser tab you opened. Delete `$RUN` once the evidence is in the PR.
 
 ## Metadata-only daemon proofs
 
+A Windows compiled-startup proof also isolates `USERPROFILE`, `TEMP` and `TMP`.
+Use native Windows paths for `HOME` and `HYPERNEO_DATA_DIR` (PowerShell
+`Join-Path`). The helper passes `SystemRoot` for Windows process startup but
+does not inherit provider credentials or the human's executable search path.
+
 A journey that needs no model may start the source CLI directly under `env -i`
 with `NODE_ENV=test`, a fresh `HOME`, `HYPERNEO_DATA_DIR` and `--db-path` inside
 its run directory. It must preflight its own non-8399 port, retain the daemon log

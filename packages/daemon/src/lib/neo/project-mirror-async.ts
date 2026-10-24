@@ -17,7 +17,7 @@ const createWorker = () =>
       './project-mirror-worker.ts',
       './daemon/src/lib/neo/project-mirror-worker.ts',
       import.meta.url
-    ).href,
+    ).toString(),
     { type: 'module' }
   );
 
