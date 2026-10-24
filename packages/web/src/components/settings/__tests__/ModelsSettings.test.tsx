@@ -552,6 +552,17 @@ describe('ModelsSettings — default thinking beside the default model', () => {
     expect(updateGlobalSettings).not.toHaveBeenCalled();
   });
 
+  it('uses the provider thinking capability when the model carries none', async () => {
+    settingsRef.value = { model: 'llama-4', modelProvider: 'ollama', thinkingLevel: 'off' };
+    serveModels([{ id: 'llama-4', display_name: 'Llama 4', description: '', provider: 'ollama' }]);
+    render(<ModelsSettings />);
+
+    await waitFor(() => expect(screen.getByText(/Llama 4 · /)).toBeTruthy());
+    const select = screen.getByLabelText('Default thinking') as HTMLSelectElement;
+    expect([...select.options].map((option) => option.value)).toEqual(['off']);
+    expect(screen.queryByText(/support for this model is unknown/)).toBeNull();
+  });
+
   it('rolls the control back to the saved value when the save fails', async () => {
     settingsRef.value = {
       model: 'claude-sonnet-5',

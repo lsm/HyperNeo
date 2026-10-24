@@ -12,6 +12,9 @@ import {
   AUTO_COMPACT_PERCENT_MAX,
   resolveAutoCompactPercent,
   findSameModel,
+  normalizeThinkingLevel,
+  PROVIDER_THINKING_MODES,
+  THINKING_LEVEL_LABELS,
   THINKING_OPTIONS,
   type FallbackModelEntry,
   type ModelInfo,
@@ -656,6 +659,56 @@ function NeoModelSettings({
   );
 }
 
+function DefaultThinkingSelect({ model }: { model: ModelInfo | null }) {
+  const saved = normalizeThinkingLevel(globalSettings.value?.thinkingLevel);
+  const [level, setLevel] = useState<ThinkingLevel>(saved);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setLevel(saved), [saved]);
+  const mode =
+    model?.thinkingModes ??
+    PROVIDER_THINKING_MODES[model?.provider as keyof typeof PROVIDER_THINKING_MODES];
+  const options = mode === 'off' ? THINKING_OPTIONS.slice(0, 1) : THINKING_OPTIONS;
+  const unsupported = !options.some((option) => option.value === level);
+  const change = async (next: ThinkingLevel) => {
+    setLevel(next);
+    setSaving(true);
+    try {
+      await updateGlobalSettings({ thinkingLevel: next });
+    } catch {
+      toast.error('Failed to update thinking level');
+      setLevel(saved);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div class="flex flex-wrap items-center gap-2">
+      <label class="text-xs text-fg-muted" for="default-thinking">
+        Thinking
+      </label>
+      <select
+        id="default-thinking"
+        aria-label="Default thinking"
+        class="rounded border border-line bg-surface px-2 py-1 text-xs text-fg"
+        value={level}
+        disabled={saving}
+        onChange={(event) => change(event.currentTarget.value as ThinkingLevel)}
+      >
+        {options.map((option) => (
+          <option value={option.value}>{option.label}</option>
+        ))}
+        {unsupported && <option value={level}>{THINKING_LEVEL_LABELS[level]}</option>}
+      </select>
+      {unsupported && (
+        <span class="text-xs text-warning">Saved level is not supported by this model.</span>
+      )}
+      {!mode && (
+        <span class="text-xs text-fg-faint">Thinking support for this model is unknown.</span>
+      )}
+    </div>
+  );
+}
+
 export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) {
   const settings = globalSettings.value;
   const [fallbackModels, setFallbackModels] = useState<FallbackModelEntry[]>(
@@ -1024,6 +1077,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
               Change
             </Button>
           </div>
+          <DefaultThinkingSelect model={defaultModel} />
         </div>
 
         <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
