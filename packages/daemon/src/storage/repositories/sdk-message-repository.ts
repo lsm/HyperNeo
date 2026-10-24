@@ -1,3 +1,6 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import type { RunDbOp } from '../db-gateway/db-op.ts';
+import { sdkMessageWrites } from './sdk-message-writes.ts';
 import type { SdkMessageWriteMethod } from './sdk-message-writes.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { toSqlStringList } from '../sql-string-list.ts';
@@ -624,12 +627,14 @@ export class SDKMessageRepository {
     private reactiveDb?: SdkMessageChanges
   ) {}
 
+  readonly runWrite: RunDbOp = (op, args) => gatewayFor(this.db).run(op, args);
   write<K extends SdkMessageWriteMethod>(
     method: K,
     ...args: Parameters<SDKMessageRepository[K]>
   ): Promise<ReturnType<SDKMessageRepository[K]>> {
-    const write = this[method] as (...args: unknown[]) => unknown;
-    return Promise.resolve(write.apply(this, args)) as Promise<ReturnType<SDKMessageRepository[K]>>;
+    return this.runWrite(sdkMessageWrites, { method, args }) as Promise<
+      ReturnType<SDKMessageRepository[K]>
+    >;
   }
 
   private hasMessageSearchIndex(): boolean {

@@ -2218,19 +2218,26 @@ export class SpaceRuntime {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
           if (existing) return { dbId: existing.dbId, replayed: true };
         }
-        const dbId = await messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
+        const dbId = await messages.write(
+          'saveUserMessage',
+          targetSessionId,
+          message,
+          'deferred',
+          'system'
+        );
         return { dbId, replayed: false };
       },
-      reopenFailedDigest: async (targetSessionId, uuid) => {
-        const failedRow = messages.getMessageByStatusAndUuid(targetSessionId, 'failed', uuid);
-        if (failedRow) messages.updateMessageStatus([failedRow.dbId], 'deferred');
+      reopenFailedDigest: async (sid, uuid) => {
+        const row = messages.getMessageByStatusAndUuid(sid, 'failed', uuid);
+        if (row)
+          await messages.write('transitionMessageSendStatus', row.dbId, 'failed', 'deferred');
       },
       deleteDigestMessage: async (targetSessionId, dbId) => {
         const row = messages.getMessageByStatusAndDbId(targetSessionId, 'deferred', dbId);
         if (row && typeof row.uuid === 'string') {
           this.deleteDigestHandoffDebt(targetSessionId, row.uuid);
         }
-        messages.deletePendingUserMessage(targetSessionId, dbId, 'deferred');
+        await messages.write('deletePendingUserMessage', targetSessionId, dbId, 'deferred');
       },
       appendDigest: async (targetSessionId, message) => {
         const row = messages.getDeliveryContent(targetSessionId, String(message.uuid));
@@ -2386,7 +2393,7 @@ export class SpaceRuntime {
             )
         );
       if (!allMembersDelivered) {
-        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        await messages.write('deletePendingUserMessage', sessionId, row.dbId, 'deferred');
       }
     }
   }
@@ -2457,7 +2464,7 @@ export class SpaceRuntime {
         );
       });
       if (isObsolete) {
-        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        await messages.write('deletePendingUserMessage', sessionId, row.dbId, 'deferred');
       }
     }
   }

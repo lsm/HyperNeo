@@ -1,3 +1,4 @@
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { mirrorSdkMessageFixtureBodies } from '../../helpers/sdk-message-fixture-columns';
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -359,7 +360,10 @@ test('joint intake publishes only once all three records are visible from anothe
     const jobs = new JobQueueRepository(writer);
     const ledger = new NeoConversationAskRepository(writer);
     const observed: number[][] = [];
-    const notify = spyOn(sdk, 'runPostSaveSideEffects').mockImplementation(() => {
+    const gateway = new DbGateway(path, writer);
+    bindGateway(writer, gateway);
+    gateway.onChanges = (changes) => {
+      if (!changes.some((change) => change.table === 'sdk_messages')) return;
       observed.push(
         ['neo_conversation_asks', 'sdk_messages', 'job_queue'].map(
           (table) =>
@@ -367,7 +371,7 @@ test('joint intake publishes only once all three records are visible from anothe
               .count
         )
       );
-    });
+    };
     expect(
       await ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)
     ).toMatchObject({
@@ -382,7 +386,7 @@ test('joint intake publishes only once all three records are visible from anothe
       created: false,
     });
     expect(observed).toEqual([[1, 1, 1]]);
-    notify.mockRestore();
+    await gateway.close();
   } finally {
     reader.close();
     writer.close();

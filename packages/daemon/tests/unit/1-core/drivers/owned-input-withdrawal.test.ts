@@ -1,3 +1,4 @@
+import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   requireOwnedQueuedInput,
@@ -29,18 +30,18 @@ describe('owned deferred input withdrawal', () => {
       jobs: db.jobQueue,
       transaction: (effect) => db.db.transaction(effect)(),
       messageId: (sessionId, uuid) => db.sdkMessageRepo.findMessageIdByUuid(sessionId, uuid),
-      removeDeferred: async (sessionId, id, commit) =>
-        db.db.transaction(() => {
-          removed.push(id);
-          const deleted =
-            db.db
-              .prepare(
-                "DELETE FROM sdk_messages WHERE session_id = ? AND id = ? AND send_status = 'deferred'"
-              )
-              .run(sessionId, id).changes > 0;
-          if (deleted) commit();
-          return deleted;
-        })(),
+      removeDeferred: async (sessionId, messageDbId, withdrawalJobId) => {
+        removed.push(messageDbId);
+        return !!(
+          await db.sdkMessageRepo.runWrite(sdkPendingRemoval, {
+            sessionId,
+            messageDbId,
+            mode: 'remove',
+            expectedStatus: 'deferred',
+            withdrawalJobId,
+          })
+        )?.uuid;
+      },
     };
   });
 
@@ -52,7 +53,7 @@ describe('owned deferred input withdrawal', () => {
     db.db
       .prepare(`INSERT INTO sdk_messages
       (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
-      VALUES ('db-input', 'target', 'user', '{}', '2026-10-16', ?, 'input')`)
+      VALUES ('db-input', 'target', 'user', '{"uuid":"input"}', '2026-10-16', ?, 'input')`)
       .run(status);
   }
 
@@ -169,16 +170,13 @@ describe('owned deferred input withdrawal', () => {
   test('a failed tombstone write rolls back the SDK deletion before retry', async () => {
     materialize('deferred');
     jobStatus('completed');
-    deps.jobs = {
-      getLatestByPayload: (...args) => db.jobQueue.getLatestByPayload(...args),
-      markDeadIfActive: () => {
-        throw new Error('storage failed');
-      },
-    };
+    db.db.exec(
+      "CREATE TRIGGER fail_tombstone BEFORE UPDATE ON job_queue WHEN NEW.error='driver_input_withdrawn' BEGIN SELECT RAISE(ABORT,'storage failed'); END"
+    );
     await expect(withdraw()).rejects.toThrow('storage failed');
     expect(db.sdkRows()).toHaveLength(1);
     expect(db.rows()[0].status).toBe('completed');
-    deps.jobs = db.jobQueue;
+    db.db.exec('DROP TRIGGER fail_tombstone');
     expect(await withdraw()).toMatchObject({ value: { withdrawn: true } });
   });
 

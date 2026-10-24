@@ -10,7 +10,7 @@ export interface OwnedInputWithdrawalDeps {
   jobs: Pick<JobQueueRepository, 'getLatestByPayload' | 'markDeadIfActive'>;
   transaction<T>(effect: () => T): T;
   messageId(sessionId: string, uuid: string): string | null;
-  removeDeferred(sessionId: string, messageDbId: string, commit: () => void): Promise<boolean>;
+  removeDeferred(sessionId: string, messageDbId: string, withdrawalJobId: string): Promise<boolean>;
 }
 
 type Outcome = Result<WorkWithdrawal>;
@@ -77,10 +77,7 @@ async function removeDeferredInput(
 ): Promise<Gate<QueuedInput>> {
   const dbId = deps.messageId(input.sessionId, input.uuid);
   const removed = dbId
-    ? await deps.removeDeferred(input.sessionId, dbId, () => {
-        if (!deps.jobs.markDeadIfActive(input.job.id, WITHDRAWN, ['dead', 'completed']))
-          throw new Error('Input withdrawal was superseded.');
-      })
+    ? await deps.removeDeferred(input.sessionId, dbId, input.job.id)
     : input.job.status === 'pending';
   return removed ? { value: input } : { reason: withdrawal(queuedSubmissionId, false) };
 }

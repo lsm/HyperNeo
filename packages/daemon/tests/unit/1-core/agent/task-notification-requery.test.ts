@@ -329,7 +329,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
           : null
       ),
       getSDKMessageRepo: mock(() => ({
-        deletePendingUserMessage: mock(() => revokedPendingMessage),
+        runWrite: mock(async () => revokedPendingMessage),
       })),
       updateMessageStatus: mock(() => {}),
       updateMessageTimestamp: mock(() => {}),

@@ -1,3 +1,4 @@
+import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
 import { dirname, resolve } from 'node:path';
@@ -150,23 +151,18 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         jobs: jobQueue,
         transaction: (effect) => db.getDatabase().transaction(effect)(),
         messageId: (target, uuid) => db.getSDKMessageRepo().findMessageIdByUuid(target, uuid),
-        removeDeferred: async (target, messageDbId, commit) => {
+        removeDeferred: async (target, dbId, jobId) => {
           const session = sessionManager.getCachedSession(target);
           if (session)
-            return (await session.revokePendingDelivery(messageDbId, 'remove', 'deferred', commit))
-              .changed;
-          const removed = db.getDatabase().transaction(() => {
-            const row = db
-              .getSDKMessageRepo()
-              .deletePendingUserMessage(target, messageDbId, 'deferred');
-            if (row?.uuid) commit();
-            return row;
-          })();
-          if (!removed?.uuid) return false;
-          jobQueue.cancelDelivery(target, removed.uuid);
-          db.notifyChange?.('sdk_messages', { sessionId: target });
-          db.notifyChange?.('job_queue', { sessionId: target });
-          return true;
+            return (await session.revokePendingDelivery(dbId, 'remove', 'deferred', jobId)).changed;
+          const removed = await db.gateway.run(sdkPendingRemoval, {
+            sessionId: target,
+            messageDbId: dbId,
+            mode: 'remove',
+            expectedStatus: 'deferred',
+            withdrawalJobId: jobId,
+          });
+          return !!removed?.uuid;
         },
       }),
     archive: async (ref, admit) => {

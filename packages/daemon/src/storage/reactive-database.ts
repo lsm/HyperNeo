@@ -144,37 +144,6 @@ export function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | unde
 }
 
 const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
-  saveSDKMessage: {
-    table: 'sdk_messages',
-    extractScope: (args, db) => ({
-      ...sdkMessageScope(db, args[0]),
-      messageSubtype: sdkMessageSubtype(args[1]),
-    }),
-  },
-  saveUserMessage: {
-    table: 'sdk_messages',
-    extractScope: (args, db) => sdkMessageScope(db, args[0]),
-  },
-  updateMessageStatus: {
-    table: 'sdk_messages',
-    extractScope: (args, db) => messageIdsScope(db, args[0]),
-  },
-  updateMessageTimestamp: {
-    table: 'sdk_messages',
-    extractScope: (args, db) => messageIdScope(db, args[0]),
-  },
-  deletePendingUserMessage: {
-    table: 'sdk_messages',
-    extractScope: (args) => ({ sessionId: args[0] as string }),
-  },
-  deleteMessagesAfter: {
-    table: 'sdk_messages',
-    extractScope: (args) => ({ sessionId: args[0] as string }),
-  },
-  deleteMessagesAtAndAfter: {
-    table: 'sdk_messages',
-    extractScope: (args) => ({ sessionId: args[0] as string }),
-  },
   saveGlobalSettings: { table: 'global_settings' },
   updateGlobalSettings: { table: 'global_settings' },
   createInboxItem: { table: 'inbox_items' },

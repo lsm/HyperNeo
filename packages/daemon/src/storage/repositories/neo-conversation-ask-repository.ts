@@ -1,3 +1,5 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { sdkNeoIntake } from './sdk-message-transactions.ts';
 import type {
   NeoConversationAsk,
   NeoConversationAskAppendResult,
@@ -290,10 +292,20 @@ export class NeoConversationAskRepository {
     conversationId: string,
     message: IntakePrompt,
     hold: PromptHold,
-    sdkMessageRepo: SDKMessageRepository,
-    jobQueue: JobQueueRepository
+    _sdkMessageRepo: SDKMessageRepository,
+    _jobQueue: JobQueueRepository
   ): Promise<NeoConversationAskAppendResult> {
-    return this.acceptPromptSync(conversationId, message, hold, sdkMessageRepo, jobQueue);
+    const ask = prepareNeoIntakeAsk(conversationId, message);
+    if ('reason' in ask) return ask.reason;
+    if ('inTransaction' in this.db ? this.db.inTransaction : this.db.isTransaction)
+      throw new Error('Public ask intake must own its commit boundary');
+    try {
+      return await gatewayFor(this.db).run(sdkNeoIntake, { ask: ask.value, message, hold });
+    } catch (error) {
+      if (error instanceof Error && error.message.endsWith('already exists with different content'))
+        return { accepted: false, reason: 'ask_conflict' };
+      throw error;
+    }
   }
 
   acceptPromptSync(

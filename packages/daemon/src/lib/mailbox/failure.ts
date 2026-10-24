@@ -1,3 +1,4 @@
+import { sdkMailboxFailure } from '../../storage/repositories/sdk-message-transactions.ts';
 import { fillPrompt, MAILBOX_DELIVERY_FAILED } from '@hyperneo/prompts';
 import { createHash } from 'node:crypto';
 import type { MessageOrigin } from '@hyperneo/shared';
@@ -182,7 +183,10 @@ export function persistMailboxFailure(
     return { ...ctx, failedId, uuidOwned: outcome.uuidOwned };
   } catch (error) {
     emitMaterializeFailure(target, entry.id, error);
-    if (strict) throw error;
+    if (strict)
+      throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+        uuidOwned: ownershipKnown,
+      });
     return { ...ctx, uuidOwned: ownershipKnown };
   }
 }
@@ -192,25 +196,14 @@ export async function persistFailedRowStage(ctx: MailboxFailureCtx): Promise<Mai
   const message = ctx.message;
   const entry = ctx.entry;
   if (target === undefined || message === undefined || entry === null) return ctx;
-  const synthetic = mailboxMessageIsSynthetic(entry.origin, entry.message);
-  let ownershipKnown = false;
   try {
-    const outcome = persistExistingMailboxFailure(
-      ctx.deps.sdkMessageRepo,
-      target,
-      message,
-      entry.id,
-      () => {
-        ownershipKnown = true;
-      }
-    );
-    const failedId = outcome.save
-      ? await ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined)
-      : outcome.failedId;
-    return { ...ctx, failedId, uuidOwned: outcome.uuidOwned };
+    const outcome = await ctx.deps.sdkMessageRepo.runWrite(sdkMailboxFailure, { job: ctx.job });
+    if (outcome.failure) emitMaterializeFailure(target, entry.id, outcome.failure);
+    else if (outcome.uuidOwned === false) emitUuidConflictSkip(target, entry.id);
+    return { ...ctx, ...outcome };
   } catch (error) {
     emitMaterializeFailure(target, entry.id, error);
-    return { ...ctx, uuidOwned: ownershipKnown };
+    return { ...ctx, uuidOwned: false };
   }
 }
 

@@ -356,7 +356,7 @@ export class Database {
     origin?: MessageOrigin,
     options?: { stampInternalCompactionTurn?: boolean }
   ): Promise<boolean> {
-    return Promise.resolve(this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin, options));
+    return this.writeSDKMessage('saveSDKMessage', sessionId, message, origin, options);
   }
 
   getSDKMessages(
@@ -412,7 +412,7 @@ export class Database {
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
   ): Promise<string> {
-    return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
+    return this.writeSDKMessage('saveUserMessage', sessionId, message, sendStatus, origin);
   }
 
   getUserMessagesByStatus(
@@ -533,11 +533,11 @@ export class Database {
   }
 
   async updateMessageStatus(messageIds: string[], newStatus: SendStatus): Promise<void> {
-    this.sdkMessageRepo.updateMessageStatus(messageIds, newStatus);
+    return this.writeSDKMessage('updateMessageStatus', messageIds, newStatus);
   }
 
   async updateMessageTimestamp(messageId: string, timestampMs?: number): Promise<void> {
-    this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
+    return this.writeSDKMessage('updateMessageTimestamp', messageId, timestampMs);
   }
 
   async deletePendingUserMessage(
@@ -545,14 +545,14 @@ export class Database {
     messageId: string,
     expectedStatus?: 'deferred' | 'enqueued'
   ): Promise<{ dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null> {
-    return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId, expectedStatus);
+    return this.writeSDKMessage('deletePendingUserMessage', sessionId, messageId, expectedStatus);
   }
 
   async deferEnqueuedUserMessage(
     sessionId: string,
     messageId: string
   ): Promise<{ dbId: string; uuid: string } | null> {
-    return this.sdkMessageRepo.deferEnqueuedUserMessage(sessionId, messageId);
+    return this.writeSDKMessage('deferEnqueuedUserMessage', sessionId, messageId);
   }
 
   beginTransaction?(): void;
@@ -560,11 +560,11 @@ export class Database {
   abortTransaction?(): void;
 
   async deleteMessagesAfter(sessionId: string, afterTimestamp: number): Promise<number> {
-    return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
+    return this.writeSDKMessage('deleteMessagesAfter', sessionId, afterTimestamp);
   }
 
   async deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): Promise<number> {
-    return this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
+    return this.writeSDKMessage('deleteMessagesAtAndAfter', sessionId, atTimestamp);
   }
 
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
@@ -586,11 +586,11 @@ export class Database {
     sessionId: string,
     message: HyperNeoActionMessage
   ): Promise<string> {
-    return this.sdkMessageRepo.saveHyperNeoActionMessage(sessionId, message);
+    return this.writeSDKMessage('saveHyperNeoActionMessage', sessionId, message);
   }
 
   async updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): Promise<void> {
-    this.sdkMessageRepo.updateHyperNeoActionMessage(rowId, updated);
+    return this.writeSDKMessage('updateHyperNeoActionMessage', rowId, updated);
   }
 
   async updateHyperNeoActionMessageByUuid(
@@ -598,7 +598,12 @@ export class Database {
     messageUuid: string,
     updated: HyperNeoActionMessage
   ): Promise<void> {
-    this.sdkMessageRepo.updateHyperNeoActionMessageByUuid(sessionId, messageUuid, updated);
+    return this.writeSDKMessage(
+      'updateHyperNeoActionMessageByUuid',
+      sessionId,
+      messageUuid,
+      updated
+    );
   }
 
   getGlobalToolsConfig(): GlobalToolsConfig {

@@ -1,3 +1,4 @@
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { runMigration413 } from '../../../../src/storage/schema/m413-sdk-message-columns';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
@@ -50,6 +51,11 @@ describe('materializeMailboxFailuresForSession', () => {
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
       notifyChange,
     } as unknown as Database;
+    const gateway = new DbGateway(':memory:', mailbox.db);
+    bindGateway(mailbox.db, gateway);
+    gateway.onChanges = (changes) => {
+      for (const change of changes) db.notifyChange(change.table, change.scope);
+    };
     await materializeMailboxFailuresForSession(SESSION_ID, {
       db,
       internalEventBus: { publish: async () => {} } as never,

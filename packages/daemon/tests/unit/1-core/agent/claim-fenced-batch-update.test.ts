@@ -82,13 +82,13 @@ describe('claim-fenced status transitions + admission reservation primitives', (
     db.close();
   });
 
-  it('flips only enqueued user rows under a live claim', () => {
+  it('flips only enqueued user rows under a live claim', async () => {
     insertMessage('m1', 'enqueued');
     insertMessage('m2', 'submitted');
     insertMessage('m3', 'enqueued');
     insertMessage('m4', 'enqueued', 'assistant');
     const { claimToken } = claimDeliveryJob([KICKOFF]);
-    const flipped = repository.transitionDeliverySendStatusFenced({
+    const flipped = await repository.transitionDeliverySendStatusFenced({
       sessionId: SESSION,
       kickoffUuid: KICKOFF,
       claimToken,
@@ -101,10 +101,10 @@ describe('claim-fenced status transitions + admission reservation primitives', (
     expect(statusOf('m4')).toBe('enqueued');
   });
 
-  it('flips nothing when the claim is superseded', () => {
+  it('flips nothing when the claim is superseded', async () => {
     insertMessage('m1', 'enqueued');
     claimDeliveryJob([KICKOFF]);
-    const flipped = repository.transitionDeliverySendStatusFenced({
+    const flipped = await repository.transitionDeliverySendStatusFenced({
       sessionId: SESSION,
       kickoffUuid: KICKOFF,
       claimToken: 'superseded-claim',
@@ -116,11 +116,11 @@ describe('claim-fenced status transitions + admission reservation primitives', (
     expect(statusOf('m1')).toBe('enqueued');
   });
 
-  it('restores only rows still submitted when compensating', () => {
+  it('restores only rows still submitted when compensating', async () => {
     insertMessage('m1', 'enqueued');
     insertMessage('m2', 'enqueued');
     const { claimToken } = claimDeliveryJob([KICKOFF]);
-    const flipped = repository.transitionDeliverySendStatusFenced({
+    const flipped = await repository.transitionDeliverySendStatusFenced({
       sessionId: SESSION,
       kickoffUuid: KICKOFF,
       claimToken,
@@ -130,7 +130,7 @@ describe('claim-fenced status transitions + admission reservation primitives', (
     });
     expect([...flipped].sort()).toEqual(['m1', 'm2']);
     db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE sdk_uuid = 'm2'`).run();
-    const restored = repository.transitionDeliverySendStatusFenced({
+    const restored = await repository.transitionDeliverySendStatusFenced({
       sessionId: SESSION,
       kickoffUuid: KICKOFF,
       claimToken,

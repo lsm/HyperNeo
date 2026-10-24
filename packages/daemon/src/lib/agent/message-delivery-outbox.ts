@@ -1,3 +1,10 @@
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import {
+  sdkPromptEnsure,
+  sdkPromptActivate,
+  sdkPromptRetry,
+  sdkTransactionArgs,
+} from '../../storage/repositories/sdk-message-transactions.ts';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import type { MessageOrigin } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -660,7 +667,13 @@ const runEnsurePrompt = (superpipe({})('ensure-prompt') as PipelineAPI)
   .end('ctx') as (ctx: PromptCtx & PersistPromptArgs) => EnsurePromptAppliedCtx;
 
 export async function ensurePrompt(args: PersistPromptArgs): Promise<EnsurePromptResult> {
-  return ensurePromptInTransaction(args);
+  try {
+    return await gatewayFor(args.db).run(sdkPromptEnsure, sdkTransactionArgs(args));
+  } catch (error) {
+    if (error instanceof Error && error.message.endsWith('already exists with different content'))
+      throw new PromptContentConflictError(error.message);
+    throw error;
+  }
 }
 
 export function ensurePromptInTransaction(args: PersistPromptArgs): EnsurePromptResult {
@@ -744,8 +757,14 @@ export function activatePromptsInTransaction(args: ActivatePromptsArgs): Activat
   return { activated: ctx.activated };
 }
 
-function applyActivatePrompts(args: ActivatePromptsArgs): ActivatePromptsCommittedCtx {
-  return { ...args, ...activatePromptsInTransaction(args) };
+async function applyActivatePrompts(
+  args: ActivatePromptsArgs
+): Promise<ActivatePromptsCommittedCtx> {
+  const result =
+    args.canDeliver?.() === false
+      ? { activated: [] }
+      : await gatewayFor(args.db).run(sdkPromptActivate, sdkTransactionArgs(args));
+  return { ...args, ...result };
 }
 
 async function publishActivatedPrompts(
@@ -826,8 +845,13 @@ export function retryPromptInTransaction(args: RetryPromptArgs): RetryPromptResu
   return commitRetryPrompt(validateRetryPromptUuid(args)).retried;
 }
 
-function applyRetryPrompt(args: RetryPromptArgs): RetryPromptCtx {
-  return { ...args, retried: retryPromptInTransaction(args) };
+async function applyRetryPrompt(args: RetryPromptArgs): Promise<RetryPromptCtx> {
+  validateRetryPromptUuid(args);
+  const retried =
+    args.canDeliver?.() === false
+      ? null
+      : await gatewayFor(args.db).run(sdkPromptRetry, sdkTransactionArgs(args));
+  return { ...args, retried };
 }
 
 async function publishRetriedPrompt(ctx: RetryPromptCtx): Promise<RetryPromptCtx> {

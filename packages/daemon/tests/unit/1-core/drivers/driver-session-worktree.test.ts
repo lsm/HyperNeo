@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway';
+import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 import { createMailboxEntry } from '../../../../src/lib/mailbox/entry';
@@ -50,13 +52,16 @@ describe('hyperneoSessionControl withdraw', () => {
       throw new Error('must not restore');
     });
     const revoke = mock(
-      async (id: string, mode: string, expected: 'deferred', commit: () => void) => {
+      async (id: string, mode: string, expected: 'deferred', withdrawalJobId: string) => {
         expect(mode).toBe('remove');
-        return fixture.db.transaction(() => {
-          const removed = fixture.sdkMessageRepo.deletePendingUserMessage('owned', id, expected);
-          if (removed?.uuid) commit();
-          return { changed: !!removed };
-        })();
+        const removed = await gatewayFor(fixture.db).run(sdkPendingRemoval, {
+          sessionId: 'owned',
+          messageDbId: id,
+          mode: 'remove',
+          expectedStatus: expected,
+          withdrawalJobId,
+        });
+        return { changed: !!removed };
       }
     );
     const controls = hyperneoSessionControl({
@@ -66,6 +71,7 @@ describe('hyperneoSessionControl withdraw', () => {
           getSession: restore,
         },
         db: {
+          gateway: gatewayFor(fixture.db),
           getDatabase: () => fixture.db,
           getSDKMessageRepo: () => fixture.sdkMessageRepo,
           deletePendingUserMessage: (
@@ -94,7 +100,7 @@ describe('hyperneoSessionControl withdraw', () => {
       );
     expect(revoke).toHaveBeenCalledTimes(cached ? (status === 'deferred' ? 1 : 2) : 0);
     if (cached)
-      expect(revoke).toHaveBeenCalledWith('db-input', 'remove', 'deferred', expect.any(Function));
+      expect(revoke).toHaveBeenCalledWith('db-input', 'remove', 'deferred', expect.any(String));
   });
 });
 

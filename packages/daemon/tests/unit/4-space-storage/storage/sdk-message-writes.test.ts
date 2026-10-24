@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { TableChange } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -76,21 +76,26 @@ async function changesThroughProxy(): Promise<TableChange[]> {
   const facade = {
     getDatabase: () => db,
     saveSDKMessage: (...args: Parameters<Writes['saveSDKMessage']>) =>
-      Promise.resolve(repository!.saveSDKMessage(...args)),
+      Promise.resolve(repository!.write('saveSDKMessage', ...args)),
     saveUserMessage: async (...args: Parameters<Writes['saveUserMessage']>) =>
-      repository!.saveUserMessage(...args),
+      repository!.write('saveUserMessage', ...args),
     updateMessageStatus: async (...args: Parameters<Writes['updateMessageStatus']>) =>
-      repository!.updateMessageStatus(...args),
+      repository!.write('updateMessageStatus', ...args),
     updateMessageTimestamp: async (...args: Parameters<Writes['updateMessageTimestamp']>) =>
-      repository!.updateMessageTimestamp(...args),
+      repository!.write('updateMessageTimestamp', ...args),
     deletePendingUserMessage: async (...args: Parameters<Writes['deletePendingUserMessage']>) =>
-      repository!.deletePendingUserMessage(...args),
+      repository!.write('deletePendingUserMessage', ...args),
     deleteMessagesAfter: async (...args: Parameters<Writes['deleteMessagesAfter']>) =>
-      repository!.deleteMessagesAfter(...args),
+      repository!.write('deleteMessagesAfter', ...args),
     deleteMessagesAtAndAfter: async (...args: Parameters<Writes['deleteMessagesAtAndAfter']>) =>
-      repository!.deleteMessagesAtAndAfter(...args),
+      repository!.write('deleteMessagesAtAndAfter', ...args),
   };
   const reactiveDb = createReactiveDatabase(facade as never);
+  const gateway = new DbGateway(':memory:', db);
+  bindGateway(db, gateway);
+  gateway.onChanges = (changes) => {
+    for (const change of changes) reactiveDb.notifyChange(change.table, change.scope);
+  };
   repository = new SDKMessageRepository(db, reactiveDb);
   reactiveDb.on('change', ({ tables, scope }) => {
     for (const table of tables) changes.push(scope ? { table, scope } : { table });
@@ -121,7 +126,7 @@ async function changesThroughGateway(): Promise<TableChange[]> {
 }
 
 describe('sdkMessageWrites', () => {
-  test('records the same table changes and scopes the reactive proxy announced', async () => {
+  test('replays the same scoped changes through the facade without proxy duplicates', async () => {
     const proxied = await changesThroughProxy();
     const recorded = await changesThroughGateway();
 

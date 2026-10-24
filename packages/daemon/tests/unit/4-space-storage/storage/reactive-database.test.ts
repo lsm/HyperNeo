@@ -215,15 +215,14 @@ describe('ReactiveDatabase', () => {
       expect(msgEvents.length).toBe(0);
     });
 
-    test('change:sdk_messages waits until an async save settles', async () => {
+    test('change:global_settings waits until an async settings save settles', async () => {
       let settle: (saved: boolean) => void = () => {};
-      db.saveSDKMessage = () => new Promise<boolean>((resolve) => (settle = resolve));
+      db.saveGlobalSettings = (() =>
+        new Promise<boolean>((resolve) => (settle = resolve))) as never;
       const msgEvents: unknown[] = [];
-      reactiveDb.on('change:sdk_messages', () => msgEvents.push(1));
+      reactiveDb.on('change:global_settings', () => msgEvents.push(1));
 
-      const saved = reactiveDb.db.saveSDKMessage('pt4', {
-        type: 'assistant',
-      } as unknown as Parameters<Database['saveSDKMessage']>[1]);
+      const saved = reactiveDb.db.saveGlobalSettings({});
       await Promise.resolve();
       expect(msgEvents.length).toBe(0);
 
@@ -322,11 +321,10 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('proxied writes that settle later', () => {
-    const message = { type: 'assistant' } as unknown as Parameters<Database['saveSDKMessage']>[1];
-
     function deferSaves(): Array<() => void> {
       const settle: Array<() => void> = [];
-      db.saveSDKMessage = () => new Promise<boolean>((resolve) => settle.push(() => resolve(true)));
+      db.saveGlobalSettings = (() =>
+        new Promise<boolean>((resolve) => settle.push(() => resolve(true)))) as never;
       return settle;
     }
 
@@ -334,31 +332,15 @@ describe('ReactiveDatabase', () => {
       await db.createSession(makeSession('late'));
       const settle = deferSaves();
       const events: unknown[] = [];
-      reactiveDb.on('change:sdk_messages', (event) => events.push(event));
+      reactiveDb.on('change:global_settings', (event) => events.push(event));
 
-      const write = reactiveDb.db.saveSDKMessage('late', message);
+      const write = reactiveDb.db.saveGlobalSettings({});
       await Promise.resolve();
       expect(events).toEqual([]);
 
       settle[0]();
       await write;
       expect(events).toHaveLength(1);
-    });
-
-    test('scopes the change by the session as it was when the write was issued', async () => {
-      await db.createSession(
-        makeSession('moved', { context: { spaceId: 'space-1', taskId: 'task-1' } })
-      );
-      const settle = deferSaves();
-      const scopes: unknown[] = [];
-      reactiveDb.on('change:sdk_messages', (event) => scopes.push(event.scope?.taskId));
-
-      const write = reactiveDb.db.saveSDKMessage('moved', message);
-      await db.updateSession('moved', { context: { spaceId: 'space-1', taskId: 'task-2' } });
-      settle[0]();
-      await write;
-
-      expect(scopes).toEqual(['task-1']);
     });
 
     test('a committed batch emits now and its pending write emits once it lands', async () => {
@@ -368,14 +350,14 @@ describe('ReactiveDatabase', () => {
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.saveSDKMessage('batched', message);
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.commitTransaction();
       expect(events.map((event) => event.tables)).toEqual([['space_tasks']]);
 
       settle[0]();
       await write;
-      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['sdk_messages']]);
+      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['global_settings']]);
     });
 
     test('a later aborted batch keeps the change of a committed batch write', async () => {
@@ -385,7 +367,7 @@ describe('ReactiveDatabase', () => {
       reactiveDb.on('change', (data) => tables.push(data.tables));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.saveSDKMessage('committed', message);
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.commitTransaction();
       reactiveDb.beginTransaction();
       reactiveDb.notifyChange('space_tasks');
@@ -393,7 +375,7 @@ describe('ReactiveDatabase', () => {
       settle[0]();
       await write;
 
-      expect(tables).toEqual([['sdk_messages']]);
+      expect(tables).toEqual([['global_settings']]);
     });
 
     test('a write landing inside an unrelated batch survives that batch aborting', async () => {
@@ -402,14 +384,14 @@ describe('ReactiveDatabase', () => {
       const tables: string[][] = [];
       reactiveDb.on('change', (data) => tables.push(data.tables));
 
-      const write = reactiveDb.db.saveSDKMessage('outside', message);
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.beginTransaction();
       settle[0]();
       await write;
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.abortTransaction();
 
-      expect(tables).toEqual([['sdk_messages']]);
+      expect(tables).toEqual([['global_settings']]);
     });
 
     test('an aborted batch drops the change of a write that lands later', async () => {
@@ -419,15 +401,15 @@ describe('ReactiveDatabase', () => {
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.saveSDKMessage('aborted', message);
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.abortTransaction();
       settle[0]();
       await write;
-      reactiveDb.notifyChange('sdk_messages');
+      reactiveDb.notifyChange('global_settings');
 
-      expect(events.map((event) => event.tables)).toEqual([['sdk_messages']]);
-      expect(reactiveDb.getTableVersion('sdk_messages')).toBe(2);
+      expect(events.map((event) => event.tables)).toEqual([['global_settings']]);
+      expect(reactiveDb.getTableVersion('global_settings')).toBe(2);
     });
   });
 

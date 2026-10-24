@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { sdkDeliveryTeardown } from '../../storage/repositories/sdk-message-transactions.ts';
 import { ChangeRecorder } from '../../storage/db-gateway/db-op.ts';
 import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.ts';
 import type { MessageOrigin } from '@hyperneo/shared';
@@ -181,6 +183,15 @@ export function cancelMailboxJobsStage<T extends MailboxPersistenceContext>(
   };
 }
 
+async function routeMailboxTeardown(ctx: MailboxCancelCtx): Promise<MailboxCancelCtx> {
+  const { preserveDeferred, deliveries } = ctx.deps;
+  const result = await gatewayFor(ctx.deps.db.getDatabase()).run(sdkDeliveryTeardown, {
+    sessionId: ctx.sessionId,
+    options: { preserveDeferred, deliveries },
+  });
+  return { ...ctx, ...result };
+}
+
 export async function materializeCancelledEntriesStage(
   ctx: MailboxCancelCtx
 ): Promise<MailboxCancelCtx> {
@@ -229,7 +240,7 @@ const runCancelMailboxForSession = (
   .input(['ctx'])
   .pipe(resolveCancelMailboxReposStage, 'ctx', 'ctx')
   .pipe('!cancelUnsupported', 'ctx')
-  .pipe(cancelMailboxJobsStage, 'ctx', 'ctx')
+  .pipe(routeMailboxTeardown, 'ctx', 'ctx')
   .pipe(materializeCancelledEntriesStage, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: MailboxCancelCtx) => Promise<MailboxCancelCtx>;
 
