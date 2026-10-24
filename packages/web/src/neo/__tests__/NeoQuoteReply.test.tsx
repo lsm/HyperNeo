@@ -198,12 +198,14 @@ function deferredSend() {
 }
 
 describe('Neo quote reply through live chat and durable intake', () => {
-  it.each([
-    { desktop: false, draft: '' },
-    { desktop: true, draft: '' },
-    { desktop: false, draft: 'My existing draft' },
-    { desktop: true, draft: 'My existing draft' },
-  ].flatMap((test) => ['question', 'ask'].map((kind) => ({ ...test, kind }))))(
+  it.each(
+    [
+      { desktop: false, draft: '' },
+      { desktop: true, draft: '' },
+      { desktop: false, draft: 'My existing draft' },
+      { desktop: true, draft: 'My existing draft' },
+    ].flatMap((test) => ['question', 'ask'].map((kind) => ({ ...test, kind })))
+  )(
     'replies to $kind with desktop=$desktop and draft="$draft"',
     async ({ desktop, draft, kind }) => {
       vi.stubGlobal('matchMedia', (query: string) => ({
@@ -289,7 +291,8 @@ describe('Neo quote reply through live chat and durable intake', () => {
       await waitFor(() => expect(calls()).toHaveLength(1));
       expect(calls()[0][1].input).toMatchObject({
         content: draft || 'Use lsm/HyperNeo.',
-        replyTo: kind === 'ask' ? { kind: 'ask', id: 'question-ask' } : { kind: 'question', id: 'q3' },
+        replyTo:
+          kind === 'ask' ? { kind: 'ask', id: 'question-ask' } : { kind: 'question', id: 'q3' },
       });
     }
   );
