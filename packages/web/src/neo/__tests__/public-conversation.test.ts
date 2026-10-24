@@ -3,6 +3,7 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import {
   admitNeoPublicSources,
+  neoPublicationAnswerOrigins,
   projectNeoPublicConversation,
   requireNeoPublicIdentities,
 } from '../public-conversation.ts';
@@ -306,4 +307,31 @@ describe('session message rows', () => {
       result.entries.map((entry) => (entry.kind === 'session' ? entry.message.text : entry.kind))
     ).toEqual(['ask', 'PR #9 is up\nCI green']);
   });
+});
+
+it('does not classify a card reply notice or its edit history as an answered human input', () => {
+  const origin = { sessionId: root, messageId: 'human' };
+  expect(
+    neoPublicationAnswerOrigins({
+      conversationId: id,
+      publicationId: 'notice',
+      sequence: 1,
+      createdAt: at,
+      shortText: 'Card',
+      fullText: 'Card',
+      links: [],
+      askOrigin: origin,
+      answerInput: origin,
+      revisions: [
+        {
+          revisionId: 'edit',
+          shortText: 'Old',
+          fullText: 'Old',
+          createdAt: at,
+          producerInput: origin,
+        },
+      ],
+      cardReply: { sourceMessageIds: ['human'], askId: 'a', questionId: 'q', mutationId: 'm' },
+    })
+  ).toEqual([]);
 });

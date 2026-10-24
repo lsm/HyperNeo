@@ -423,6 +423,7 @@ function QuestionBox({
 
 export function NeoAskTodos({
   entry,
+  focusedQuestion,
   disabled,
   onAnswer,
   onReply,
@@ -432,6 +433,7 @@ export function NeoAskTodos({
   onLoadDone,
 }: {
   entry: NeoAskEntry;
+  focusedQuestion?: { questionId: string };
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onReply?: (question: NeoQuestionEntry) => void;
@@ -442,6 +444,31 @@ export function NeoAskTodos({
 }) {
   const cardRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
+  const focusedQuestionId = focusedQuestion?.questionId;
+  useEffect(() => {
+    if (focusedQuestionId) setOpen(true);
+  }, [focusedQuestion]);
+  useEffect(() => {
+    if (!open || !focusedQuestionId) return;
+    const target = document.getElementById(`neo-ref-question-${focusedQuestionId}`);
+    if (!target || !cardRef.current?.contains(target)) return;
+    const tabIndex = target.getAttribute('tabindex');
+    target.tabIndex = -1;
+    target.dataset.cardReplyFocus = 'true';
+    target.classList.add('ring-2', 'ring-accent');
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ block: 'center' });
+    return () => {
+      delete target.dataset.cardReplyFocus;
+      target.classList.remove('ring-2', 'ring-accent');
+      if (tabIndex === null) target.removeAttribute('tabindex');
+      else target.setAttribute('tabindex', tabIndex);
+    };
+  }, [
+    open,
+    focusedQuestion,
+    entry.questions.find((question) => question.id === focusedQuestionId)?.state,
+  ]);
   const [doneOpen, setDoneOpen] = useState(false);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
   const [stalled, setStalled] = useState(false);

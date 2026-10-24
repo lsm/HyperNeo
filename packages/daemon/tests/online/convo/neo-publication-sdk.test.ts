@@ -691,7 +691,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     );
     expect(webRead).toEqual({
       state: 'ready',
-      items: page.items.map(({ cardReply: _cardReply, ...item }) => item),
+      items: page.items,
       nextAfter: page.items.at(-1)!.sequence,
     });
     const unansweredId = randomUUID();

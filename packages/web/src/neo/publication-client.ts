@@ -1,5 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublication, NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import { ARTIFACT_KINDS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
@@ -139,6 +139,20 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
         !row.replyTo.every((id) => typeof id === 'string' && uuid.test(id))))
   )
     return null;
+  const cardReply = object(row.cardReply);
+  if (
+    row.cardReply !== undefined &&
+    (!cardReply ||
+      !Array.isArray(cardReply.sourceMessageIds) ||
+      !cardReply.sourceMessageIds.length ||
+      cardReply.sourceMessageIds.length > 100 ||
+      !cardReply.sourceMessageIds.every((id) => typeof id === 'string' && uuid.test(id)) ||
+      !text(cardReply.askId, 160) ||
+      !text(cardReply.questionId, 160) ||
+      typeof cardReply.mutationId !== 'string' ||
+      !uuid.test(cardReply.mutationId))
+  )
+    return null;
   const artifacts = row.artifacts === undefined ? undefined : artifactRefs(row.artifacts);
   if (artifacts === null) return null;
   const revisions: NonNullable<NeoPublication['revisions']>[number][] = [];
@@ -176,6 +190,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     ...(ask ? { askOrigin: ask } : {}),
     ...(producer ? { producerInput: producer } : {}),
     links,
+    ...(cardReply ? { cardReply: cardReply as unknown as NeoCardReply } : {}),
     ...(row.replyTo !== undefined ? { replyTo: row.replyTo as string[] } : {}),
     ...(typeof row.editedAt === 'string' ? { editedAt: row.editedAt } : {}),
     ...(typeof row.editedBy === 'string' ? { editedBy: row.editedBy } : {}),

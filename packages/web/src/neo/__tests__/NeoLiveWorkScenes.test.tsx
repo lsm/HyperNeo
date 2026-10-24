@@ -1,6 +1,11 @@
+import { locale } from '../../lib/i18n/index.ts';
+import type { NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
+import type { NeoPublicEntry } from '../public-conversation.ts';
 vi.mock('../NeoGoals.tsx', () => ({ NeoGoals: () => null }));
 import { signal } from '@preact/signals';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
@@ -18,7 +23,18 @@ vi.mock('../NeoComposer.tsx', () => ({
   ),
 }));
 vi.mock('../NeoConversation.tsx', () => ({
-  NeoConversation: () => <p>Durable fictional answer</p>,
+  NeoConversation: (props: {
+    publicConversation?: Parameters<typeof NeoPublicConversation>[0]['conversation'];
+    onOpenWork?: Parameters<typeof NeoPublicConversation>[0]['onOpenWork'];
+  }) =>
+    props.publicConversation ? (
+      <NeoPublicConversation
+        conversation={props.publicConversation}
+        onOpenWork={props.onOpenWork}
+      />
+    ) : (
+      <p>Durable fictional answer</p>
+    ),
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 
@@ -63,7 +79,7 @@ function mount(publicMode = true, empty = false) {
       ? {
           conversationId: root.slice(4),
           status: 'ready',
-          entries: [],
+          entries: [] as NeoPublicEntry[],
           hasEarlier: false,
           hasMore: false,
         }
@@ -143,5 +159,170 @@ describe('Neo public work scenes', () => {
     expect(container.textContent).not.toContain('Checking with');
     expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
+  });
+});
+
+function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = false) {
+  const view = mount();
+  const question: NeoQuestionEntry = {
+    id: 'q1',
+    askId: 'waiting',
+    text: 'Choose a sign-off',
+    kind: 'choice',
+    options: ['Approve', 'Revise'],
+    multiple: false,
+    noLabel: null,
+    yesLabel: null,
+    startTodos: null,
+    state,
+    answer: state === 'answered' ? ['Approve'] : null,
+    answeredBy: state === 'answered' ? 'button' : null,
+    answeredAt: null,
+    retiredReason: 'No longer needed',
+    replacedBy: replacement ? 'q2' : null,
+    createdAt: 1,
+  };
+  const publication: NeoPublication = {
+    conversationId: root.slice(4),
+    publicationId: '20000000-0000-4000-8000-000000000001',
+    sequence: 1,
+    createdAt: '2026-10-24T12:00:00Z',
+    shortText: 'I replied · View card · Choose a sign-off',
+    fullText: 'Do not copy these options into chat',
+    links: [],
+    cardReply: {
+      sourceMessageIds: ['30000000-0000-4000-8000-000000000001'],
+      askId: 'waiting',
+      questionId: 'q1',
+      mutationId: '40000000-0000-4000-8000-000000000001',
+    },
+  };
+  const questions = [
+    question,
+    ...(replacement
+      ? [
+          {
+            ...question,
+            id: 'q2',
+            text: 'Replacement sign-off',
+            state: 'open' as const,
+            replacedBy: null,
+          },
+        ]
+      : []),
+  ];
+  act(() => {
+    view.model.value = {
+      ...view.model.value,
+      snapshot: {
+        ...view.model.value.snapshot,
+        todoAsks: [testAskEntry('waiting', 'Sign-off card', { questions })],
+      },
+      viewPublicConversation: {
+        ...view.model.value.viewPublicConversation!,
+        entries: [{ kind: 'publication', key: 'card-reply', publication, replyTo: null }],
+      },
+    };
+  });
+  return view;
+}
+
+describe('card reply notice navigation', () => {
+  it.each([true, false])('opens and returns to chat position on desktop=%s', async (desktop) => {
+    vi.stubGlobal('matchMedia', () => ({ matches: desktop }));
+    const { container } = mountCard();
+    if (!desktop) fireEvent.click(screen.getByRole('button', { name: 'Close work list' }));
+    const rail = container.querySelector<HTMLElement>(desktop ? '.neo-chat-rail' : '.neo-scroll')!;
+    rail.scrollTop = 175;
+    const notice = screen.getByRole('button', { name: /I replied · View card/ });
+    expect(notice.textContent).toContain('Choose a sign-off');
+    expect(notice.textContent).not.toContain('Approve');
+    fireEvent.click(notice);
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+    expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
+    expect(container.querySelector('[data-card-reply-focus]')).toBeTruthy();
+    rail.scrollTop = 900;
+    fireEvent.click(screen.getByRole('button', { name: 'Back to chat' }));
+    await waitFor(() => expect(rail.scrollTop).toBe(175));
+  });
+  it('localizes a saved English notice into Chinese without copying options', () => {
+    const previous = locale.value;
+    try {
+      locale.value = 'zh-Hans';
+      mountCard();
+      const notice = screen.getByRole('button', { name: /我给你回了 · 查看卡片/ });
+      expect(notice.textContent).toContain('Choose a sign-off');
+      expect(notice.textContent).not.toContain('Approve');
+      expect(notice.textContent).not.toContain('I replied');
+    } finally {
+      locale.value = previous;
+    }
+  });
+
+  it('re-focuses a repeated click and shows unavailable if an open target disappears', async () => {
+    const { model } = mountCard();
+    const notice = screen.getByRole('button', { name: /I replied · View card/ });
+    fireEvent.click(notice);
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+    notice.focus();
+    fireEvent.click(notice);
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+    act(() => {
+      model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: [] } };
+    });
+    expect(await screen.findByText('This card is no longer available.')).toBeTruthy();
+  });
+
+  it('resolves a retired question to its replacement', async () => {
+    mountCard('retired', true);
+    fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q2'));
+    expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
+  });
+  it.each(['answered', 'retired'] as const)(
+    'opens %s details rather than asking again',
+    async (state) => {
+      mountCard(state);
+      fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+      await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+      expect(screen.queryByRole('button', { name: /^A.*Approve/ })).toBeNull();
+      expect(
+        within(document.activeElement as HTMLElement).getByText(
+          state === 'answered' ? /Approve/ : /No longer needed/
+        )
+      ).toBeTruthy();
+    }
+  );
+  it.each(['missing', 'cycle'])('shows unavailable for a %s replacement link', async (broken) => {
+    const { model } = mountCard('retired', true);
+    const entry = model.value.snapshot.todoAsks[0];
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...entry,
+              questions: entry.questions.map((q) => ({
+                ...q,
+                replacedBy: q.id === 'q1' ? (broken === 'cycle' ? 'q2' : 'gone') : 'q1',
+              })),
+            },
+          ],
+        },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+    expect(await screen.findByText('This card is no longer available.')).toBeTruthy();
+  });
+
+  it('shows an explicit unavailable state when the target is missing', async () => {
+    const { model } = mountCard();
+    act(() => {
+      model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: [] } };
+    });
+    fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+    expect(await screen.findByText('This card is no longer available.')).toBeTruthy();
   });
 });
