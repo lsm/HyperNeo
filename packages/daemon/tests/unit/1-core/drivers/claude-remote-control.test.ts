@@ -243,6 +243,74 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     ]);
   });
 
+  test.each(['desktop-wake', 'rc-toggle'])(
+    'a dead %s gets at most one replacement and a clear failure',
+    async (title) => {
+      const old = record('old', { title, cwd: '/Users/test' });
+      write(old);
+      let now = 0;
+      const base = deps();
+      const result = await openRcToggle(
+        [old],
+        [],
+        {
+          ...base,
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms;
+          },
+          spawn: (args, options) => {
+            const child = base.spawn(args, options);
+            live = [];
+            return child;
+          },
+        },
+        title
+      );
+      expect(result).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: `Claude Code Desktop did not open ${title}.`,
+        },
+      });
+      expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(
+        title === 'desktop-wake' ? 1 : 0
+      );
+      expect(spawned.filter((call) => call.args.includes('--desktop'))).toHaveLength(
+        title === 'desktop-wake' ? 2 : 1
+      );
+    }
+  );
+
+  test('a stale desktop-wake is replaced after its resume never becomes live', async () => {
+    const old = record('old', { title: 'desktop-wake', cwd: '/Users/test' });
+    write(old);
+    let now = 0;
+    const base = deps();
+    const result = await openRcToggle(
+      [old],
+      [],
+      {
+        ...base,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        spawn: (args, options) => {
+          const child = base.spawn(args, options);
+          if (args.at(-1) === 'cli-old') live = [];
+          return child;
+        },
+      },
+      'desktop-wake'
+    );
+    expect(result).toMatchObject({
+      value: { record: { sessionId: 'local_new-rc', permissionMode: 'acceptEdits' } },
+    });
+    expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
+  });
+
   test('leaves a session that already has its Remote Control set alone', async () => {
     write(record('t1', { title: target.title, bridgeSessionIds: ['session_01Abc'] }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());

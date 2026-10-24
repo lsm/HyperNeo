@@ -163,6 +163,38 @@ try {
   assert(concurrent[0].ok && concurrent[1].ok && concurrent[0].value.receipt!.inputId !== concurrent[1].value.receipt!.inputId);
   evidence.push({ concurrentNativeMessages: concurrent, newHelpers: helperPreparationsAfter - helperPreparationsBefore });
   writeFileSync(join(run, 'evidence/fault'), '');
+  if (process.env.VERIFY_STALE_HELPER === '1') {
+    const statePath = join(run, 'evidence/native-sessions.json');
+    const stopHelpers = () => {
+      const state = JSON.parse(readFileSync(statePath, 'utf8')) as Array<{ id: string; title: string; pid: number }>;
+      const ids = state.filter(s => s.title === 'desktop-wake').map(s => s.id);
+      for (const s of state) if (ids.includes(s.id)) s.pid = 0;
+      writeFileSync(statePath, JSON.stringify(state));
+      writeFileSync(join(run, 'evidence/blocked-imports.json'), JSON.stringify(ids));
+      return ids;
+    };
+    const preparations = () => events().filter(e => e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake')).length;
+    const staleIds = stopHelpers();
+    const before = preparations();
+    const recovered = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Stale helper replacement delivers this exact marker' });
+    assert(recovered.ok, JSON.stringify(recovered));
+    assert(recovered.value.receipt?.inputId);
+    assert.equal(preparations() - before, 1);
+    const delivered = events().findLast(e => e.kind === 'native-send')!;
+    assert(!staleIds.includes(String(delivered.helper)));
+    const status = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: recovered.value.receipt });
+    assert(status.ok && status.value.lastReply === 'Completed: Stale helper replacement delivers this exact marker');
+    stopHelpers();
+    writeFileSync(join(run, 'evidence/fault'), 'dead-helpers');
+    const beforeFailure = preparations();
+    const failed = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Never delivered with two dead helpers' });
+    assert(!failed.ok && failed.reason === 'not_delivered', JSON.stringify(failed));
+    assert.match(failed.detail, /Claude Code Desktop did not open desktop-wake/);
+    assert.equal(preparations() - beforeFailure, 1);
+    assert(!events().some(e => e.kind === 'native-send' && e.message === 'Never delivered with two dead helpers'));
+    evidence.push({ staleHelperRecovery: recovered, targetStatus: status, failedReplacement: failed, replacementsPerSend: 1 });
+    writeFileSync(join(run, 'evidence/fault'), '');
+  }
   const humanId = crypto.randomUUID();
   for (const args of [
     ['claude', '-p', '--session-id', humanId, '-n', 'Synthetic human-created session', '--permission-mode', 'acceptEdits', '--', 'Synthetic human opening message'],

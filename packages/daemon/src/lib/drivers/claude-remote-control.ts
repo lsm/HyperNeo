@@ -202,6 +202,7 @@ async function openHelper(
   }
   const live = await waitUntilLive(record.cliSessionId, deps);
   if (!live) {
+    if (found && title === 'desktop-wake') return openHelper([], [], deps, title);
     return { reason: reject('not_delivered', `Claude Code Desktop did not open ${title}.`) };
   }
   return readyHelper(record, live);

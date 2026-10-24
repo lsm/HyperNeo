@@ -104,3 +104,16 @@ Historical native evidence is local, outside this repository, under
 `/private/tmp/neo-claude-b1-native-check/evidence/`. The human confirmed phone
 visibility of probe `b19fce90`; do not transfer that assertion to a different
 session. Re-run against the installed versions when validating native behavior.
+
+For stale forwarding-helper recovery, run the isolated command above with
+`VERIFY_STALE_HELPER=1` in a fresh run directory. Allow about three minutes for
+three real 60-second liveness deadlines. The fixture retains stopped helper
+records but prevents their resumed processes from registering as live. The first
+`work.send` must create exactly one fresh helper and return the target input
+receipt; `work.status` must show the exact marker's completed reply. The next
+send also prevents the replacement from going live: it must return one clear
+`not_delivered` result with exactly one creation, and no native target input.
+`observed.json` retains both RPC results and the target readback. The focused
+`claude-remote-control.test.ts` contracts also cover a dead authorized rc-toggle:
+it must fail without preparing any replacement. No GUI or real Desktop state
+is used by this profile.
