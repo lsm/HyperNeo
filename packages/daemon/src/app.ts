@@ -183,7 +183,7 @@ import {
   seedDefaultMcpEntries,
 } from './lib/mcp/index.ts';
 import { FileIndex } from './lib/file-index.ts';
-import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
+import { Logger, installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
 import { EvolutionLogEvidenceService } from './lib/evolution/log-evidence-service.ts';
@@ -197,6 +197,8 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
+
+const mailboxLog = new Logger('mailbox');
 
 interface ReconcilePersistedDiscoveryDeps {
   credentialManager: ProviderCredentialManager;
@@ -1299,7 +1301,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-      logError,
+      logError: (message) => mailboxLog.error(message),
     });
 
     messageDeliveryProcessor.register(

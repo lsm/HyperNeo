@@ -248,8 +248,12 @@ export function createMailboxDeadHandler(
   return (job: Job): void => {
     const rawId =
       typeof job.payload?.id === 'string' && job.payload.id.length > 0 ? job.payload.id : 'unknown';
-    const entryId = parseMailboxEntry(job.payload)?.id ?? rawId;
-    logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
+    const entry = parseMailboxEntry(job.payload);
+    const entryId = entry?.id ?? rawId;
+    const target = sessionFailureTarget(entry);
+    logError(
+      `mailbox: entry ${entryId} session ${target?.sessionId ?? 'unknown'} dead-lettered: ${job.error ?? 'unknown error'}`
+    );
     if (deps) void materializeMailboxFailure(job, deps);
   };
 }

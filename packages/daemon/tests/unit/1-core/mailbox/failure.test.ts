@@ -114,13 +114,16 @@ function findMaterializeFailureEvent(
 }
 
 describe('createMailboxDeadHandler', () => {
-  test('logs a valid entry id and job error without writing a settlement', () => {
+  test('logs a valid entry id, target session and job error without writing a settlement', () => {
     const messages: string[] = [];
     const handler = createMailboxDeadHandler((message) => messages.push(message));
-    const job = makeDeadJob({ id: 'entry-1' }, 'delivery failed');
+    const entry = makeEntry();
+    const job = makeDeadJob(entry as unknown as Record<string, unknown>, 'delivery failed');
 
     expect(handler(job)).toBeUndefined();
-    expect(messages).toEqual(['mailbox: entry entry-1 dead-lettered: delivery failed']);
+    expect(messages).toEqual([
+      `mailbox: entry ${entry.id} session ${SESSION_ID} dead-lettered: delivery failed`,
+    ]);
     expect(job.result).toBeNull();
   });
 
@@ -258,7 +261,9 @@ describe('createMailboxDeadHandler', () => {
     const job = makeDeadJob({ garbage: true }, null);
 
     expect(handler(job)).toBeUndefined();
-    expect(messages).toEqual(['mailbox: entry unknown dead-lettered: unknown error']);
+    expect(messages).toEqual([
+      'mailbox: entry unknown session unknown dead-lettered: unknown error',
+    ]);
     expect(job.result).toBeNull();
   });
 
