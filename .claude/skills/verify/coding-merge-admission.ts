@@ -63,7 +63,7 @@ try {
   ]) { publish(bad); assert.equal((await prepare()).accepted, false, JSON.stringify(bad)); }
   publish(); await setting('humanSignoff', ['src/**']);
   assert.equal((await prepare()).accepted, false, 'Applicable human sign-off required');
-  publish({ reviews: [[...reviews, { ...reviews[0], user: { login: 'human', type: 'User' }, html_url: `${url}#human` }]] });
+  publish({ reviews: [[{ ...reviews[0], user: null }], reviews, [{ ...reviews[0], user: { login: 'human', type: 'User' }, html_url: `${url}#human` }]] });
   const admitted = await prepare();
   assert.equal(admitted.accepted, true); assert.equal(admitted.head, head);
   assert.deepEqual(admitted.command, ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]);

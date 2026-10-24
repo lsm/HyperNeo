@@ -222,6 +222,18 @@ describe('coding merge operation', () => {
       expect((await f.prepare()).accepted).toBe(false);
     }
   );
+  test('historical null-user reviews cannot block a current bot approval or supply sign-off', async () => {
+    const f = fixture();
+    f.stage('qa');
+    f.data.reviews.unshift([
+      { ...f.data.reviews[0][0], user: null } as unknown as (typeof f.data.reviews)[number][number],
+    ]);
+    expect((await f.prepare()).accepted).toBe(true);
+    f.setting('humanSignoff', ['src/**']);
+    expect((await f.prepare()).accepted).toBe(false);
+    f.data.reviews.push([{ ...f.data.reviews[1][0], user: { login: 'human', type: 'User' } }]);
+    expect((await f.prepare()).accepted).toBe(true);
+  });
   test('later bot changes requested overrides the approval', async () => {
     const f = fixture();
     f.stage('qa');
