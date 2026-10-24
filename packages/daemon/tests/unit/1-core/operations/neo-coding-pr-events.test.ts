@@ -40,11 +40,11 @@ const response = (open: unknown[], done: unknown[] = []) => ({
   },
 });
 
-function setup() {
+function setup(activatedAt = 0) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
-  createCodingPackTables(db);
+  createCodingPackTables(db, activatedAt);
   const ledger = new CodingPrLedgerRepository(db);
   const events = new CodingPrEventRepository(db);
   const told: { ref: unknown; key: string; text: string }[] = [];
@@ -69,7 +69,7 @@ function setup() {
     db
       .prepare('UPDATE pack_coding_pr_ledger SET owner = ? WHERE number = ?')
       .run(JSON.stringify(owner), number);
-  return { db, told, woken, cycle, own };
+  return { db, ledger, events, deps, told, woken, cycle, own };
 }
 
 describe('PR ledger events', () => {
@@ -98,6 +98,67 @@ describe('PR ledger events', () => {
     expect(told[2].text).toBe('lsm/a#1 \"PR 1\" was merged on head head1ab.');
     expect(woken).toEqual([]);
     db.close();
+  });
+
+  test('a terminal observation survives a lost transition return and retries on the next sweep', async () => {
+    const { db, ledger, told, cycle, own } = setup();
+    try {
+      await cycle(response([node(8548)]), 100);
+      own(8548);
+      const merged = response(
+        [],
+        [node(8548, { state: 'MERGED', closedAt: new Date(150).toISOString() })]
+      );
+      await reconcileCodingPrLedger(ledger, ['lsm/a'], async () => merged, 200);
+      expect(told).toHaveLength(0);
+      await cycle(merged, 300);
+      expect(told).toEqual([
+        expect.objectContaining({ key: 'neo-pr-event:lsm/a#8548:head8548abc:merged', ref: owner }),
+      ]);
+      await cycle(merged, 400);
+      expect(told).toHaveLength(1);
+      expect(
+        db.prepare('SELECT told_at FROM pack_coding_pr_ledger WHERE number=8548').get()
+      ).toMatchObject({ told_at: expect.any(Number) });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a newly merged first observation waits for its owner, survives a rejected tell and repository restart', async () => {
+    const { db, events, ledger, deps, told, cycle, own } = setup(100);
+    try {
+      const merged = response(
+        [],
+        [node(8548, { state: 'MERGED', closedAt: new Date(150).toISOString() })]
+      );
+      await cycle(merged, 200);
+      expect(told).toHaveLength(0);
+      own(8548);
+      await deliverCodingPrEvents(events, [], { ...deps, tell: async () => false });
+      await deliverCodingPrEvents(new CodingPrEventRepository(db), [], deps);
+      expect(told).toHaveLength(1);
+      await cycle(merged, 300);
+      expect(told).toHaveLength(1);
+      expect(ledger.list()[0].state).toBe('merged');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('terminal history predating activation is not replayed to existing owners', async () => {
+    const { db, events, deps, told, cycle, own } = setup(1000);
+    try {
+      await cycle(
+        response([], [node(1, { state: 'MERGED', closedAt: new Date(50).toISOString() })]),
+        1100
+      );
+      own(1);
+      await deliverCodingPrEvents(events, [], deps);
+      expect(told).toHaveLength(0);
+    } finally {
+      db.close();
+    }
   });
 
   test('an unowned PR stays quiet and a claimed PR receives its ledger event', async () => {
