@@ -118,6 +118,33 @@ describe('NeoAskTodos', () => {
     expect(reply).not.toHaveBeenCalled();
   });
 
+  it('keeps the focused session opener on the ask after its question is retired', () => {
+    locale.value = 'en';
+    const onOpen = vi.fn();
+    const focusedSession = {
+      adapter: 'hyperneo',
+      id: 'discussion',
+      name: 'Positioning discussion',
+      label: 'HyperNeo · Positioning discussion',
+      provider: 'Anthropic',
+      link: '/session/discussion',
+    };
+    const original = entry({
+      questions: [question('prepared', { state: 'retired', retiredReason: 'Discuss directly' })],
+    });
+    const app = render(
+      <NeoAskTodos
+        entry={{ ...original, ask: { ...original.ask, ...{ focusedSession } } }}
+        onOpen={onOpen}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.container.querySelector('[data-ask-question]')).toBeNull();
+    expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: 'Open session: Positioning discussion' }));
+    expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
+  });
+
   it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge'])(
     'opens a question source through the existing opener: %s',
     async (link) => {

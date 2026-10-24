@@ -233,6 +233,48 @@ describe('neo.question operations', () => {
     }
   );
 
+  test('keeps the explicitly focused session on the ask after card retirement', async () => {
+    const { asked, call, store } = setup();
+    const sourceSession = { adapter: 'codex-desktop', id: 'discussion' };
+    const ordinary = await asked({ kind: 'reply', text: 'Ordinary report', sourceSession });
+    expect(store.getAsk('ask')).not.toHaveProperty('focusedSession');
+    const ready = await asked({
+      kind: 'reply',
+      text: 'Prepared discussion',
+      sourceSession,
+      focused: true,
+    });
+    const captured = ready.sourceSession;
+    expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
+    await call('neo.question.retire', { questionId: ready.id, reason: 'Discuss directly' });
+    await call('neo.question.retire', { questionId: ordinary.id, reason: 'Superseded' });
+    await asked({
+      kind: 'reply',
+      text: 'Unrelated worker',
+      sourceSession: { ...sourceSession, id: 'other' },
+    });
+    expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
+    expect(store.getAsks(['ask'])[0]).toMatchObject({ focusedSession: captured });
+    expect(store.listAsks(undefined, 10)[0]).toMatchObject({ focusedSession: captured });
+  });
+
+  test('refuses a focused card without a single readable session', async () => {
+    const { call, store } = setup();
+    for (const sourceSession of [undefined, { adapter: 'codex-desktop', id: 'missing' }]) {
+      expect(
+        await call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Ready',
+          focused: true,
+          sourceSession,
+        })
+      ).toMatchObject({ ok: false });
+    }
+    expect(store.listQuestions('ask')).toEqual([]);
+    expect(store.getAsk('ask')).not.toHaveProperty('focusedSession');
+  });
+
   test('retains one explicit source session through read, answer and list payloads', async () => {
     const { asked, call, store } = setup();
     const source = { adapter: 'codex-desktop', id: 'source-worker', daemon: 'remote-machine' };
