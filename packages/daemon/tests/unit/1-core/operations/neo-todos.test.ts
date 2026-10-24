@@ -31,6 +31,7 @@ function setup(packs: NeoPack[] = []) {
     createdAt: 1,
   });
   const stopFails = { value: false };
+  const duringStop = { value: (_todo: NeoTodo) => {} };
   const ops = Object.fromEntries(
     createNeoTodoOperations(
       repo,
@@ -42,6 +43,7 @@ function setup(packs: NeoPack[] = []) {
         retry: async () => ({ ok: false as const, reason: 'not failed' }),
         stop: async (todo) => {
           stopped.push(todo.id);
+          duringStop.value(todo);
           return stopFails.value ? 'stop_failed: driver offline' : null;
         },
       },
@@ -53,7 +55,7 @@ function setup(packs: NeoPack[] = []) {
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as
       | { ok: true; todo: NeoTodo; todos: NeoTodo[] }
       | { ok: false; reason: string };
-  return { db, repo, call, stopped, stopFails, changes: () => changes };
+  return { db, repo, call, stopped, stopFails, duringStop, changes: () => changes };
 }
 
 describe('neo.todo operations', () => {
@@ -194,6 +196,94 @@ describe('neo.todo operations', () => {
       ok: false,
       reason: 'no session',
     });
+  });
+
+  test('refuses to finish a todo while its card waits for the human, and keeps the card', async () => {
+    const { call, repo, stopped } = setup();
+    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    if (!added.ok) throw new Error(added.reason);
+    const card = repo.askQuestion(
+      'card-1',
+      'ask',
+      {
+        text: 'Approve step 1?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: added.todo.id,
+      },
+      Date.now()
+    );
+    const refused = {
+      ok: false,
+      reason: 'card_unanswered: card card-1 is still waiting for the human.',
+    };
+    expect(await call('neo.todo.close', { todoId: added.todo.id, reason: 'Done' })).toEqual(
+      refused
+    );
+    expect(
+      await call('neo.todo.edit', { todoId: added.todo.id, done: 'met', evidence: '#12 merged' })
+    ).toEqual(refused);
+    expect(repo.getQuestion(card.id)?.state).toBe('open');
+    expect(repo.getTodo(added.todo.id)?.state).not.toBe('done');
+    expect(stopped).toEqual([]);
+  });
+
+  test('a card asked while the close stops the session keeps the todo open', async () => {
+    const { call, repo, duringStop } = setup();
+    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    if (!added.ok) throw new Error(added.reason);
+    duringStop.value = (todo) => {
+      repo.askQuestion(
+        'card-late',
+        'ask',
+        {
+          text: 'Approve step 2?',
+          kind: 'yesno',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todoId: todo.id,
+        },
+        Date.now()
+      );
+    };
+    expect(await call('neo.todo.close', { todoId: added.todo.id, reason: 'Done' })).toEqual({
+      ok: false,
+      reason: 'card_unanswered: card card-late is still waiting for the human.',
+    });
+    expect(repo.getQuestion('card-late')?.state).toBe('open');
+    expect(repo.getTodo(added.todo.id)?.state).not.toBe('done');
+  });
+
+  test('finishes a todo once its card is answered', async () => {
+    const { call, repo } = setup();
+    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    if (!added.ok) throw new Error(added.reason);
+    const card = repo.askQuestion(
+      'card-1',
+      'ask',
+      {
+        text: 'Approve step 1?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: added.todo.id,
+      },
+      Date.now()
+    );
+    repo.answerQuestion(card, 'yes', 'button', Date.now());
+    const closed = await call('neo.todo.close', { todoId: added.todo.id, reason: 'Approved' });
+    expect(closed.ok && closed.todo).toMatchObject({ state: 'done', evidence: 'Approved' });
+    expect(repo.getQuestion(card.id)).toMatchObject({ state: 'answered', answer: 'yes' });
   });
 
   test('a close whose stop fails leaves the todo unchanged and says so', async () => {
