@@ -472,7 +472,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.retry',
       description:
-        'Retry a failed todo in place with a new attempt, keeping its todoId. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. To use another target, ask the human.',
+        'Retry a failed todo in place with a new attempt, keeping its todoId. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. Choose the delivery channel or adapter for reaching the same worker session yourself; never ask the human to choose it. Ask the human before changing which worker or target does the work.',
       inputSchema: Retry,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
