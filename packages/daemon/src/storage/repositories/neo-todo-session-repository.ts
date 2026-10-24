@@ -90,6 +90,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       .run(todoId, JSON.stringify(target));
   }
 
+  bind(todoId: string, ref: WorkRef, now: number): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO neo_todo_sessions
+      (todo_id, target, ref, started_at, follow_anchor)
+      VALUES (?, ?, ?, ?, ?)`)
+      .run(todoId, JSON.stringify({ verb: 'adopt', ref }), JSON.stringify(ref), now, now);
+  }
+
   readLinks(todoId: string): { link: string | null; remoteLink: string | null } {
     const row = this.db
       .prepare(

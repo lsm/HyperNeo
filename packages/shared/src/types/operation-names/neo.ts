@@ -37,6 +37,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.session.track',
   'neo.snapshot',
   'neo.todo.add',
+  'neo.todo.bind',
   'neo.todo.close',
   'neo.todo.continue',
   'neo.todo.edit',

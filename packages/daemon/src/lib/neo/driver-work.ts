@@ -49,7 +49,10 @@ const NeoSendWorkTarget = z.object({ verb: z.literal('send'), ref: WorkRefSchema
 export const NeoTodoTargetSchema = z.discriminatedUnion('verb', [
   NeoStartWorkTarget,
   NeoSendWorkTarget,
+  z.object({ verb: z.literal('bind'), ref: WorkRefSchema }),
 ]);
+
+export type NeoTodoTarget = z.infer<typeof NeoTodoTargetSchema>;
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,
