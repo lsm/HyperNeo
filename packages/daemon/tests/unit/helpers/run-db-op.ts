@@ -1,5 +1,9 @@
-import { DbGateway } from '../../../src/storage/db-gateway/db-gateway';
+import { DbGateway, spaceTaskLaneFor } from '../../../src/storage/db-gateway/db-gateway';
 import { ChangeRecorder, type RunDbOp } from '../../../src/storage/db-gateway/db-op';
+import {
+  spaceTaskWrites,
+  type WriteSpaceTask,
+} from '../../../src/storage/repositories/space-task-repository';
 import type { Database } from '../../../src/storage/sqlite-compat';
 
 export function runDbOpOn(db: Database, notify: (table: string) => void = () => {}): RunDbOp {
@@ -12,4 +16,8 @@ export function runDbOpOn(db: Database, notify: (table: string) => void = () => 
 
 export function fixtureChanges(): ChangeRecorder {
   return new ChangeRecorder();
+}
+
+export function writeSpaceTaskOn(db: Database): WriteSpaceTask {
+  return (method, ...args) => spaceTaskLaneFor(db).call(spaceTaskWrites, method, ...args);
 }

@@ -1,14 +1,18 @@
 import type { Space, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import { isWorkflowRunSucceeded } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type {
+  SpaceTaskRepository,
+  WriteSpaceTask,
+} from '../../storage/repositories/space-task-repository.ts';
 import {
   mapPostApprovalDispatchWarning,
   type PostApprovalRouteResult,
 } from './post-approval-router.ts';
 
 export interface PostApprovalRetryDeps {
-  taskRepo: Pick<SpaceTaskRepository, 'getTask' | 'updateTask'>;
+  taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
+  writeTask: WriteSpaceTask;
   workflowRunRepo: { getRun(runId: string): SpaceWorkflowRun | null };
   spaceManager: { getSpace(spaceId: string): Promise<Space | null> };
   isSessionAlive?: (sessionId: string) => boolean;
@@ -98,17 +102,16 @@ export async function applyDispatch(ctx: PostApprovalRetryCtx): Promise<PostAppr
     return { ...ctx, result };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    const fresh = ctx.taskRepo.getTask(task.id);
-    if (
-      fresh?.status === 'approved' &&
-      fresh.workflowRunId === task.workflowRunId &&
-      fresh.approvedAt === task.approvedAt &&
-      fresh.postApprovalSessionId === task.postApprovalSessionId
-    ) {
-      ctx.taskRepo.updateTask(task.id, {
-        postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
-      });
-    }
+    await ctx.writeTask(
+      'updateTask',
+      task.id,
+      { postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail) },
+      'approved',
+      undefined,
+      task.postApprovalSessionId ?? null,
+      task.workflowRunId ?? null,
+      task.approvedAt ?? null
+    );
     return { ...ctx, result: { mode: 'skipped', reason: detail } };
   }
 }

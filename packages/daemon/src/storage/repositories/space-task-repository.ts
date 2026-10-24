@@ -402,7 +402,8 @@ export class SpaceTaskRepository {
     expectedStatus?: SpaceTaskStatus,
     expectedPendingCompletionGeneration?: number,
     expectedPostApprovalSessionId?: string | null,
-    expectedWorkflowRunId?: string | null
+    expectedWorkflowRunId?: string | null,
+    expectedApprovedAt?: number | null
   ): SpaceTask | null {
     if (this.hasTaskWithoutSpace(id)) return null;
     const fields: string[] = [];
@@ -621,8 +622,10 @@ export class SpaceTaskRepository {
       const workflowRunGuard =
         expectedWorkflowRunId === undefined ? '' : ' AND workflow_run_id IS ?';
       if (expectedWorkflowRunId !== undefined) values.push(expectedWorkflowRunId);
+      const approvedAtGuard = expectedApprovedAt === undefined ? '' : ' AND approved_at IS ?';
+      if (expectedApprovedAt !== undefined) values.push(expectedApprovedAt);
       const stmt = this.db.prepare(
-        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}${postApprovalGuard}${workflowRunGuard}`
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}${postApprovalGuard}${workflowRunGuard}${approvedAtGuard}`
       );
       const written = this.db.transaction(() => {
         const result = stmt.run(...values);
@@ -630,7 +633,8 @@ export class SpaceTaskRepository {
           (expectedStatus !== undefined ||
             expectedPendingCompletionGeneration !== undefined ||
             expectedPostApprovalSessionId !== undefined ||
-            expectedWorkflowRunId !== undefined) &&
+            expectedWorkflowRunId !== undefined ||
+            expectedApprovedAt !== undefined) &&
           result.changes === 0
         )
           return false;
@@ -1054,6 +1058,7 @@ export const spaceTaskWrites = defineRepositoryOp(
   [
     'createTask',
     'updateTask',
+    'casPostApprovalRouting',
     'deleteTask',
     'promoteDraftTasksByCreator',
     'casStatus',
@@ -1061,3 +1066,10 @@ export const spaceTaskWrites = defineRepositoryOp(
     'markReconcileCheckedAt',
   ]
 );
+
+type SpaceTaskWriteMethod = (typeof spaceTaskWrites.methods)[number];
+
+export type WriteSpaceTask = <K extends SpaceTaskWriteMethod>(
+  method: K,
+  ...args: SpaceTaskRepository[K] extends (...args: infer P) => unknown ? P : never
+) => Promise<SpaceTaskRepository[K] extends (...args: never[]) => infer T ? Awaited<T> : never>;
