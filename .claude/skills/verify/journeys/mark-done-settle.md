@@ -22,7 +22,8 @@ No desktop GUI is driven. Run `before` on the regression commit to capture the
 unfinished-todo refusal, the still-open card and absence of a card-local error.
 
 The real `/neo` Mark done menu changes an unfinished ask to Done under Recent
-outcomes. A separate synthetic unavailable worker makes stop fail: its ask stays
+outcomes. Its actions menu retains only Reply, with neither settling action.
+A separate synthetic unavailable worker makes stop fail: its ask stays
 open, the error appears inside that card, and Mark done remains retryable.
 Check desktop 1280 and mobile 390 widths; inspect `marked-done.png` and
 `card-error-*.png`. `browser.json` records the visible errors and retries;
