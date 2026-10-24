@@ -31,7 +31,9 @@ import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyper
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { Database } from '../../storage/database.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
-import { OperationRefusalRepository } from '../../storage/repositories/operation-refusal-repository.ts';
+import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import type { OperationRefusal } from '../operations/mcp-adapter.ts';
 import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
@@ -333,9 +335,12 @@ export class AgentSession
     ));
   }
 
-  private readonly recordOperationRefusal = (
-    refusal: Parameters<OperationRefusalRepository['record']>[0]
-  ) => new OperationRefusalRepository(this.db.getDatabase()).record(refusal, this.session.id);
+  private readonly recordOperationRefusal = (refusal: OperationRefusal) =>
+    gatewayFor(this.db.getDatabase()).run(recordOperationRefusal, {
+      refusal,
+      sessionId: this.session.id,
+      at: Date.now(),
+    });
 
   getOperationsCapabilityContribution(): AuthoredCapabilityContribution {
     return operationsCapabilityContribution(

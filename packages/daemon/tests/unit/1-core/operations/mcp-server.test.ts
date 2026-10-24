@@ -149,4 +149,49 @@ describe('operation MCP server', () => {
       await bounded.instance.close();
     }
   });
+
+  describe('createOperationMcpHandler refusal recording', () => {
+    const refusing = createOperationRegistry([
+      defineOperation({
+        name: 'example.refuse',
+        description: 'Refuse',
+        inputSchema: z.object({}),
+        resultSchema: z.object({ accepted: z.literal(false), reason: z.string() }),
+        execute: async () => ({ accepted: false as const, reason: 'not_allowed' }),
+      }),
+    ]);
+
+    test('waits for the refusal to be recorded before answering', async () => {
+      const recorded: unknown[] = [];
+      const handler = createOperationMcpHandler(
+        refusing,
+        () => ({ sessionId: 'trusted-session' }),
+        async (refusal) => {
+          await Promise.resolve();
+          recorded.push(refusal);
+        }
+      );
+      const result = await handler({ name: 'example.refuse', input: {} });
+      expect(result.isError).not.toBe(true);
+      expect(recorded).toEqual([{ operation: 'example.refuse', reason: 'not_allowed' }]);
+    });
+
+    test('a refusal that cannot be recorded fails the invocation', async () => {
+      const handler = createOperationMcpHandler(
+        refusing,
+        () => ({ sessionId: 'trusted-session' }),
+        async () => {
+          throw new Error('database is locked');
+        }
+      );
+      const result = await handler({ name: 'example.refuse', input: {} });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        {
+          type: 'text',
+          text: JSON.stringify({ code: 'invocation_failed', message: 'database is locked' }),
+        },
+      ]);
+    });
+  });
 });
