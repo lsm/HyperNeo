@@ -184,8 +184,7 @@ async function openHelper(
         'The existing authorized rc-toggle helper is unavailable; native approval may be required. No replacement was created.'
       ),
     };
-  const created =
-    found && title === RC_TOGGLE_TITLE ? { value: found.record } : await createWakeHelper(deps);
+  const created = found ? { value: found.record } : await createWakeHelper(deps);
   if ('reason' in created) return created;
   const record = created.value;
   try {
