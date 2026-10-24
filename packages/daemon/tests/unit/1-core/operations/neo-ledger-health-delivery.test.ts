@@ -57,7 +57,7 @@ const notices = (db: Database) =>
   ).notices ?? [];
 
 describe('repository health delivery', () => {
-  test('an existing active health record without notice metadata is delivered on its next sweep', () =>
+  test('legacy active health is delivered, while already-resolved legacy health stays quiet', () =>
     using(async (db, pack) => {
       const ledger = new CodingPrLedgerRepository(db);
       for (const at of [1, 2, 3]) ledger.recordHealth(repo, { at, outcome: 'failed' });
@@ -72,6 +72,15 @@ describe('repository health delivery', () => {
       expect(keys).toEqual(['github-health:synthetic/health:1']);
       expect(notices(db)).toHaveLength(1);
       expect(notices(db)[0].acceptedAt).toBe(4);
+      await pack(async () => true, true).sweep!(5);
+      db.exec(
+        "UPDATE pack_coding_repo_health SET health_json=json_remove(health_json,'$.notices')"
+      );
+      await pack(async (key) => {
+        keys.push(key);
+        return true;
+      }, true).sweep!(6);
+      expect(keys).toEqual(['github-health:synthetic/health:1']);
     }));
   test('the third miss wakes once and accepted state survives pack reconstruction and recovery', () =>
     using(async (db, pack) => {
