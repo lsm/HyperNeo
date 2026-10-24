@@ -23,11 +23,18 @@ import {
 } from './SettingsSection.tsx';
 
 const PERMISSION_MODE_OPTIONS = [
-  { value: 'default', label: 'Default' },
-  { value: 'acceptEdits', label: 'Accept Edits' },
-  { value: 'plan', label: 'Plan Mode' },
-  { value: 'delegate', label: 'Delegate' },
+  { value: 'default', label: 'bypassPermissions (Default)' },
+  { value: 'acceptEdits', label: 'acceptEdits' },
+  { value: 'plan', label: 'plan' },
 ];
+
+function permissionModeOptions(saved: string) {
+  if (PERMISSION_MODE_OPTIONS.some((option) => option.value === saved))
+    return PERMISSION_MODE_OPTIONS;
+  const label =
+    saved === 'bypassPermissions' ? saved : `${saved} (legacy, compatibility unconfirmed)`;
+  return [...PERMISSION_MODE_OPTIONS, { value: saved, label }];
+}
 
 const LANGUAGE_OPTIONS = [
   { value: 'system', label: 'Same as browser' },
@@ -208,11 +215,14 @@ export function GeneralSettings() {
   return (
     <SettingsSection title="General">
       <SettingsGroup>
-        <SettingsRow label="Permission Mode" description="How Claude asks for permissions">
+        <SettingsRow
+          label="Permission Mode"
+          description="Default or unset runs new HyperNeo SDK sessions with bypassPermissions."
+        >
           <SettingsSelect
             value={localPermissionMode}
             onChange={handlePermissionModeChange}
-            options={PERMISSION_MODE_OPTIONS}
+            options={permissionModeOptions(localPermissionMode)}
             disabled={isUpdating}
           />
         </SettingsRow>
