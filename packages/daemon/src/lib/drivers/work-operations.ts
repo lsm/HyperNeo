@@ -183,7 +183,7 @@ function admitNeoTodo(
     : {
         reason: reject(
           'todo_required',
-          'Neo work needs todoId belonging to an open ask. Start a todo with neo.todo.add {start:true}; use neo.todo.continue or reference that todoId for follow-ups.'
+          'Neo work needs todoId belonging to an open ask owned by this session. Start a todo with neo.todo.add {start:true}; use neo.todo.continue or reference that todoId for follow-ups.'
         ),
       };
 }
