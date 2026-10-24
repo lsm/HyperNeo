@@ -149,10 +149,11 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
-    test('opens while the initial negative owner discovery is still pending', async () => {
+    test('opens while negative owner discovery is pending and waits for asynchronous ownership', async () => {
       let opened = false;
+      let readyAt = Infinity;
       const f = await fixture((message, _socket, send) => {
-        if (message.method === 'thread-owner-discovery' && !opened) return;
+        if (message.method === 'thread-owner-discovery' && Date.now() < readyAt) return;
         send({
           type: 'response',
           requestId: message.requestId,
@@ -166,6 +167,7 @@ describe('withCodexDesktopIpc', () => {
         f.path,
         () => {
           opened = true;
+          readyAt = Date.now() + 400;
           return {
             stdout: null,
             stderr: null,

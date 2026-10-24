@@ -45,6 +45,7 @@ db.prepare('UPDATE threads SET rollout_path = ?').run(rollout);
 db.close();
 let owner = 'missing';
 let ownerReadyAt = 0;
+let openedReadyAt = 0;
 let active = true;
 let loaded = true;
 let resumeError = '';
@@ -69,9 +70,12 @@ const desktop = createServer((socket) => {
       calls.push({ desktop: request.method, version: request.version, params: request.params });
       if(owner==='delayed' && Date.now()>=ownerReadyAt)owner='owned';
       if(request.method==='thread-owner-discovery' && owner==='missing' && !existsSync(refuseOpen)
-        && existsSync(openLog) && readFileSync(openLog,'utf8').includes('codex://threads/synthetic')) owner='owned';
+        && existsSync(openLog) && readFileSync(openLog,'utf8').includes('codex://threads/synthetic')) {
+        if(!openedReadyAt)openedReadyAt=Date.now()+400;
+        if(Date.now()>=openedReadyAt)owner='owned';
+      }
       if(request.method==='thread-owner-discovery' && owner==='missing' && request.params?.conversationId==='synthetic'
-        && (!existsSync(openLog) || !readFileSync(openLog,'utf8').includes('codex://threads/synthetic'))){
+        ){
         const timer=setTimeout(()=>{
           if(socket.destroyed)return;
           const body=Buffer.from(JSON.stringify({type:'response',requestId:request.requestId,resultType:'error',error:'no-client-found'}));
@@ -141,8 +145,10 @@ try {
   const ownerlessBefore=calls.length;
   const ownerlessStarted=performance.now();
   const ownerless=await send();
-  timings.push({ delayedNegativeOwnerDeliveryMs: performance.now()-ownerlessStarted, nativeNegativeDelayMs: 10_000 });
+  timings.push({ delayedNegativeOwnerDeliveryMs: performance.now()-ownerlessStarted, nativeNegativeDelayMs: 10_000, asynchronousOpenReadyMs: 400 });
+  assert.equal(ownerless.ok,true,JSON.stringify(ownerless));
   assert.equal(ownerless.value.steeredIntoTurnId,'desktop-active');
+  assert(performance.now()-ownerlessStarted<3_000,'Slow negative discovery must leave time to open and deliver');
   assert(!calls.slice(ownerlessBefore).some(call=>(call as {server?:string}).server==='thread/resume'));
   const desktopQueueBefore=calls.length;
   const desktopQueued=await send('queue');
