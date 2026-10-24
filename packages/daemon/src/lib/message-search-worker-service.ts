@@ -38,7 +38,7 @@ export class MessageSearchWorkerService {
         './message-search-worker.ts',
         './daemon/src/lib/message-search-worker.ts',
         import.meta.url
-      ).href,
+      ).toString(),
       {
         type: 'module',
       }

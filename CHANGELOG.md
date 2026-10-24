@@ -4,6 +4,34 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-24
+
+This release includes the features and fixes since v0.46.0, including the unpublished v0.47.0, v0.47.1 and v0.47.2 changes below. Those earlier tags remain unchanged.
+
+### Added
+
+- **Settings**: Manage Neo standing rules one by one and choose default thinking beside the default model (#8563, #8561).
+- **Focused discussions**: Prepare fresh sessions, retain source-session links on cards and asks, and record settled outcomes (#8424, #8471, #8473, #8480).
+- **Documents**: Attach complete PR-head files and dock previews beside Neo (#8454, #8459).
+- **Coding verification**: Configure stage actors and review bots, prepare pinned checkouts, record verification facts, and require assigned QA smoke (#8442, #8512, #8522, #8529, #8431, #8474, #8468).
+- **Chat notices**: Publish notices for Neo card question replies (#8547).
+- **Ledger health**: Persist coverage health, deliver notices, and publish daily dropped-work counts (#8492, #8494, #8504, #8441).
+
+### Changed
+
+- **Database writes**: Expand guarded and awaited gateway writes across sessions, messages, search, task runtime, coding ledgers and delivery; switch space-task writes to the gateway (#8382, #8349, #8350, #8367, #8447, #8450, #8548, #8550).
+- **Permission controls**: Show the configured Claude worker permission mode and the SDK mode's actual name (#8564, #8556).
+
+### Fixed
+
+- **Compiled startup**: Embed worker entrypoints and resolve encoded Windows virtual paths, with a native Windows smoke check required before merge (#8528, #8540, #8572).
+- **Coding notifications**: Restore PR lifecycle notifications, persist merged-PR owner delivery intent, and reconcile polling coverage (#8544, #8573, #8535).
+- **Desktop delivery**: Recover stale wake helpers and keep sent Claude messages pending rather than relaying them again (#8566, #8555).
+- **Preview rendering**: Match Markdown previews to assistant typography (#8571).
+- **Todo completion**: Refuse to finish a todo while its card remains unanswered (#8552).
+- **Worker documents**: Register artifacts from a Claude worker's own checkout (#8562).
+- **SDK startup**: Bound startup permit holds and await remaining live message writers (#8500, #8508).
+
 ## [0.47.2] - 2026-10-24
 
 v0.47.1 was held before publication to include the coding-pack notification fix. This release includes the v0.47.1 and v0.47.0 changes below; neither earlier tag was published.

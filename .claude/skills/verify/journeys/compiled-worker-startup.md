@@ -21,3 +21,27 @@ TypeScript watchdog. Retain build.json, daemon.log and cleanup.json. The compile
 entrypoint selects production mode internally; all state still belongs to this
 disposable test HOME and DB. This checks startup/worker loading, not embedding
 inference or native Desktop UI. Every owned child stops in finally.
+
+## Windows
+
+The `Windows Compiled Worker Smoke` CI job runs on PRs that affect the daemon
+runtime or build, as well as dev/tag runs. It compiles the native worker fixture
+and the actual Windows CLI with the same worker manifest as release builds,
+then runs this isolated proof and uploads `windows-compiled-worker-evidence`.
+`All Tests Pass` requires this job to pass. The fixture executes a typed worker
+from an unrelated directory, not a source checkout lookup.
+
+To repeat on a Windows machine, build with
+`bun scripts/build-binary.ts --target bun-windows-x64`, then use PowerShell:
+
+```powershell
+$run = Join-Path $env:TEMP ('hyperneo-compiled-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Force "$run\home" | Out-Null
+$env:HOME = "$run\home"
+$env:HYPERNEO_DATA_DIR = "$run\data"
+$env:NODE_ENV = 'test'
+bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-windows-x64.exe $run
+```
+
+The child uses its own HOME/USERPROFILE, DB, data directory and temporary files.
+Keep build.json, daemon.log and cleanup.json. Do not use the human's daemon.

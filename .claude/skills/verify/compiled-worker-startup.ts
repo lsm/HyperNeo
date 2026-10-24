@@ -7,7 +7,7 @@ const run = resolve(directory);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
-for (const part of ['bin', 'data', 'workspace', 'evidence']) mkdirSync(join(run, part), { recursive: true });
+for (const part of ['bin', 'data', 'workspace', 'evidence', 'tmp']) mkdirSync(join(run, part), { recursive: true });
 for (const command of ['security', 'gh', 'open', 'ps'])
   writeFileSync(join(run, 'bin', command), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
@@ -16,7 +16,7 @@ const port = probe.port;
 assert.notEqual(port, 8399);
 await probe.stop(true);
 const child = Bun.spawn([resolve(binaryPath), '--host', '127.0.0.1', '--port', String(port), '--db-path', join(run, 'data/daemon.db'), '--workspace', join(run, 'workspace')], {
-  env: { HOME: join(run, 'home'), PATH: `${join(run, 'bin')}:/usr/bin:/bin:/usr/sbin`, HYPERNEO_DATA_DIR: join(run, 'data'), NODE_ENV: 'test', LOG_LEVEL: 'info', HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' },
+  env: { HOME: join(run, 'home'), PATH: process.platform === 'win32' ? join(run, 'bin') : `${join(run, 'bin')}:/usr/bin:/bin:/usr/sbin`, USERPROFILE: join(run, 'home'), SystemRoot: process.env.SystemRoot, TEMP: join(run, 'tmp'), TMP: join(run, 'tmp'), HYPERNEO_DATA_DIR: join(run, 'data'), NODE_ENV: 'test', LOG_LEVEL: 'info', HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' },
   stdout: 'pipe', stderr: 'pipe',
 });
 const stdout = new Response(child.stdout).text();
@@ -52,6 +52,7 @@ try {
   writeFileSync(join(run, 'evidence/daemon.log'), logs);
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ pid: child.pid, exit, stopped: true }));
   assert(!logs.includes('ModuleNotFound'), 'Compiled worker module is missing');
+  assert(!logs.includes('embedding worker crashed'), 'Embedding worker failed to execute');
   assert(!logs.includes('Unexpected use of reserved word') && !logs.includes('daemon runs without an event-loop watchdog'), 'Watchdog did not load as JavaScript');
 }
 writeFileSync(join(run, 'evidence/build.json'), JSON.stringify(observed, null, 2));

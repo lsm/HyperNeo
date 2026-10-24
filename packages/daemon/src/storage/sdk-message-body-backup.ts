@@ -79,7 +79,7 @@ export function sdkBodyBackupChannel(dbPath: string, backupPath: string, signal:
       './sdk-message-body-backup-worker.ts',
       './daemon/src/storage/sdk-message-body-backup-worker.ts',
       import.meta.url
-    ).href,
+    ).toString(),
     {
       type: 'module',
     }
