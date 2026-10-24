@@ -1,3 +1,4 @@
+import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
@@ -138,7 +139,7 @@ describe('InterruptHandler', () => {
       messageQueue: mockMessageQueue,
       stateManager: mockStateManager,
       logger: mockLogger,
-      db: mockDb,
+      db: withSdkTeardownGateway(overrides.db ?? mockDb),
       internalEventBus: mockEventBus,
       queryObject: mockQueryObject,
       queryPromise: mockQueryPromise,
