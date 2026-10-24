@@ -387,6 +387,8 @@ export function createNeoTodoOperations(
           ok: false,
           reason: 'todo_changed: PR URLs changed during completion; retry with the current check.',
         };
+      const answered = requireNeoTodoCardsAnswered(plan, cards(plan));
+      if ('reason' in answered) return answered.reason;
     }
     if (plan.patch.check) {
       const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));
@@ -461,8 +463,6 @@ export function createNeoTodoOperations(
     .pipe(withUrls, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
-    .pipe(cards, 'outcome', 'questions')
-    .pipe(requireNeoTodoCardsAnswered, ['outcome', 'questions'], 'result:outcome')
     .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Edit>,
