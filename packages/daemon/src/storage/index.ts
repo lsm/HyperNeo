@@ -25,6 +25,7 @@ import {
   sessionWrites,
 } from './repositories/session-repository.ts';
 import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
+import type { SessionWriteOutcome } from './repositories/session-status-write.ts';
 import type {
   RuntimeSettingsPatch,
   SessionRuntimeSettingsSnapshot,
@@ -263,9 +264,23 @@ export class Database {
     return this.sessionRepo.listAcpSessionIds();
   }
 
-  async updateSession(id: string, updates: Partial<Session>): Promise<void> {
-    await this.gateway.call(sessionWrites, 'updateSession', id, postable(updates));
+  async updateSession(id: string, updates: Partial<Session>): Promise<SessionWriteOutcome> {
+    const readStatus = updates.status ? (this.sessionRepo.getSession(id)?.status ?? null) : null;
+    const outcome = await this.gateway.call(
+      sessionWrites,
+      'guardedUpdateSession',
+      id,
+      postable(updates),
+      readStatus
+    );
+    if (outcome !== 'written') {
+      this.logger.warn(
+        `refused status ${updates.status} for session ${id}: ${outcome} (read ${readStatus})`
+      );
+      return outcome;
+    }
     if (updates.type !== undefined || 'context' in updates) this.reactiveDb?.forgetSessionTask(id);
+    return outcome;
   }
 
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {

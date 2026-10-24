@@ -18,6 +18,13 @@ import {
   sessionInputDraftSnapshotFromRow,
 } from './session-input-draft-write.ts';
 import {
+  refuseSessionStatusWrite,
+  type SessionStatus,
+  type SessionStatusFacts,
+  type SessionWriteOutcome,
+  TERMINAL_TASK_SESSION_ARCHIVE_STATUSES,
+} from './session-status-write.ts';
+import {
   buildSessionRuntimeSettingsWrite,
   planRuntimeSettingsPatch,
   type RuntimeSettingsPatch,
@@ -319,6 +326,34 @@ export class SessionRepository {
       )
       .all() as Array<{ id: string; acp_session_id: string }>;
     return rows.map((row) => ({ sessionId: row.id, acpSessionId: row.acp_session_id }));
+  }
+
+  guardedUpdateSession(
+    id: string,
+    updates: Partial<Session>,
+    readStatus: SessionStatus | null
+  ): SessionWriteOutcome {
+    const refusal = updates.status
+      ? refuseSessionStatusWrite(updates.status, readStatus, this.sessionStatusFacts(id))
+      : null;
+    if (refusal) return refusal;
+    this.updateSession(id, updates);
+    return 'written';
+  }
+
+  private sessionStatusFacts(id: string): SessionStatusFacts | null {
+    const terminalTask = this.tableExists('space_tasks')
+      ? `EXISTS (
+           SELECT 1 FROM space_tasks t
+           WHERE t.status IN (${toSqlStringList(TERMINAL_TASK_SESSION_ARCHIVE_STATUSES)})
+             AND (t.id = s.task_id OR t.task_agent_session_id = s.id
+               OR s.id LIKE ('space:%:task:' || t.id || ':%'))
+         ) AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'space_chat', 'spaces_global')`
+      : '0';
+    const row = this.db
+      .prepare(`SELECT s.status, ${terminalTask} AS terminal_task FROM sessions s WHERE s.id = ?`)
+      .get(id) as { status: SessionStatus; terminal_task: number } | undefined;
+    return row ? { status: row.status, terminalTask: row.terminal_task === 1 } : null;
   }
 
   updateSession(id: string, updates: Partial<Session>, now: number = Date.now()): void {
@@ -776,7 +811,7 @@ export class SessionRepository {
 
 export const sessionWrites = defineRepositoryOp('sessions.write', 'write', SessionRepository, [
   'createSession',
-  'updateSession',
+  'guardedUpdateSession',
   'deleteSession',
   'detachFromParent',
   'setParent',

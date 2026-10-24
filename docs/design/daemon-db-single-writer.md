@@ -77,7 +77,8 @@ The `sessions` switch has to cover these, so it can prove it is complete:
 - `state-projection-service`: `last_error`.
 - `task-agent-manager`'s delete of never-streamed sessions.
 - `space-runtime-service`'s direct `sessionRepo.updateSession`.
-- The `SpaceTaskRepository` archive cascade (switches with it, above).
+- The `SpaceTaskRepository` archive cascade (stays on main; the guard below
+  keeps it safe).
 - `SDKMessageRepository`'s `visible_message_count` (moves with `sdk_messages`).
 
 The first four are routed through the facade before the switch.
@@ -86,13 +87,22 @@ awaits. Fenced compare-and-set writers (`casSessionInputDraft`,
 `casSessionRuntimeSettings`, `takeRestartCooldownResume`) are safe next to main
 writers and don't block the order.
 
+The archive cascade's `SET status = 'archived'` stays on main after the
+`sessions` switch, so `sessions.write` fences every status write. The facade
+reads the session's status on main when the write is issued. Inside the op the
+write is refused if that status has changed, or if it would take an archived
+session off a terminal task (`done`, `cancelled`, `archived`), the same match
+the cascade uses. Writes to `archived` are never refused, because archiving
+can't undo an archive. A refused write resolves to `stale-status` or
+`terminal-task` and is logged. Writes that leave `status` alone are not fenced.
+
 ## Ownership and cross-table ops
 
 | Owner | Tables | Cross-table ops it owns |
 |---|---|---|
 | `sessions` owner | `sessions` (all columns, including `processing_state` and metadata), `session_incarnations`, session child rows deleted with a session | `updateSession` with its search-row rebuild, delete and retitle (search rows are written inside the op); `deleteSession` with `mcp_enablement`, `delivery_turn_end`, `neo_goals` and children's `parent_id`; `createSession` with its workspace-ownership check |
 | `sdk_messages` owner | `sdk_messages`, `sdk_message_bodies`, consumed seq, replacement edges, the delivery outbox | `saveSDKMessage` with its admission: body, replacement edges, `message_search_pending` schedule and the `sessions.visible_message_count` badge, all in one op; session teardown (mailbox failures, `cancelForSessionWithMessages`, `markDeliveryFailedByUuid`, deferred rows) as one op; `JobQueueRepository.transitionDeliverySendStatusFenced` (it writes `sdk_messages` and moves in the `sdk_messages` switch, not with the job queue); the SDK body copy |
-| gateway owner | gateway core, `DB_OPS`, the guard; `job_queue` (except the method above); pairing; external events; `message_search_*` flush and FTS merge; `work_feed_*`; `pack_coding_*`; `space_*`, `neo_*`, goals, evolution, agent memory, schedules and every remaining table | `SpaceTaskRepository.updateTask/archiveTask` with the terminal-task session archive (in the joint `sessions` + `space_tasks` switch); the project mirror |
+| gateway owner | gateway core, `DB_OPS`, the guard; `job_queue` (except the method above); pairing; external events; `message_search_*` flush and FTS merge; `work_feed_*`; `pack_coding_*`; `space_*`, `neo_*`, goals, evolution, agent memory, schedules and every remaining table | `SpaceTaskRepository.updateTask/archiveTask` with the terminal-task session archive (in the `space_tasks` switch); the project mirror |
 
 `visible_message_count` is written only by message code, so it is a
 `sdk_messages` column in practice and moves with the `sdk_messages` switch.
@@ -114,14 +124,13 @@ session exists, checked in the same transaction.
    `pack_coding_*` writers together.
 2. Async callers first (the `sessions` and `sdk_messages` owners' prep PRs). These change no write
    location.
-3. Switches, one at a time: `sessions` together with `space_tasks`, then
-   `sdk_messages`, then the remaining repositories by subsystem.
+3. Switches, one at a time: `sessions`, then `sdk_messages`, then `space_tasks`
+   as its own subsystem switch, then the remaining repositories by subsystem.
    `SpaceTaskRepository.updateTask/archiveTask` archives a terminal task's worker
-   sessions in the same transaction (`SET status = 'archived'`), a blind write
-   to `sessions.status`. Moving either table alone leaves that column with blind
-   writers on two connections, and a queued write could un-archive, or
-   re-archive, a session. Every dev merge deploys, so two PRs merged back to back
-   can't be relied on. The two tables switch in one PR, built by both owners.
+   sessions in the same transaction (`SET status = 'archived'`). That no longer
+   ties the two switches together: the `sessions` switch ships with the status
+   fence above in the same PR, so a queued session write can't un-archive a
+   session the cascade archived. The cascade moves with `space_tasks` later.
 4. Fold the remaining writer workers (FTS merge, project mirror, body copy).
 5. Guard step 1 (`query_only` on main).
 6. Reads by subsystem, LiveQuery last, then guard step 2.
