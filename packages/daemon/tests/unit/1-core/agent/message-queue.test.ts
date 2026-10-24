@@ -82,7 +82,9 @@ describe('MessageQueue', () => {
 
   it('suppresses the pre-yield callback only when requested by ACP', async () => {
     const yielded: string[] = [];
-    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.onMessageYielded = (id) => {
+      yielded.push(id);
+    };
     queue.start();
 
     const delivery = queue.enqueue('ACP prompt');
@@ -96,7 +98,9 @@ describe('MessageQueue', () => {
 
   it('keeps the SDK pre-yield callback behavior by default', async () => {
     const yielded: string[] = [];
-    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.onMessageYielded = (id) => {
+      yielded.push(id);
+    };
     queue.start();
 
     const delivery = queue.enqueue('SDK prompt');
@@ -415,6 +419,28 @@ describe('MessageQueue', () => {
       await expect(generator.next()).rejects.toBe(callbackError);
       expect(await rejection).toBe(callbackError);
       expect(queue.size()).toBe(0);
+    });
+
+    it('waits for an async onMessageYielded before yielding, and rejects on its failure', async () => {
+      queue.start();
+      let persisted = false;
+      queue.onMessageYielded = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        persisted = true;
+      };
+      queue.enqueueWithId('msg-async-yield', 'Hello');
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(persisted).toBe(true);
+      result.value.onSent();
+
+      const callbackError = new Error('async persistence failed');
+      queue.onMessageYielded = async () => {
+        throw callbackError;
+      };
+      const rejection = queue.enqueueWithId('msg-async-fail', 'Hello').catch((error) => error);
+      await expect(generator.next()).rejects.toBe(callbackError);
+      expect(await rejection).toBe(callbackError);
     });
 
     it('size() counts messages shifted out and yielded but not yet acknowledged', async () => {

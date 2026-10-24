@@ -107,6 +107,7 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
         context.deps.sessionManager.getCachedSession(sessionId) ??
         null,
       getSession: scopeDeps.getSession,
+      updateSession: (sessionId, updates) => context.deps.db.updateSession(sessionId, updates),
       sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
       audit: (entry) => {
         try {

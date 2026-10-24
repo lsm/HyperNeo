@@ -86,7 +86,9 @@ export function cancelMailboxJobsStage(ctx: MailboxCancelCtx): MailboxCancelCtx 
   };
 }
 
-export function materializeCancelledEntriesStage(ctx: MailboxCancelCtx): MailboxCancelCtx {
+export async function materializeCancelledEntriesStage(
+  ctx: MailboxCancelCtx
+): Promise<MailboxCancelCtx> {
   const jobQueue = ctx.jobQueue;
   const sdkMessageRepo = ctx.sdkMessageRepo;
   if (jobQueue === null || sdkMessageRepo === null) return ctx;
@@ -116,7 +118,7 @@ export function materializeCancelledEntriesStage(ctx: MailboxCancelCtx): Mailbox
     try {
       const payload = JSON.parse(row.payload) as Record<string, unknown>;
       const target = sessionFailureTarget(parseMailboxEntry(payload));
-      materializeMailboxFailure(deletedRowAsJob(row.id, payload), failureDeps);
+      await materializeMailboxFailure(deletedRowAsJob(row.id, payload), failureDeps);
       if (target) cancelled.push(target.messageUuid);
     } catch {}
   }
@@ -133,18 +135,19 @@ const runCancelMailboxForSession = (
   .pipe('!cancelUnsupported', 'ctx')
   .pipe(cancelMailboxJobsStage, 'ctx', 'ctx')
   .pipe(materializeCancelledEntriesStage, 'ctx', 'ctx')
-  .end('ctx') as (ctx: MailboxCancelCtx) => MailboxCancelCtx;
+  .endAsync('ctx') as (ctx: MailboxCancelCtx) => Promise<MailboxCancelCtx>;
 
-export function materializeMailboxFailuresForSession(
+export async function materializeMailboxFailuresForSession(
   sessionId: string,
   deps: MailboxCancelMaterializerDeps
-): string[] {
-  return runCancelMailboxForSession({
+): Promise<string[]> {
+  const ctx = await runCancelMailboxForSession({
     sessionId,
     deps,
     jobQueue: null,
     sdkMessageRepo: null,
     deleted: [],
     cancelled: [],
-  }).cancelled;
+  });
+  return ctx.cancelled;
 }

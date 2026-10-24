@@ -17,6 +17,7 @@ import {
   initializeProviders,
   markBuiltInProviderDisabled,
   markBuiltInProviderEnabled,
+  waitForOptionalProviderRegistration,
 } from '../../../../src/lib/providers/factory';
 import { AgentChildProcessRepository } from '../../../../src/storage/repositories/agent-child-process-repository';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
@@ -2500,7 +2501,9 @@ describe('AgentSession', () => {
         status: 'deferred' as const,
       }));
       const cancelDeliverySpy = mock(() => false);
-      mockDb.deletePendingUserMessage = deletePendingSpy;
+      mockDb.getSDKMessageRepo = mock(
+        () => ({ deletePendingUserMessage: deletePendingSpy }) as never
+      );
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
 
       const result = await agentSession.revokePendingDelivery('db-1', 'remove');
@@ -2513,7 +2516,9 @@ describe('AgentSession', () => {
     it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
       const deletePendingSpy = mock(() => null);
       const cancelDeliverySpy = mock(() => false);
-      mockDb.deletePendingUserMessage = deletePendingSpy;
+      mockDb.getSDKMessageRepo = mock(
+        () => ({ deletePendingUserMessage: deletePendingSpy }) as never
+      );
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
 
       expect(await agentSession.revokePendingDelivery('db-1', 'remove', 'deferred')).toEqual({
@@ -2539,11 +2544,16 @@ describe('AgentSession', () => {
             },
           }) as never
       );
-      mockDb.deletePendingUserMessage = mock(() => ({
-        dbId: 'db-1',
-        uuid: 'uuid-1',
-        status: 'deferred' as const,
-      }));
+      mockDb.getSDKMessageRepo = mock(
+        () =>
+          ({
+            deletePendingUserMessage: mock(() => ({
+              dbId: 'db-1',
+              uuid: 'uuid-1',
+              status: 'deferred' as const,
+            })),
+          }) as never
+      );
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: mock(() => false) }));
       agentSession.stateManager.clearQueuedIfOwnedBy = mock(async () => {
         expect(committed).toBe(true);
@@ -2563,7 +2573,7 @@ describe('AgentSession', () => {
       const deferSpy = mock(() => ({ dbId: 'db-1', uuid: 'uuid-1' }));
       const cancelDeliverySpy = mock(() => true);
       const notifySpy = mock(() => {});
-      mockDb.deferEnqueuedUserMessage = deferSpy;
+      mockDb.getSDKMessageRepo = mock(() => ({ deferEnqueuedUserMessage: deferSpy }) as never);
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
       mockDb.notifyChange = notifySpy;
 
@@ -6371,6 +6381,11 @@ describe('AgentSession', () => {
     it('fails each delivery once and tells the user every time when an unpinned session has no registered provider', async () => {
       const db = await createTestDb();
       const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+      const copilot = registry.get('anthropic-copilot');
+      const copilotAvailability = copilot
+        ? spyOn(copilot, 'isAvailable').mockImplementation(async () => false)
+        : undefined;
       const anthropic = registry.get('anthropic');
       markBuiltInProviderDisabled('anthropic');
       registry.unregister('anthropic');
@@ -6423,6 +6438,7 @@ describe('AgentSession', () => {
           )
         );
       } finally {
+        copilotAvailability?.mockRestore();
         markBuiltInProviderEnabled('anthropic');
         if (anthropic) registry.register(anthropic);
         db.close();

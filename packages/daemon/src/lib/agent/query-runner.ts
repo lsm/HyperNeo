@@ -2158,7 +2158,7 @@ export class QueryRunner {
         }
         break;
       }
-      messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
+      await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
       const promptContent = (queuedMessage.message as { content?: unknown } | undefined)?.content;

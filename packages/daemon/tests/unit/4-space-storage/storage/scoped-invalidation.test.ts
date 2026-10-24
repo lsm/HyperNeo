@@ -156,7 +156,7 @@ describe('ReactiveDatabase — scope extraction', () => {
       parent_tool_use_id: null,
       message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     };
-    reactiveDb.db.saveUserMessage('sess-2', userMsg as any, 'consumed');
+    await reactiveDb.db.saveUserMessage('sess-2', userMsg as any, 'consumed');
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();
@@ -168,7 +168,7 @@ describe('ReactiveDatabase — scope extraction', () => {
     reactiveDb.on('change', (data) => events.push(data));
 
     await reactiveDb.db.createSession(makeSession('sess-3'));
-    reactiveDb.db.deleteMessagesAfter('sess-3', Date.now());
+    await reactiveDb.db.deleteMessagesAfter('sess-3', Date.now());
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();
@@ -180,7 +180,7 @@ describe('ReactiveDatabase — scope extraction', () => {
     reactiveDb.on('change', (data) => events.push(data));
 
     await reactiveDb.db.createSession(makeSession('sess-status', { taskId: 'task-status' }));
-    const messageId = reactiveDb.db.saveUserMessage(
+    const messageId = await reactiveDb.db.saveUserMessage(
       'sess-status',
       {
         type: 'user',
@@ -193,7 +193,7 @@ describe('ReactiveDatabase — scope extraction', () => {
     );
     events.length = 0;
 
-    reactiveDb.db.updateMessageStatus([messageId], 'consumed');
+    await reactiveDb.db.updateMessageStatus([messageId], 'consumed');
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();

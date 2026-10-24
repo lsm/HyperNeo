@@ -174,7 +174,7 @@ export class StateProjectionService {
           details,
           occurredAt: Date.now(),
         });
-        this.persistSessionError(sessionId, details);
+        return this.persistSessionError(sessionId, details);
       },
       { subscriberName: 'StateProjectionService.sessionError' }
     );
@@ -184,44 +184,37 @@ export class StateProjectionService {
       (data) => {
         const { sessionId } = data as unknown as { sessionId: string };
         this.errorCache.set(sessionId, null);
-        this.persistSessionError(sessionId, null);
+        return this.persistSessionError(sessionId, null);
       },
       { subscriberName: 'StateProjectionService.sessionErrorClear' }
     );
   }
 
-  private persistSessionError(sessionId: string, details: unknown): void {
-    if (!this.db) return;
-    try {
-      const db = this.db.getDatabase();
-      if (!details) {
-        db.prepare('UPDATE sessions SET last_error = NULL WHERE id = ?').run(sessionId);
-        this.reactiveDb?.notifyChange('sessions');
-        return;
-      }
-      const err = details as {
-        category?: unknown;
-        userMessage?: unknown;
-        message?: unknown;
-        metadata?: Record<string, unknown> | undefined;
-      };
-      const category = typeof err.category === 'string' ? err.category : null;
-      if (!category) return;
-      const message =
-        (typeof err.userMessage === 'string' && err.userMessage) ||
-        (typeof err.message === 'string' && err.message) ||
-        '';
-      const providerIdRaw = err.metadata?.providerId;
-      const snapshot: Record<string, unknown> = { category, message };
-      if (typeof providerIdRaw === 'string') snapshot.providerId = providerIdRaw;
-      db.prepare('UPDATE sessions SET last_error = ? WHERE id = ?').run(
-        JSON.stringify(snapshot),
-        sessionId
-      );
-      this.reactiveDb?.notifyChange('sessions');
-    } catch (err) {
-      this.logger.warn(`Failed to persist session error for ${sessionId}:`, err);
-    }
+  private async persistSessionError(sessionId: string, details: unknown): Promise<void> {
+    const db = this.db;
+    if (!db) return;
+    const persist = (lastError: string | null) =>
+      db
+        .setSessionLastError(sessionId, lastError)
+        .then(() => this.reactiveDb?.notifyChange('sessions'))
+        .catch((err) => this.logger.warn(`Failed to persist session error for ${sessionId}:`, err));
+    if (!details) return persist(null);
+    const err = details as {
+      category?: unknown;
+      userMessage?: unknown;
+      message?: unknown;
+      metadata?: Record<string, unknown> | undefined;
+    };
+    const category = typeof err.category === 'string' ? err.category : null;
+    if (!category) return;
+    const message =
+      (typeof err.userMessage === 'string' && err.userMessage) ||
+      (typeof err.message === 'string' && err.message) ||
+      '';
+    const providerIdRaw = err.metadata?.providerId;
+    const snapshot: Record<string, unknown> = { category, message };
+    if (typeof providerIdRaw === 'string') snapshot.providerId = providerIdRaw;
+    return persist(JSON.stringify(snapshot));
   }
 
   private async broadcastSessionUpdateFromCache(sessionId: string): Promise<void> {

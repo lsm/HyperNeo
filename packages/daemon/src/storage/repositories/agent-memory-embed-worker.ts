@@ -6,7 +6,7 @@ import {
 type EmbedRequest = { kind: 'query' | 'passage'; text: string };
 type EmbedResponse =
   | { ready: true }
-  | { loadError: string }
+  | { loadError: string; retryable?: boolean }
   | { vector: ArrayBuffer }
   | { error: string };
 type WorkerGlobal = {
@@ -22,7 +22,11 @@ prefetchAgentMemoryEmbeddingModel()
   .then(() => embedder.load())
   .then(
     () => worker.postMessage({ ready: true }),
-    (err) => worker.postMessage({ loadError: message(err) })
+    (err) =>
+      worker.postMessage({
+        loadError: message(err),
+        retryable: !(err instanceof Error && 'retryable' in err && err.retryable === false),
+      })
   );
 
 worker.onmessage = async ({ data }) => {

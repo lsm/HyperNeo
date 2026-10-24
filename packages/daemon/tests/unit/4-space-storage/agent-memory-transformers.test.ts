@@ -173,4 +173,39 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
       cleanup(cacheDir);
     }
   });
+
+  test('rejects checksum-invalid model responses before a consumer can read their bytes', async () => {
+    const cacheDir = createCacheDir();
+    const fake = createFakeTransformers();
+    fake.env.fetch = (async () => new Response('tampered model')) as typeof fetch;
+    try {
+      await prefetchAgentMemoryEmbeddingModel({ cacheDir, loadTransformers: fake.load });
+      await expect(
+        fake.env.fetch('https://huggingface.co/' + MODEL_ID + '/resolve/main/config.json')
+      ).rejects.toThrow('Checksum mismatch');
+    } finally {
+      cleanup(cacheDir);
+    }
+  });
+
+  test('allows partial metadata probes without treating them as complete model files', async () => {
+    const cacheDir = createCacheDir();
+    const fake = createFakeTransformers();
+    fake.env.fetch = (async () =>
+      new Response('{', {
+        status: 206,
+        headers: { 'content-range': 'bytes 0-0/100' },
+      })) as typeof fetch;
+    try {
+      await prefetchAgentMemoryEmbeddingModel({ cacheDir, loadTransformers: fake.load });
+      const response = await fake.env.fetch(
+        'https://huggingface.co/' + MODEL_ID + '/resolve/main/config.json',
+        { headers: { range: 'bytes=0-0' } }
+      );
+      expect(response.status).toBe(206);
+      expect(await response.text()).toBe('{');
+    } finally {
+      cleanup(cacheDir);
+    }
+  });
 });

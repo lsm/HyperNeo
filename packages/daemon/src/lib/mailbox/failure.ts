@@ -16,7 +16,7 @@ import { mailboxMessageIsSynthetic, type MailboxEntry, parseMailboxEntry } from 
 export interface MailboxFailureDeps {
   sdkMessageRepo: SDKMessageRepository;
   publishFailed?(sessionId: string, dbMessageId: string): Promise<void>;
-  saveFailed(sessionId: string, message: SDKUserMessage, origin?: MessageOrigin): string;
+  saveFailed(sessionId: string, message: SDKUserMessage, origin?: MessageOrigin): Promise<string>;
   settleSkipped?(sessionId: string, messageUuid: string): Promise<void>;
   notifySender?(senderSessionId: string, notice: MailboxFailureNotice): Promise<unknown>;
 }
@@ -117,7 +117,7 @@ function samePromptMessage(stored: SDKMessage, incoming: SDKUserMessage): boolea
   );
 }
 
-export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+export async function persistFailedRowStage(ctx: MailboxFailureCtx): Promise<MailboxFailureCtx> {
   const target = ctx.target;
   const message = ctx.message;
   const entry = ctx.entry;
@@ -125,7 +125,7 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
   const synthetic = mailboxMessageIsSynthetic(entry.origin, entry.message);
   let ownershipKnown = false;
   try {
-    const outcome = withBusyRetry((): { failedId?: string; uuidOwned: boolean } => {
+    const outcome = withBusyRetry((): { failedId?: string; uuidOwned: boolean; save?: true } => {
       const siblings = ctx.deps.sdkMessageRepo.getStoredPromptsByUuid(
         target.sessionId,
         target.messageUuid
@@ -142,13 +142,15 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
       );
       const failedId =
         ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(target.sessionId, target.messageUuid) ??
-        failedRow?.dbId ??
-        (siblings.length === 0
-          ? ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined)
-          : undefined);
-      return { failedId, uuidOwned: true };
+        failedRow?.dbId;
+      return failedId === undefined && siblings.length === 0
+        ? { uuidOwned: true, save: true }
+        : { failedId, uuidOwned: true };
     });
-    return { ...ctx, failedId: outcome.failedId, uuidOwned: outcome.uuidOwned };
+    const failedId = outcome.save
+      ? await ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined)
+      : outcome.failedId;
+    return { ...ctx, failedId, uuidOwned: outcome.uuidOwned };
   } catch (error) {
     emitMaterializeFailure(target, entry.id, error);
     return { ...ctx, uuidOwned: ownershipKnown };
@@ -233,10 +235,10 @@ const runMaterializeMailboxFailure = (
   .pipe(persistFailedRowStage, 'ctx', 'ctx')
   .pipe(notifyFailureObserversStage, 'ctx', 'ctx')
   .pipe(notifyFailureSenderStage, 'ctx', 'ctx')
-  .end('ctx') as (ctx: MailboxFailureCtx) => MailboxFailureCtx;
+  .endAsync('ctx') as (ctx: MailboxFailureCtx) => Promise<MailboxFailureCtx>;
 
-export function materializeMailboxFailure(job: Job, deps: MailboxFailureDeps): void {
-  runMaterializeMailboxFailure({ job, deps, entry: null });
+export async function materializeMailboxFailure(job: Job, deps: MailboxFailureDeps): Promise<void> {
+  await runMaterializeMailboxFailure({ job, deps, entry: null });
 }
 
 export function createMailboxDeadHandler(
@@ -248,6 +250,6 @@ export function createMailboxDeadHandler(
       typeof job.payload?.id === 'string' && job.payload.id.length > 0 ? job.payload.id : 'unknown';
     const entryId = parseMailboxEntry(job.payload)?.id ?? rawId;
     logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
-    if (deps) materializeMailboxFailure(job, deps);
+    if (deps) void materializeMailboxFailure(job, deps);
   };
 }

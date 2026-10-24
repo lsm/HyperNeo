@@ -37,7 +37,7 @@ describe('materializeMailboxFailuresForSession', () => {
     mailbox.close();
   });
 
-  test('retains an accepted prompt as a failed row and deletes its mailbox job', () => {
+  test('retains an accepted prompt as a failed row and deletes its mailbox job', async () => {
     const entry = pendingEntry('accepted-then-cancelled');
     enqueueMailboxEntry(mailbox.jobQueue, entry);
     const publish = mock(async () => {});
@@ -45,11 +45,11 @@ describe('materializeMailboxFailuresForSession', () => {
     const db = {
       getJobQueueRepo: () => mailbox.jobQueue,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
-      saveUserMessage: (sessionId: string, message: never, status: string, origin?: string) =>
+      saveUserMessage: async (sessionId: string, message: never, status: string, origin?: string) =>
         mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, status, origin),
     } as unknown as Database;
 
-    const cancelled = materializeMailboxFailuresForSession(SESSION_ID, {
+    const cancelled = await materializeMailboxFailuresForSession(SESSION_ID, {
       db,
       internalEventBus: { publish } as never,
       settleSkipped,
@@ -77,11 +77,11 @@ describe('materializeMailboxFailuresForSession', () => {
     const db = {
       getJobQueueRepo: () => mailbox.jobQueue,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
-      saveUserMessage: (sessionId: string, message: never, status: string, origin?: string) =>
+      saveUserMessage: async (sessionId: string, message: never, status: string, origin?: string) =>
         mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, status, origin),
     } as unknown as Database;
 
-    materializeMailboxFailuresForSession(SESSION_ID, {
+    await materializeMailboxFailuresForSession(SESSION_ID, {
       db,
       internalEventBus: { publish: async () => {} } as never,
     });
@@ -95,7 +95,7 @@ describe('materializeMailboxFailuresForSession', () => {
     expect(JSON.stringify(notice?.message)).toContain('cancelled by session abort');
   });
 
-  test('reports the deterministic uuid for entries materialized without messageUuid', () => {
+  test('reports the deterministic uuid for entries materialized without messageUuid', async () => {
     const entry: MailboxEntry = {
       id: createUlid(),
       to: { kind: 'session', sessionId: SESSION_ID },
@@ -114,11 +114,11 @@ describe('materializeMailboxFailuresForSession', () => {
     const db = {
       getJobQueueRepo: () => mailbox.jobQueue,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
-      saveUserMessage: (sessionId: string, message: never, status: string, origin?: string) =>
+      saveUserMessage: async (sessionId: string, message: never, status: string, origin?: string) =>
         mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, status, origin),
     } as unknown as Database;
 
-    const cancelled = materializeMailboxFailuresForSession(SESSION_ID, {
+    const cancelled = await materializeMailboxFailuresForSession(SESSION_ID, {
       db,
       internalEventBus: { publish } as never,
     });
@@ -130,14 +130,14 @@ describe('materializeMailboxFailuresForSession', () => {
     expect(mailbox.sdkRows()[0].send_status).toBe('failed');
   });
 
-  test('is a no-op when the job queue lacks mailbox cancellation support', () => {
+  test('is a no-op when the job queue lacks mailbox cancellation support', async () => {
     const publish = mock(async () => {});
     const db = {
       getJobQueueRepo: () => ({ cancelForSessionWithMessages: () => [] }),
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
     } as unknown as Database;
 
-    const cancelled = materializeMailboxFailuresForSession(SESSION_ID, {
+    const cancelled = await materializeMailboxFailuresForSession(SESSION_ID, {
       db,
       internalEventBus: { publish } as never,
     });
@@ -147,7 +147,7 @@ describe('materializeMailboxFailuresForSession', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  test('preserveDeferred keeps deferred entries pending for post-interrupt replay', () => {
+  test('preserveDeferred keeps deferred entries pending for post-interrupt replay', async () => {
     const deferred = pendingEntry('queued-next-survives');
     const immediate: MailboxEntry = {
       ...pendingEntry('immediate-then-cancelled'),
@@ -159,11 +159,11 @@ describe('materializeMailboxFailuresForSession', () => {
     const db = {
       getJobQueueRepo: () => mailbox.jobQueue,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
-      saveUserMessage: (sessionId: string, message: never, status: string, origin?: string) =>
+      saveUserMessage: async (sessionId: string, message: never, status: string, origin?: string) =>
         mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, status, origin),
     } as unknown as Database;
 
-    const cancelled = materializeMailboxFailuresForSession(SESSION_ID, {
+    const cancelled = await materializeMailboxFailuresForSession(SESSION_ID, {
       db,
       internalEventBus: { publish } as never,
       preserveDeferred: true,
