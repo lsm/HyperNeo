@@ -32,6 +32,10 @@ An opt-in entry inside the existing web package at `/neo`, included in the web b
 The shared `NEO_SPEAKING_POLICY` is delivered through the existing pure coordinator prompt/runtime policy. It asks Neo to answer direct human questions, use conversation and current facts to avoid repetition, and stay silent on event wakes unless something is useful to the human. Direct answers use the publication ledger so they appear in the conversation. This is behavioral guidance, not a routing/permission gate or guaranteed semantic isolation; actual-provider acceptance remains necessary.
 The Neo-only SDK policy delivers the authored prompt as `custom` with `snapshot:false`, so resumed root/holder sessions read current guidance without discarding their history. Ordinary execution-session prompt profiles remain unchanged.
 
+## Escape ownership
+
+New Neo handlers that dismiss an overlay or cancel a composer action must call `event.preventDefault()` when consuming Escape; nested widgets may also stop propagation. The page-level attachment preview honors consumed events. Keep this contract in the owning component rather than adding future widget selectors to the preview's compatibility list. When adding a handler, test that one Escape performs its foreground action while an open preview remains mounted, and a later unconsumed Escape closes the preview. Existing compatibility selectors cover current handlers that predate this convention. See `.claude/skills/verify/journeys/attachment-preview-layout.md` for the real composer/preferences checks and `ArtifactPreviewPanel.test.tsx` for consumed-event coverage.
+
 ## Message themes
 
 `neo.css` is the single customization point for Neo's palette. Its `.neo-shell` block sets the shared surface/text/border/accent tokens locally, without changing the rest of HyperNeo. Defaults use `light-dark()` and follow the existing app color scheme, including the system setting.
