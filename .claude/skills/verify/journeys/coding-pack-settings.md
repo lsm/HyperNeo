@@ -28,3 +28,12 @@ pack global stays `review_bot`. Each control fits at 1280 and 390 px. Evidence:
 The page writes through the local-human RPC door. Agent writes are refused by the
 `human_only` policy; [pack settings operations](pack-settings-operations-slice-2.md)
 proves that refusal.
+
+The instance watch list must start empty and opening the page must not write it.
+While viewing repository policy, save `acme/app` and `other/repo` as watches:
+readback must be at pack-global scope, with duplicates/case normalized. Reload
+keeps those choices. An invalid repository is refused without replacing the
+saved list. Clearing the field stores `[]`, and reload stays empty. The desktop
+and mobile screenshots show the saved list and controls fitting the viewport.
+The helper also retains the initial screenshot so the missing-control regression
+can be inspected. No automatic repository enrolment is exercised.
