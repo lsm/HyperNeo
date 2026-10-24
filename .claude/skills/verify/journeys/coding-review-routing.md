@@ -16,8 +16,8 @@ cat "$RUN/evidence/routing.json"
 cat "$RUN/evidence/assignments.json"
 ```
 
-Observe exact-head bot approval, invalidation after a push and no reviewer
-assignment while waiting. With no configured bot, observe exactly one persisted
+Observe exact-head bot approval, retained approval after COMMENTED/PENDING
+reviews, invalidation after a push and no reviewer assignment while waiting. With no configured bot, observe exactly one persisted
 synthetic assignment and its returned ID. Retain both files. Review inputs must
 use the repository's configured bot, the latest observed PR head and reviews in
 chronological order, as the existing GitHub ledger reader supplies them.

@@ -53,6 +53,23 @@ describe('coding review routing', () => {
     expect(startReviewer).not.toHaveBeenCalled();
   });
 
+  test.each(['COMMENTED', 'PENDING'])(
+    '%s does not replace the bot approval on the same head',
+    async (state) => {
+      const startReviewer = mock(async () => 'forbidden-reviewer');
+      const result = await runCodingReview(
+        {
+          reviewBot: 'repo-review-app',
+          head,
+          reviews: [review('repo-review-app'), review('repo-review-app', head, state)],
+        },
+        { startReviewer }
+      );
+      expect(result).toEqual({ kind: 'bot', head, login: 'repo-review-app', approved: true });
+      expect(startReviewer).not.toHaveBeenCalled();
+    }
+  );
+
   test('matches login without case sensitivity and ignores other actors and heads', async () => {
     const startReviewer = mock(async () => 'forbidden-reviewer');
     expect(

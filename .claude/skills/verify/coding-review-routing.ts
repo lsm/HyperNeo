@@ -39,6 +39,14 @@ try {
   const reviews = [{ author: { login: reviewBot }, commit: { oid: 'head-1' }, state: 'APPROVED' }];
   const approved = await pack.review({ reviewBot, head: 'head-1', reviews }, effects);
   assert.deepEqual(approved, { kind: 'bot', head: 'head-1', login: reviewBot, approved: true });
+  for (const state of ['COMMENTED', 'PENDING']) {
+    const afterComment = await pack.review({ reviewBot, head: 'head-1', reviews: [
+      ...reviews, { ...reviews[0], state },
+    ] }, effects);
+    assert.deepEqual(afterComment, approved);
+    assert.equal(calls.length, 0);
+    evidence.push({ state, afterComment, reviewerAssignments: [...calls] });
+  }
   const pushed = await pack.review({ reviewBot, head: 'head-2', reviews }, effects);
   assert.deepEqual(pushed, { kind: 'bot', head: 'head-2', login: reviewBot, approved: false });
   const waiting = await pack.review({ reviewBot, head: 'head-2', reviews: [] }, effects);
