@@ -19,3 +19,9 @@ actual SDK trace repeats the original transport UUID across restart. After the
 fix each Neo delivery has a fresh transport UUID while incoming SDK attribution
 maps back to the durable input ID. Daemon, SDK and model resources close in
 finally; retain synthetic evidence. No real-provider behavior is claimed.
+
+The identity regression also runs 200 completed coordinator turns with another
+input queued throughout: each top-level result retains durable attribution and
+then releases only its referenced transport mappings. Queued inputs and nested
+results keep their mappings; unrelated SDK events are returned unchanged. This
+prevents completed turns from retaining mappings for the coordinator lifetime.

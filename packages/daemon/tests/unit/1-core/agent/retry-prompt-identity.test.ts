@@ -77,6 +77,13 @@ describe('RetryPromptIdentity', () => {
         user_message_uuid: wire.uuid,
         user_message_uuids: [wire.uuid],
       } as unknown as SDKMessage;
+      const nested = { ...result, parent_tool_use_id: 'synthetic-tool' } as SDKMessage;
+      expect(ids.incoming(nested)).toEqual({
+        ...nested,
+        user_message_uuid: durable.uuid,
+        user_message_uuids: [durable.uuid],
+      });
+      expect(ids.incoming(wire)).toEqual(durable);
       expect(ids.incoming(result)).toEqual({
         ...result,
         user_message_uuid: durable.uuid,
