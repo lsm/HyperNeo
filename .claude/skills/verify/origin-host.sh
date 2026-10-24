@@ -1,6 +1,7 @@
 #!/bin/bash
-# S7 of docs/design/daemon-security.md: Origin/Host checks only record what they would
-# refuse; every request is still served, CORS '*' is unchanged, and a host the human adds
+# S7 of docs/design/daemon-security.md: Origin/Host checks record what they would refuse;
+# pages are still served (a cross-site WebSocket is refused since #7975, see
+# origin-refuse.sh), CORS '*' is unchanged, and a host the human adds
 # under Settings > Devices > Allowed hosts stops being recorded. Usage: origin-host.sh <port>
 # (never 8399). Needs the web build and Playwright (PLAYWRIGHT_NODE_PATH, default: the
 # Homebrew @playwright/cli install).
@@ -26,7 +27,7 @@ echo "page with a foreign Host (rebinding):  $(status -H 'Host: rebind.example' 
 echo "page from a foreign Origin:            $(status -H 'Origin: https://evil.example' "$URL")"
 echo "CORS preflight from a foreign Origin:  $(status -X OPTIONS -H 'Origin: https://evil.example' "$URL") allow-origin=$(curl -s -D - -o /dev/null -X OPTIONS -H 'Origin: https://evil.example' "$URL" | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')"
 echo "page from a tailnet name:              $(status -H 'Host: mac.tailnet.example' "$URL")"
-echo "WebSocket from a foreign Origin served: $(VERIFY_PORT="$PORT" VERIFY_ORIGIN=https://evil.example bun .claude/skills/verify/rpc.ts device.pair.pending | python3 -c "import json,sys;print('error' not in json.load(sys.stdin)['reply'])")"
+echo "WebSocket from a foreign Origin served: $(VERIFY_PORT="$PORT" VERIFY_ORIGIN=https://evil.example bun .claude/skills/verify/rpc.ts device.pair.pending > /dev/null 2>&1 && echo true || echo false)"
 DB="$RUN/data/daemon.db"
 rows() { sqlite3 -readonly -separator ' | ' "$DB" "SELECT reason, kind, IFNULL(host,'-'), IFNULL(origin,'-'), count FROM would_refuse_requests ORDER BY rowid"; }
 echo "recorded:"; rows

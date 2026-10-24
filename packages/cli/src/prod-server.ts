@@ -151,7 +151,8 @@ export async function startProdServer(config: Config) {
 
     async fetch(req, server) {
       const url = new URL(req.url);
-      daemonContext.observeRequest(req);
+      const refused = daemonContext.guardRequest(req);
+      if (refused) return refused;
 
       if (req.method === 'OPTIONS') {
         return createCorsPreflightResponse();

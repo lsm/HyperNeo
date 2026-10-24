@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { Logger } from '../../../../src/lib/logger.ts';
-import { createRequestObserver, judgeOriginHost } from '../../../../src/lib/pairing/origin-host.ts';
+import { createRequestGuard, judgeOriginHost } from '../../../../src/lib/pairing/origin-host.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -61,7 +61,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     const repo = new DevicePairingRepository(db);
     const gateway = new DbGateway(':memory:', db);
     let now = 1_000;
-    const observe = createRequestObserver({
+    const observe = createRequestGuard({
       db: () => gateway,
       allowedHosts: () => allowed,
       exempt: (req) => new URL(req.url).pathname === '/webhooks/github',
@@ -73,7 +73,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
   test('records each request that would be refused once, counting repeats, and never refuses', async () => {
     const { db, repo, observe, allowed, tick } = setup();
     const foreign = () => request({ host: 'mac.tailnet.ts.net', origin: 'https://evil.example' });
-    expect(observe(foreign())).toBeUndefined();
+    expect(observe(foreign())).toBeNull();
     tick();
     observe(foreign());
     observe(request({ host: '127.0.0.1:9283', origin: 'http://127.0.0.1:9283' }));
@@ -107,7 +107,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
 
   test('loopback requests are judged without reading the settings', () => {
     let reads = 0;
-    const observe = createRequestObserver({
+    const observe = createRequestGuard({
       db: () => {
         throw new Error('no record expected');
       },
@@ -130,7 +130,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     let rejected = 0;
     let now = 1;
     const failing = (fail: () => Promise<void>) =>
-      createRequestObserver({
+      createRequestGuard({
         db: () => ({ run: fail }) as unknown as DbGateway,
         allowedHosts: () => [],
         exempt: () => false,
@@ -165,7 +165,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
 
 describe('refusing cross-site WebSocket upgrades and mutating requests', () => {
   const guard = (allowed: string[] = []) =>
-    createRequestObserver({
+    createRequestGuard({
       db: () => ({ run: () => Promise.resolve() }) as unknown as DbGateway,
       allowedHosts: () => allowed,
       exempt: (req) => new URL(req.url).pathname === '/webhooks/github',
