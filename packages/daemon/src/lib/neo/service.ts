@@ -496,7 +496,9 @@ export class NeoService {
     );
     if (this.watching || this.disposed) return;
     this.watching = runLagPhase('neo:driver:session_watch', async () => {
-      await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now());
+      await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
+        this.log.warn('Stalled ask wake pending', error)
+      );
       await this.sessionWatcher.watchSessions(Date.now());
     })
       .catch((error) => this.log.warn('Neo refresh pending', error))

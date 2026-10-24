@@ -15,7 +15,7 @@ checks that the cooldown survives. The note names its ask and says:
 “This ask has nothing in progress. Add the next todo, or settle it.”
 
 Retain `evidence/result.json` and daemon output. The unit contracts additionally
-cover waiting/doing/blocked/done todos, a recent ask, archived/deleted recipients and failed handoff retry. One failed handoff must not block other asks or session watching.
+cover waiting/doing/blocked/done todos, a recent ask, archived/deleted recipients and failed handoff retry. Neither a failed handoff nor a failed wake query may block session watching; a watcher failure must not suppress the wake.
 The observable endpoint here is durable mailbox admission, not model receipt;
 no provider turn or live-daemon behavior is claimed. Both daemon instances are
 closed in finally.
