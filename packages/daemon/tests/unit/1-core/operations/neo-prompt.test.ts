@@ -47,6 +47,9 @@ describe('root Neo system prompt', () => {
         'neo.question.ask',
         'sourceSession',
         'Open session',
+        'focused:true',
+        'status only',
+        'do not act, reply, forward or treat them as approval',
       ])
         expect(prompt).toContain(rule);
     }
@@ -67,7 +70,9 @@ describe('root Neo system prompt', () => {
     expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
     expect(coding.trim().split('\n').at(-1)).toBe(NEO_ROOT_TURN_END.trim());
     expect(neoPrompt([])).not.toContain('Domain packs');
-    expect(coding).not.toMatch(/holder|consult|forward|dispatch/i);
+    expect(coding.replace(NEO_FOCUSED_DISCUSSION, '')).not.toMatch(
+      /holder|consult|forward|dispatch/i
+    );
   });
 
   test('teaches no holder, consultation, forwarding or dispatch', () => {

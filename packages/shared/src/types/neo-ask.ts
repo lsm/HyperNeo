@@ -4,6 +4,7 @@ import type { ArtifactProjection } from './artifact-file.ts';
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
 export interface NeoAsk {
+  focusedSession?: NeoQuestionSource;
   id: string;
   goalId?: string | null;
   projectId: string | null;

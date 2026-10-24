@@ -119,6 +119,7 @@ describe('neo.question operations', () => {
           noLabel: 'Wait',
           yesLabel: 'Approve',
           sourceSession: { adapter: 'codex-desktop', id: 'worker' },
+          focused: true,
         });
         await reading;
         f.store.settleAsk(f.store.getAsk('ask')!, 'dropped', 'No longer needed', 2);
@@ -132,6 +133,7 @@ describe('neo.question operations', () => {
         });
         expect(await pending).toEqual({ ok: false, reason: 'ask_settled: this ask is dropped.' });
         expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
+        expect(f.store.getAsk('ask')).not.toHaveProperty('focusedSession');
       } finally {
         f.db.close();
       }

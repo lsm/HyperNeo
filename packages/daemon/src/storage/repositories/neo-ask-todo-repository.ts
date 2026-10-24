@@ -56,8 +56,17 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
 };
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
-  origin_message_id AS originMessageId, title, request, status, outcome,
+  origin_message_id AS originMessageId, title, request, status, outcome, focused_session_json AS focusedSessionJson,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
+
+type AskRow = Omit<NeoAsk, 'focusedSession'> & { focusedSessionJson: string | null };
+const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
+  ...row,
+  ...(focusedSessionJson
+    ? { focusedSession: JSON.parse(focusedSessionJson) as NeoAsk['focusedSession'] }
+    : {}),
+});
+const foundAsk = (row: AskRow | null): NeoAsk | null => (row ? toAsk(row) : null);
 
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
   check_json AS checkJson, instruction, named, repo, state, reason, blocked_reason AS blockedReason,
@@ -189,41 +198,54 @@ export class NeoAskTodoRepository {
     return this.getAsk(ask.id)!;
   }
 
+  focusAsk(id: string, source: NonNullable<NeoAsk['focusedSession']>, now: number): void {
+    this.db
+      .prepare(
+        "UPDATE neo_asks SET focused_session_json = ?, updated_at = ? WHERE id = ? AND status = 'open'"
+      )
+      .run(JSON.stringify(source), now, id);
+    this.changed();
+  }
+
   findAsk(
     sessionId: string,
     originMessageId: string | null,
     title: string,
     goalId: string | null = null
   ): NeoAsk | null {
-    return (
+    return foundAsk(
       (this.db
         .prepare(
           `${ASK_SELECT} WHERE session_id = ? AND origin_message_id IS ? AND title = ? AND goal_id IS ?
            AND (status = 'open' OR (status = 'done'
              AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))`
         )
-        .get(sessionId, originMessageId, title, goalId) as NeoAsk | null) ?? null
+        .get(sessionId, originMessageId, title, goalId) as AskRow | null) ?? null
     );
   }
 
   childAsk(parentId: string, repo: string): NeoAsk | null {
-    return (
+    return foundAsk(
       (this.db
         .prepare(`${ASK_SELECT} WHERE parent_id = ? AND repo = ? AND status = 'open'`)
-        .get(parentId, repo) as NeoAsk | null) ?? null
+        .get(parentId, repo) as AskRow | null) ?? null
     );
   }
 
   listChildAsks(parentId: string): NeoAsk[] {
-    return this.db
-      .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at, rowid`)
-      .all(parentId) as NeoAsk[];
+    return (
+      this.db
+        .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at, rowid`)
+        .all(parentId) as AskRow[]
+    ).map(toAsk);
   }
 
   listGoalAsks(goalId: string): NeoAsk[] {
-    return this.db
-      .prepare(`${ASK_SELECT} WHERE goal_id = ? ORDER BY created_at, id`)
-      .all(goalId) as NeoAsk[];
+    return (
+      this.db
+        .prepare(`${ASK_SELECT} WHERE goal_id = ? ORDER BY created_at, id`)
+        .all(goalId) as AskRow[]
+    ).map(toAsk);
   }
 
   settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {
@@ -244,16 +266,18 @@ export class NeoAskTodoRepository {
   }
 
   getAsk(id: string): NeoAsk | null {
-    return (this.db.prepare(`${ASK_SELECT} WHERE id = ?`).get(id) as NeoAsk | null) ?? null;
+    return foundAsk(this.db.prepare(`${ASK_SELECT} WHERE id = ?`).get(id) as AskRow | null);
   }
 
   listAsks(projectId: string | null | undefined, limit: number): NeoAsk[] {
-    return this.db
-      .prepare(
-        `${ASK_SELECT} WHERE (?1 = 0 OR project_id IS ?2)
+    return (
+      this.db
+        .prepare(
+          `${ASK_SELECT} WHERE (?1 = 0 OR project_id IS ?2)
           ORDER BY status = 'open' DESC, updated_at DESC LIMIT ?3`
-      )
-      .all(projectId === undefined ? 0 : 1, projectId ?? null, limit) as NeoAsk[];
+        )
+        .all(projectId === undefined ? 0 : 1, projectId ?? null, limit) as AskRow[]
+    ).map(toAsk);
   }
 
   countAsks(projectId: string | null | undefined): number {
@@ -265,7 +289,7 @@ export class NeoAskTodoRepository {
   }
 
   listOpenAsks(): NeoAsk[] {
-    return this.db.prepare(`${ASK_SELECT} WHERE status = 'open'`).all() as NeoAsk[];
+    return (this.db.prepare(`${ASK_SELECT} WHERE status = 'open'`).all() as AskRow[]).map(toAsk);
   }
 
   listStalledAsks(
@@ -311,9 +335,11 @@ export class NeoAskTodoRepository {
   }
 
   getAsks(ids: readonly string[]): NeoAsk[] {
-    return this.db
-      .prepare(`${ASK_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
-      .all(JSON.stringify(ids)) as NeoAsk[];
+    return (
+      this.db
+        .prepare(`${ASK_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
+        .all(JSON.stringify(ids)) as AskRow[]
+    ).map(toAsk);
   }
 
   listTodos(askId: string): NeoTodo[] {
