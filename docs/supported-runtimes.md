@@ -56,7 +56,7 @@ Or grab the binary + `SHA256SUMS` from the GitHub Release assets. CLI flags:
 | Flag | Meaning | Default |
 | --- | --- | --- |
 | `-p, --port <port>` | Port to listen on | `9283` |
-| `--host <host>` | Host to bind to | `0.0.0.0` |
+| `--host <host>` | Host to bind to | `127.0.0.1` |
 | `--db-path <path>` | SQLite database file | `<data-dir>/data/daemon.db` |
 | `--data-dir <dir>` | Root for all daemon state (db, logs, skills, SDK cache) | `~/.hyperneo` (or `HYPERNEO_DATA_DIR`) |
 | `--workspace <path>` | Default workspace root for file indexing | — |
