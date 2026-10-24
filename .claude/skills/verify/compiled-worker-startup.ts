@@ -22,6 +22,7 @@ const child = Bun.spawn([resolve(binaryPath), '--host', '127.0.0.1', '--port', S
 const stdout = new Response(child.stdout).text();
 const stderr = new Response(child.stderr).text();
 let ws: WebSocket | undefined;
+let observed: Record<string, unknown> | undefined;
 try {
   const deadline = Date.now() + 30000;
   let ready = false;
@@ -42,7 +43,7 @@ try {
   assert.equal(build.health, 'ok');
   assert.equal(build.pid, child.pid);
   await new Promise((done) => setTimeout(done, 1500));
-  writeFileSync(join(run, 'evidence/build.json'), JSON.stringify({ status: 'pass', port, binary: resolve(binaryPath), build, limits: 'Startup and worker loading only; embedding inference and native Desktop are not exercised.' }, null, 2));
+  observed = { status: 'pass', port, binary: resolve(binaryPath), build, limits: 'Startup and worker loading only; embedding inference and native Desktop are not exercised.' };
 } finally {
   ws?.close(); child.kill('SIGTERM');
   const timer = setTimeout(() => child.kill('SIGKILL'), 15000);
@@ -50,7 +51,8 @@ try {
   const logs = `${await stdout}\n${await stderr}`;
   writeFileSync(join(run, 'evidence/daemon.log'), logs);
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ pid: child.pid, exit, stopped: true }));
-  assert(!/ModuleNotFound[^\n]*(?:db-gateway-worker|agent-memory-embed-worker)/.test(logs), 'Compiled worker module is missing');
-  assert(!logs.includes('Unexpected use of reserved word') && !logs.includes('worker failed; daemon runs without an event-loop watchdog'), 'Watchdog did not load as JavaScript');
+  assert(!logs.includes('ModuleNotFound'), 'Compiled worker module is missing');
+  assert(!logs.includes('Unexpected use of reserved word') && !logs.includes('daemon runs without an event-loop watchdog'), 'Watchdog did not load as JavaScript');
 }
+writeFileSync(join(run, 'evidence/build.json'), JSON.stringify(observed, null, 2));
 console.log('PASS: compiled binary starts, system.build is healthy, and workers load without missing-module or raw-TypeScript errors');

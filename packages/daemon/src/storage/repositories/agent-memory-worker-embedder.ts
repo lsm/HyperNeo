@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../../lib/runtime-worker-url.ts';
 import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
 import { DIMENSIONS, MODEL_ID } from './agent-memory-transformers.ts';
 import { Logger } from '../../lib/logger.ts';
@@ -19,9 +20,16 @@ type Running = {
 };
 
 function createEmbedWorker(): Worker {
-  return new Worker(new URL('./agent-memory-embed-worker.ts', import.meta.url).href, {
-    type: 'module',
-  });
+  return new Worker(
+    runtimeWorkerUrl(
+      './agent-memory-embed-worker.ts',
+      './daemon/src/storage/repositories/agent-memory-embed-worker.ts',
+      import.meta.url
+    ).href,
+    {
+      type: 'module',
+    }
+  );
 }
 
 export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {

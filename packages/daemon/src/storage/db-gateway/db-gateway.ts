@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../../lib/runtime-worker-url.ts';
 import { forwardSQLiteWorkerLog } from '../sqlite-worker-observability.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger.ts';
@@ -155,7 +156,14 @@ export class DbGateway {
     private readonly inline: Database | null,
     queryObservability?: SQLiteQueryObservabilityOptions,
     createWorker = () =>
-      new Worker(new URL('./db-gateway-worker.ts', import.meta.url).href, { type: 'module' }),
+      new Worker(
+        runtimeWorkerUrl(
+          './db-gateway-worker.ts',
+          './daemon/src/storage/db-gateway/db-gateway-worker.ts',
+          import.meta.url
+        ).href,
+        { type: 'module' }
+      ),
     replyTimeoutMs = REPLY_TIMEOUT_MS
   ) {
     this.lanes = {

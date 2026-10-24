@@ -1,3 +1,4 @@
+import { COMPILED_WORKER_ENTRYPOINTS } from './compiled-worker-entrypoints.ts';
 import { readReleaseBuildCommit } from '../packages/daemon/src/lib/build-metadata.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -66,11 +67,13 @@ for (const target of targets) {
   bun([
     'build',
     '--compile',
+    '--root=packages',
     `--target=${target}`,
     ...defineBuildCommit,
     ...externalFor(target),
     `--outfile=${outputPath}`,
     'packages/cli/prod-entry.ts',
+    ...COMPILED_WORKER_ENTRYPOINTS,
   ]);
   console.log(`  -> ${outputPath}`);
 
@@ -84,11 +87,13 @@ for (const target of targets) {
     bun([
       'build',
       '--compile',
+      '--root=packages',
       `--target=${target}`,
       ...defineBuildCommit,
       ...externalFor(target),
       `--outfile=${daemonOutputPath}`,
       'packages/cli/daemon-entry.ts',
+      ...COMPILED_WORKER_ENTRYPOINTS,
     ]);
     console.log(`  -> ${daemonOutputPath}`);
 

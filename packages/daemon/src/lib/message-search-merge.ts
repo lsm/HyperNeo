@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from './runtime-worker-url.ts';
 import { getConfig } from '../config.ts';
 import {
   forwardSQLiteWorkerLog,
@@ -47,9 +48,16 @@ export function runMessageSearchMerge(
       resolve(status);
     };
     try {
-      worker = new Worker(new URL('./message-search-merge-worker.ts', import.meta.url).href, {
-        type: 'module',
-      });
+      worker = new Worker(
+        runtimeWorkerUrl(
+          './message-search-merge-worker.ts',
+          './daemon/src/lib/message-search-merge-worker.ts',
+          import.meta.url
+        ).href,
+        {
+          type: 'module',
+        }
+      );
       worker.onmessage = (event: MessageEvent<MergeWorkerResponse | SQLiteWorkerLog>) => {
         if ('log' in event.data) {
           forwardSQLiteWorkerLog(event.data, 'message-search-merge');

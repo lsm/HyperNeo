@@ -1,4 +1,7 @@
-// @ts-expect-error bun embeds this worker source as a file asset, not a module default export
-import workerUrl from './event-loop-watchdog-worker.ts' with { type: 'file' };
+import { runtimeWorkerUrl } from './runtime-worker-url.ts';
 
-export const eventLoopWatchdogWorkerAssetUrl: string = workerUrl;
+export const eventLoopWatchdogWorkerAssetUrl = runtimeWorkerUrl(
+  './event-loop-watchdog-worker.ts',
+  './daemon/src/lib/event-loop-watchdog-worker.ts',
+  import.meta.url
+);
