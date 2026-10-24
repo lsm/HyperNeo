@@ -4,6 +4,7 @@ import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import { codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
+import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
   recordUnpaired,
   recordWouldRefuse,
@@ -35,6 +36,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sessionWrites,
     codingLedgerWrites,
     codingTodoPrWrites,
+    codingDeliveryWrites,
     codingSweepWrites,
   ].map((op) => [op.name, op])
 );

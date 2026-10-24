@@ -1,7 +1,15 @@
 import type { Database } from '../../../../../storage/sqlite-compat.ts';
 
 export function createCodingPackTables(db: Database, activatedAt = Date.now()): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_todo_prs (
+  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
+    todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    head TEXT NOT NULL,
+    gate_json TEXT NOT NULL CHECK (json_valid(gate_json)),
+    smoke_json TEXT CHECK (smoke_json IS NULL OR json_valid(smoke_json)),
+    PRIMARY KEY (todo_id, url, head)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_todo_prs (
     todo_id TEXT PRIMARY KEY REFERENCES neo_todos(id) ON DELETE CASCADE,
     prs_json TEXT NOT NULL CHECK (json_valid(prs_json)),
     read_at INTEGER NOT NULL
