@@ -1,4 +1,6 @@
 import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test';
+import { vi } from 'vitest';
+import type { GitHubPollCollector } from '../../../../src/lib/github/poll-source.ts';
 import { Database as SqliteDatabase } from '../../../../src/storage/sqlite-compat';
 import { GitHubService } from '../../../../src/lib/github/github-service';
 import { GITHUB_POLL } from '../../../../src/lib/job-queue-constants';
@@ -93,6 +95,34 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds,
     });
   }
+
+  it('passes both legacy page reads through its configured collector', async () => {
+    const collectPollPage: GitHubPollCollector = mock(async () => Response.json([]));
+    const db = makeDb();
+    const options = {
+      db,
+      internalEventBus: makeDaemonHub(),
+      config: makeConfig(),
+      apiKey: '',
+      githubToken: 'synthetic-transport-only',
+      collectPollPage,
+      getPollingIntervalSeconds: () => 60,
+    };
+    const service = new GitHubService(options);
+    vi.stubGlobal('fetch', () => {
+      throw new Error('Direct transport refused');
+    });
+    try {
+      service.start();
+      service.addRepository('synthetic', 'legacy');
+      await service.getPollingService()!.triggerPoll();
+      expect(collectPollPage).toHaveBeenCalledTimes(2);
+    } finally {
+      service.stop();
+      db.getDatabase().close();
+      vi.unstubAllGlobals();
+    }
+  });
 
   it('registers github.poll handler on jobProcessor when start() is called', () => {
     const svc = makeService();
