@@ -1,3 +1,8 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, realpathSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 import { createCodingPrFileOperation } from '../../../../src/lib/neo/packs/coding/pr-file-operation.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -87,4 +92,38 @@ describe('coding PR complete-file attachment', () => {
       f.db.close();
     }
   });
+});
+
+test('attaches the full Markdown document through an isolated daemon agent door', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'coding-pr-file-')));
+  mkdirSync(join(root, 'home'));
+  try {
+    const output = execFileSync(
+      'bun',
+      [
+        fileURLToPath(
+          new URL('../../../../../../.claude/skills/verify/coding-pr-file.ts', import.meta.url)
+        ),
+        '0',
+        root,
+      ],
+      {
+        env: {
+          HOME: join(root, 'home'),
+          NODE_ENV: 'test',
+          HYPERNEO_DATA_DIR: join(root, 'data'),
+          LOG_LEVEL: 'error',
+          PATH: `${join(root, 'bin')}:${process.env.PATH}`,
+        },
+        encoding: 'utf8',
+        timeout: 30000,
+      }
+    );
+    expect(output).toContain('PASS: owner Neo MCP');
+    const proof = JSON.parse(readFileSync(join(root, 'evidence/observed.json'), 'utf8'));
+    expect(proof.status).toBe('pass');
+    expect(proof.fullContent).toContain('Unchanged appendix.');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

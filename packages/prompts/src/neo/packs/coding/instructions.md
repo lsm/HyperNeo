@@ -50,3 +50,5 @@ including GLM, Gemini and DeepSeek, do not qualify automatically. Ask for a supp
 identity or use a human reviewer.
 A human is an alternative. When off, no Author line or model diversity is required.
 This records policy only; keep the repository's existing review and merge rules.
+
+Use `neo.coding.pr.file` for document attachments: always attach the complete file at the PR’s current head (Markdown renders as Markdown); explain changes in card text, never attach a diff or diff text disguised as a Markdown document.
