@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { getDataDir } from '../data-dir.ts';
+import { installClaudeNativeWrites } from './claude-native-writes.ts';
 import { collectDescendantPids, listProcesses } from '../process-watchdog.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
@@ -1531,10 +1533,22 @@ export async function startClaudeSession(
   const prepared = request.preparation
     ? await deps.prepareExecution!(request.preparation, {
         directory: folder,
-        destination: join(folder, '.claude', 'worktrees', `neo-${cliSessionId.slice(0, 8)}`),
+        destination: join(getDataDir(), 'claude-worktrees', basename(folder), cliSessionId),
       })
     : null;
   if (prepared && !prepared.ok) return prepared;
+  if (prepared) {
+    try {
+      const checkout = await deps.gitCheckout(folder);
+      await installClaudeNativeWrites(prepared.value.directory, [folder, checkout?.repo ?? folder]);
+    } catch (error) {
+      await prepared.value.release();
+      return reject(
+        'preparation_failed',
+        `Could not install native write policy: ${String(error)}`
+      );
+    }
+  }
   const placement = planWorkPlacement(
     prepared ? null : await deps.gitCheckout(folder).catch(() => null)
   );
