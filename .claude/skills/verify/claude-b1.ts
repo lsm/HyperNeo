@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { createServer } from 'node:net';
+import { chmodSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -81,6 +83,60 @@ try {
   assert(events().some(e => e.kind === 'rc-request' && e.mode === 'bypassPermissions'));
   const recordPath = join(scope, `${ref.id}.json`);
   const importedHash = digest(recordPath);
+  if (process.env.VERIFY_LIVE_DIRECT === '1') {
+    const caller = 'synthetic-direct-origin';
+    await app.db.createSession({ id: caller, title: caller, workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+    const statePath = join(run, 'evidence/native-sessions.json');
+    const state = JSON.parse(readFileSync(statePath, 'utf8')) as Array<{ id: string; title: string; pid: number }>;
+    const target = state.find(s => `local_${s.id}` === ref.id)!;
+    for (const helper of state.filter(s => s.title === 'desktop-wake')) helper.pid = 0;
+    writeFileSync(statePath, JSON.stringify(state));
+    writeFileSync(join(run, 'evidence/fault'), 'dead-helpers');
+    const registrations = join(run, 'home/.claude/sessions');
+    chmodSync(registrations, 0o700);
+    const socketPath = join(registrations, `${target.pid}.sock`);
+    const registration = join(registrations, `${target.pid}.json`);
+    const original = JSON.parse(readFileSync(registration, 'utf8'));
+    writeFileSync(registration, JSON.stringify({ ...original, messagingSocketPath: socketPath }));
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    const transcript = join(run, 'home/.claude/projects', record.cwd.replace(/[/.]/g, '-'), `${target.id}.jsonl`);
+    const frames: unknown[] = [];
+    const peer = createServer(socket => {
+      let buffer = '';
+      socket.setEncoding('utf8');
+      socket.on('data', chunk => {
+        buffer += chunk;
+        if (!buffer.endsWith('\n')) return;
+        const frame = JSON.parse(buffer); frames.push(frame);
+        appendFileSync(transcript, JSON.stringify({ type: 'user', uuid: frame.uuid, timestamp: new Date().toISOString(), message: frame.message }) + '\n');
+        appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: 'Synthetic direct completion' }], stop_reason: 'end_turn' } }) + '\n');
+      });
+    });
+    await new Promise<void>(resolve => peer.listen(socketPath, resolve));
+    chmodSync(socketPath, 0o600);
+    try {
+      const before = events().length;
+      for (const mode of ['auto', 'steer']) {
+        const sent = await rpc<Result<WorkDelivery>>('work.send', { ref, mode, from: `session:${caller}`, message: `Exact direct marker ${mode}` });
+        assert(sent.ok && sent.value.delivered && sent.value.receipt?.inputId, JSON.stringify(sent));
+        const status = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: sent.value.receipt });
+        assert(status.ok && status.value.inputEvidence?.transcriptState === 'completed', JSON.stringify(status));
+      }
+      assert.equal(frames.length, 2);
+      assert.equal(events().length, before, 'Direct sends must not touch helpers or CLI relays');
+      target.pid = 0;
+      writeFileSync(statePath, JSON.stringify(state));
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const failed = await rpc<Result<WorkDelivery>>('work.send', { ref, from: `session:${caller}`, message: 'Cold target with capped helper' });
+        assert(!failed.ok && failed.reason === 'not_delivered', JSON.stringify(failed));
+        assert.match(failed.detail, /process cap/);
+        assert.equal(events().filter(e => e.kind === 'prepare').length, events().slice(0, before).filter(e => e.kind === 'prepare').length);
+      }
+      evidence.push({ liveDirectFrames: frames, repeatedColdSendsCreatedNoHelpers: true });
+    } finally {
+      await new Promise<void>(resolve => peer.close(() => resolve()));
+    }
+  } else {
   if (process.env.VERIFY_QUEUED_DELIVERY === '1') {
     const { NeoAskTodoRepository } = await import('../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts');
     const { NeoTodoSessionRepository } = await import('../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts');
@@ -163,38 +219,6 @@ try {
   assert(concurrent[0].ok && concurrent[1].ok && concurrent[0].value.receipt!.inputId !== concurrent[1].value.receipt!.inputId);
   evidence.push({ concurrentNativeMessages: concurrent, newHelpers: helperPreparationsAfter - helperPreparationsBefore });
   writeFileSync(join(run, 'evidence/fault'), '');
-  if (process.env.VERIFY_STALE_HELPER === '1') {
-    const statePath = join(run, 'evidence/native-sessions.json');
-    const stopHelpers = () => {
-      const state = JSON.parse(readFileSync(statePath, 'utf8')) as Array<{ id: string; title: string; pid: number }>;
-      const ids = state.filter(s => s.title === 'desktop-wake').map(s => s.id);
-      for (const s of state) if (ids.includes(s.id)) s.pid = 0;
-      writeFileSync(statePath, JSON.stringify(state));
-      writeFileSync(join(run, 'evidence/blocked-imports.json'), JSON.stringify(ids));
-      return ids;
-    };
-    const preparations = () => events().filter(e => e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake')).length;
-    const staleIds = stopHelpers();
-    const before = preparations();
-    const recovered = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Stale helper replacement delivers this exact marker' });
-    assert(recovered.ok, JSON.stringify(recovered));
-    assert(recovered.value.receipt?.inputId);
-    assert.equal(preparations() - before, 1);
-    const delivered = events().findLast(e => e.kind === 'native-send')!;
-    assert(!staleIds.includes(String(delivered.helper)));
-    const status = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: recovered.value.receipt });
-    assert(status.ok && status.value.lastReply === 'Completed: Stale helper replacement delivers this exact marker');
-    stopHelpers();
-    writeFileSync(join(run, 'evidence/fault'), 'dead-helpers');
-    const beforeFailure = preparations();
-    const failed = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Never delivered with two dead helpers' });
-    assert(!failed.ok && failed.reason === 'not_delivered', JSON.stringify(failed));
-    assert.match(failed.detail, /Claude Code Desktop did not open desktop-wake/);
-    assert.equal(preparations() - beforeFailure, 1);
-    assert(!events().some(e => e.kind === 'native-send' && e.message === 'Never delivered with two dead helpers'));
-    evidence.push({ staleHelperRecovery: recovered, targetStatus: status, failedReplacement: failed, replacementsPerSend: 1 });
-    writeFileSync(join(run, 'evidence/fault'), '');
-  }
   const humanId = crypto.randomUUID();
   for (const args of [
     ['claude', '-p', '--session-id', humanId, '-n', 'Synthetic human-created session', '--permission-mode', 'acceptEdits', '--', 'Synthetic human opening message'],
@@ -263,6 +287,7 @@ try {
     assert(!childState || childState.startsWith('Z'), `owned PTY child ${hangingPid} survived in ${childState}`);
     evidence.push({ actualPtyChild: hangingPid, childState: childState || 'absent', checkedBeforeFixtureCleanup: true });
     evidence.push({ hangingHandoff: hung, elapsed, noTaskDispatched: !events().some(e => e.kind === 'native-send' && e.message === 'Never dispatch during hung handoff') });
+  }
   }
   assert(events().filter(e => e.kind === 'relay' && e.helper !== rcId).every(e => e.mode === 'acceptEdits'));
   assert.equal(digest(settings), originalSettings);

@@ -244,7 +244,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
   });
 
   test.each(['desktop-wake', 'rc-toggle'])(
-    'a dead %s gets at most one replacement and a clear failure',
+    'a dead %s is reused without leaking replacement records',
     async (title) => {
       const old = record('old', { title, cwd: '/Users/test' });
       write(old);
@@ -271,44 +271,51 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
         reason: {
           ok: false,
           reason: 'not_delivered',
-          detail: `Claude Code Desktop did not open ${title}.`,
+          detail: expect.stringContaining(`Claude Code Desktop did not open ${title}.`),
         },
       });
-      expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(
-        title === 'desktop-wake' ? 1 : 0
-      );
-      expect(spawned.filter((call) => call.args.includes('--desktop'))).toHaveLength(
-        title === 'desktop-wake' ? 2 : 1
-      );
+      expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(0);
+      expect(spawned.filter((call) => call.args.includes('--desktop'))).toHaveLength(1);
     }
   );
 
-  test('a stale desktop-wake is replaced after its resume never becomes live', async () => {
-    const old = record('old', { title: 'desktop-wake', cwd: '/Users/test' });
-    write(old);
-    let now = 0;
-    const base = deps();
-    const result = await openRcToggle(
-      [old],
-      [],
+  test('a live Desktop target receives directly without opening a helper', async () => {
+    write(record('t1', { cwd: '/Users/test' }));
+    live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
+    const project = join(dir, 'projects/-Users-test');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, 'cli-t1.jsonl'), '');
+    const context = { from: 'session:origin', caller: { source: 'rpc' as const } };
+    const result = await runClaudeDesktopWake(
+      target,
+      'Exact direct marker',
       {
-        ...base,
-        now: () => now,
-        sleep: async (ms) => {
-          now += ms;
-        },
-        spawn: (args, options) => {
-          const child = base.spawn(args, options);
-          if (args.at(-1) === 'cli-old') live = [];
-          return child;
+        ...deps(),
+        sendInbox: async (id, message, receivedContext) => {
+          expect(id).toBe('cli-t1');
+          expect(receivedContext).toEqual(context);
+          writeFileSync(
+            join(project, 'cli-t1.jsonl'),
+            JSON.stringify({ type: 'user', uuid: 'direct-input', message: { content: message } }) +
+              '\n'
+          );
+          return {
+            ok: true,
+            value: {
+              delivered: false,
+              unconfirmed: true,
+              receipt: { executionId: id, inputId: 'direct-input' },
+            },
+          };
         },
       },
-      'desktop-wake'
+      context
     );
     expect(result).toMatchObject({
-      value: { record: { sessionId: 'local_new-rc', permissionMode: 'acceptEdits' } },
+      ok: true,
+      value: { delivered: true, receipt: { inputId: 'direct-input' } },
     });
-    expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
+    expect(spawned).toEqual([]);
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {

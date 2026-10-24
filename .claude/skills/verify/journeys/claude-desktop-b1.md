@@ -105,15 +105,14 @@ Historical native evidence is local, outside this repository, under
 visibility of probe `b19fce90`; do not transfer that assertion to a different
 session. Re-run against the installed versions when validating native behavior.
 
-For stale forwarding-helper recovery, run the isolated command above with
-`VERIFY_STALE_HELPER=1` in a fresh run directory. Allow about three minutes for
-three real 60-second liveness deadlines. The fixture retains stopped helper
-records but prevents their resumed processes from registering as live. The first
-`work.send` must create exactly one fresh helper and return the target input
-receipt; `work.status` must show the exact marker's completed reply. The next
-send also prevents the replacement from going live: it must return one clear
-`not_delivered` result with exactly one creation, and no native target input.
-`observed.json` retains both RPC results and the target readback. The focused
-`claude-remote-control.test.ts` contracts also cover a dead authorized rc-toggle:
-it must fail without preparing any replacement. No GUI or real Desktop state
-is used by this profile.
+For Desktop process-cap delivery, run the isolated command above with
+`VERIFY_LIVE_DIRECT=1` in a fresh run directory. Allow about two minutes for
+two real 60-second helper deadlines. The fixture keeps the target live but
+prevents helper processes from starting. A private synthetic Unix socket records
+the direct input and completed reply. Both `work.send` and steer must return
+confirmed target receipts without opening, preparing or relaying through a helper.
+Then the target is made dormant: two sends must each return one `not_delivered`
+mentioning the possible Desktop process cap, with no replacement helper records.
+`observed.json` retains the RPC results, receipt-bound status and socket frames.
+The focused `claude-remote-control.test.ts` contracts also verify that rc-toggle
+is never replaced. No GUI or real Desktop state is used by this profile.
