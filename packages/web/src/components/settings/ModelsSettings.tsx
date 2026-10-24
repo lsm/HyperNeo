@@ -702,7 +702,7 @@ function DefaultThinkingSelect({ model }: { model: ModelInfo | null }) {
       {unsupported && (
         <span class="text-xs text-warning">Saved level is not supported by this model.</span>
       )}
-      {!mode && (
+      {model && !mode && (
         <span class="text-xs text-fg-faint">Thinking support for this model is unknown.</span>
       )}
     </div>

@@ -563,6 +563,21 @@ describe('ModelsSettings — default thinking beside the default model', () => {
     expect(screen.queryByText(/support for this model is unknown/)).toBeNull();
   });
 
+  it('claims no unknown thinking support while the catalog is loading', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'off',
+    };
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockReturnValue(new Promise(() => {}));
+    render(<ModelsSettings />);
+
+    await screen.findAllByText('Loading models...');
+    expect(screen.getByLabelText('Default thinking')).toBeTruthy();
+    expect(screen.queryByText(/support for this model is unknown/)).toBeNull();
+  });
+
   it('rolls the control back to the saved value when the save fails', async () => {
     settingsRef.value = {
       model: 'claude-sonnet-5',
