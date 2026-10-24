@@ -244,6 +244,8 @@ export const en = {
   'artifact.openPreview': 'Open preview',
   'artifact.attached': 'Attached files',
   'artifact.region': 'File preview',
+  'artifact.close': 'Close preview',
+  'artifact.dismiss': 'Dismiss preview',
   'artifact.back': 'Back',
   'artifact.untitled': 'Preview',
   'artifact.preview': 'Preview',

@@ -112,6 +112,20 @@ describe('ArtifactPreviewPanel', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('closes with a downward swipe but preserves horizontal gestures', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    const panel = screen.getByRole('dialog');
+    fireEvent.touchStart(panel, { touches: [{ clientX: 100, clientY: 100 }] });
+    fireEvent.touchEnd(panel, { changedTouches: [{ clientX: 240, clientY: 105 }] });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.touchStart(panel, { touches: [{ clientX: 100, clientY: 100 }] });
+    fireEvent.touchEnd(panel, { changedTouches: [{ clientX: 105, clientY: 230 }] });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('renders nothing until something is opened', () => {
     const { container } = render(<ArtifactPreviewPanel />);
     expect(container.innerHTML).toBe('');

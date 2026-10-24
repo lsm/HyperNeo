@@ -29,7 +29,7 @@ linked to the todo.
 
 Headless Chromium at 1280px and 390px, every off-origin request aborted, must see:
 the card `Synthetic notes · Markdown · 63 B · Open preview` opens the notes in the
-panel (right side when wide, full sheet when narrow); Back closes it with the chat
+panel (docked right column when wide, bottom sheet with an uncovered strip when narrow); Back closes it with the chat
 scroll position unchanged and focus back on the card. Tapping `notes.md` resolves
 against that publication to a worktree snapshot; Escape closes. Tapping the PR
 link shows the PR summary (title, repository, state, checks, head SHA, inert body,
