@@ -1,6 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { readNeoPublications } from '../../../../../web/src/neo/publication-client.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, spyOn } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -292,6 +292,46 @@ describe('card reply notices', () => {
       }
     }
   );
+
+  test.each([
+    ['system', 'zh-CN', '我给你回了 · 查看卡片'],
+    ['system', 'en-US', 'I replied · View card'],
+    ['en', 'zh-CN', 'I replied · View card'],
+    ['zh-Hans', 'en-US', '我给你回了 · 查看卡片'],
+    [undefined, 'zh-CN', '我给你回了 · 查看卡片'],
+    [undefined, 'en-US', 'I replied · View card'],
+  ] as const)('notice language %s on host %s', (language, host, expected) => {
+    const f = setup();
+    const options = Intl.DateTimeFormat().resolvedOptions();
+    const locale = spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+      ...options,
+      locale: host,
+    });
+    try {
+      const id = crypto.randomUUID();
+      f.store.writeCardReply({ conversationId, sourceMessageIds: [human1], language }, id, () =>
+        f.store.askQuestion(
+          id,
+          'ask',
+          {
+            text: 'Choose a path',
+            kind: 'reply',
+            options: null,
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+            startTodos: null,
+          },
+          1
+        )
+      );
+      expect(f.rows()[0].shortText).toBe(`${expected} · Choose a path`);
+      expect(f.rows()[0].fullText).toBe(f.rows()[0].shortText);
+    } finally {
+      locale.mockRestore();
+      f.db.close();
+    }
+  });
 
   test('publication failure rolls the question mutation back', async () => {
     const f = setup();

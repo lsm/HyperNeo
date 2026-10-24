@@ -1,3 +1,4 @@
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { neoDerivedId } from '../../lib/neo/derived-id.ts';
 import {
@@ -170,7 +171,7 @@ const isStartable = (todo: NeoTodo) =>
 export interface NeoCardReplyContext {
   conversationId: string;
   sourceMessageIds: readonly string[];
-  language?: string;
+  language?: LanguageSetting;
 }
 
 export class NeoAskTodoRepository {
@@ -202,7 +203,7 @@ export class NeoAskTodoRepository {
       if (question && context) {
         const zh =
           context.language === 'zh-Hans' ||
-          ((!context.language || context.language === 'auto') &&
+          ((!context.language || context.language === 'system') &&
             Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh'));
         const shortText = `${zh ? '我给你回了 · 查看卡片' : 'I replied · View card'} · ${question.text.slice(0, 120)}`;
         const result = new NeoPublicationRepository(this.db).append({
