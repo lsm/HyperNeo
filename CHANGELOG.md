@@ -4,6 +4,30 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-23
+
+### Added
+
+- **Neo work**: Goals, schedules and fact-driven todo completion; dispatch-bound worker results and report-only relays for silent worker turns (#8263).
+- **Document previews**: Registered documents open from Neo replies and question cards without pasting their contents into the conversation (#8392).
+- **Model controls**: Ordered primary/fallback preferences, per-model auto-compaction, and live model/thinking changes for Anthropic, GLM, DeepSeek and Kimi (#7950, #8303, #8340, #8364).
+- **Diagnostics**: SQLite contention timing and opt-in event-loop profiles identify slow phases and worker SQL (#7967, #8377).
+
+### Changed
+
+- **Network default**: The daemon now listens on `127.0.0.1` by default. Direct LAN clients, including iOS and another daemon, must set `--host 0.0.0.0`, `HOST=0.0.0.0`, or a specific LAN address. This reduces accidental exposure; reachable-peer authentication remains tracked separately (#8393, #7975).
+- **Database gateway**: Job-queue claims, settlements and WebSocket authentication reads use the gateway; table-change notifications are replayed after worker writes (#8300, #8299, #8348). The sessions-writer switch is not part of this release.
+- **Neo UI**: Expandable todo rows, model-switch disclosures, and a connection-settings drawer aligned with iOS (#8345, #8336, #8395).
+
+### Fixed
+
+- **Codex delivery**: Desktop ownership is acquired before unloaded-thread delivery, with bounded owner discovery and visible refusal instead of a competing background writer while Desktop is running (#8370, #8384).
+- **Claude Desktop**: Prepared work is woken through Desktop (#8274).
+- **Neo inputs**: Interrupted inputs recover with fresh SDK attempt identities (#8388).
+- **Model preferences**: Refused or deferred primary-model restores preserve the fallback model's thinking level (#7973).
+- **Responsiveness**: Batched Neo snapshots and card eligibility reads, asynchronous worktree resolution, and explicit SQLite worker closure reduce main-loop stalls (#7944, #7947, #7967, #7986).
+- **Storage/runtime**: Stale SDK message indexes retire on upgrade, and missing embedding runtime/model assets recover automatically (#8376, #8379).
+
 ## [0.45.2] - 2026-10-18
 
 ### Fixed
