@@ -149,6 +149,30 @@ describe('work feed scope', () => {
     expect(feedSessions('codex')).toEqual([STARTED_THREAD, TODO_THREAD, FOREIGN_THREAD]);
   });
 
+  test("switching to 'own' hides already-indexed foreign threads; 'all' brings them back", async () => {
+    await startThroughWorkStart('codex-desktop', STARTED_THREAD);
+    for (const thread of [STARTED_THREAD, FOREIGN_THREAD]) writeCodexRollout(thread);
+    await runCodexFeed(queue, db, root, Date.now(), null);
+    expect(feedSessions('codex')).toEqual([STARTED_THREAD, FOREIGN_THREAD]);
+
+    await runCodexFeed(queue, db, root, Date.now(), ownCodexSessions(readStartedWork(db)));
+    expect(feedSessions('codex')).toEqual([STARTED_THREAD]);
+
+    await runCodexFeed(queue, db, root, Date.now(), null);
+    expect(feedSessions('codex')).toEqual([STARTED_THREAD, FOREIGN_THREAD]);
+  });
+
+  test("switching to 'own' hides already-indexed foreign Claude sessions", async () => {
+    await startThroughWorkStart('claude-code', 'cli-started');
+    for (const session of ['cli-started', 'cli-foreign']) writeClaudeTranscript(root, session);
+    await runClaudeFeed(queue, db, root, Date.now(), undefined, null);
+    expect(feedSessions('claude')).toEqual(['cli-foreign', 'cli-started']);
+
+    const own = await ownClaudeSessions(readStartedWork(db), join(root, 'desktop'));
+    await runClaudeFeed(queue, db, root, Date.now(), undefined, own);
+    expect(feedSessions('claude')).toEqual(['cli-started']);
+  });
+
   test("'own' Claude feed keeps sessions this instance started, including Desktop ones", async () => {
     const desktop = join(root, 'desktop', 'account', 'scope');
     mkdirSync(desktop, { recursive: true });
