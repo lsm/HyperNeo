@@ -2,6 +2,7 @@ import type { WorkflowHookResult } from '@hyperneo/shared';
 import { parsePrUrl } from '../../github/parse-pr-url.ts';
 import { type SpawnFn, spawnProcess } from '../../runtime-spawn/index.ts';
 import type { HookExecutorContext } from '../../hooks/hook-executor.ts';
+import { isRateLimitError } from '../../session/rate-limit-detector.ts';
 import {
   type CommandFailure,
   commandFailureToHookResult,
@@ -104,13 +105,7 @@ export function createPrReadyValidator(
       };
     }
 
-    const prView = await runCommand<PrViewResult>(
-      ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
-      context.workspacePath,
-      remainingTimeoutMs(deadlineMs),
-      spawnImpl,
-      { hostHint: prMeta.host, resourceHint: 'graphql' }
-    );
+    const prView = await readPrView(context, prUrl, prMeta.host, spawnImpl, deadlineMs);
     if (!prView.success) {
       return commandFailureToHookResult(prView, 'PR is not ready for Review');
     }
@@ -191,6 +186,48 @@ export function createPrReadyValidator(
       data: { pr_url: prJson.url },
     };
   };
+}
+
+async function readPrView(
+  context: HookExecutorContext,
+  url: string,
+  host: string,
+  spawn: SpawnFn,
+  deadline: number
+): Promise<Awaited<ReturnType<typeof runCommand<PrViewResult>>>> {
+  if (!context.readGithubPr)
+    return runCommand<PrViewResult>(
+      ['gh', 'pr', 'view', url, '--json', 'url,state,mergeable,mergeStateStatus'],
+      context.workspacePath,
+      remainingTimeoutMs(deadline),
+      spawn,
+      { hostHint: host, resourceHint: 'graphql' }
+    );
+  const timeoutMs = remainingTimeoutMs(deadline);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      context.readGithubPr(url, context.workspacePath),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`PR fact read timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      }),
+    ]);
+    return outcome.ok
+      ? { success: true, data: outcome.data as PrViewResult }
+      : {
+          success: false,
+          error: outcome.error,
+          rateLimited: isRateLimitError(outcome.error),
+          retryAfterMs: outcome.retryAfterMs,
+        };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function resolvePrUrl(
