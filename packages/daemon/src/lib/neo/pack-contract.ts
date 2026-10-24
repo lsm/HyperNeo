@@ -77,6 +77,7 @@ export interface NeoPackPreferenceDeclaration {
 }
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
+  forgetRepositories?(repos: readonly string[]): void;
   sessionLinks?(ref: WorkRef | null): Promise<string[]>;
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;

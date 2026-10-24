@@ -62,7 +62,8 @@ export class NeoRepository {
   }
 
   forgetProject(
-    projectId: string
+    projectId: string,
+    afterForget: () => void = () => {}
   ): { forgotten: true } | { reason: 'project_missing' | 'project_in_use' } {
     const result = this.db.transaction(() => {
       if (!this.db.prepare('SELECT 1 FROM neo_concerns WHERE id = ?').get(projectId))
@@ -77,6 +78,7 @@ export class NeoRepository {
       this.db.prepare('UPDATE neo_asks SET project_id = NULL WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
+      afterForget();
       return { forgotten: true as const };
     })();
     if ('forgotten' in result) this.notify();

@@ -48,3 +48,25 @@ export function codingRepoWatched(db: Database, repo: string): boolean {
       .get(key, JSON.stringify(watched))
   );
 }
+
+export function unwatchCodingRepos(
+  db: Database,
+  repos: readonly string[],
+  remaining: readonly string[]
+): void {
+  const watched = codingWatchedRepos(db);
+  if (watched === null) return;
+  const canonical = (repo: string) =>
+    (
+      db
+        .prepare('SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?')
+        .get(repo.toLowerCase()) as { canonical: string } | undefined
+    )?.canonical ?? repo.toLowerCase();
+  const kept = new Set(remaining.map(canonical));
+  const removed = new Set(repos.map(canonical).filter((repo) => !kept.has(repo)));
+  const next = watched.filter((repo) => !removed.has(canonical(repo)));
+  if (next.length === watched.length) return;
+  db.prepare(
+    "UPDATE neo_pack_preferences SET value_json = ?, set_by = 'project_forget', set_at = ? WHERE pack = 'coding' AND scope_kind = 'global' AND scope_key = '' AND key = 'watchedRepos'"
+  ).run(JSON.stringify(next), Date.now());
+}
