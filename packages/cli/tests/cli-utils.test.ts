@@ -123,6 +123,10 @@ describe('parseArgs', () => {
 });
 
 describe('getHelpText', () => {
+  test('documents the loopback default', () => {
+    expect(getHelpText()).toContain('Host to bind to (default: 127.0.0.1)');
+  });
+
   test('returns help text containing usage information', () => {
     const helpText = getHelpText();
     expect(helpText).toContain('HyperNeo');
