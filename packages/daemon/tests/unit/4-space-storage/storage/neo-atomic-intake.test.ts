@@ -10,6 +10,7 @@ import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants.ts';
 import {
   NeoConversationAskRepository,
   prepareNeoIntakeAsk,
+  persistNeoIntakeTransaction,
 } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
@@ -57,6 +58,46 @@ describe('atomic public ask intake primitive', () => {
       message,
       delivery: { origin: 'chat' },
     });
+
+  test('the synchronous intake unit rolls all three records back with its outer transaction', () => {
+    const message = prompt();
+    const prepared = prepareNeoIntakeAsk(conversationId, message);
+    if (!('value' in prepared)) throw new Error('fixture ask rejected');
+    let publish = () => {};
+    const notify = spyOn(mailbox.sdkMessageRepo, 'runPostSaveSideEffects');
+    try {
+      expect(() =>
+        mailbox.db.transaction(() => {
+          const receipt = persistNeoIntakeTransaction(
+            prepared.value,
+            message,
+            'immediate',
+            mailbox.db,
+            ledger,
+            mailbox.sdkMessageRepo,
+            mailbox.jobQueue,
+            (effect) => {
+              publish = effect;
+            }
+          );
+          expect(receipt).not.toBeInstanceOf(Promise);
+          expect(receipt).toMatchObject({ accepted: true, created: true });
+          expect(ledger.list(conversationId)).toHaveLength(1);
+          expect(mailbox.sdkRows()).toHaveLength(1);
+          expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
+          expect(notify).not.toHaveBeenCalled();
+          expect(publish).toBeTypeOf('function');
+          throw new Error('outer rollback');
+        })()
+      ).toThrow('outer rollback');
+      expect(ledger.list(conversationId)).toEqual([]);
+      expect(mailbox.sdkRows()).toEqual([]);
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toEqual([]);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      notify.mockRestore();
+    }
+  });
 
   test('prepares only the existing human prompt shape without treating it as caller authority', () => {
     const message = prompt();

@@ -159,9 +159,7 @@ type ActivatePromptsCtx = ActivatePromptsArgs & {
   rowIds: Array<string | undefined>;
 };
 
-type ActivatePromptsCommittedCtx = ActivatePromptsCtx & {
-  activated: ActivatedPromptEntry[];
-};
+type ActivatePromptsCommittedCtx = ActivatePromptsArgs & ActivatePromptsResult;
 
 type RetryPromptCtx = RetryPromptArgs & {
   retried: RetryPromptResult | null;
@@ -741,6 +739,15 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
   return { ...ctx, activated };
 }
 
+export function activatePromptsInTransaction(args: ActivatePromptsArgs): ActivatePromptsResult {
+  const ctx = commitActivatePrompts(normalizeActivateUuids(args));
+  return { activated: ctx.activated };
+}
+
+function applyActivatePrompts(args: ActivatePromptsArgs): ActivatePromptsCommittedCtx {
+  return { ...args, ...activatePromptsInTransaction(args) };
+}
+
 async function publishActivatedPrompts(
   ctx: ActivatePromptsCommittedCtx
 ): Promise<ActivatePromptsCommittedCtx> {
@@ -756,8 +763,7 @@ async function publishActivatedPrompts(
 
 const runActivatePrompts = (superpipe({})('activate-prompts') as PipelineAPI)
   .input(['ctx'])
-  .pipe(normalizeActivateUuids, 'ctx', 'ctx')
-  .pipe(commitActivatePrompts, 'ctx', 'ctx')
+  .pipe(applyActivatePrompts, 'ctx', 'ctx')
   .pipe(publishActivatedPrompts, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: ActivatePromptsArgs) => Promise<ActivatePromptsCommittedCtx>;
 
@@ -816,6 +822,14 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
   return { ...ctx, retried };
 }
 
+export function retryPromptInTransaction(args: RetryPromptArgs): RetryPromptResult | null {
+  return commitRetryPrompt(validateRetryPromptUuid(args)).retried;
+}
+
+function applyRetryPrompt(args: RetryPromptArgs): RetryPromptCtx {
+  return { ...args, retried: retryPromptInTransaction(args) };
+}
+
 async function publishRetriedPrompt(ctx: RetryPromptCtx): Promise<RetryPromptCtx> {
   if (ctx.retried === null || !ctx.publishStatusChanged) return ctx;
   try {
@@ -826,8 +840,7 @@ async function publishRetriedPrompt(ctx: RetryPromptCtx): Promise<RetryPromptCtx
 
 const runRetryPrompt = (superpipe({})('retry-prompt') as PipelineAPI)
   .input(['ctx'])
-  .pipe(validateRetryPromptUuid, 'ctx', 'ctx')
-  .pipe(commitRetryPrompt, 'ctx', 'ctx')
+  .pipe(applyRetryPrompt, 'ctx', 'ctx')
   .pipe(publishRetriedPrompt, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: RetryPromptArgs) => Promise<RetryPromptCtx>;
 

@@ -119,19 +119,17 @@ export function prepareNeoIntakeAsk(conversationId: string, message: IntakePromp
     : { reason: { accepted: false as const, reason: 'invalid_ask' as const } };
 }
 
-function commitNeoIntake(
+export function persistNeoIntakeTransaction(
   ask: NeoConversationAskInput,
   message: IntakePrompt,
   hold: PromptHold,
   db: Database,
   ledger: NeoConversationAskRepository,
   sdkMessageRepo: SDKMessageRepository,
-  jobQueue: JobQueueRepository
+  jobQueue: JobQueueRepository,
+  deferPostSaveSideEffects: (effect: () => void) => void
 ): NeoConversationAskAppendResult {
-  const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
-  if (active) throw new Error('Public ask intake must own its commit boundary');
-  let publish = () => {};
-  const receipt = db.transaction(() => {
+  return db.transaction(() => {
     const stored = ledger.append(ask);
     if (!stored.accepted) return stored;
     if (
@@ -148,12 +146,36 @@ function commitNeoIntake(
       message,
       hold,
       delivery: { origin: 'chat', priority: NEO_HUMAN_DELIVERY_PRIORITY },
-      deferPostSaveSideEffects: (effect) => {
-        publish = effect;
-      },
+      deferPostSaveSideEffects,
     });
     return { ...stored, created: prompt.created };
   })();
+}
+
+function commitNeoIntake(
+  ask: NeoConversationAskInput,
+  message: IntakePrompt,
+  hold: PromptHold,
+  db: Database,
+  ledger: NeoConversationAskRepository,
+  sdkMessageRepo: SDKMessageRepository,
+  jobQueue: JobQueueRepository
+): NeoConversationAskAppendResult {
+  const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
+  if (active) throw new Error('Public ask intake must own its commit boundary');
+  let publish = () => {};
+  const receipt = persistNeoIntakeTransaction(
+    ask,
+    message,
+    hold,
+    db,
+    ledger,
+    sdkMessageRepo,
+    jobQueue,
+    (effect) => {
+      publish = effect;
+    }
+  );
   try {
     publish();
   } catch {}
