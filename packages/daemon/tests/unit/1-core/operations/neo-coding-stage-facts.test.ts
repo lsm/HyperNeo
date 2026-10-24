@@ -4,6 +4,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { CodingStageFact } from '../../../../src/lib/neo/packs/coding/stage-facts.ts';
 
 const url = 'https://github.com/synthetic/stages/pull/7';
@@ -141,6 +142,9 @@ describe('coding provenance policy', () => {
         ['GPT-6', 'gpt-6-2026-09'],
         ['GPT-6', 'openai/gpt-6'],
         ['GPT-6', 'gpt 6'],
+        ['gpt-6', 'gpt-6.0'],
+        ['Opus 5.5', 'claude-opus-5-5[1m]'],
+        ['Claude Fable 5.1', 'claude-fable-5-1'],
         ['Claude Opus 5.5', 'claude-opus-5-5'],
         ['GPT-6', 'unidentified-model'],
         ['unidentified-model', 'claude-opus-5-5'],
@@ -151,6 +155,15 @@ describe('coding provenance policy', () => {
             model,
           })
         ).toMatchObject({ qualifies: false });
+      for (const model of [
+        'claude-fable-5-1',
+        'Claude Fable 5.1',
+        'Opus 5.5',
+        'claude-opus-5-5[1m]',
+      ])
+        expect(
+          ledger.reviewerPolicy('synthetic/stages', body, { ...reviewer, model })
+        ).toMatchObject({ qualifies: true });
       expect(db.prepare('SELECT * FROM neo_pack_preferences').all()).toEqual([]);
       db.prepare(
         "INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', 'synthetic/stages', 'provenance', 'false', 'human', 1)"
@@ -163,4 +176,52 @@ describe('coding provenance policy', () => {
       db.close();
     }
   });
+});
+
+describe('provenance preference answers', () => {
+  test.each(['button', 'chat'] as const)(
+    'a human %s no leaves provenance unanswered and on',
+    (by) => {
+      const { db, ledger } = setup();
+      try {
+        const store = new NeoAskTodoRepository(db);
+        const question = store.askQuestion(
+          'q',
+          'ask-7',
+          {
+            text: 'Apply these settings?',
+            kind: 'yesno',
+            options: null,
+            multiple: false,
+            noLabel: 'Keep current settings',
+            yesLabel: 'Apply these settings',
+            startTodos: null,
+          },
+          1
+        );
+        const values = [
+          {
+            pack: 'coding',
+            scope: { kind: 'repo', key: 'synthetic/stages' },
+            key: 'provenance',
+            value: true,
+          },
+          {
+            pack: 'coding',
+            scope: { kind: 'repo', key: 'synthetic/stages' },
+            key: 'mergePolicy',
+            value: 'ci_only',
+          },
+        ];
+        db.prepare(
+          'INSERT INTO neo_pack_preference_proposals (question_id, request_id, values_json, question_text) VALUES (?, ?, ?, ?)'
+        ).run('q', 'request', JSON.stringify(values), question.text);
+        expect(store.answerQuestion(question, 'no', by, 2)?.state).toBe('answered');
+        expect(db.prepare('SELECT * FROM neo_pack_preferences').all()).toEqual([]);
+        expect(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies).toBe(false);
+      } finally {
+        db.close();
+      }
+    }
+  );
 });

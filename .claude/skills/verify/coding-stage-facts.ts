@@ -60,10 +60,19 @@ try {
         await rpc('neo.question.answer', { questionId: proposal.questionId, answer: 'no' });
         const afterNo = await rpc('pack.preferences.get', setting) as { preference: { value: unknown } | null };
         evidence.push({ aliases, afterNo });
-        assert.equal(afterNo.preference?.value, false, 'No must disable provenance');
+        assert.equal(afterNo.preference, null, 'No must leave provenance unanswered and on');
         assert.deepEqual(await rpc('pack.preferences.get', { ...setting, key: 'mergePolicy' }), { preference: null });
         const label = db.prepare('SELECT no_label AS label FROM neo_questions WHERE id = ?').get(proposal.questionId) as { label: string };
-        assert.match(label.label, /Disable provenance/);
+        assert.equal(label.label, 'Keep current settings');
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, false);
+        for (const model of ['claude-fable-5-1', 'Opus 5.5', 'claude-opus-5-5[1m]'])
+          assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via A', { ...reviewer, model }).qualifies, true, model);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: gpt-6 via A', { ...reviewer, model: 'gpt-6.0' }).qualifies, false);
+        const disable = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'disable-provenance', values: [{ ...setting, value: false }] }) as { ok: boolean; questionId: string };
+        assert.equal(disable.ok, true);
+        await rpc('neo.question.answer', { questionId: disable.questionId, answer: 'yes' });
+        const disabled = await rpc('pack.preferences.get', setting) as { preference: { value: boolean } };
+        assert.equal(disabled.preference.value, false);
         assert(aliases.every(policy => !policy.qualifies), 'Aliases and unknown models must not qualify');
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, true);
       } else {
