@@ -12,7 +12,7 @@ import {
 import type { ArtifactResolution } from '../../lib/artifact-reference-client.ts';
 import { ArtifactPreview } from './ArtifactPreview.tsx';
 import { ReferenceView } from './ReferenceView.tsx';
-import { ArtifactPreviewTabs, artifactTabIds } from './ArtifactPreviewTabs.tsx';
+import { ArtifactPreviewTabs, artifactTabIds, artifactWorkTabId } from './ArtifactPreviewTabs.tsx';
 
 const rememberMetadata = (metadata: ArtifactFileMetadata) =>
   artifactPreviewWorkspace.update(metadata.artifact);
@@ -20,27 +20,30 @@ const rememberMetadata = (metadata: ArtifactFileMetadata) =>
 export function ArtifactPreviewPanel({
   markdownClass,
   fileTabs = false,
+  work,
 }: {
   markdownClass?: string;
   fileTabs?: boolean;
+  work?: { id: string; showTab: boolean; count: number };
 } = {}) {
   const stack = artifactPreviewStack.value;
   const top = stack.at(-1);
-  const open = !!top;
-  const [desktop, setDesktop] = useState(
-    () => fileTabs && window.matchMedia('(min-width: 1120px)').matches
-  );
+  const desktopQuery = work ? '(min-width: 720px)' : '(min-width: 1120px)';
+  const [desktop, setDesktop] = useState(() => fileTabs && window.matchMedia(desktopQuery).matches);
   useEffect(() => {
     if (!fileTabs) return;
-    const update = () => setDesktop(window.matchMedia('(min-width: 1120px)').matches);
+    const update = () => setDesktop(window.matchMedia(desktopQuery).matches);
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
-  }, [fileTabs]);
+  }, [fileTabs, desktopQuery]);
   const tabbed = fileTabs && desktop;
   const files = artifactPreviewWorkspace.state.value.files;
   const selectedId = top?.kind === 'artifact' ? top.artifactId : null;
-  const focusEntry = tabbed && selectedId ? open : stack[0];
+  const workActive = tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top;
+  const open = !!top || workActive;
+  const showWork = tabbed && work?.showTab;
+  const focusEntry = workActive ? artifactWorkTabId : tabbed && selectedId ? open : stack[0];
   const dialog = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const resolved = useRef(new Map<string, ArtifactResolution>());
@@ -88,7 +91,7 @@ export function ArtifactPreviewPanel({
     dialog.current?.focus({ preventScroll: true });
   }, [focusEntry]);
 
-  if (!top) return null;
+  if (!top && !workActive) return null;
   return (
     <>
       <button
@@ -101,13 +104,22 @@ export function ArtifactPreviewPanel({
         ref={dialog}
         role="dialog"
         aria-labelledby={
-          tabbed && selectedId ? artifactTabIds(selectedId).title : 'artifact-preview-title'
+          workActive
+            ? artifactWorkTabId
+            : tabbed && selectedId
+              ? artifactTabIds(selectedId).title
+              : 'artifact-preview-title'
         }
+        aria-owns={workActive ? work?.id : undefined}
         tabIndex={-1}
         class="artifact-preview-panel flex min-h-0 flex-col bg-surface focus:outline-none"
         onTouchStart={(event) => {
           touch.current = null;
-          if (window.matchMedia('(min-width: 1120px)').matches || event.touches.length !== 1)
+          if (
+            tabbed ||
+            window.matchMedia('(min-width: 1120px)').matches ||
+            event.touches.length !== 1
+          )
             return;
           let node = event.target as HTMLElement | null;
           while (node && node !== dialog.current) {
@@ -154,9 +166,17 @@ export function ArtifactPreviewPanel({
         >
           ×
         </button>
-        {tabbed && selectedId && files.length > 0 && (
+        {tabbed && (selectedId || workActive || showWork) && (
           <div class="flex shrink-0 px-3 py-3 pr-14">
-            <ArtifactPreviewTabs files={files} selectedId={selectedId} />
+            <ArtifactPreviewTabs
+              files={selectedId || workActive ? files : []}
+              selectedId={selectedId}
+              work={
+                showWork && work
+                  ? { id: work.id, count: work.count, selected: workActive }
+                  : undefined
+              }
+            />
           </div>
         )}
         {tabbed &&
@@ -178,14 +198,14 @@ export function ArtifactPreviewPanel({
               />
             </div>
           ))}
-        {!tabbed && top.kind === 'artifact' ? (
+        {!tabbed && top?.kind === 'artifact' ? (
           <ArtifactPreview
             key={stack.length}
             artifactId={top.artifactId}
             onBack={backArtifactPreview}
             markdownClass={markdownClass}
           />
-        ) : top.kind === 'reference' ? (
+        ) : top?.kind === 'reference' ? (
           <ReferenceView
             key={stack.length}
             target={top}

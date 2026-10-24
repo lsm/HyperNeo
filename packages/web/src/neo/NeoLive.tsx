@@ -40,6 +40,8 @@ import './neo.css';
 import type { NeoQuote } from './neo-intake.ts';
 import { t } from '../lib/i18n/index.ts';
 import { ArtifactPreviewPanel } from '../components/artifacts/ArtifactPreviewPanel.tsx';
+import { artifactPreviewStack, artifactPreviewWorkspace } from '../lib/artifact-preview-store.ts';
+import { artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
 export function NeoLive() {
@@ -47,7 +49,11 @@ export function NeoLive() {
   const attachments = useNeoAttachments(neo.sessionId);
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
-  const [scenesOpen, setScenesOpen] = useState(false);
+  const [scenesOpen, setScenesOpenState] = useState(false);
+  const [previewDesktop, setPreviewDesktop] = useState(
+    () => window.matchMedia('(min-width: 720px)').matches
+  );
+  const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 1440px)').matches);
   const [cardTarget, setCardTarget] = useState<{ askId: string; questionId: string } | null>(null);
   const [cardUnavailable, setCardUnavailable] = useState(false);
   const returnToChat = useRef<{
@@ -144,7 +150,18 @@ export function NeoLive() {
   });
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
   const columns = !!publicConversation;
-  const sheet = !!publicConversation && narrow;
+  const previewOpen =
+    artifactPreviewStack.value.length > 0 || artifactPreviewWorkspace.state.value.open;
+  const focusPreview = columns && !chat && previewDesktop && previewOpen;
+  const previewWork = focusPreview && artifactPreviewStack.value.length === 0;
+  const setScenesOpen = useCallback(
+    (open: boolean) => {
+      if (open && focusPreview) artifactPreviewWorkspace.select(null);
+      setScenesOpenState(open);
+    },
+    [focusPreview]
+  );
+  const sheet = !!publicConversation && narrow && !focusPreview;
   useNeoSheetSwipe({
     enabled: sheet && !chat,
     open: scenesOpen,
@@ -192,9 +209,15 @@ export function NeoLive() {
   useLayoutEffect(() => {
     const selectScroll = () => {
       const desktop = window.matchMedia('(min-width: 1120px)').matches;
+      const previewWidth = window.matchMedia('(min-width: 720px)').matches;
       setNarrow(!desktop);
+      setPreviewDesktop(previewWidth);
+      setRoomy(window.matchMedia('(min-width: 1440px)').matches);
       const previous = scroll.current;
-      scroll.current = columns && desktop ? rail.current : mainScroll.current;
+      scroll.current =
+        columns && (desktop || (previewWidth && previewOpen && !chat))
+          ? rail.current
+          : mainScroll.current;
       if (nearBottom.current && scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
       else if (scroll.current && scroll.current !== previous)
@@ -206,7 +229,7 @@ export function NeoLive() {
     selectScroll();
     window.addEventListener('resize', selectScroll);
     return () => window.removeEventListener('resize', selectScroll);
-  }, [columns]);
+  }, [columns, previewOpen, chat]);
 
   const earlierAnchor = useRef<{ key: string; top: number } | null>(null);
   const publicEntryAt = (element: HTMLElement, test: (entry: Element) => boolean) =>
@@ -352,7 +375,7 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}`}
     >
       {dragging && (
         <div
@@ -617,8 +640,23 @@ export function NeoLive() {
         </div>
         <div
           ref={sceneSheet}
+          id="neo-preview-work-panel"
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
-          role="region"
+          role={previewWork ? 'tabpanel' : 'region'}
+          hidden={focusPreview && !roomy && !previewWork}
+          aria-labelledby={previewWork ? artifactWorkTabId : undefined}
+          tabIndex={previewWork ? 0 : undefined}
+          onKeyDown={(event) => {
+            if (
+              previewWork &&
+              event.key === 'Tab' &&
+              event.shiftKey &&
+              event.target === event.currentTarget
+            ) {
+              event.preventDefault();
+              document.getElementById(artifactWorkTabId)?.focus();
+            }
+          }}
           aria-label={t('live.scenes')}
           aria-hidden={(sheet && !scenesOpen) || chat ? true : undefined}
           inert={(sheet && !scenesOpen) || !!chat}
@@ -796,6 +834,11 @@ export function NeoLive() {
       <ToastContainer />
       <ArtifactPreviewPanel
         fileTabs
+        work={
+          columns && !chat
+            ? { id: 'neo-preview-work-panel', showTab: !roomy || previewWork, count: workCount }
+            : undefined
+        }
         markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed"
       />
     </div>

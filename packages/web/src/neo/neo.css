@@ -691,3 +691,91 @@
     display: none;
   }
 }
+
+@media (min-width: 720px) {
+  .neo-shell.neo-preview-focus {
+    --artifact-preview-width: 56%;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, calc(100% - var(--artifact-preview-width))) minmax(
+        0,
+        var(--artifact-preview-width)
+      );
+    padding-right: 0;
+  }
+  .neo-shell.neo-preview-focus > .neo-scroll {
+    display: contents;
+  }
+  .neo-shell.neo-preview-focus .neo-chat-rail {
+    grid-area: 1 / 1;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    max-width: none;
+    margin: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding: 76px 24px calc(var(--neo-composer-height, 190px) + 32px);
+  }
+  .neo-shell.neo-preview-focus .neo-scene-list {
+    grid-area: 1 / 2;
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+    max-width: none;
+    height: auto;
+    margin: calc(12px + 4rem) 12px 12px;
+    padding: 16px;
+    overflow-y: auto;
+    border-radius: 0 0 24px 24px;
+    background: var(--surface);
+  }
+  .neo-shell.neo-preview-focus .neo-scene-list[hidden] {
+    display: none;
+  }
+  .neo-shell.neo-preview-focus > .artifact-preview-panel {
+    grid-area: 1 / 2;
+    order: -1;
+    position: relative;
+    inset: auto;
+    width: auto;
+    margin: 12px;
+    border: 0;
+    border-radius: 24px;
+    box-shadow: var(--flat-shadow);
+    animation: none;
+    z-index: auto;
+  }
+  .neo-shell.neo-preview-focus > .artifact-preview-backdrop,
+  .neo-shell.neo-preview-focus .artifact-preview-handle {
+    display: none;
+  }
+  .neo-shell.neo-preview-focus > .neo-composer-dock {
+    width: calc(100% - var(--artifact-preview-width));
+    right: auto;
+    transition: none;
+  }
+}
+@media (min-width: 1440px) {
+  .neo-shell.neo-preview-focus {
+    --artifact-preview-width: 44%;
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) {
+    grid-template-columns: minmax(0, calc((100% - var(--artifact-preview-width)) * 0.58)) minmax(
+        0,
+        calc((100% - var(--artifact-preview-width)) * 0.42)
+      ) minmax(0, var(--artifact-preview-width));
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) > .artifact-preview-panel {
+    grid-column: 3;
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) .neo-scene-list {
+    margin: 0;
+    padding: 76px 16px 32px;
+    background: transparent;
+    border-radius: 0;
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) > .neo-composer-dock {
+    width: calc((100% - var(--artifact-preview-width)) * 0.58);
+  }
+}
