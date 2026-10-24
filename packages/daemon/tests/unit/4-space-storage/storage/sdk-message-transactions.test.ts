@@ -144,7 +144,7 @@ describe('SDK transaction ops', () => {
 
   test('registers every transaction without routing a caller', () => {
     for (const op of SDK_MESSAGE_TRANSACTIONS) expect(DB_OPS.get(op.name)).toBe(op);
-    expect(SDK_MESSAGE_TRANSACTIONS).toHaveLength(9);
+    expect(SDK_MESSAGE_TRANSACTIONS).toHaveLength(10);
   });
   test('ensures, activates and retries the same row with its job', async () => {
     const ensured = await gateway.run(sdkPromptEnsure, {
