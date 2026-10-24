@@ -23,6 +23,31 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_PROMPT).not.toContain('Plain assistant text shows only');
   });
 
+  test('routes continuing discussion into a fresh prepared session using existing flows', () => {
+    for (const prompt of [neoPrompt([]), neoPrompt(neoSettingsPackBriefs())]) {
+      for (const rule of [
+        'fresh focused session',
+        'continuing human judgment or back-and-forth',
+        'Delegate bounded fixes, PRs, deploys and research normally',
+        'ask a routing question only when genuinely ambiguous',
+        'Always offer a multi-provider HyperNeo session',
+        'available Claude Code in Desktop or Codex Desktop',
+        "human's preference",
+        'neo.todo.add',
+        "verb:'start'",
+        "human's words, linked docs and earlier decisions",
+        'research and drafts',
+        'clear questions and options',
+        'Wait for preparation',
+        'one card',
+        'neo.question.ask',
+        'sourceSession',
+        'Open session',
+      ])
+        expect(prompt).toContain(rule);
+    }
+  });
+
   test('gives questions and publications the same concise Markdown guidance', () => {
     const prompt = neoPrompt([]);
     expect(prompt).toContain('For neo.question.ask text and publication shortText, use Markdown');
