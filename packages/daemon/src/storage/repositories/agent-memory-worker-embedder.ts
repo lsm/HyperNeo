@@ -25,7 +25,7 @@ function createEmbedWorker(): Worker {
       './agent-memory-embed-worker.ts',
       './daemon/src/storage/repositories/agent-memory-embed-worker.ts',
       import.meta.url
-    ).href,
+    ).toString(),
     {
       type: 'module',
     }

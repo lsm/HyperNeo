@@ -53,7 +53,7 @@ export function runMessageSearchMerge(
           './message-search-merge-worker.ts',
           './daemon/src/lib/message-search-merge-worker.ts',
           import.meta.url
-        ).href,
+        ).toString(),
         {
           type: 'module',
         }

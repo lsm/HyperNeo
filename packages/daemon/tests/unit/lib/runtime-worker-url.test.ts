@@ -13,7 +13,7 @@ test.each([
   ['file:///$bunfs/root/hyperneo', 'file:///$bunfs/root/daemon/src/lib/worker.ts'],
   ['file:///C:/repo/main.ts', 'file:///C:/repo/worker.ts'],
 ])('resolves a worker for source or compiled runtime %s', (moduleUrl, expected) => {
-  expect(runtimeWorkerUrl('./worker.ts', './daemon/src/lib/worker.ts', moduleUrl).href).toBe(
+  expect(String(runtimeWorkerUrl('./worker.ts', './daemon/src/lib/worker.ts', moduleUrl))).toBe(
     expected
   );
 });
@@ -31,12 +31,17 @@ test.each([
 test('source and compiled node workers execute TypeScript entrypoints as JavaScript', () => {
   const root = resolve(import.meta.dirname, '../../../../..');
   const run = mkdtempSync(join(tmpdir(), 'hyperneo-compiled-worker-'));
-  const bun = process.env.BUN_INSTALL
-    ? join(process.env.BUN_INSTALL, 'bin/bun')
-    : join(homedir(), '.bun/bin/bun');
+  const bun = process.versions.bun
+    ? process.execPath
+    : process.env.BUN_INSTALL
+      ? join(process.env.BUN_INSTALL, 'bin/bun')
+      : join(homedir(), '.bun/bin/bun');
   const entry = 'packages/daemon/tests/unit/lib/compiled-worker-main-fixture.ts';
   const worker = 'packages/daemon/tests/unit/lib/compiled-worker-thread-fixture.ts';
-  const binary = join(run, 'compiled-worker');
+  const binary = join(
+    run,
+    process.platform === 'win32' ? 'compiled-worker.exe' : 'compiled-worker'
+  );
   try {
     expect(execFileSync(bun, [entry], { cwd: root, encoding: 'utf8', timeout: 10000 }).trim()).toBe(
       'compiled-worker-ready'

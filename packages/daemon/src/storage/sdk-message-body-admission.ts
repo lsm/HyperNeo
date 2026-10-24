@@ -89,7 +89,7 @@ export function startSdkBodyWriteAdmission(
         './sdk-message-body-admission-worker.ts',
         './daemon/src/storage/sdk-message-body-admission-worker.ts',
         import.meta.url
-      ).href,
+      ).toString(),
       {
         type: 'module',
       }

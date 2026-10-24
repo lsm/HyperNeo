@@ -163,7 +163,7 @@ export class DbGateway {
           './db-gateway-worker.ts',
           './daemon/src/storage/db-gateway/db-gateway-worker.ts',
           import.meta.url
-        ).href,
+        ).toString(),
         { type: 'module' }
       ),
     replyTimeoutMs = REPLY_TIMEOUT_MS
