@@ -16,7 +16,7 @@ function fixture() {
   const delivered: string[] = [];
   const adapter: WorkAdapter = {
     id: 'fixture',
-    capabilities: ['find', 'start', 'send'],
+    capabilities: ['find', 'start', 'send', 'queue'],
     find: () => [],
     start: async (input) => {
       delivered.push(input.message);
@@ -24,6 +24,10 @@ function fixture() {
         ok: true,
         value: { ref, title: input.title, place, status: 'running', lastActivityAt: 1 },
       };
+    },
+    queue: async (_ref, message) => {
+      delivered.push(message);
+      return { ok: true, value: { delivered: true } };
     },
     send: async (_ref, message) => {
       delivered.push(message);
@@ -41,7 +45,7 @@ function fixture() {
 }
 
 describe('Neo work todo reference', () => {
-  for (const name of ['work.start', 'work.send'] as const) {
+  for (const name of ['work.start', 'work.send', 'work.queue'] as const) {
     const input =
       name === 'work.start'
         ? { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' }
@@ -62,6 +66,7 @@ describe('Neo work todo reference', () => {
         ok: false,
         reason: 'todo_required',
       });
+      expect(reply.content[0].text).not.toContain('neo.todo.start');
       expect(delivered).toEqual([]);
     });
 

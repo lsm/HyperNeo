@@ -52,6 +52,7 @@ try {
   for (const extra of [{}, { todoId: 'unknown' }, { todoId: 'closed-todo' }, { message: 'todoId open-todo appears only in text', source: 'internal' }]) {
     failures.push(await call('work.send', { ref, message: 'Synthetic new work', ...extra }));
   }
+  failures.push(await call('work.queue', { ref, message: 'Untracked next-turn work' }));
   const start = await call('work.start', { adapter: 'hyperneo', place: { machine: 'fixture', folder: join(run, 'workspace'), name: 'Synthetic' }, title: 'Synthetic new work', message: 'Synthetic work' });
   const followUp = await call('work.send', { ref, message: 'More context for the existing todo', todoId: 'open-todo' });
   const runner = await call('neo.todo.add', { askId: 'open', title: 'Synthetic runner work', doneWhen: 'Tracked dispatch', instruction: 'Synthetic opening task', target: { verb: 'send', ref }, start: true });
