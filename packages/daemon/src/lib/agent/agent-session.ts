@@ -1,3 +1,4 @@
+import { sdkPendingRemoval } from '../../storage/repositories/sdk-message-transactions.ts';
 import type { ChildProcess } from 'node:child_process';
 import type {
   AgentProcessingState,
@@ -1101,32 +1102,23 @@ export class AgentSession
     messageDbId: string,
     mode: 'remove' | 'defer',
     expectedStatus?: 'deferred',
-    commitRemoval?: () => void
+    withdrawalJobId?: string
   ): Promise<
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
     const result = await withSessionLock(this.session.id, async () => {
       const messages = this.db.getSDKMessageRepo();
-      const remove = () =>
-        mode === 'remove'
-          ? expectedStatus
-            ? messages.deletePendingUserMessage(this.session.id, messageDbId, expectedStatus)
-            : messages.deletePendingUserMessage(this.session.id, messageDbId)
-          : messages.deferEnqueuedUserMessage(this.session.id, messageDbId);
-      const result = commitRemoval
-        ? this.db.getDatabase().transaction(() => {
-            const removed = remove();
-            if (removed?.uuid) commitRemoval();
-            return removed;
-          })()
-        : remove();
+      const result = await messages.runWrite(sdkPendingRemoval, {
+        sessionId: this.session.id,
+        messageDbId,
+        mode,
+        expectedStatus,
+        withdrawalJobId,
+      });
       if (!result?.uuid) return { changed: false as const };
 
-      this.db.getJobQueueRepo().cancelDelivery(this.session.id, result.uuid);
       const removedFromMemory = this.messageQueue.remove(result.uuid);
       await this.stateManager.clearQueuedIfOwnedBy(result.uuid);
-      this.db.notifyChange?.('sdk_messages', { sessionId: this.session.id });
-      this.db.notifyChange?.('job_queue', { sessionId: this.session.id });
       return {
         changed: true as const,
         dbId: result.dbId,

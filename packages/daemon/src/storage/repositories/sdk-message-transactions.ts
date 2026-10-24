@@ -77,8 +77,12 @@ export const sdkPromptEnsure = sdkOp('ensurePrompt', (args: Input<PersistPromptA
 );
 export const sdkPromptActivate = sdkOp(
   'activatePrompts',
-  (args: Input<ActivatePromptsArgs>, deps) =>
-    activatePromptsInTransaction({ ...sdkTransactionArgs(args), ...deps })
+  (args: Input<ActivatePromptsArgs>, deps) => {
+    const result = activatePromptsInTransaction({ ...sdkTransactionArgs(args), ...deps });
+    if (result.activated.length)
+      deps.changes.notifyChange('sdk_messages', { sessionId: args.sessionId });
+    return result;
+  }
 );
 export const sdkPromptRetry = sdkOp('retryPrompt', (args: Input<RetryPromptArgs>, deps) =>
   retryPromptInTransaction({ ...sdkTransactionArgs(args), ...deps })
@@ -136,9 +140,21 @@ export const sdkDeliveryTeardown = sdkOp(
     return { deleted: result.deleted, failedDbIds: result.failedDbIds };
   }
 );
-export const sdkMailboxFailure = sdkOp('mailboxFailure', (args: { job: Job }, deps) =>
-  persistMailboxFailure(args.job, deps.sdkMessageRepo, deps.saveFailed, true)
-);
+export const sdkMailboxFailure = sdkOp('mailboxFailure', (args: { job: Job }, deps) => {
+  const checkpoint = deps.changes.changes.length;
+  try {
+    const { failedId, uuidOwned } = deps.db.transaction(() =>
+      persistMailboxFailure(args.job, deps.sdkMessageRepo, deps.saveFailed, true)
+    )();
+    return { failedId, uuidOwned, failure: undefined };
+  } catch (error) {
+    deps.changes.changes.splice(checkpoint);
+    return {
+      uuidOwned: Boolean((error as { uuidOwned?: boolean }).uuidOwned),
+      failure: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
 export const sdkColumnBackfillChunk = sdkOp(
   'backfillColumns',
   (args: Parameters<typeof backfillSdkMessageColumnsChunk>[1], deps) =>
@@ -153,8 +169,11 @@ export const sdkColumnBackfillComplete = sdkOp('finishBackfill', (_args: undefin
 });
 export const sdkDeliveryFencedStatus = sdkOp(
   'deliveryFencedStatus',
-  (args: Parameters<JobQueueRepository['transitionDeliverySendStatusFenced']>[0], deps) =>
-    deps.jobQueue.transitionDeliverySendStatusFenced(args)
+  (args: Parameters<JobQueueRepository['transitionDeliverySendStatusFenced']>[0], deps) => {
+    const result = deps.jobQueue.transitionDeliverySendStatusFencedSync(args);
+    if (result.length) deps.changes.notifyChange('sdk_messages', { sessionId: args.sessionId });
+    return result;
+  }
 );
 export const sdkPendingRemoval = sdkOp(
   'pendingRemoval',

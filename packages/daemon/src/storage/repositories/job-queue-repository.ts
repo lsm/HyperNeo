@@ -1,3 +1,4 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import type { DbGateway } from '../db-gateway/db-gateway.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { generateUUID } from '@hyperneo/shared';
@@ -621,7 +622,13 @@ export class JobQueueRepository {
     }
   }
 
-  transitionDeliverySendStatusFenced(args: {
+  async transitionDeliverySendStatusFenced(
+    args: Parameters<JobQueueRepository['transitionDeliverySendStatusFencedSync']>[0]
+  ): Promise<string[]> {
+    const { sdkDeliveryFencedStatus } = await import('./sdk-message-transactions.ts');
+    return gatewayFor(this.db).run(sdkDeliveryFencedStatus, args);
+  }
+  transitionDeliverySendStatusFencedSync(args: {
     sessionId: string;
     kickoffUuid: string;
     claimToken: string;

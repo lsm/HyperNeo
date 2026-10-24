@@ -92,7 +92,9 @@ export const sdkMessageWrites: RepositoryOp<SDKMessageRepository, SdkMessageWrit
   name: 'sdk_messages.write',
   mode: 'write',
   methods: SDK_MESSAGE_WRITE_METHODS,
-  Repository: SDKMessageRepository,
+  get Repository() {
+    return SDKMessageRepository;
+  },
   run: (db, input, changes) => {
     const { method, args } = input;
     applySdkBodyWriteMode(db, input);

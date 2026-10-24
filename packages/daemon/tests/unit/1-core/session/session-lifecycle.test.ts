@@ -1,3 +1,4 @@
+import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
@@ -257,7 +258,7 @@ describe('SessionLifecycle', () => {
     };
 
     lifecycle = new SessionLifecycle(
-      mockDb,
+      withSdkTeardownGateway(mockDb),
       mockWorktreeManager,
       mockSessionCache,
       mockInternalEventBus,

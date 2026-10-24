@@ -137,15 +137,15 @@ describe('registerMailboxJobs', () => {
       if (kind === 'dead') calls[0][2]!.onDead!(job);
       else expect(await expiration[0][1](job)).toMatchObject({ expired: 1 });
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(deps.db.saveUserMessage).toHaveBeenCalledWith(
-        'session',
-        expect.objectContaining({ uuid: 'message', session_id: 'session' }),
-        'failed',
-        undefined
-      );
+      expect(deps.db.saveUserMessage).not.toHaveBeenCalled();
+      expect(mailbox.sdkRows()[0]).toMatchObject({
+        sdk_uuid: 'message',
+        session_id: 'session',
+        send_status: 'failed',
+      });
       expect(publish).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'session',
-        messageIds: ['failed-row'],
+        messageIds: [mailbox.sdkRows()[0].id],
         status: 'failed',
       });
       expect(deps.sessionManager!.getCachedSession).toHaveBeenCalledWith('session');

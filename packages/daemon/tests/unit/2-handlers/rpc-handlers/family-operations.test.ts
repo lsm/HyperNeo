@@ -7,7 +7,11 @@ import {
 
 function fakeContext(): FamilyOperationContext {
   return {
-    deps: { db: { getSession: () => null, getDatabase: () => ({}) }, externalEventStore: {} },
+    deps: {
+      db: { getSession: () => null, getDatabase: () => ({}) },
+      externalEventStore: {},
+      config: { dbPath: '/synthetic/family-operations.db' },
+    },
     spaceGoalService: {},
     longHorizonAgentRepo: {},
     nodeExecutionRepo: {},

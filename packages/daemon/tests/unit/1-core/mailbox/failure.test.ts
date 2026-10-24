@@ -457,6 +457,9 @@ describe('createMailboxDeadHandler', () => {
       publishFailed,
       settleSkipped,
     };
+    mailbox.db.exec(
+      "CREATE TRIGGER fail_sdk BEFORE INSERT ON sdk_messages BEGIN SELECT RAISE(ABORT, 'boom'); END"
+    );
     const entry = makeEntry({ origin: 'chat', messageUuid: 'boom-uuid' });
     const job = claimMailboxJob(mailbox, entry);
     const handler = createMailboxDeadHandler(() => {}, deps);
@@ -612,11 +615,14 @@ describe('materializeMailboxFailure', () => {
       saveFailed,
     });
 
-    expect(saveFailed).toHaveBeenCalledWith(
-      SESSION_ID,
-      expect.objectContaining({ uuid: deterministicMailboxUuid(entry.id), isSynthetic: true }),
-      'system'
-    );
+    const row = mailbox.sdkRows()[0];
+    expect(row.sdk_uuid).toBe(deterministicMailboxUuid(entry.id));
+    expect(JSON.parse(row.sdk_message)).toMatchObject({
+      uuid: deterministicMailboxUuid(entry.id),
+      isSynthetic: true,
+    });
+    expect(row.origin).toBe('system');
+    expect(saveFailed).not.toHaveBeenCalled();
     mailbox.close();
   });
 
@@ -707,9 +713,7 @@ describe('materializeMailboxFailure', () => {
     const capture = captureStructuredEvents();
     const entry = makeEntry({ origin: 'chat', messageUuid: 'unread-uuid' });
     const repo = Object.create(mailbox.sdkMessageRepo) as SDKMessageRepository;
-    repo.getStoredPromptsByUuid = () => {
-      throw new Error('read boom');
-    };
+    mailbox.db.exec('DROP TABLE sdk_messages');
     const settleSkipped = mock(async () => {});
 
     await materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), {

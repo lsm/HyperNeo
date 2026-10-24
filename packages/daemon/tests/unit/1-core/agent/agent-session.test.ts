@@ -1,3 +1,5 @@
+import { createMailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type {
@@ -2503,93 +2505,91 @@ describe('AgentSession', () => {
       expect(handleInterruptSpy).toHaveBeenCalled();
     });
 
-    it('revokePendingDelivery remove accepts deferred (next-turn) rows too (#3744105283)', async () => {
-      const deletePendingSpy = mock(() => ({
-        dbId: 'db-1',
-        uuid: 'uuid-1',
-        status: 'deferred' as const,
-      }));
-      const cancelDeliverySpy = mock(() => false);
-      mockDb.getSDKMessageRepo = mock(
-        () => ({ deletePendingUserMessage: deletePendingSpy }) as never
+    function pendingRemovalFixture(status: 'enqueued' | 'deferred' = 'deferred') {
+      const fixture = createMailboxTestDb();
+      fixture.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(mockSession.id);
+      const id = fixture.sdkMessageRepo.saveUserMessage(
+        mockSession.id,
+        { type: 'user', uuid: 'uuid-1', message: { role: 'user', content: 'pending' } } as never,
+        status
       );
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
-
-      const result = await agentSession.revokePendingDelivery('db-1', 'remove');
-
-      expect(result.changed).toBe(true);
-      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1');
-      expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
-    });
-
-    it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
-      const deletePendingSpy = mock(() => null);
-      const cancelDeliverySpy = mock(() => false);
-      mockDb.getSDKMessageRepo = mock(
-        () => ({ deletePendingUserMessage: deletePendingSpy }) as never
-      );
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
-
-      expect(await agentSession.revokePendingDelivery('db-1', 'remove', 'deferred')).toEqual({
-        changed: false,
+      const delivery = fixture.jobQueue.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: mockSession.id, messageUuid: 'uuid-1' },
       });
-      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1', 'deferred');
-      expect(cancelDeliverySpy).not.toHaveBeenCalled();
+      const gateway = new DbGateway(':memory:', fixture.db);
+      bindGateway(fixture.db, gateway);
+      gateway.onChanges = (changes) => {
+        for (const change of changes) mockDb.notifyChange?.(change.table, change.scope);
+      };
+      mockDb.getSDKMessageRepo = mock(() => fixture.sdkMessageRepo);
+      return {
+        fixture,
+        id,
+        delivery,
+        close: async () => {
+          await gateway.close();
+          fixture.close();
+        },
+      };
+    }
+    it('revokePendingDelivery removes deferred input and cancels its delivery through the op', async () => {
+      const testDb = pendingRemovalFixture();
+      try {
+        const result = await agentSession.revokePendingDelivery(testDb.id, 'remove');
+        expect(result.changed).toBe(true);
+        expect(testDb.fixture.sdkRows()).toEqual([]);
+        expect(testDb.fixture.jobQueue.getJob(testDb.delivery.id)).toBeNull();
+      } finally {
+        await testDb.close();
+      }
     });
-
+    it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
+      const testDb = pendingRemovalFixture('enqueued');
+      try {
+        expect(await agentSession.revokePendingDelivery(testDb.id, 'remove', 'deferred')).toEqual({
+          changed: false,
+        });
+        expect(testDb.fixture.sdkRows()[0].send_status).toBe('enqueued');
+        expect(testDb.fixture.jobQueue.getJob(testDb.delivery.id)?.status).toBe('pending');
+      } finally {
+        await testDb.close();
+      }
+    });
     it('revokePendingDelivery commits a withdrawal before asynchronous cleanup', async () => {
-      let transactionActive = false;
-      let committed = false;
-      mockDb.getDatabase = mock(
-        () =>
-          ({
-            transaction: (effect: () => unknown) => () => {
-              transactionActive = true;
-              try {
-                return effect();
-              } finally {
-                transactionActive = false;
-              }
-            },
-          }) as never
-      );
-      mockDb.getSDKMessageRepo = mock(
-        () =>
-          ({
-            deletePendingUserMessage: mock(() => ({
-              dbId: 'db-1',
-              uuid: 'uuid-1',
-              status: 'deferred' as const,
-            })),
-          }) as never
-      );
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: mock(() => false) }));
+      const testDb = pendingRemovalFixture();
+      const job = testDb.fixture.jobQueue.enqueue({ queue: 'mailbox', payload: {} });
+      testDb.fixture.db.prepare("UPDATE job_queue SET status='completed' WHERE id=?").run(job.id);
       agentSession.stateManager.clearQueuedIfOwnedBy = mock(async () => {
-        expect(committed).toBe(true);
+        expect(testDb.fixture.sdkRows()).toEqual([]);
+        expect(testDb.fixture.jobQueue.getJob(job.id)?.error).toBe('driver_input_withdrawn');
         throw new Error('cleanup interrupted');
       });
-      await expect(
-        agentSession.revokePendingDelivery('db-1', 'remove', 'deferred', () => {
-          expect(transactionActive).toBe(true);
-          committed = true;
-        })
-      ).rejects.toThrow('cleanup interrupted');
-      expect(committed).toBe(true);
-      expect(transactionActive).toBe(false);
+      try {
+        await expect(
+          agentSession.revokePendingDelivery(testDb.id, 'remove', 'deferred', job.id)
+        ).rejects.toThrow('cleanup interrupted');
+        expect(testDb.fixture.sdkRows()).toEqual([]);
+        expect(testDb.fixture.jobQueue.getJob(job.id)?.error).toBe('driver_input_withdrawn');
+      } finally {
+        await testDb.close();
+      }
     });
-
-    it('revokePendingDelivery notifies the delivery feeds after defer+cancel (#862 review P2)', async () => {
-      const deferSpy = mock(() => ({ dbId: 'db-1', uuid: 'uuid-1' }));
-      const cancelDeliverySpy = mock(() => true);
+    it('revokePendingDelivery replays the delivery feeds after defer and cancellation', async () => {
+      const testDb = pendingRemovalFixture('enqueued');
       const notifySpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({ deferEnqueuedUserMessage: deferSpy }) as never);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
       mockDb.notifyChange = notifySpy;
-
-      await agentSession.revokePendingDelivery('db-1', 'defer');
-
-      expect(notifySpy).toHaveBeenCalledWith('sdk_messages', { sessionId: mockSession.id });
-      expect(notifySpy).toHaveBeenCalledWith('job_queue', { sessionId: mockSession.id });
+      try {
+        await agentSession.revokePendingDelivery(testDb.id, 'defer');
+        expect(testDb.fixture.sdkRows()[0].send_status).toBe('deferred');
+        expect(testDb.fixture.jobQueue.getJob(testDb.delivery.id)).toBeNull();
+        expect(notifySpy.mock.calls).toEqual([
+          ['sdk_messages', { sessionId: mockSession.id }],
+          ['job_queue', { sessionId: mockSession.id }],
+        ]);
+      } finally {
+        await testDb.close();
+      }
     });
 
     it('deliverChatMessage preserves a legacy-owned processing turn', async () => {

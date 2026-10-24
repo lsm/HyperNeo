@@ -1,3 +1,8 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import {
+  sdkColumnBackfillChunk,
+  sdkColumnBackfillComplete,
+} from '../repositories/sdk-message-transactions.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { SDK_MESSAGE_COLUMN_TYPES, deriveSdkMessageColumns } from '../sdk-message-columns.ts';
 
@@ -79,7 +84,7 @@ export async function backfillSdkMessageColumns(
   for (;;) {
     if (options.signal?.aborted) return;
     const startedAt = performance.now();
-    const chunk = backfillSdkMessageColumnsChunk(db, { after, ceiling });
+    const chunk = await gatewayFor(db).run(sdkColumnBackfillChunk, { after, ceiling });
     if (!chunk) break;
     const { through, rows, bytes, malformed } = chunk;
     after = through;
@@ -90,11 +95,5 @@ export async function backfillSdkMessageColumns(
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   if (options.signal?.aborted) return;
-  db.transaction(() => {
-    db.prepare('INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, ?)').run(
-      done,
-      Date.now()
-    );
-    db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'");
-  })();
+  await gatewayFor(db).run(sdkColumnBackfillComplete, undefined);
 }

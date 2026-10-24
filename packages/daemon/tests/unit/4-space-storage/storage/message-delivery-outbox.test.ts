@@ -192,16 +192,14 @@ describe('transactional outbox (ensurePrompt)', () => {
   });
 
   it('the async facade rejects after rolling back a failed enqueue', async () => {
-    const failingQueue = {
-      enqueue: () => {
-        throw new Error('async enqueue failed');
-      },
-    } as unknown as JobQueueRepoType;
+    db.exec(
+      "CREATE TRIGGER fail_async_enqueue BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'async enqueue failed'); END"
+    );
     await expect(
       ensurePromptAsync({
         db,
         sdkMessageRepo: sdkRepo,
-        jobQueue: failingQueue,
+        jobQueue,
         sessionId: SESSION,
         message: userMessage('async-rollback'),
         delivery: { origin: 'chat' },
@@ -807,17 +805,15 @@ describe('transactional outbox (ensurePrompt)', () => {
     it('activatePrompts rolls the whole batch back when the enqueue fails', async () => {
       insertStatusRow('rollback-1', 'deferred');
       insertStatusRow('rollback-2', 'deferred');
-      const failingQueue = {
-        enqueue: () => {
-          throw new Error('simulated job_queue transient failure');
-        },
-      } as unknown as JobQueueRepoType;
+      db.exec(
+        "CREATE TRIGGER fail_activate_enqueue BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'simulated job_queue transient failure'); END"
+      );
       let published = 0;
 
       await expect(
         activatePrompts({
           db: db as never,
-          jobQueue: failingQueue,
+          jobQueue,
           sessionId: SESSION,
           messageUuids: ['rollback-1', 'rollback-2'],
           origin: 'recovery',

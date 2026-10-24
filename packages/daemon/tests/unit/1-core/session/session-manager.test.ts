@@ -1,3 +1,4 @@
+import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { McpServerConfig, MessageHub, Session } from '@hyperneo/shared';
@@ -121,7 +122,7 @@ describe('SessionManager', () => {
     };
 
     sessionManager = new SessionManager(
-      mockDb,
+      withSdkTeardownGateway(mockDb),
       mockMessageHub,
       mockAuthManager,
       mockSettingsManager,
