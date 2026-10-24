@@ -691,11 +691,7 @@ export class QueryOptionsBuilder {
 
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {
-      if (KimiProvider.isKimiK3Model(selectedModel)) {
-        if (thinkingConfig?.type === 'disabled') {
-          thinkingConfig = undefined;
-        }
-      } else if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
+      if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
         if (!thinkingConfig || thinkingConfig.type === 'disabled') {
           thinkingConfig = {
             type: 'enabled',
