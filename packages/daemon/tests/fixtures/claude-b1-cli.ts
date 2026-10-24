@@ -76,7 +76,13 @@ if (process.argv.includes('agents')) {
   const s = sessions.find((s) => s.id === flag('--resume'))!;
   if (fault() === 'missing-import') process.exit(1);
   s.permissionMode = s.title === 'rc-toggle' ? 'bypassPermissions' : 'acceptEdits';
-  s.pid ||= 9000 + sessions.indexOf(s);
+  const blockedPath = join(evidence, 'blocked-imports.json');
+  const blocked: string[] = existsSync(blockedPath)
+    ? JSON.parse(readFileSync(blockedPath, 'utf8'))
+    : [];
+  const staysDead =
+    blocked.includes(s.id) || (fault() === 'dead-helpers' && s.title === 'desktop-wake');
+  if (!staysDead) s.pid ||= 9000 + sessions.indexOf(s);
   mkdirSync(scope, { recursive: true });
   writeFileSync(
     recordPath(s),
