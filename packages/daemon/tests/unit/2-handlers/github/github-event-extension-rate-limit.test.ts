@@ -68,6 +68,19 @@ function rateLimitedResetResponse(opts: {
 }
 
 describe('parseRateLimitHeaders', () => {
+  for (const status of [200, 304]) {
+    test(`ignores an expired zero quota on successful HTTP ${status}`, () => {
+      const res = new Response(status === 304 ? null : '[]', {
+        status,
+        headers: {
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.floor(Date.now() / 1000)),
+        },
+      });
+      expect(parseRateLimitHeaders(res).remaining).toBe(Infinity);
+    });
+  }
+
   test('parses remaining + reset headers into ms epoch', () => {
     const res = makeResponse({ status: 200, remaining: '42', reset: '1700000000' });
     const info = parseRateLimitHeaders(res);
