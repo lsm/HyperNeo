@@ -26,5 +26,6 @@ Keep the evidence outside the worktree.
 The contract-first proof on the preceding commit fails on the old unconditional
 merge message. This checks notification text and generated worker guidance, not
 actual session transport, GitHub review acquisition, actor selection, final
-admission activation or a live deployment. Those final capabilities remain
-blocked on #8428 and the approved #8442 review API; no substitute is installed.
+admission activation or a live deployment. Use `coding-merge-admission.md` for
+the final operation door, `coding-actor-assignments.md` for actor dispatch and
+`coding-delivery-completion.md` for the deployment-smoke completion gate.

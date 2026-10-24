@@ -48,7 +48,7 @@ try {
   assert(prompt.includes('gh pr merge <number> --squash --match-head-commit <head_sha>'));
   assert(prompt.includes('immediately before'));
   assert(prompt.includes('Never enable GitHub auto-merge'));
-  assert(prompt.includes('remaining recorded deployment or QA-smoke condition'));
+  assert(prompt.includes('remaining recorded deployment or Verify smoke condition'));
   evidence.push({ verified: true });
   console.log('PASS: review/CI notifications require merge gates; worker prompt requires a freshly read SHA-pinned manual command. No merge executed.');
 } catch (error) { evidence.push({ error: String(error) }); throw error; }

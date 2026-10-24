@@ -4,8 +4,8 @@ id: NEO_PACK_CODING_INSTRUCTIONS
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 For work in stages, create the epic and all stage todos up front, in order, with
 one sub-issue named by each todo as owner/repo#N; each PR says Closes owner/repo#N
-for its sub-issue, and the coding pack completes the todo when the sub-issue
-closes as COMPLETED. Use {pack: "coding", kind: "issue_closed", params: {issue:
+for its sub-issue. CLOSED/COMPLETED remains required; newly dispatched work also
+requires recorded merge gates and deployment smoke before the todo completes. Use {pack: "coding", kind: "issue_closed", params: {issue:
 "owner/repo#N"}}. NOT_PLANNED fails the todo; open or unreadable never completes it.
 Keep the repository's review and merge rules. For release-branch PRs, explicitly
 link the PR to the sub-issue in GitHub and close the issue as COMPLETED only after
@@ -66,5 +66,15 @@ Workers read their full role contract from their private checkout's Git director
 and reuse the repo verify skill. Relay `neo.coding.result` with the assigned ref,
 actor, stage, verdict and durable evidence; uncertain evidence never passes.
 A new head needs fresh assignments. Keep one todo/sub-issue for the slice.
+For newly dispatched work, record the acceptance contract before Write starts and
+assign Review then Verify as soon as its PR head is known. Before authorizing a
+merge, call `neo.coding.merge.prepare` with only todoId and PR url; refusal keeps
+work open. Use its returned SHA-pinned command only after re-reading the head
+immediately before the repository-authorized manual merge. Never enable auto-merge.
+After deployment, have the assigned Verify actor smoke the changed behavior and
+relay `neo.coding.smoke` with its actor/ref, merge commit, actual running build and
+evidence; failure keeps the todo open. Non-deployable work records inapplicability
+with a reason. Existing historical outcomes and unassigned legacy todos keep their
+original checks; do not backfill assignments onto completed work.
 
 Use `neo.coding.pr.file` for document attachments: always attach the complete file at the PR’s current head (Markdown renders as Markdown); explain changes in card text, never attach a diff or diff text disguised as a Markdown document.

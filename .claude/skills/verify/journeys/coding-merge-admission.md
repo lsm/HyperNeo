@@ -1,0 +1,33 @@
+# Recorded manual merge admission through the operation door
+
+Use shared isolation from `../SKILL.md`. This metadata-only helper owns a real
+isolated daemon, an ephemeral loopback port, fresh home and DB, and a GitHub CLI
+fixture. No provider, model, HTTP mock or browser is needed. External HTTP throws;
+the CLI fixture logs reads and refuses merge/deploy commands.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hyperneo-merge-admission-XXXXXX)
+mkdir -p "$RUN/home" "$RUN/bin"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
+  bun .claude/skills/verify/coding-merge-admission.ts "$RUN"
+```
+
+The committed contract-first proof fails before the operation exists. After the
+wire, real WebSocket `neo.coding.merge.prepare` reads its persisted assignments,
+actual paginated review verdict, required checks and complete review threads.
+It refuses absent Verify, stale/negative bot review, pending/failing CI, unresolved
+findings, missing applicable human sign-off and a head changed at the final read.
+Only a passing case records a receipt and returns the exact SHA-pinned manual
+squash command. It executes no merge and leaves the todo doing.
+
+Keep `evidence/observed.json` (`verified: true`) and `evidence/gh.jsonl` outside
+the worktree. Unit contracts also cover the no-bot assigned reviewer, author/ref
+changes, policy changes, latched failure, path/label sign-off and inaccessible
+facts. The fixture uses `neo.coding.assign` for the bot route and seeds only the
+synthetic Verify assignment; it does not claim a real model or native-harness run.
+Use `coding-actor-assignments.md` for real isolated preparation with a synthetic
+harness, `coding-merge-guidance.md` for delivered instructions, and
+`coding-delivery-completion.md` for post-deploy smoke and historical completion.
+Live GitHub transport and deployment are not verified here. The helper closes
+its own socket and daemon in finally and never touches the human's running app.

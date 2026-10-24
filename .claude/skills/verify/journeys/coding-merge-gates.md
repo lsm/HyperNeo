@@ -28,5 +28,6 @@ Unit contracts additionally reject wrong actor harnesses, unbound legacy stage
 facts, same-ID refs on another harness/daemon, missing bot-review evidence and a
 conflicting stored receipt. Bot output must match the persisted assignment bot login (case-insensitive);
 a configured bot cannot fall back to a reviewer session.
-This verifies the build API, not live GitHub transport or the final operation and
-todo-completion surface; those remain required before #8429 closes.
+This verifies the build API. Use `coding-merge-admission.md` for its supported
+operation door and `coding-delivery-completion.md` for completion; live GitHub
+transport is outside this synthetic journey.
