@@ -4,6 +4,21 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.47.2] - 2026-10-24
+
+v0.47.1 was held before publication to include the coding-pack notification fix. This release includes the v0.47.1 and v0.47.0 changes below; neither earlier tag was published.
+
+### Fixed
+
+- **Coding notifications**: Restore PR lifecycle notifications (#8544).
+- **GitHub observations**: Reconcile polling coverage (#8535).
+- **Space tasks**: Fence reopen-from-terminal updates against the status that was read (#8537).
+- **Builds**: Align dev-push compilation with the release worker entrypoints (#8540).
+
+### Changed
+
+- **Database writes**: Record agent child processes and Neo session messages through the database gateway (#8538, #8545).
+
 ## [0.47.1] - 2026-10-24
 
 Patch release: v0.47.0 did not reach npm or GitHub Releases because compiled binaries could not load their worker modules. This release includes the v0.47.0 changes below.
