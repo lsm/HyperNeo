@@ -78,6 +78,40 @@ afterEach(() => {
 });
 
 describe('ArtifactPreviewPanel', () => {
+  it('offers an explicit close action independently of nested navigation', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('uses a history entry so browser Back closes without navigating away', async () => {
+    const push = vi.spyOn(history, 'pushState');
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    render(<ArtifactPreviewPanel />);
+    const url = location.href;
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    expect(push).toHaveBeenCalledTimes(1);
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(location.href).toBe(url);
+    push.mockRestore();
+  });
+
+  it('dismisses the narrow sheet from its uncovered strip', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss preview' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('renders nothing until something is opened', () => {
     const { container } = render(<ArtifactPreviewPanel />);
     expect(container.innerHTML).toBe('');
@@ -202,7 +236,7 @@ describe('ArtifactPreviewPanel', () => {
     second.remove();
   });
 
-  it('ignores Escape pressed outside the panel, such as in a chat menu beside it', async () => {
+  it('closes on Escape pressed in the chat beside it', async () => {
     route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
     const menu = document.createElement('button');
     document.body.appendChild(menu);
@@ -210,7 +244,7 @@ describe('ArtifactPreviewPanel', () => {
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
     await screen.findByRole('heading', { name: 'Layout design' });
     fireEvent.keyDown(menu, { key: 'Escape' });
-    expect(screen.getByRole('heading', { name: 'Layout design' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
     menu.remove();
   });
 });
