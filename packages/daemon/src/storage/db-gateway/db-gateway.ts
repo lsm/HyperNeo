@@ -1,3 +1,4 @@
+import { sdkSideOnlyWrites } from '../sdk-message-body-admission.ts';
 import { runtimeWorkerUrl } from '../../lib/runtime-worker-url.ts';
 import { forwardSQLiteWorkerLog } from '../sqlite-worker-observability.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
@@ -150,6 +151,7 @@ class WorkerLane {
 export class DbGateway {
   private readonly lanes: Record<Lane, WorkerLane>;
   onChanges: (changes: TableChange[]) => void = () => {};
+  sdkBodyWriteMode?: () => boolean;
 
   constructor(
     dbPath: string,
@@ -187,6 +189,13 @@ export class DbGateway {
   }
 
   run<A, R>(op: DbOp<A, R>, args: A): Promise<R> {
+    if (
+      op.name.startsWith('sdk_messages.') &&
+      this.sdkBodyWriteMode &&
+      typeof args === 'object' &&
+      args !== null
+    )
+      args = { ...args, sdkSideOnlyWrites: this.sdkBodyWriteMode() };
     const db = this.inline;
     if (db)
       return Promise.resolve().then(() => {
@@ -226,6 +235,7 @@ const gateways = new WeakMap<Database, DbGateway>();
 
 export function bindGateway(db: Database, gateway: DbGateway): void {
   gateways.set(db, gateway);
+  gateway.sdkBodyWriteMode = () => sdkSideOnlyWrites(db);
 }
 
 export function gatewayFor(db: Database): DbGateway {

@@ -6,6 +6,11 @@ const modes = new WeakMap<Database, boolean>();
 
 export const sdkSideOnlyWrites = (db: Database): boolean => modes.get(db) === true;
 
+export function applySdkBodyWriteMode(db: Database, args: unknown): void {
+  const mode = (args as { sdkSideOnlyWrites?: unknown } | null)?.sdkSideOnlyWrites;
+  if (typeof mode === 'boolean') modes.set(db, mode);
+}
+
 const decide = (superpipe({})('sdkSideBodyStartup') as PipelineAPI)
   .input(['facts'])
   .pipe(
