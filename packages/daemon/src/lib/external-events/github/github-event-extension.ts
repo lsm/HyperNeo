@@ -300,6 +300,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private credentialGeneration = 0;
   private pollCycleCredentialGeneration: number | null = null;
   private pollCycleCredentialFingerprint: string | null = null;
+  private pollCycleCredentialSource: string | null = null;
   private pollCycleAccessible = false;
   private readonly credentialStore?: CredentialStore;
   private readonly eventStore: ExternalEventStore;
@@ -1363,7 +1364,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (secondaryLimitApplied) {
           this.applyRateLimit(
             {
-              remaining: validationRateLimit.remaining,
+              ...validationRateLimit,
               resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
               limited: true,
               retryAfter: true,
@@ -1880,6 +1881,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       this.lastRateLimitFingerprint = newFingerprint;
     }
     log.warn('GitHub rate limit detected — deferring next poll', {
+      status: rateLimit.status ?? null,
+      credentialSource: this.pollCycleCredentialSource ?? 'unknown',
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,
       limit: rateLimit.limit ?? null,
       resource: rateLimit.resource ?? 'unknown',
@@ -2395,7 +2398,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ) {
         this.applyRateLimit(
           {
-            remaining: rateLimit.remaining,
+            ...rateLimit,
             resetAt: rateLimit.limited ? rateLimit.resetAt : 0,
             limited: true,
             retryAfter: rateLimit.retryAfter,
@@ -2430,6 +2433,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     } finally {
       this.pollCycleCredentialGeneration = null;
       this.pollCycleCredentialFingerprint = null;
+      this.pollCycleCredentialSource = null;
       this.pollCycleAccessible = false;
     }
   }
@@ -2506,6 +2510,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     const credentials = await this.resolveTokenOrFail();
     const token = credentials.token;
+    this.pollCycleCredentialSource = token
+      ? credentials.source
+      : this.options.fetchImpl || fetchImpl !== fetch
+        ? 'injected'
+        : 'gh';
     const fetchPage = createGitHubPollSource({
       collection: this.options.collectPollPage
         ? {
@@ -2589,7 +2598,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (rateLimit.limited) {
         if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
           this.applyRateLimit({
-            remaining: rateLimit.remaining,
+            ...rateLimit,
             resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
             limited: true,
             retryAfter: true,
@@ -2612,7 +2621,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             ? rateLimit.resetAt - Date.now()
             : RATE_LIMIT_MIN_BACKOFF_MS;
           this.applyRateLimit({
-            remaining: rateLimit.remaining,
+            ...rateLimit,
             resetAt: Date.now() + secondaryDelayMs,
             limited: true,
             retryAfter: true,
@@ -2851,7 +2860,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             if (rateLimit.limited) {
               if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
                 this.applyRateLimit({
-                  remaining: rateLimit.remaining,
+                  ...rateLimit,
                   resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
                   limited: true,
                   retryAfter: true,
@@ -2880,7 +2889,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                   ? rateLimit.resetAt - Date.now()
                   : RATE_LIMIT_MIN_BACKOFF_MS;
                 this.applyRateLimit({
-                  remaining: rateLimit.remaining,
+                  ...rateLimit,
                   resetAt: Date.now() + secondaryDelayMs,
                   limited: true,
                   retryAfter: true,
@@ -3080,7 +3089,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           !mergeRateLimit.retryAfter
         ) {
           this.applyRateLimit({
-            remaining: mergeRateLimit.remaining,
+            ...mergeRateLimit,
             resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
             limited: true,
             retryAfter: true,
@@ -3105,7 +3114,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             ? mergeRateLimit.resetAt - Date.now()
             : RATE_LIMIT_MIN_BACKOFF_MS;
           this.applyRateLimit({
-            remaining: mergeRateLimit.remaining,
+            ...mergeRateLimit,
             resetAt: Date.now() + secondaryDelayMs,
             limited: true,
             retryAfter: true,
@@ -3228,7 +3237,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             !reviewRateLimit.retryAfter
           ) {
             this.applyRateLimit({
-              remaining: reviewRateLimit.remaining,
+              ...reviewRateLimit,
               resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
               limited: true,
               retryAfter: true,
@@ -3249,7 +3258,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               ? reviewRateLimit.resetAt - Date.now()
               : RATE_LIMIT_MIN_BACKOFF_MS;
             this.applyRateLimit({
-              remaining: reviewRateLimit.remaining,
+              ...reviewRateLimit,
               resetAt: Date.now() + secondaryDelayMs,
               limited: true,
               retryAfter: true,
@@ -3358,7 +3367,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           !reactionRateLimit.retryAfter
         ) {
           this.applyRateLimit({
-            remaining: reactionRateLimit.remaining,
+            ...reactionRateLimit,
             resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
             limited: true,
             retryAfter: true,
@@ -3377,7 +3386,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             ? reactionRateLimit.resetAt - Date.now()
             : RATE_LIMIT_MIN_BACKOFF_MS;
           this.applyRateLimit({
-            remaining: reactionRateLimit.remaining,
+            ...reactionRateLimit,
             resetAt: Date.now() + secondaryDelayMs,
             limited: true,
             retryAfter: true,

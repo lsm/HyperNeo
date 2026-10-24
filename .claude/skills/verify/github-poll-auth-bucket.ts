@@ -12,7 +12,7 @@ import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src
 const [mode, scenario, portText, runText] = process.argv.slice(2);
 const port = Number(portText), run = resolve(runText);
 assert(['reproduce', 'verify'].includes(mode));
-assert(['private', 'exhausted', 'secondary'].includes(scenario));
+assert(['private', 'exhausted', 'secondary', 'stale'].includes(scenario));
 assert(port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -27,6 +27,7 @@ const repos = ['a-public', 'b-public', 'c-public', 'd-phone', 'e-qlark', 'f-mone
 const calls: { path: string; authenticated: boolean; limit: number; resource: string; status: number }[] = [];
 const api = (url: URL, authenticated: boolean) => {
   const repo = url.pathname.split('/')[3];
+  const stale = authenticated && scenario === 'stale' && calls.length === 0;
   const secondary = authenticated && scenario === 'secondary' && calls.length === 0;
   const status = secondary ? 403 : authenticated || repos.indexOf(repo) < 3 ? 200 : scenario === 'private' ? 404 : 403;
   let body: unknown = [];
@@ -36,7 +37,7 @@ const api = (url: URL, authenticated: boolean) => {
   if (url.pathname === '/user') body = { login: 'synthetic-human' };
   const limit = authenticated ? 5000 : 60;
   calls.push({ path: url.pathname, authenticated, limit, resource: 'core', status });
-  return Response.json(body, { status, headers: { 'X-RateLimit-Limit': String(limit), 'X-RateLimit-Remaining': authenticated ? '4900' : scenario === 'exhausted' ? '0' : '59', 'X-RateLimit-Reset': String(Math.ceil(Date.now() / 1000) + 3600), 'X-RateLimit-Resource': 'core', ...(secondary ? { 'Retry-After': '2' } : {}) } });
+  return Response.json(body, { status, headers: { 'X-RateLimit-Limit': String(limit), 'X-RateLimit-Remaining': stale ? '0' : authenticated ? '4900' : scenario === 'exhausted' ? '0' : '59', 'X-RateLimit-Reset': String(Math.floor(Date.now() / 1000) + (stale ? 0 : 3600)), 'X-RateLimit-Resource': 'core', ...(secondary ? { 'Retry-After': '2' } : {}) } });
 };
 const ledgerCalls: unknown[] = [];
 const mock = createServer(async (req, res) => {
