@@ -69,13 +69,7 @@ export function formatPreferenceProposal(
   });
   return {
     text: [zh ? '应用这些设置？' : 'Apply these settings?', ...tables].join('\n\n'),
-    noLabel: values.some((v) => v.pack === 'coding' && v.key === 'provenance' && v.value === true)
-      ? zh
-        ? '关闭模型来源要求，保留其他设置'
-        : 'Disable provenance; keep other settings'
-      : zh
-        ? '保留当前设置'
-        : 'Keep current settings',
+    noLabel: zh ? '保留当前设置' : 'Keep current settings',
     yesLabel: zh ? '应用这些设置' : 'Apply these settings',
   };
 }

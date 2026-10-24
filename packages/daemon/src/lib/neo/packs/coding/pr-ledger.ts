@@ -350,7 +350,12 @@ export class CodingPrLedgerRepository {
     };
   }
 
-  replace(repo: string, rows: readonly CodingLedgerRow[], now: number): CodingPrTransition[] {
+  replace(
+    repo: string,
+    rows: readonly CodingLedgerRow[],
+    now: number,
+    observedAt = now
+  ): CodingPrTransition[] {
     const before = new Map(
       (
         this.db
@@ -358,7 +363,7 @@ export class CodingPrLedgerRepository {
           .all(repo) as { number: number; state: CodingPrState }[]
       ).map((row) => [row.number, row.state])
     );
-    this.upsert(rows, now);
+    this.upsert(rows, now, observedAt);
     this.db
       .prepare(
         `DELETE FROM pack_coding_pr_ledger WHERE repo = ? AND closed_at IS NULL
@@ -371,7 +376,7 @@ export class CodingPrLedgerRepository {
     });
   }
 
-  private upsert(rows: readonly CodingLedgerRow[], now: number): void {
+  private upsert(rows: readonly CodingLedgerRow[], now: number, observedAt: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
          (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at, created_at, author_is_bot)
@@ -395,7 +400,7 @@ export class CodingPrLedgerRepository {
       this.stageFacts.observeHead(
         `https://github.com/${row.repo}/pull/${row.number}`,
         row.head,
-        now
+        observedAt
       );
       insert.run(
         row.repo,
@@ -647,6 +652,7 @@ export async function reconcileCodingPrLedger(
   const last = ledger.lastReads();
   const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
   for (const repo of order) {
+    const observedAt = Date.now();
     const raw = await read(repo);
     const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
     const error = (raw as { error?: unknown } | null)?.error;
@@ -661,7 +667,9 @@ export async function reconcileCodingPrLedger(
     if (planned && planned.repo !== repo.toLowerCase())
       await ledger.write('dropRepo', repo.toLowerCase());
     if (planned && !seen.has(planned.repo))
-      transitions.push(...(await ledger.write('replace', planned.repo, planned.rows, now)));
+      transitions.push(
+        ...(await ledger.write('replace', planned.repo, planned.rows, now, observedAt))
+      );
     if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }

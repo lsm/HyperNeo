@@ -598,8 +598,8 @@ export class NeoAskTodoRepository {
         .run(JSON.stringify(answer), by, now, question.id).changes;
       if (answered) {
         this.releaseStartTodos(question.id, now);
-        applyPackPreferenceAnswer(this.db, question.id);
         if (answer === 'yes') {
+          applyPackPreferenceAnswer(this.db, question.id);
           const rules = applyNeoRuleAnswer(this.db, question.id);
           rulesChanged = rules.ok && rules.changed;
         }

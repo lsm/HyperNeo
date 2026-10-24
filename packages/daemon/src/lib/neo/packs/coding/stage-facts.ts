@@ -77,14 +77,15 @@ const normalize = (identity: string) => identity.trim().replace(/\s+/g, ' ').toL
 
 function canonicalModel(identity: string): string | null {
   const name = normalize(identity)
+    .replace(/(\[1m\])+$/i, '')
     .replace(/^(openai|anthropic)\//, '')
     .replace(/\s+/g, '-');
   const gpt =
     /^(?:gpt|codex)-(\d+(?:\.\d+)?)(?:-(?:sol|astra|luna|terra))?(?:-\d{4}-?\d{2}(?:-?\d{2})?)?$/.exec(
       name
     );
-  if (gpt) return `gpt-${gpt[1]}`;
-  const claude = /^claude-(opus|sonnet|haiku)-(\d+)[.-](\d+)(?:-\d{8})?$/.exec(name);
+  if (gpt) return `gpt-${Number(gpt[1])}`;
+  const claude = /^(?:claude-)?(opus|sonnet|haiku|fable)-(\d+)[.-](\d+)(?:-\d{8})?$/.exec(name);
   return claude ? `claude-${claude[1]}-${claude[2]}.${claude[3]}` : null;
 }
 

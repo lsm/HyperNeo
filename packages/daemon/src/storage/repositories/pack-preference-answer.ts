@@ -21,15 +21,10 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
       | undefined;
     if (!row) return { ok: false as const, reason: 'no_bound_proposal' };
     if (row.applied_at !== null) return { ok: true as const };
-    const values = JSON.parse(row.values_json) as NeoPackSetting[];
-    const optOut = values.filter(
-      (v) => v.pack === 'coding' && v.key === 'provenance' && v.value === true
-    );
-    const no = row.answer === JSON.stringify('no') && optOut.length > 0;
     if (
       row.state !== 'answered' ||
       row.kind !== 'yesno' ||
-      (row.answer !== JSON.stringify('yes') && !no) ||
+      row.answer !== JSON.stringify('yes') ||
       !['button', 'chat'].includes(row.answered_by ?? '')
     )
       return { ok: false as const, reason: 'human_yes_required' };
@@ -39,13 +34,13 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
       ON CONFLICT(pack, scope_kind, scope_key, key) DO UPDATE SET
       value_json=excluded.value_json, set_by=excluded.set_by, set_at=excluded.set_at`);
     const now = Date.now();
-    for (const value of no ? optOut : values)
+    for (const value of JSON.parse(row.values_json) as NeoPackSetting[])
       insert.run(
         value.pack,
         value.scope.kind,
         value.scope.key,
         value.key,
-        JSON.stringify(no ? false : value.value),
+        JSON.stringify(value.value),
         now
       );
     db.prepare('UPDATE neo_pack_preference_proposals SET applied_at=? WHERE question_id=?').run(

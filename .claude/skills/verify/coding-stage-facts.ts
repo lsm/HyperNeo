@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { CodingPrLedgerRepository, reconcileCodingPrLedger } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { CodingStageFact } from '../../../packages/daemon/src/lib/neo/packs/coding/stage-facts.ts';
@@ -98,6 +98,19 @@ try {
         assert.equal(await ledger.write('recordStage', { ...fact, head: 'head-c' }), false);
         await todos.write('record', 'todo-7', [{ url, head: 'head-c', state: 'OPEN', checks: 'passing', review: 'approved' }], 3);
         assert.deepEqual(todos.stages('todo-7'), []);
+        await reconcileCodingPrLedger(ledger, ['synthetic/first', 'synthetic/stages'], async repo => {
+          if (repo === 'synthetic/first') {
+            ledger.stageFacts.observeHead(url, 'head-c', Date.now());
+            await new Promise(done => setTimeout(done, 3));
+          }
+          return { data: { rateLimit: { remaining: 4000 }, repository: {
+            nameWithOwner: repo,
+            open: { pageInfo: { hasNextPage: false }, nodes: repo === 'synthetic/stages' ? [{ number: 7, title: 'Stages', headRefName: 'stages', headRefOid: 'head-d', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null, closedAt: null }] : [] }, done: { nodes: [] },
+          } } };
+        }, Date.now());
+        assert.equal(await ledger.write('recordStage', { ...fact, head: 'head-c' }), false);
+        assert(await ledger.write('recordStage', { ...fact, head: 'head-d' }));
+        evidence.push({ perRepoReadStages: todos.stages('todo-7') });
         evidence.push({ phase, afterPush: todos.stages('todo-7'), todo: db.prepare("SELECT state FROM neo_todos WHERE id = 'todo-7'").get() });
       }
     } finally { ws?.close(); await app.cleanup(); }
