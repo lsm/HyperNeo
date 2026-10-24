@@ -6,10 +6,12 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   activatePrompts,
+  activatePromptsInTransaction,
   ensurePrompt as ensurePromptAsync,
   ensurePromptInTransaction as ensurePrompt,
   PromptContentConflictError,
   retryPrompt,
+  retryPromptInTransaction,
   verifyPromptContent,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import type { JobQueueRepository as JobQueueRepoType } from '../../../../src/storage/repositories/job-queue-repository';
@@ -101,6 +103,77 @@ describe('transactional outbox (ensurePrompt)', () => {
     ({ db, sdkRepo, jobQueue } = setup());
   });
   afterEach(() => db.close());
+
+  it('synchronous activation commits the row and job without publishing', () => {
+    const { dbMessageId } = ensurePrompt({
+      db,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('sync-activate'),
+      hold: 'manual',
+      delivery: { origin: 'chat' },
+    });
+    let published = false;
+    const result = activatePromptsInTransaction({
+      db,
+      jobQueue,
+      sessionId: SESSION,
+      messageUuids: ['sync-activate'],
+      origin: 'chat',
+      publishStatusChanged: () => {
+        published = true;
+      },
+    });
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result).toEqual({ activated: [{ dbId: dbMessageId, messageUuid: 'sync-activate' }] });
+    expect(sdkRepo.getDeliveryContent(SESSION, 'sync-activate')?.sendStatus).toBe('enqueued');
+    expect(jobPayload(db, SESSION, 'sync-activate')?.released).toBe(true);
+    expect(published).toBe(false);
+  });
+
+  it('synchronous retry rolls the row and revived job back with its outer transaction', () => {
+    const { dbMessageId } = ensurePrompt({
+      db,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('sync-retry'),
+      delivery: { origin: 'chat' },
+    });
+    sdkRepo.updateMessageStatus([dbMessageId], 'failed');
+    db.prepare("UPDATE job_queue SET status='dead',error='retry fixture' WHERE queue=?").run(
+      MESSAGE_DELIVERY
+    );
+    let published = false;
+    expect(() =>
+      db.transaction(() => {
+        const result = retryPromptInTransaction({
+          db,
+          sdkMessageRepo: sdkRepo,
+          jobQueue,
+          sessionId: SESSION,
+          messageUuid: 'sync-retry',
+          origin: 'chat',
+          publishStatusChanged: () => {
+            published = true;
+          },
+        });
+        expect(result).not.toBeInstanceOf(Promise);
+        expect(result).toEqual({ dbId: dbMessageId, messageUuid: 'sync-retry' });
+        expect(sdkRepo.getDeliveryContent(SESSION, 'sync-retry')?.sendStatus).toBe('enqueued');
+        expect(
+          db.prepare('SELECT status FROM job_queue WHERE queue=?').get(MESSAGE_DELIVERY)
+        ).toEqual({ status: 'pending' });
+        throw new Error('outer rollback');
+      })()
+    ).toThrow('outer rollback');
+    expect(sdkRepo.getDeliveryContent(SESSION, 'sync-retry')?.sendStatus).toBe('failed');
+    expect(
+      db.prepare('SELECT status,error FROM job_queue WHERE queue=?').get(MESSAGE_DELIVERY)
+    ).toEqual({ status: 'dead', error: 'retry fixture' });
+    expect(published).toBe(false);
+  });
 
   it('the async facade resolves after both outbox writes commit', async () => {
     const pending = ensurePromptAsync({
