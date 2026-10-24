@@ -19,17 +19,17 @@ Inspect `evidence/web-menu-*.png`, `web-composer-*.png`, `browser.json` and
 `observed.json`; the ask stays open. Both listeners/browser close in finally.
 Component integration tests additionally send the draft with exactly
 `replyTo: {kind: 'ask', id: <ask id>}`, without a quoted text prefix, matching
-iOS `WorkSheetView` / `ReplyTarget`. Question replies retain their behavior.
+the iOS app. Question replies retain their behavior.
 
-For iOS comparison, use a fresh read-only-source clone of neo-ios main and an
-owned Simulator (never Simulator.app or a physical phone). Copy the retained
-`../ask-card-reply-ios.swift` to `NeoUITests/AskReplyEvidenceTests.swift` in that
-temporary clone. Run `xcodebuild test` with scheme NeoExpansion, that Simulator's
-explicit UDID, `-collect-test-diagnostics never -parallel-testing-enabled NO`
-and `-only-testing:NeoUITests/AskReplyEvidenceTests`. The existing offline demo
+For iOS comparison, use a disposable source checkout of the iOS app and an
+owned Simulator (never Simulator.app or a physical phone). Add the retained
+`../ask-card-reply-ios.swift` helper to its UI test target and run that test
+using the app's UI-test scheme, the owned Simulator's explicit UDID,
+`-collect-test-diagnostics never -parallel-testing-enabled NO`, and
+`-only-testing:<UI-test-target>/AskReplyEvidenceTests`. The existing offline demo
 uses synthetic data; no iOS app source changes. Export attachments with
 `xcresulttool export attachments`: menu and composer screenshots must show Reply
 and the same quoted title. Compare them beside the web shots in the PR. This
 comparison exercises native menu/composer navigation, not a real provider turn.
-Shut down/delete only the owned Simulator and remove the temporary clone after
-retaining the evidence. Remove the PR worktree after merge/close.
+Shut down/delete only the owned Simulator and remove the temporary checkout after
+retaining local evidence. Remove the PR worktree after merge/close.
