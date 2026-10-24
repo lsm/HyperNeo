@@ -746,6 +746,9 @@
     animation: none;
     z-index: auto;
   }
+  .neo-shell.neo-preview-work .neo-scene-list {
+    position: relative;
+  }
   .neo-shell.neo-preview-focus > .artifact-preview-backdrop,
   .neo-shell.neo-preview-focus .artifact-preview-handle {
     display: none;
