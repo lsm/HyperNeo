@@ -15,6 +15,8 @@ import {
   type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
   type ClaudeLiveSession,
+  relayNativeDesktopMessage,
+  readClaudeInputEvidence,
   claudeDirectInput,
   claudeNativeInput,
   claudeInputEvidence,
@@ -1471,6 +1473,168 @@ describe('claudeInputEvidence', () => {
 });
 
 describe('native Desktop message confirmation', () => {
+  test('a queued native send stays pending after the confirm window and confirms from a later transcript', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'desktop-queued-'));
+    const folder = join(root, '-synthetic');
+    mkdirSync(folder);
+    const target = {
+      sessionId: 'local_target',
+      cliSessionId: 'target',
+      cwd: '/synthetic',
+      title: 'worker',
+      isArchived: false,
+      lastActivityAt: 0,
+    };
+    const helper = {
+      ...target,
+      sessionId: 'local_helper',
+      cliSessionId: 'helper',
+      title: 'desktop-wake',
+    };
+    const targetPath = join(folder, 'target.jsonl');
+    const helperPath = join(folder, 'helper.jsonl');
+    writeFileSync(
+      targetPath,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'old-same-message',
+        timestamp: new Date(0).toISOString(),
+        message: {
+          content:
+            '<cross-session-message from="local_helper" name="desktop-wake">\nSynthetic queued task\nExact tail\n</cross-session-message>',
+        },
+      }) + '\n'
+    );
+    writeFileSync(helperPath, '');
+    const message = 'Synthetic queued task\nExact tail';
+    let elapsed = 0;
+    const deps = {
+      projectsDir: root,
+      now: () => elapsed,
+      sleep: async (ms: number) => {
+        elapsed += ms;
+      },
+      spawn: ((args: string[]) => {
+        appendFileSync(
+          helperPath,
+          JSON.stringify({
+            type: 'user',
+            uuid: 'helper-request',
+            message: {
+              content: `<cross-session-message from="relay">\n${args.at(-1)}\n</cross-session-message>`,
+            },
+          }) + '\n'
+        );
+        return {
+          stdout: new Response('Request queued').body,
+          stderr: new Response('').body,
+          exited: Promise.resolve(0),
+          kill: () => {},
+        };
+      }) as SpawnFn,
+    } as ClaudeDesktopAdapterDeps;
+    try {
+      const sent = await relayNativeDesktopMessage(
+        target,
+        helper,
+        [
+          {
+            sessionId: 'helper',
+            name: 'desktop-wake',
+            status: 'running',
+            pid: 1,
+            owner: 'desktop',
+          },
+        ],
+        message,
+        deps
+      );
+      expect(sent).toMatchObject({
+        ok: true,
+        value: {
+          delivered: false,
+          unconfirmed: true,
+          receipt: { executionId: 'target', inputId: expect.any(String) },
+        },
+      });
+      expect(elapsed).toBeGreaterThanOrEqual(28_000);
+      if (!sent.ok || !sent.value.receipt) throw new Error('Missing queued receipt');
+      expect(sent.value.confirmedAt).toBeUndefined();
+      const receipt = sent.value.receipt;
+      for (const [from, text] of [
+        ['local_other', message],
+        ['local_helper', 'Synthetic queued task\nDifferent tail'],
+      ]) {
+        appendFileSync(
+          targetPath,
+          JSON.stringify({
+            type: 'user',
+            uuid: `unrelated-${from}`,
+            timestamp: new Date(elapsed).toISOString(),
+            message: {
+              content: `<cross-session-message from="${from}" name="desktop-wake">\n${text}\n</cross-session-message>`,
+            },
+          }) + '\n'
+        );
+      }
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toEqual({
+        receipt,
+        state: 'pending',
+      });
+      elapsed += 120_000;
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toEqual({
+        receipt,
+        state: 'pending',
+      });
+      appendFileSync(
+        targetPath,
+        JSON.stringify({ type: 'assistant', message: { content: 'x'.repeat(2 * 1024 * 1024) } }) +
+          '\n'
+      );
+      appendFileSync(
+        targetPath,
+        JSON.stringify({
+          type: 'user',
+          uuid: 'later-target-input',
+          timestamp: new Date(elapsed).toISOString(),
+          message: {
+            content: `<cross-session-message from="local_helper" name="desktop-wake">\n${message}\n</cross-session-message>`,
+          },
+        }) + '\n'
+      );
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toMatchObject({
+        receipt,
+        state: 'pending',
+        transcriptState: 'accepted',
+      });
+      appendFileSync(
+        targetPath,
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: new Date(elapsed + 1).toISOString(),
+          message: {
+            content: [{ type: 'text', text: 'Synthetic completion' }],
+            stop_reason: 'end_turn',
+          },
+        }) + '\n'
+      );
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toMatchObject({
+        receipt,
+        state: 'observed',
+        transcriptState: 'completed',
+        exchange: [
+          { role: 'user', text: expect.stringContaining(message) },
+          { role: 'agent', text: 'Synthetic completion' },
+        ],
+      });
+      expect(
+        await readClaudeInputEvidence({ ...target, cliSessionId: 'other' }, deps, receipt)
+      ).toEqual({ receipt, state: 'unavailable' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('requires the actual helper, user receipt and complete message rather than a matching prefix', () => {
     const message = 'Same opening line\nComplete quoted "tail" 😀';
     const entry = (helper: string, text: string, type = 'user') =>

@@ -13,6 +13,8 @@ import { createCodingMergeReader } from './coding/merge-reader.ts';
 import { createCodingAncestryReader } from './coding/ancestry-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './coding/deploy-checks.ts';
 import { createCodingPack } from './coding/pack.ts';
+import { CodingAssignmentsRepository } from './coding/assignments.ts';
+import { createCodingResultOperation } from './coding/result-operation.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
 import { CodingPrLedgerRepository } from './coding/pr-ledger.ts';
 import { CodingPrSweepRepository } from './coding/pr-sweep.ts';
@@ -86,6 +88,13 @@ export function createNeoService(...args: NeoServiceArgs) {
         },
         projectRepos: () => configured.repo.allRepositories(),
       });
+      coding.operations = [
+        ...(coding.operations ?? []),
+        createCodingResultOperation(
+          new CodingAssignmentsRepository(db.getDatabase()),
+          new CodingPrLedgerRepository(db.getDatabase())
+        ),
+      ];
       coding.sessionLinks = async (ref) => {
         const localId = localCodingSessionId(ref);
         const branch = neoWorkBranch(localId ? db.getSession(localId) : null);

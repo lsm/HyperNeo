@@ -255,6 +255,35 @@ export class NeoAskTodoRepository {
     return this.db.prepare(`${ASK_SELECT} WHERE status = 'open'`).all() as NeoAsk[];
   }
 
+  listStalledAsks(
+    before: number,
+    repeatBefore: number | null = null
+  ): {
+    id: string;
+    sessionId: string;
+    title: string;
+    wakeKey: string;
+  }[] {
+    return this.db
+      .prepare(`SELECT id, session_id AS sessionId, title,
+      'neo-stalled-ask:' || id || ':' || updated_at || ':' || COALESCE(stalled_wake_at, 0) AS wakeKey
+      FROM neo_asks WHERE status = 'open' AND updated_at <= ?1
+      AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
+      AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
+      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
+      AND (?2 IS NULL OR stalled_wake_at IS NULL OR stalled_wake_at <= ?2)`)
+      .all(before, repeatBefore) as {
+      id: string;
+      sessionId: string;
+      title: string;
+      wakeKey: string;
+    }[];
+  }
+
+  recordStalledAskWake(askId: string, now: number): void {
+    this.db.prepare('UPDATE neo_asks SET stalled_wake_at = ? WHERE id = ?').run(now, askId);
+  }
+
   getTodo(id: string): NeoTodo | null {
     const row = this.db.prepare(`${TODO_SELECT} WHERE id = ?`).get(id) as TodoRow | null;
     return row ? toTodo(row) : null;

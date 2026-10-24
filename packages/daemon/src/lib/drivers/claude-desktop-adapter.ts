@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { collectDescendantPids, listProcesses } from '../process-watchdog.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
@@ -823,6 +824,30 @@ export async function readClaudeInputEvidence(
   const path = claudeTranscriptPath(deps.projectsDir, record);
   if (!path) return { receipt, state: 'unavailable' };
   try {
+    const pending = /^desktop-pending:(\d+):([a-f0-9]{64})$/.exec(receipt.inputId);
+    if (pending && receipt.executionId === record.cliSessionId) {
+      const lines = await readLinesAfter(path, Number(pending[1]), true);
+      const input = lines.map(parseClaudeEntry).find((entry) => {
+        const text = entry?.type === 'user' ? claudeInputText(entry) : null;
+        const native =
+          text &&
+          /<cross-session-message from="([^"]+)"[^>]*>\n([\s\S]*)\n<\/cross-session-message>$/.exec(
+            text
+          );
+        return (
+          typeof entry?.uuid === 'string' &&
+          native &&
+          nativeInputFingerprint(native[1], native[2]) === pending[2]
+        );
+      });
+      if (!input) return { receipt, state: 'pending' };
+      const evidence = claudeInputEvidence(
+        lines,
+        { ...receipt, inputId: input.uuid as string },
+        record.cliSessionId
+      );
+      return { ...evidence, receipt };
+    }
     const { lines } = await readTailLines(path, TRANSCRIPT_TAIL_BYTES);
     return claudeInputEvidence(lines, receipt, record.cliSessionId);
   } catch {
@@ -878,15 +903,20 @@ async function transcriptSize(path: string | null): Promise<number> {
   );
 }
 
-async function readLinesAfter(path: string | null, offset: number): Promise<string[]> {
+async function readLinesAfter(
+  path: string | null,
+  offset: number,
+  tail = false
+): Promise<string[]> {
   if (!path) return [];
   const handle = await open(path, 'r');
   try {
     const { size } = await handle.stat();
-    const start = Math.min(offset, size);
+    const start = Math.min(tail ? Math.max(offset, size - TRANSCRIPT_TAIL_BYTES) : offset, size);
     const buffer = Buffer.alloc(Math.min(size - start, TRANSCRIPT_TAIL_BYTES));
     await handle.read(buffer, 0, buffer.length, start);
-    return buffer.toString('utf8').split('\n');
+    const lines = buffer.toString('utf8').split('\n');
+    return start > offset ? lines.slice(1) : lines;
   } finally {
     await handle.close();
   }
@@ -959,6 +989,12 @@ async function relayClaudeMessage(
   }
 }
 
+function nativeInputFingerprint(helperSessionId: string, message: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify([helperSessionId, message]))
+    .digest('hex');
+}
+
 export async function relayNativeDesktopMessage(
   target: ClaudeDesktopRecord & { cliSessionId: string },
   helper: ClaudeDesktopRecord & { cliSessionId: string },
@@ -992,10 +1028,17 @@ export async function relayNativeDesktopMessage(
           confirmedAt: confirmed.at ?? deps.now(),
         },
       }
-    : reject(
-        'not_delivered',
-        `No native task input was confirmed in ${target.sessionId} (${target.permissionMode ?? 'unknown'}). Inspect desktop-wake and the target for a native permission wait, hold or refusal; no headless task was run.`
-      );
+    : {
+        ok: true,
+        value: {
+          delivered: false,
+          unconfirmed: true,
+          receipt: {
+            executionId: target.cliSessionId,
+            inputId: `desktop-pending:${before}:${nativeInputFingerprint(helper.sessionId, message)}`,
+          },
+        },
+      };
 }
 
 export function claudeNativeInput(

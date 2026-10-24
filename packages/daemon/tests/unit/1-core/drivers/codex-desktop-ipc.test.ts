@@ -471,6 +471,7 @@ describe('withCodexDesktopIpc', () => {
           createWorkVerbOperations({
             adapters: () => [driver],
             daemonName: 'test',
+            isOpenTodo: (todoId) => todoId === 'open-todo',
             remote: { list: () => [], invoke: async () => ({}) },
           })
         );
@@ -480,7 +481,11 @@ describe('withCodexDesktopIpc', () => {
             invokeOperation(
               registry,
               'work.send',
-              { ref: { adapter: driver.id, id: 'thread-1' }, message: 'Existing worker input' },
+              {
+                ref: { adapter: driver.id, id: 'thread-1' },
+                message: 'Existing worker input',
+                todoId: 'open-todo',
+              },
               { source: 'mcp', role: 'neo', sessionId: 'neo' }
             ),
             new Promise<never>((_, reject) => {
@@ -739,6 +744,7 @@ describe('withCodexDesktopIpc', () => {
         createWorkVerbOperations({
           adapters: () => [driver],
           daemonName: 'test',
+          isOpenTodo: (todoId) => todoId === 'open-todo',
           remote: { list: () => [], invoke: async () => ({}) },
         })
       );
@@ -746,7 +752,11 @@ describe('withCodexDesktopIpc', () => {
         await invokeOperation(
           registry,
           'work.send',
-          { ref: { adapter: driver.id, id: 'thread-1' }, message: 'use the parser' },
+          {
+            ref: { adapter: driver.id, id: 'thread-1' },
+            message: 'use the parser',
+            todoId: 'open-todo',
+          },
           { source: 'mcp', role: 'neo', sessionId: 'neo' }
         )
       ).toEqual({
