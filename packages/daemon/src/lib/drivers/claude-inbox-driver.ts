@@ -4,7 +4,7 @@ import {
   createClaudeInboxConversations,
 } from './claude-inbox-conversations.ts';
 import { requireClaudeReplyDestination, submitClaudeInboxMessage } from './claude-inbox-submit.ts';
-import type { ClaudeInboxEvent } from './claude-inbox.ts';
+import type { ClaudeInboxEvent, ClaudeInboxSubmission } from './claude-inbox.ts';
 import { readClaudeSenderSession } from './claude-inbox-endpoint.ts';
 import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import type { MailboxHandoffArgs, MailboxHandoffOutcome } from '../mailbox/handoff.ts';
@@ -74,12 +74,22 @@ export function createClaudeInboxDriver(deps: ClaudeInboxDriverDeps) {
   });
   return {
     admit: (context: WorkCallContext) => requireClaudeReplyDestination(context, deps),
-    send(sessionId: string, text: string, context: WorkCallContext) {
+    send(
+      sessionId: string,
+      text: string,
+      context: WorkCallContext,
+      fromMode?: ClaudeInboxSubmission['fromMode']
+    ) {
       const id = crypto.randomUUID();
-      return submitClaudeInboxMessage(sessionId, { messageId: id, inputId: id, text }, context, {
-        ...deps,
-        write: conversations.write,
-      });
+      return submitClaudeInboxMessage(
+        sessionId,
+        { messageId: id, inputId: id, text, ...(fromMode ? { fromMode } : {}) },
+        context,
+        {
+          ...deps,
+          write: conversations.write,
+        }
+      );
     },
     listen: conversations.listen,
     close: conversations.close,
