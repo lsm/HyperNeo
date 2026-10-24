@@ -7,6 +7,7 @@ import {
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
+import { CodingRepoHealthRepository, type RepoHealthCycle } from './health-state.ts';
 import { CodingAncestryFactsRepository } from './ancestry-facts.ts';
 import { CodingRefFactsRepository } from './ref-facts.ts';
 import { CodingQueryFactsRepository } from './query-facts.ts';
@@ -292,6 +293,7 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
 }
 
 export class CodingPrLedgerRepository {
+  readonly health: CodingRepoHealthRepository;
   readonly stageFacts: CodingStageFactsRepository;
   readonly pollFacts: CodingPollFactsRepository;
   readonly mergeFacts: CodingMergeFactsRepository;
@@ -302,6 +304,7 @@ export class CodingPrLedgerRepository {
   readonly queryFacts: CodingQueryFactsRepository;
 
   constructor(private readonly db: Database) {
+    this.health = new CodingRepoHealthRepository(db);
     this.stageFacts = new CodingStageFactsRepository(db);
     this.pollFacts = new CodingPollFactsRepository(db);
     this.mergeFacts = new CodingMergeFactsRepository(db);
@@ -323,6 +326,10 @@ export class CodingPrLedgerRepository {
 
   recordStage(fact: CodingStageFact): boolean {
     return this.stageFacts.record(fact);
+  }
+
+  recordHealth(repo: string, cycle: RepoHealthCycle) {
+    return this.health.record(repo, cycle);
   }
 
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
@@ -680,6 +687,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'recordHealth'
   | 'recordStage'
   | 'recordAlias'
   | 'dropRepo'
@@ -694,6 +702,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'recordHealth',
     'recordStage',
     'recordAlias',
     'dropRepo',

@@ -4,23 +4,14 @@ import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/sch
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
-type Health = {
-  cycleAt: number;
-  misses: number;
-  incident: { key: string; raisedAt: number; resolvedAt: number | null } | null;
-};
-type HealthLedger = {
-  health: { read(repo: string): Health | null };
-  recordHealth(repo: string, cycle: { at: number; outcome: string; retryAt?: number }): Health;
-};
 const repo = 'synthetic/health';
-function using(run: (db: Database, ledger: HealthLedger) => void) {
+function using(run: (db: Database, ledger: CodingPrLedgerRepository) => void) {
   const db = new Database(':memory:');
   createTables(db);
   runMigrations(db, () => {});
   createCodingPackTables(db);
   try {
-    run(db, new CodingPrLedgerRepository(db) as unknown as HealthLedger);
+    run(db, new CodingPrLedgerRepository(db));
   } finally {
     db.close();
   }
@@ -95,7 +86,7 @@ describe('durable repository cycle health', () => {
     using((db, ledger) => {
       ledger.recordHealth(repo.toUpperCase(), { at: 300, outcome: 'partial' });
       const before = db.prepare('SELECT * FROM pack_coding_repo_health').all();
-      const reopened = new CodingPrLedgerRepository(db) as unknown as HealthLedger;
+      const reopened = new CodingPrLedgerRepository(db);
       for (const at of [300, 299]) reopened.recordHealth(repo, { at, outcome: 'complete' });
       expect(db.prepare('SELECT * FROM pack_coding_repo_health').all()).toEqual(before);
       expect(reopened.health.read(repo)).toMatchObject({
@@ -114,6 +105,21 @@ describe('durable repository cycle health', () => {
         ledger.recordHealth(repo, { at: 200, outcome: 'cooldown', retryAt: 199 })
       ).toThrow();
       expect(db.prepare('SELECT * FROM pack_coding_repo_health').all()).toEqual(before);
+    }));
+  test('initial cooldown invents no coverage, and later misses retain last complete coverage', () =>
+    using((_db, ledger) => {
+      expect(
+        ledger.recordHealth(repo, { at: 100, outcome: 'cooldown', retryAt: 150 })
+      ).toMatchObject({ attemptedAt: null, completeAt: null, misses: 0, firstMissAt: null });
+      ledger.recordHealth(repo, { at: 200, outcome: 'complete' });
+      expect(ledger.recordHealth(repo, { at: 300, outcome: 'partial' })).toMatchObject({
+        attemptedAt: 300,
+        completeAt: 200,
+        misses: 1,
+        firstMissAt: 300,
+        nextRetryAt: null,
+        incident: null,
+      });
     }));
   test('the new migration upgrades an old schema without changing existing facts or schema', () =>
     using((db) => {

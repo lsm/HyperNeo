@@ -1,3 +1,4 @@
+import { runMigration454 } from './m454-coding-repo-health.ts';
 import { runMigration453 } from './m453-neo-ask-focused-session.ts';
 import { runMigration452 } from './m452-neo-question-source.ts';
 import { runMigration451 } from './m451-stalled-ask-wake.ts';
@@ -961,6 +962,7 @@ export function runMigrations(
   run(migrationMarkerKey(451), () => runMigration451(db));
   run(migrationMarkerKey(452), () => runMigration452(db));
   run(migrationMarkerKey(453), () => runMigration453(db));
+  run(migrationMarkerKey(454), () => runMigration454(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

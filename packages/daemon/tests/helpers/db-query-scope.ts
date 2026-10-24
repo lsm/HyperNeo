@@ -46,6 +46,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_rule_proposals',
   'neo_home_github',
   'pack_facts',
+  'pack_coding_repo_health',
   'neo_ask_work',
   'neo_work_prs',
   'neo_work_pr_claims',
