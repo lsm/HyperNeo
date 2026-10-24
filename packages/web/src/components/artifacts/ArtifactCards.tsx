@@ -13,7 +13,11 @@ export function ArtifactCards({ artifacts }: { artifacts?: readonly ArtifactRef[
             type="button"
             aria-label={t('artifact.openNamed', { name: artifact.title })}
             onClick={() =>
-              openArtifactPreview({ kind: 'artifact', artifactId: artifact.artifactId })
+              openArtifactPreview({
+                kind: 'artifact',
+                artifactId: artifact.artifactId,
+                title: artifact.title,
+              })
             }
             class="max-w-full break-words rounded-lg border border-line px-3 py-1.5 text-left text-sm hover:bg-fill-soft"
           >
