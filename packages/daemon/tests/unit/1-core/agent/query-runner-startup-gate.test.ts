@@ -374,10 +374,11 @@ describe('QueryRunner startup gate', () => {
     first.ctx.logger.warn = warn;
     try {
       first.runner.start();
+      await waitFor(() => spawned.length === 1 && spawned[0].pendingNexts.length === 1);
       second.runner.start();
-      await waitFor(() => spawned.length === 1 && gate.getStats().queued === 1);
+      await waitFor(() => gate.getStats().queued === 1);
       expect(firstPermit?.release()).toBe(true);
-      await waitFor(() => spawned.length === 2);
+      await waitFor(() => spawned.length === 2 && spawned[1].pendingNexts.length === 1);
       deliverFirstMessage(spawned[0]);
       await waitFor(() => first.ctx.firstMessageReceived);
       expect(warn.mock.calls.flat().join(' ')).not.toContain('slot released');
