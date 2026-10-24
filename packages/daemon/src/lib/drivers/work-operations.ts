@@ -224,7 +224,12 @@ export function pickRoute<Verb extends RoutedVerb>(
   if (target.daemon) return { value: { daemon: target.daemon } };
   const adapter = adapters.find((candidate) => candidate.id === target.adapter);
   if (!adapter) {
-    return { reason: reject('unknown_adapter', `No adapter named ${target.adapter} here.`) };
+    return {
+      reason: reject(
+        'unknown_adapter',
+        `No adapter named ${target.adapter} here. Adapters here: ${adapters.map((candidate) => candidate.id).join(', ')}.`
+      ),
+    };
   }
   const local = adapter[verb];
   if (!local || !adapter.capabilities.includes(verb)) {

@@ -781,6 +781,23 @@ describe('work verb operations', () => {
     expect(asked).toEqual([['laptop', 'work.adapters', {}]]);
   });
 
+  test('unknown adapter detail lists the registered adapter ids', async () => {
+    expect(
+      await call(
+        'work.start',
+        { adapter: 'codex', place, title: 'Task', message: 'Start task' },
+        undefined,
+        { source: 'rpc' },
+        [desktop, { ...desktop, id: 'codex-desktop' }, hyperneo]
+      )
+    ).toEqual({
+      ok: false,
+      reason: 'unknown_adapter',
+      detail:
+        'No adapter named codex here. Adapters here: claude-desktop, codex-desktop, hyperneo.',
+    });
+  });
+
   test('rejects an adapter that is not registered or does not declare the verb', async () => {
     expect(await call('work.status', { ref: { adapter: 'oap', id: 'x' } })).toMatchObject({
       ok: false,
