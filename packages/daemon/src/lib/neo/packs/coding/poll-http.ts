@@ -84,18 +84,30 @@ async function observePage(
   return response;
 }
 
+async function collectObservation(
+  facts: CodingPollFactsRepository,
+  subject: Subject,
+  cycle: string,
+  validator: string | null,
+  request: (validator: string | null) => Promise<Response>,
+  saved: Snapshot,
+  cached: Response | null,
+  now: () => number
+) {
+  if (cached) return cached;
+  return facts.acquireObservation(subject, validator, async () => {
+    const requested = await requestPage(facts, subject, validator, request, saved, null, now);
+    return observePage(facts, subject, cycle, saved, null, requested, now);
+  });
+}
+
 export const collectPollHttp = (superpipe({})('coding-ledger-collect-http-page') as PipelineAPI)
   .input(['facts', 'subject', 'cycle', 'validator', 'request', 'now'])
   .pipe(readSnapshot, ['facts', 'subject', 'now'], 'saved')
   .pipe(cachedResponse, ['saved', 'cycle'], 'cached')
   .pipe(
-    requestPage,
-    ['facts', 'subject', 'validator', 'request', 'saved', 'cached', 'now'],
-    'requested'
-  )
-  .pipe(
-    observePage,
-    ['facts', 'subject', 'cycle', 'saved', 'cached', 'requested', 'now'],
+    collectObservation,
+    ['facts', 'subject', 'cycle', 'validator', 'request', 'saved', 'cached', 'now'],
     'response'
   )
   .endAsync('response') as (
