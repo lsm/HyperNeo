@@ -145,8 +145,8 @@ describe('SdkStartupConcurrencyGate', () => {
 
   it('treats release() as idempotent', async () => {
     const a = await gate.acquire({ sessionId: 'a' });
-    a.release();
-    a.release();
+    expect(a.release()).toBe(true);
+    expect(a.release()).toBe(false);
     expect(gate.getStats()).toEqual({ active: 0, queued: 0, maxConcurrent: 2 });
 
     await gate.acquire({ sessionId: 'b' });
@@ -171,7 +171,7 @@ describe('SdkStartupConcurrencyGate', () => {
       ),
     ]);
     expect(neo.sessionId).toBe('root-neo');
-    first.release();
+    expect(first.release()).toBe(false);
     second.release();
     expect(bounded.getStats().active).toBe(1);
     neo.release();

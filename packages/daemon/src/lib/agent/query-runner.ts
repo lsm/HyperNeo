@@ -714,11 +714,11 @@ export class QueryRunner {
       if (!startupPermit) return;
       const permit = startupPermit;
       startupPermit = null;
+      if (!permit.release()) return;
       logger.warn(
         `SDK startup gate: slot released (session=${session.id} reason=${reason} ` +
           `heldMs=${Date.now() - permit.admittedAt})`
       );
-      permit.release();
     };
 
     let runAbortController: AbortController | null = null;

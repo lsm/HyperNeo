@@ -24,7 +24,7 @@ export interface SdkStartupPermit {
   readonly waitedMs: number;
   readonly admittedAt: number;
   setPhase(phase: string): void;
-  release(): void;
+  release(): boolean;
 }
 
 export interface SdkStartupGateStats {
@@ -136,7 +136,7 @@ export class SdkStartupConcurrencyGate {
         holder.phase = phase;
       },
       release: () => {
-        if (released) return;
+        if (released) return false;
         released = true;
         clearTimeout(timer);
         this.holders.delete(key);
@@ -150,6 +150,7 @@ export class SdkStartupConcurrencyGate {
         } else {
           this.active = Math.max(0, this.active - 1);
         }
+        return true;
       },
     };
     return permit;
