@@ -27,6 +27,10 @@ try {
       await joined.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
       await page.locator('.neo-session-pane').getByRole('heading', { name: 'HyperNeo · Review worker', exact: true }).waitFor();
       await page.locator('.neo-session-pane').getByRole('button', { name: 'Back to Neo', exact: true }).click();
+      const linkless = page.locator('[data-ask-question="linkless-source"]:visible');
+      assert((await linkless.locator('[data-question-source]').innerText()).includes('Terminal worker'));
+      assert((await linkless.locator('[data-question-source]').innerText()).includes('Claude'));
+      assert.equal(await linkless.getByRole('button', { name: /^Open session/ }).count(), 0);
       const ordinary = page.locator(`[data-ask-question="${saved.ordinary.question.id}"]:visible`);
       assert.equal(await ordinary.getByRole('button', { name: /^Open session/ }).count(), 0);
       await page.waitForFunction(({ id, width }) => {
@@ -53,7 +57,7 @@ try {
         assert.equal(result.question.answer, 'yes');
         assert.deepEqual(result.question.sourceSession, saved.source.question.sourceSession);
       }
-      observed.push({ width, header: 'Review worker · glm', bounds, adapterOpener: '/session/source-worker', ordinaryHasNoOpener: true, answerControlsPreserved: true, joinedStartHasWorkingOpener: true });
+      observed.push({ width, header: 'Review worker · glm', bounds, adapterOpener: '/session/source-worker', ordinaryHasNoOpener: true, answerControlsPreserved: true, joinedStartHasWorkingOpener: true, linklessIdentityVisible: true });
     } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/question-source-web.json`, JSON.stringify(observed, null, 2));

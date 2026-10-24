@@ -31,6 +31,7 @@ if (phase === 'seed') {
         .run(id, title, join(run, 'workspace'), JSON.stringify({ provider, queryMode: 'manual' }));
     new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     new NeoAskTodoRepository(db).openAsk({ id: 'source-ask', sessionId: root, projectId: null, originMessageId: null, title: 'Review a worker decision', request: 'Synthetic question source verification', createdAt: Date.now() });
+    new NeoAskTodoRepository(db).askQuestion('linkless-source', 'source-ask', { text: 'Terminal worker recommendation', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null, sourceSession: { adapter: 'claude-code', id: 'linkless-worker', name: 'Terminal worker', label: 'Claude Code · Terminal worker', provider: 'Claude', link: null } }, Date.now());
     new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
   } finally { db.close(); }
 } else {
@@ -63,6 +64,9 @@ if (phase === 'seed') {
   const joined = await rpc('neo.question.get', { questionId: start.question.id });
   assert.equal(joined.question.state, 'open');
   assert.deepEqual(joined.question.sourceSession, expected);
+  const linkless = await rpc('neo.question.get', { questionId: 'linkless-source' });
+  assert.equal(linkless.question.sourceSession.name, 'Terminal worker');
+  assert.equal(linkless.question.sourceSession.link, null);
   const got = await rpc('neo.question.get', { questionId: source.question.id });
   assert.deepEqual(got.question.sourceSession, expected);
   const snapshot = await rpc('neo.snapshot', {});
@@ -74,6 +78,6 @@ if (phase === 'seed') {
   assert.match(refused.reason, /source_session_unavailable/);
   if (phase === 'capture') assert.equal(got.question.state, 'open');
   else { assert.equal(got.question.state, 'answered'); assert.equal(got.question.answer, 'yes'); }
-  writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, start, joined, got, entry, refused }, null, 2));
+  writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, start, joined, linkless, got, entry, refused }, null, 2));
   console.log(`PASS: ${phase} source-session identity/ref survives the operation and snapshot payloads`);
 }

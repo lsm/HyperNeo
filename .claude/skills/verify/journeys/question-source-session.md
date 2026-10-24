@@ -29,7 +29,9 @@ NODE_PATH=<directory containing playwright> VERIFY_BROWSER=<Chromium executable>
 
 At 1440px and 390px, the source question shows its name and provider at top-right,
 and the start question keeps its working opener after the todo join. Open session enters the existing HyperNeo session pane. Back retains the
-answer buttons. The general question has no session opener. The mobile check
+answer buttons. The general question has no session opener. A synthetic persisted source with
+`link:null` still shows its name/provider without an opener; this checks rendering
+of an adapter with no navigable destination, not a real Claude native session. The mobile check
 answers yes and reads back both the answer and unchanged source ref. Screenshots
 and receipts stay in `$RUN/evidence/`. No native app is opened: the Codex opener
 callback is covered by the component contract, not a real Desktop acceptance test.
