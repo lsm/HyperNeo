@@ -1,4 +1,4 @@
-# Ledger review-thread collector (Build)
+# Ledger review-thread collector
 
 Use the shared credential-free isolation in `../SKILL.md`:
 
@@ -13,8 +13,8 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
 The helper owns a real isolated daemon/DB, calls the coding-reader composition,
 and refuses external fetch. Fake gh accepts only the synthetic GraphQL family.
 Five concurrent consumers must share two pages, returning the unresolved link
-and one consistent head. This is a collector contract, not a production API-read
-reduction: existing readiness consumers are intentionally not wired in Build.
+and one consistent head. This isolates the collector contract. The production readiness Wire comparison
+lives in `github-ledger-pr-ready.md`; this helper alone makes no API-saving claim.
 
 Stop/restart the owned daemon on the same synthetic DB. Saved facts survive;
 a new demand refreshes. Failed, incomplete and cross-head refreshes refuse while

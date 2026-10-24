@@ -252,6 +252,7 @@ function formatWorkflowNodeSessionTitle(task: SpaceTask, agentName?: string): st
 export interface TaskAgentManagerConfig {
   db: Database;
   readGithubPr?: HookExecutorConfig['readGithubPr'];
+  readGithubReviewThreads?: HookExecutorConfig['readGithubReviewThreads'];
   sessionManager: SessionManager;
   reactiveDb?: ReactiveDatabase;
   spaceManager: SpaceManager;
@@ -4839,6 +4840,7 @@ export class TaskAgentManager {
       const hookExecutor = new HookExecutor({
         workspacePath,
         readGithubPr: this.config.readGithubPr,
+        readGithubReviewThreads: this.config.readGithubReviewThreads,
       });
       hookEngine = new HookEngine({
         addressing: workflowHookAddressing(workflow, workflowRunId),

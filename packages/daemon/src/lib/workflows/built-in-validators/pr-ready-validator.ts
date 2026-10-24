@@ -153,12 +153,18 @@ export function createPrReadyValidator(
       };
     }
 
-    const threadsResult = await runReviewThreadsQuery(
-      prMeta,
-      context.workspacePath,
-      spawnImpl,
-      deadlineMs
-    );
+    const threadsResult = context.readGithubReviewThreads
+      ? await readLedger<{ unresolvedThreadUrls: string[] }>(
+          context.readGithubReviewThreads,
+          context,
+          prUrl,
+          deadlineMs
+        ).then((result) =>
+          result.success
+            ? { success: true as const, unresolvedUrls: result.data.unresolvedThreadUrls }
+            : result
+        )
+      : await runReviewThreadsQuery(prMeta, context.workspacePath, spawnImpl, deadlineMs);
     if (!threadsResult.success) {
       return commandFailureToHookResult(threadsResult, 'PR is not ready for Review');
     }
@@ -203,11 +209,20 @@ async function readPrView(
       spawn,
       { hostHint: host, resourceHint: 'graphql' }
     );
+  return readLedger<PrViewResult>(context.readGithubPr, context, url, deadline);
+}
+
+async function readLedger<T>(
+  read: NonNullable<HookExecutorContext['readGithubPr']>,
+  context: HookExecutorContext,
+  url: string,
+  deadline: number
+): Promise<Awaited<ReturnType<typeof runCommand<T>>>> {
   const timeoutMs = remainingTimeoutMs(deadline);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const outcome = await Promise.race([
-      context.readGithubPr(url, context.workspacePath),
+      read(url, context.workspacePath),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error(`PR fact read timed out after ${timeoutMs}ms`)),
@@ -216,7 +231,7 @@ async function readPrView(
       }),
     ]);
     return outcome.ok
-      ? { success: true, data: outcome.data as PrViewResult }
+      ? { success: true, data: outcome.data as T }
       : {
           success: false,
           error: outcome.error,
