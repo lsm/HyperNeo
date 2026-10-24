@@ -1,5 +1,6 @@
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, test } from 'bun:test';
+import { GitHubPollSlice } from '../../../../src/lib/external-events/github/github-poll-slice.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import {
   GitHubEventExtension,
@@ -81,6 +82,31 @@ describe('parseRateLimitHeaders', () => {
     });
   }
 
+  for (const status of [200, 403, 429]) {
+    test(`retains unexpired zero quota for HTTP ${status}`, () => {
+      const reset = String(Math.floor(Date.now() / 1000) + 3600);
+      expect(parseRateLimitHeaders(makeResponse({ status, remaining: '0', reset })).remaining).toBe(
+        0
+      );
+    });
+  }
+
+  for (const status of [403, 429]) {
+    test(`retains expired zero quota on HTTP ${status} errors`, () => {
+      const info = parseRateLimitHeaders(makeResponse({ status, remaining: '0', reset: '1' }));
+      expect(info.remaining).toBe(0);
+      expect(info.limited).toBe(true);
+    });
+  }
+
+  test('retains explicit Retry-After and missing reset evidence', () => {
+    expect(
+      parseRateLimitHeaders(makeResponse({ remaining: '0', reset: '1', retryAfter: '30' }))
+        .remaining
+    ).toBe(0);
+    expect(parseRateLimitHeaders(makeResponse({ remaining: '0', reset: null })).remaining).toBe(0);
+  });
+
   test('parses remaining + reset headers into ms epoch', () => {
     const res = makeResponse({ status: 200, remaining: '42', reset: '1700000000' });
     const info = parseRateLimitHeaders(res);
@@ -139,6 +165,16 @@ describe('parseRateLimitHeaders', () => {
     const info = parseRateLimitHeaders(res);
     expect(info.remaining).toBe(Infinity);
     expect(info.resetAt).toBe(0);
+  });
+});
+
+describe('GitHubPollSlice', () => {
+  test('expired successful quota does not collapse a repo slice to one request', () => {
+    const slice = new GitHubPollSlice(undefined, 10);
+    expect(slice.take({ stage: 0 })).toBe(true);
+    slice.observe(makeResponse({ remaining: '0', reset: '1' }));
+    for (let i = 1; i < 64; i++) expect(slice.take({ stage: i })).toBe(true);
+    expect(slice.take({ stage: 64 })).toBe(false);
   });
 });
 
