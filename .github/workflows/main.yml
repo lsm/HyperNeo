@@ -607,7 +607,7 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
+        run: bun build --compile --compile-autoload-package-json --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
 
       - name: Smoke test
         run: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-linux-x64
@@ -615,13 +615,16 @@ jobs:
           GLM_API_KEY: smoke-test
 
       - name: Compile daemon binary
-        run: bun build --compile --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
+        run: bun build --compile --compile-autoload-package-json --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
 
       - name: Smoke test daemon binary
         run: bun run scripts/smoke-test.ts ./dist/bin/hyperneod-linux-x64 --daemon
         env:
           GLM_API_KEY: smoke-test
           HYPERNEO_DATA_DIR: /tmp/hyperneod-smoke-data
+
+      - name: Load embeddings from a compiled binary in a fresh data dir
+        run: bun .claude/skills/verify/compiled-embedding-load.ts ${{ runner.temp }}/hyperneo-embedding-load bun-linux-x64
 
 
   windows-compiled-smoke:
@@ -653,6 +656,8 @@ jobs:
           $env:HYPERNEO_DATA_DIR = "$run\data"
           $env:NODE_ENV = 'test'
           bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-windows-x64.exe $run
+      - name: Load embeddings from a compiled binary in a fresh data dir
+        run: bun .claude/skills/verify/compiled-embedding-load.ts ${{ runner.temp }}/hyperneo-embedding-load
       - uses: actions/upload-artifact@v7
         if: always()
         with:

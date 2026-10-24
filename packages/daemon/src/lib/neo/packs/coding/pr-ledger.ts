@@ -400,9 +400,11 @@ export class CodingPrLedgerRepository {
       for (const row of rows) {
         const from = before.get(row.number);
         if (
-          !['merged', 'closed'].includes(row.state) ||
           from === row.state ||
-          (!from && (row.closedAt === null || row.closedAt < activation.activated_at))
+          (!from &&
+            (!['merged', 'closed'].includes(row.state) ||
+              row.closedAt === null ||
+              row.closedAt < activation.activated_at))
         )
           continue;
         this.db

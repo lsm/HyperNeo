@@ -1,4 +1,4 @@
-import { COMPILED_WORKER_ENTRYPOINTS } from './compiled-worker-entrypoints.ts';
+import { compileArgs, COMPILED_WORKER_ENTRYPOINTS } from './compiled-worker-entrypoints.ts';
 import { readReleaseBuildCommit } from '../packages/daemon/src/lib/build-metadata.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -51,9 +51,6 @@ bun(['run', 'scripts/generate-embedded-assets.ts']);
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
-const externalFor = (target: string) =>
-  target === 'bun-darwin-x64' ? ['--external', '*onnxruntime_binding.node'] : [];
-
 const buildCommit = readReleaseBuildCommit(process.env) ?? '';
 const defineBuildCommit = /^[0-9a-f]{40}$/.test(buildCommit)
   ? ['--define', `process.env.HYPERNEO_BUILD_COMMIT="${buildCommit}"`]
@@ -65,12 +62,8 @@ for (const target of targets) {
 
   console.log(`\nStep 3: Compiling binary for ${target}...`);
   bun([
-    'build',
-    '--compile',
-    '--root=packages',
-    `--target=${target}`,
+    ...compileArgs(target),
     ...defineBuildCommit,
-    ...externalFor(target),
     `--outfile=${outputPath}`,
     'packages/cli/prod-entry.ts',
     ...COMPILED_WORKER_ENTRYPOINTS,
@@ -85,12 +78,8 @@ for (const target of targets) {
     const daemonOutputPath = outputFileForTarget(target, 'hyperneod');
     console.log(`  Compiling standalone daemon binary for ${target}...`);
     bun([
-      'build',
-      '--compile',
-      '--root=packages',
-      `--target=${target}`,
+      ...compileArgs(target),
       ...defineBuildCommit,
-      ...externalFor(target),
       `--outfile=${daemonOutputPath}`,
       'packages/cli/daemon-entry.ts',
       ...COMPILED_WORKER_ENTRYPOINTS,

@@ -186,6 +186,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   exa?: ExaSettings;
 
   neo?: NeoSettings;
+
+  workFeedScope?: 'all' | 'own';
 }
 
 export interface SessionSettings extends GlobalSettings {
