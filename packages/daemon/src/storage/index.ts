@@ -1,4 +1,4 @@
-import { DbGateway } from './db-gateway/db-gateway.ts';
+import { bindGateway, DbGateway } from './db-gateway/db-gateway.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
@@ -155,6 +155,12 @@ export class Database {
   async initialize(reactiveDb: ReactiveDatabase): Promise<void> {
     await this.core.initialize();
     this.reactiveDb = reactiveDb;
+    bindGateway(this.core.getDb(), this.gateway);
+    this.gateway.onChanges = (changes) => {
+      reactiveDb.beginTransaction();
+      for (const { table, scope } of changes) reactiveDb.notifyChange(table, scope);
+      reactiveDb.commitTransaction();
+    };
 
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);
@@ -235,7 +241,7 @@ export class Database {
     return this.sessionRepo.listProcessingSessionIds();
   }
 
-  markRestartInterruptedTurns(): number {
+  async markRestartInterruptedTurns(): Promise<number> {
     return this.sessionRepo.markRestartInterruptedTurns();
   }
 
@@ -243,7 +249,7 @@ export class Database {
     return this.sessionRepo.listRestartCooldownResumes();
   }
 
-  takeRestartCooldownResume(sessionId: string): boolean {
+  async takeRestartCooldownResume(sessionId: string): Promise<boolean> {
     return this.sessionRepo.takeRestartCooldownResume(sessionId);
   }
 
@@ -258,20 +264,20 @@ export class Database {
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
     return this.sessionRepo.captureSessionInputDraft(id);
   }
-  casSessionInputDraft(
+  async casSessionInputDraft(
     snapshot: SessionInputDraftSnapshot,
     text: string | null
-  ): 'won' | 'superseded' | 'invalid' {
+  ): Promise<'won' | 'superseded' | 'invalid'> {
     return this.sessionRepo.casSessionInputDraft(snapshot, text);
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
     return this.sessionRepo.captureSessionRuntimeSettings(id);
   }
-  casSessionRuntimeSettings(
+  async casSessionRuntimeSettings(
     snapshot: SessionRuntimeSettingsSnapshot,
     patch: RuntimeSettingsPatch
-  ): 'won' | 'superseded' {
+  ): Promise<'won' | 'superseded'> {
     return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
   }
 
@@ -351,12 +357,12 @@ export class Database {
     return this.sdkMessageRepo.getSDKMessageCount(sessionId);
   }
 
-  saveUserMessage(
+  async saveUserMessage(
     sessionId: string,
     message: SDKMessage,
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
-  ): string {
+  ): Promise<string> {
     return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
   }
 
@@ -470,26 +476,26 @@ export class Database {
     return this.sdkMessageRepo.getUserMessageIdsByStatus(sessionId, status);
   }
 
-  updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
+  async updateMessageStatus(messageIds: string[], newStatus: SendStatus): Promise<void> {
     this.sdkMessageRepo.updateMessageStatus(messageIds, newStatus);
   }
 
-  updateMessageTimestamp(messageId: string, timestampMs?: number): void {
+  async updateMessageTimestamp(messageId: string, timestampMs?: number): Promise<void> {
     this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
   }
 
-  deletePendingUserMessage(
+  async deletePendingUserMessage(
     sessionId: string,
     messageId: string,
     expectedStatus?: 'deferred' | 'enqueued'
-  ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
+  ): Promise<{ dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null> {
     return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId, expectedStatus);
   }
 
-  deferEnqueuedUserMessage(
+  async deferEnqueuedUserMessage(
     sessionId: string,
     messageId: string
-  ): { dbId: string; uuid: string } | null {
+  ): Promise<{ dbId: string; uuid: string } | null> {
     return this.sdkMessageRepo.deferEnqueuedUserMessage(sessionId, messageId);
   }
 
@@ -497,11 +503,11 @@ export class Database {
   commitTransaction?(): void;
   abortTransaction?(): void;
 
-  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
+  async deleteMessagesAfter(sessionId: string, afterTimestamp: number): Promise<number> {
     return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
   }
 
-  deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
+  async deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): Promise<number> {
     return this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
   }
 
@@ -520,19 +526,22 @@ export class Database {
     return this.sdkMessageRepo.countMessagesAfter(sessionId, afterTimestamp);
   }
 
-  saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
+  async saveHyperNeoActionMessage(
+    sessionId: string,
+    message: HyperNeoActionMessage
+  ): Promise<string> {
     return this.sdkMessageRepo.saveHyperNeoActionMessage(sessionId, message);
   }
 
-  updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
+  async updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): Promise<void> {
     this.sdkMessageRepo.updateHyperNeoActionMessage(rowId, updated);
   }
 
-  updateHyperNeoActionMessageByUuid(
+  async updateHyperNeoActionMessageByUuid(
     sessionId: string,
     messageUuid: string,
     updated: HyperNeoActionMessage
-  ): void {
+  ): Promise<void> {
     this.sdkMessageRepo.updateHyperNeoActionMessageByUuid(sessionId, messageUuid, updated);
   }
 

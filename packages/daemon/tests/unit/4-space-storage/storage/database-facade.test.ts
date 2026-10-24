@@ -87,6 +87,24 @@ describe('Database Facade', () => {
       }
     });
 
+    it('reports a failed value-returning session write as a rejection', async () => {
+      const raw = db.getDatabase();
+      const prepare = raw.prepare.bind(raw);
+      raw.prepare = ((sql: string, ...rest: unknown[]) => {
+        if (/UPDATE sessions/.test(sql)) throw new Error('fictional write failure');
+        return prepare(sql, ...rest);
+      }) as typeof raw.prepare;
+      try {
+        let pending: Promise<boolean> | undefined;
+        expect(() => {
+          pending = db.takeRestartCooldownResume('fictional-session');
+        }).not.toThrow();
+        await expect(pending).rejects.toThrow('fictional write failure');
+      } finally {
+        raw.prepare = prepare;
+      }
+    });
+
     it('creates and retrieves a session', async () => {
       const session = createTestSession();
       db.createSession(session);

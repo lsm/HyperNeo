@@ -419,7 +419,7 @@ export class QueryLifecycleManager {
       timestamp: Date.now(),
     };
 
-    db.saveHyperNeoActionMessage(session.id, actionMessage);
+    await db.saveHyperNeoActionMessage(session.id, actionMessage);
 
     if (
       messageRepo?.hasUnresolvedHyperNeoAction &&
@@ -714,7 +714,7 @@ export class QueryLifecycleManager {
       return;
     }
 
-    db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
+    await db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
     try {
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,

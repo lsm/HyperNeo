@@ -154,7 +154,9 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
             return (await session.revokePendingDelivery(messageDbId, 'remove', 'deferred', commit))
               .changed;
           const removed = db.getDatabase().transaction(() => {
-            const row = db.deletePendingUserMessage(target, messageDbId, 'deferred');
+            const row = db
+              .getSDKMessageRepo()
+              .deletePendingUserMessage(target, messageDbId, 'deferred');
             if (row?.uuid) commit();
             return row;
           })();

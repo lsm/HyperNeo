@@ -474,7 +474,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await db.initialize(reactiveDb);
     if (process.env.NODE_ENV !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
-    const interruptedTurns = db.markRestartInterruptedTurns();
+    const interruptedTurns = await db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
     const earlyLogEvidenceService = new EvolutionLogEvidenceService({
@@ -1116,12 +1116,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
     const cooldownResumeTimers = db.listRestartCooldownResumes().map(({ sessionId, resumeAt }) => {
       const timer = setTimeout(
-        () => {
-          if (!db.takeRestartCooldownResume(sessionId)) return;
-          void recoverRestartCutTurns([sessionId], restartRecoveryDeps).catch((error) =>
-            logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
-          );
-        },
+        () =>
+          void db
+            .takeRestartCooldownResume(sessionId)
+            .then((taken) =>
+              taken ? recoverRestartCutTurns([sessionId], restartRecoveryDeps) : []
+            )
+            .catch((error) =>
+              logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
+            ),
         Math.max(0, resumeAt - Date.now())
       );
       timer.unref?.();

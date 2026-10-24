@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../../storage/db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { DeliveryTerminalEvent, PendingDeliverySummary } from './queue-health-metrics.ts';
@@ -239,6 +241,36 @@ export class ExternalEventStore {
     const event = this.getById(eventId);
     if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
     this.setEventState(eventId, 'failed');
+  }
+
+  expirePublishedEventsBefore(createdAtBefore: number, now: number): Promise<number> {
+    return gatewayFor(this.db).call(
+      externalEventSweeps,
+      'markPublishedEventsFailedBefore',
+      createdAtBefore,
+      now
+    );
+  }
+
+  async expirePendingDeliveriesBefore(
+    createdAtBefore: number,
+    skipDeliveryKeys: ReadonlySet<string>,
+    now: number
+  ): Promise<void> {
+    const expired = await gatewayFor(this.db).call(
+      externalEventSweeps,
+      'markPendingDeliveriesFailedBefore',
+      createdAtBefore,
+      skipDeliveryKeys,
+      now
+    );
+    for (const { eventId, deliveryKey } of expired)
+      this.deliveryTerminalHook?.({
+        eventId,
+        deliveryKey,
+        outcome: 'failed',
+        reason: 'ttl_expired',
+      });
   }
 
   markPublishedEventsFailedBefore(createdAtBefore: number, now: number = Date.now()): number {
@@ -855,3 +887,10 @@ function deliveryLogRowToRecord(row: ExternalEventDeliveryLogRow): ExternalEvent
     eventUpdatedAt: eventRecord.updatedAt,
   };
 }
+
+export const externalEventSweeps = defineRepositoryOp(
+  'externalEvents.sweep',
+  'write',
+  ExternalEventStore,
+  ['markPublishedEventsFailedBefore', 'markPendingDeliveriesFailedBefore']
+);

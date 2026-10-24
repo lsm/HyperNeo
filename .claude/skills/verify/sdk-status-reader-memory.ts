@@ -30,7 +30,7 @@ try {
  const rpc=(method:string,data:unknown={})=>new Promise<unknown>((resolve,reject)=>{const id=crypto.randomUUID(),timer=setTimeout(()=>reject(new Error('RPC timeout')),10000);pending.set(id,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});ws!.send(JSON.stringify({id,method,data,type:'REQ',sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));});
  const {sessionId}=await rpc('session.create',{workspacePath:join(run,'workspace'),config:{queryMode:'manual'}}) as {sessionId:string};
  const text='Complete memory text 🦊\n'.repeat(2000);
- app.db.saveUserMessage(sessionId,{type:'user',uuid:'memory-user',parent_tool_use_id:null,message:{role:'user',content:[{type:'text',text},{type:'image'},{type:'text',text:'Second'}]}} as SDKMessage,'consumed');
+ await app.db.saveUserMessage(sessionId,{type:'user',uuid:'memory-user',parent_tool_use_id:null,message:{role:'user',content:[{type:'text',text},{type:'image'},{type:'text',text:'Second'}]}} as SDKMessage,'consumed');
  const hash=()=>{const h=createHash('sha256');for(const r of app.db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq').iterate() as Iterable<{sdk_message:string}>)h.update(r.sdk_message);return h.digest('hex');};
  const before=hash(),at=performance.now();
  const result=await rpc('session.messages.byStatus',{sessionId,status:'consumed',limit:20}).then(value=>({value}),error=>({error:String(error)}));
@@ -50,7 +50,7 @@ try {
    const snapshot=events.find(e=>e.method==='liveQuery.snapshot'&&e.data.subscriptionId==='memory-live');assert(snapshot);
    const rows=snapshot.data.rows as {uuid:string;id:string;message:{content:unknown}}[];
    assert.equal(rows.length,1);assert.equal(rows[0].uuid,'memory-user');assert.deepEqual(rows[0].message.content,page.sdkMessages[0].message.content);
-   app.reactiveDb.db.updateMessageStatus([rows[0].id],'deferred');
+   await app.reactiveDb.db.updateMessageStatus([rows[0].id],'deferred');
    for(let n=0;n<200&&!events.some(e=>e.method==='liveQuery.delta');n++)await new Promise(resolve=>setTimeout(resolve,10));
    const delta=events.find(e=>e.method==='liveQuery.delta');assert(delta);
    assert.equal((delta.data.updated as {id:string}[])[0].id,rows[0].id);

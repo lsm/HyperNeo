@@ -28,10 +28,14 @@ export function resolveFallbackChain(
   provider: string,
   model: string,
   modelFallbackMap: Record<string, FallbackModelEntry[]> | undefined,
-  fallbackModels: FallbackModelEntry[] | undefined
+  fallbackModels: FallbackModelEntry[] | undefined,
+  alias?: string
 ): FallbackModelEntry[] {
-  const key = entryKey({ provider, model });
-  if (modelFallbackMap && Object.hasOwn(modelFallbackMap, key)) {
+  const key = [model, alias]
+    .filter((name): name is string => Boolean(name))
+    .map((name) => entryKey({ provider, model: name }))
+    .find((name) => modelFallbackMap && Object.hasOwn(modelFallbackMap, name));
+  if (modelFallbackMap && key) {
     return [...(modelFallbackMap[key] ?? [])];
   }
   if (fallbackModels && fallbackModels.length > 0) {

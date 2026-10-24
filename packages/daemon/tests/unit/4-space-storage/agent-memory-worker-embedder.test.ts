@@ -12,6 +12,24 @@ const fakeWorker =
   };
 
 describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
+  test('backs off a missing platform binding instead of reloading it for every input', async () => {
+    let attempts = 0;
+    const embedder = new WorkerAgentMemoryEmbedder(() => {
+      attempts += 1;
+      return fakeWorker('missing-native')();
+    });
+    try {
+      for (const text of ['first', 'second', 'third']) {
+        await expect(embedder.embedQuery(text)).rejects.toThrow(
+          '../bin/napi-v6/darwin/x64/onnxruntime_binding.node'
+        );
+      }
+      expect(attempts).toBe(1);
+    } finally {
+      embedder.stop();
+    }
+  });
+
   test('returns the worker’s vector bit for bit, one request at a time', async () => {
     const embedder = new WorkerAgentMemoryEmbedder(fakeWorker());
     try {
@@ -50,7 +68,10 @@ describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
     }
   });
 
-  test('a model that fails to load fails the request and is tried again next time', async () => {
+  test('a model that fails to load is retried after its backoff and can recover', async () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    Date.now = () => now;
     let spawned = 0;
     const embedder = new WorkerAgentMemoryEmbedder(() => {
       spawned += 1;
@@ -60,9 +81,11 @@ describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
       await expect(embedder.embedQuery('x')).rejects.toThrow(
         'embedding model failed to load: model files missing'
       );
+      now += 30_000;
       expect(Array.from(await embedder.embedQuery('second'))[0]).toBe(6);
       expect(spawned).toBe(2);
     } finally {
+      Date.now = originalNow;
       embedder.stop();
     }
   });
