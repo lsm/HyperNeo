@@ -30,7 +30,8 @@ function fixture() {
   let pack: ReturnType<typeof createCodingPack>, runner: ReturnType<typeof createNeoTodoRunner>;
   let now = 100_000,
     progress = now,
-    reachable = true;
+    reachable = true,
+    pending = false;
   vi.spyOn(Date, 'now').mockImplementation(() => now);
   let issue: (NeoRefState & { stateReason?: string; closingPrs?: string[] }) | null = null;
   const calls: string[] = [],
@@ -94,7 +95,16 @@ function fixture() {
             name === 'work.start'
               ? { ok: true, value: { ref, lastActivityAt: now } }
               : name === 'work.send'
-                ? { ok: reachable }
+                ? pending
+                  ? {
+                      ok: true,
+                      value: {
+                        delivered: false,
+                        unconfirmed: true,
+                        receipt: { executionId: 'cli-w', inputId: 'in-w' },
+                      },
+                    }
+                  : { ok: reachable }
                 : {
                     ok: true,
                     value: { status: 'stopped', lastActivityAt: progress, lastReplyAt: progress },
@@ -180,6 +190,9 @@ function fixture() {
     },
     unreachable() {
       reachable = false;
+    },
+    pending() {
+      pending = true;
     },
     linked: () => new CodingTodoPrRepository(db).prs('first'),
   };
@@ -303,6 +316,17 @@ test('unreachable reminder delivery escalates without turning time into a block 
   await f.at(20);
   expect(f.store.getTodo('first')?.state).toBe('doing');
   expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(true);
+});
+
+test('a reminder sent but not yet confirmed counts as delivered: no resend and no unreachable', async () => {
+  const f = fixture();
+  f.add('first', true);
+  f.issue('OPEN', []);
+  f.pending();
+  await f.at(20);
+  await f.at(21);
+  expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(1);
+  expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(false);
 });
 
 test('a first refresh after 60 minutes escalates without inventing sent reminders', async () => {

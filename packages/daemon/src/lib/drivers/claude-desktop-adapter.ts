@@ -1096,6 +1096,7 @@ async function sendOwnedClaudeMessage(
       ok: true,
       value: { delivered: true, receipt, confirmedAt: confirmed.at ?? deps.now() },
     };
+  if (receipt) return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
   const relayed = await relayClaudeMessage(record, liveSessions, message, path, deps);
   if (relayed.ok)
     return {
@@ -1108,12 +1109,9 @@ async function sendOwnedClaudeMessage(
         confirmedAt: relayed.value.at ?? deps.now(),
       },
     };
-  const first = direct.ok
-    ? `the direct inbox message did not appear in its transcript within ${(DELIVERY_POLLS * DELIVERY_POLL_MS) / 1000} s and may still be held for approval there`
-    : `the direct inbox message failed (${direct.detail})`;
   return reject(
     relayed.reason === 'claude_cli_login_expired' ? relayed.reason : 'not_delivered',
-    `${record.title} did not receive the message: ${first}; the relay failed: ${relayed.detail}`
+    `${record.title} did not receive the message: the direct inbox message failed (${direct.ok ? 'no receipt' : direct.detail}); the relay failed: ${relayed.detail}`
   );
 }
 

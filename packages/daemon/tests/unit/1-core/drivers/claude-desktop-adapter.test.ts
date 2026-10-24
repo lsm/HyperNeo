@@ -251,6 +251,7 @@ describe('claude-desktop adapter against the app session records', () => {
         receipt: { executionId: 'cli-a1', inputId: 'in-1' },
       },
     };
+    const refused = { ok: false as const, reason: 'unreachable' as const, detail: 'no inbox' };
     let transcript: string;
     beforeEach(() => {
       const folder = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
@@ -293,20 +294,44 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(spawned).toEqual([]);
     });
 
-    test.each([
-      ['held', written, 'may still be held for approval'],
-      [
-        'refused',
-        { ok: false as const, reason: 'unreachable' as const, detail: 'no inbox' },
-        'the direct inbox message failed (no inbox)',
-      ],
-    ])('a %s direct message falls back to the relay', async (_, reply, said) => {
+    test('a direct message held past the confirmation window stays pending under its receipt, with no relay, until a later status read confirms it', async () => {
+      const held = adapter(undefined, 0, undefined, undefined, async () => written);
+      expect(await held.send?.(ref, 'load "orders" then stop', context)).toEqual({
+        ok: true,
+        value: { ...written.value, desktopUI, remoteControl: false },
+      });
+      expect(spawned).toEqual([]);
+      const receipt = written.value.receipt;
+      expect(await held.status?.(ref, undefined, receipt)).toMatchObject({
+        ok: true,
+        value: { inputEvidence: { receipt, state: 'unavailable' } },
+      });
+      append({
+        type: 'user',
+        uuid: 'in-1',
+        timestamp: at,
+        message: { content: 'load "orders" then stop' },
+      });
+      append({
+        type: 'assistant',
+        uuid: 'out-1',
+        timestamp: at,
+        message: { content: [{ type: 'text', text: 'loaded' }], stop_reason: 'end_turn' },
+      });
+      expect(await held.status?.(ref, undefined, receipt)).toMatchObject({
+        ok: true,
+        value: { inputEvidence: { receipt, state: 'observed', transcriptState: 'completed' } },
+      });
+      expect(spawned).toEqual([]);
+    });
+
+    test('a refused direct message falls back to the relay', async () => {
       const relay = adapter(
         undefined,
         0,
         () => append(relayed('u-relay')),
         undefined,
-        async () => reply
+        async () => refused
       );
       expect(await relay.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
@@ -339,17 +364,17 @@ describe('claude-desktop adapter against the app session records', () => {
         0,
         () => append(relayed()),
         undefined,
-        async () => reply
+        async () => refused
       );
       expect(await queued.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
         value: { delivered: true, confirmedAt, desktopUI, remoteControl: false },
       });
-      const lost = adapter(undefined, 1, undefined, undefined, async () => reply);
+      const lost = adapter(undefined, 1, undefined, undefined, async () => refused);
       expect(await lost.send?.(ref, 'load "orders"', context)).toEqual({
         ok: false,
         reason: 'not_delivered',
-        detail: expect.stringContaining(said),
+        detail: expect.stringContaining('the direct inbox message failed (no inbox)'),
       });
       expect(await lost.send?.(ref, 'load "orders"', context)).toMatchObject({
         detail: expect.stringContaining('the relay failed: relay failed'),
@@ -395,7 +420,7 @@ describe('claude-desktop adapter against the app session records', () => {
     });
 
     test('a relay that never shows up and an expired CLI login are reported as such', async () => {
-      const silent = adapter(undefined, 0, undefined, undefined, async () => written);
+      const silent = adapter(undefined, 0, undefined, undefined, async () => refused);
       expect(await silent.send?.(ref, 'load "orders"', context)).toMatchObject({
         reason: 'not_delivered',
         detail: expect.stringContaining('the relayed message did not appear either'),
@@ -405,7 +430,7 @@ describe('claude-desktop adapter against the app session records', () => {
         1,
         undefined,
         { stdout: 'Failed to authenticate: OAuth session expired', stderr: '' },
-        async () => written
+        async () => refused
       );
       expect(await expired.send?.(ref, 'load "orders"', context)).toMatchObject({
         reason: 'claude_cli_login_expired',
@@ -426,7 +451,7 @@ describe('claude-desktop adapter against the app session records', () => {
       const live: ClaudeLiveSession[] = [
         { sessionId: 'cli-p1', status: 'idle', name: 'Neo iOS app', owner: 'cli', pid: 1 },
       ];
-      await adapter(live, 1, undefined, undefined, async () => written).send?.(
+      await adapter(live, 1, undefined, undefined, async () => refused).send?.(
         { adapter: 'claude-desktop', id: 'local_p1' },
         'next',
         context
