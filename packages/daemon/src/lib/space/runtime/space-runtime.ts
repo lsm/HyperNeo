@@ -62,7 +62,11 @@ import type { SpaceAgentTemplateRepository } from '../../../storage/repositories
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import {
+  type SpaceTaskRepository,
+  spaceTaskWrites,
+} from '../../../storage/repositories/space-task-repository.ts';
+import { spaceTaskLaneFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import { TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -3247,9 +3251,14 @@ export class SpaceRuntime {
     if (task.taskAgentSessionId) {
       this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
     }
-    const cleared = this.config.taskRepo.updateTask(task.id, {
-      taskAgentSessionId: null,
-    });
+    const cleared = await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+      spaceTaskWrites,
+      'updateTask',
+      task.id,
+      {
+        taskAgentSessionId: null,
+      }
+    );
     if (cleared) {
       await this.safeOnTaskUpdated(spaceId, cleared);
     }
@@ -3297,9 +3306,14 @@ export class SpaceRuntime {
     }
     this.clearAgentStuckStateForRun(task.workflowRunId);
     return (
-      this.config.taskRepo.updateTask(task.id, {
-        taskAgentSessionId: null,
-      }) ?? task
+      (await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+        spaceTaskWrites,
+        'updateTask',
+        task.id,
+        {
+          taskAgentSessionId: null,
+        }
+      )) ?? task
     );
   }
 
@@ -3485,9 +3499,14 @@ export class SpaceRuntime {
         updated.approvalReason !== (params.cancelReason ?? params.approvalReason)
       ) {
         updated =
-          this.config.taskRepo.updateTask(taskId, {
-            approvalReason: params.cancelReason ?? params.approvalReason ?? null,
-          }) ?? updated;
+          (await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+            spaceTaskWrites,
+            'updateTask',
+            taskId,
+            {
+              approvalReason: params.cancelReason ?? params.approvalReason ?? null,
+            }
+          )) ?? updated;
       }
       if (!previous.workflowRunId) {
         await this.safeOnTaskUpdated(spaceId, updated);
@@ -3526,7 +3545,12 @@ export class SpaceRuntime {
       return updated;
     }
 
-    const updated = this.config.taskRepo.updateTask(taskId, params);
+    const updated = await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+      spaceTaskWrites,
+      'updateTask',
+      taskId,
+      params
+    );
     if (updated) await this.safeOnTaskUpdated(spaceId, updated);
     return updated;
   }
@@ -3747,7 +3771,12 @@ export class SpaceRuntime {
   private async reconcileTerminalRunTasks(run: SpaceWorkflowRun): Promise<void> {
     const checkedAt = Date.now();
     await this.reconcileTerminalRunTasksUnchecked(run);
-    this.config.taskRepo.markReconcileCheckedAt(run.id, checkedAt);
+    await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+      spaceTaskWrites,
+      'markReconcileCheckedAt',
+      run.id,
+      checkedAt
+    );
   }
 
   private async reconcileTerminalRunTasksUnchecked(run: SpaceWorkflowRun): Promise<void> {
@@ -4059,7 +4088,10 @@ export class SpaceRuntime {
 
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
-        this.config.taskRepo.clearAllSpawnReservations();
+        await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+          spaceTaskWrites,
+          'clearAllSpawnReservations'
+        );
         await this.rehydrateExecutors();
         await this.recoverStalledRuns();
         if (generation !== this.runtimeGeneration || this.isStopped) {
@@ -6048,8 +6080,13 @@ export class SpaceRuntime {
     });
     await this.transitionRunStatusAndEmit(runId, 'blocked');
     if (
-      this.config.taskRepo.casStatus(canonicalTask.id, TASK_BLOCKABLE_FROM_STATUSES, 'blocked') ===
-      'superseded'
+      (await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+        spaceTaskWrites,
+        'casStatus',
+        canonicalTask.id,
+        TASK_BLOCKABLE_FROM_STATUSES,
+        'blocked'
+      )) === 'superseded'
     ) {
       log.warn(
         `SpaceRuntime: skipped blocking task ${canonicalTask.id} for execution ${execution.id} ` +
@@ -8579,7 +8616,9 @@ export class SpaceRuntime {
         hasDirectAttempt: withDirectAttempt.has(task.id),
       }));
       for (const task of selectOrphanedInProgressTasks(evidence, now)) {
-        const reopened = this.config.taskRepo.updateTask(
+        const reopened = await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+          spaceTaskWrites,
+          'updateTask',
           task.id,
           { status: 'open', startedAt: null },
           'in_progress'

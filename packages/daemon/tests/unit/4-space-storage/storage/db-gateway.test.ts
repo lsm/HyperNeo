@@ -2,8 +2,10 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { Logger } from '../../../../src/lib/logger';
 import {
   bindGateway,
+  bindSpaceTaskLane,
   DbGateway,
   gatewayFor,
+  spaceTaskLaneFor,
   type DbGatewayReply,
   type DbGatewayRequest,
 } from '../../../../src/storage/db-gateway/db-gateway';
@@ -339,5 +341,43 @@ describe('DbGateway', () => {
 
   test('the worker registry holds every op the daemon sends through the gateway', () => {
     expect(DB_OPS.get(recordWouldRefuse.name)).toBe(recordWouldRefuse);
+  });
+});
+
+describe('spaceTaskLaneFor', () => {
+  const touch = defineDbOp<undefined, void>({
+    name: 'test.touchSpaceTasks',
+    mode: 'write',
+    run: (_db, _args, changes) => changes.notifyChange('space_tasks', { taskId: 'task-1' }),
+  });
+
+  test('runs on the lane the facade bound to the connection', async () => {
+    const db = new Database(':memory:');
+    const lane = new DbGateway(':memory:', db);
+    const replayed: string[] = [];
+    lane.onChanges = (changes) => replayed.push(...changes.map((change) => change.table));
+    bindSpaceTaskLane(db, lane);
+    const fallback: string[] = [];
+
+    await spaceTaskLaneFor(db, { notifyChange: (table) => fallback.push(table) }).run(
+      touch,
+      undefined
+    );
+
+    expect(replayed).toEqual(['space_tasks']);
+    expect(fallback).toEqual([]);
+    db.close();
+  });
+
+  test('replays into the caller changes when no lane is bound', async () => {
+    const db = new Database(':memory:');
+    const notified: unknown[] = [];
+
+    await spaceTaskLaneFor(db, {
+      notifyChange: (table, scope) => notified.push({ table, scope }),
+    }).run(touch, undefined);
+
+    expect(notified).toEqual([{ table: 'space_tasks', scope: { taskId: 'task-1' } }]);
+    db.close();
   });
 });

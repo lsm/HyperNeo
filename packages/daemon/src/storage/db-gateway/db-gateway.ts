@@ -1,6 +1,7 @@
 import { forwardSQLiteWorkerLog } from '../sqlite-worker-observability.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteQueryObservabilityOptions } from '../sqlite-query-observability.ts';
 import {
@@ -233,4 +234,23 @@ export function gatewayFor(db: Database): DbGateway {
   };
   gateways.set(db, unbound);
   return unbound;
+}
+
+const spaceTaskLanes = new WeakMap<Database, DbGateway>();
+
+export function bindSpaceTaskLane(db: Database, lane: DbGateway): void {
+  spaceTaskLanes.set(db, lane);
+}
+
+export function spaceTaskLaneFor(
+  db: Database,
+  changes?: Pick<ReactiveDatabase, 'notifyChange'>
+): DbGateway {
+  const bound = spaceTaskLanes.get(db);
+  if (bound) return bound;
+  const lane = new DbGateway(':memory:', db);
+  lane.onChanges = (recorded) => {
+    for (const { table, scope } of recorded) changes?.notifyChange(table, scope);
+  };
+  return lane;
 }

@@ -75,7 +75,11 @@ import type {
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import {
+  SpaceTaskRepository,
+  spaceTaskWrites,
+} from '../../storage/repositories/space-task-repository.ts';
+import { spaceTaskLaneFor } from '../../storage/db-gateway/db-gateway.ts';
 import { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { Logger } from '../logger.ts';
@@ -118,7 +122,10 @@ export class SpaceTaskManager {
       await this.validateDependencyIds(resolvedParams.dependsOn);
     }
 
-    return this.taskRepo.createTask({ ...resolvedParams, spaceId: this.spaceId });
+    return spaceTaskLaneFor(this.db, this.reactiveDb).call(spaceTaskWrites, 'createTask', {
+      ...resolvedParams,
+      spaceId: this.spaceId,
+    });
   }
 
   private async resolveWorkspacePathParam<T extends { workspacePath?: string | null }>(
@@ -398,7 +405,14 @@ export class SpaceTaskManager {
   async publishTask(taskId: string): Promise<SpaceTask> {
     const task = await publishTask(
       async () => (await this.getTask(taskId))?.status,
-      async () => this.taskRepo.updateTask(taskId, { status: 'open' }, 'draft') ?? 'not_draft'
+      async () =>
+        (await spaceTaskLaneFor(this.db, this.reactiveDb).call(
+          spaceTaskWrites,
+          'updateTask',
+          taskId,
+          { status: 'open' },
+          'draft'
+        )) ?? 'not_draft'
     );
     if (task === 'not_draft') {
       throw new Error('Only draft tasks can be published');
@@ -490,7 +504,11 @@ export class SpaceTaskManager {
   }
 
   async promoteDraftTasks(creatorTaskId: string): Promise<number> {
-    return this.taskRepo.promoteDraftTasksByCreator(creatorTaskId);
+    return spaceTaskLaneFor(this.db, this.reactiveDb).call(
+      spaceTaskWrites,
+      'promoteDraftTasksByCreator',
+      creatorTaskId
+    );
   }
 
   async archiveTask(taskId: string): Promise<SpaceTask> {
@@ -503,7 +521,7 @@ export class SpaceTaskManager {
       return false;
     }
 
-    return this.taskRepo.deleteTask(taskId);
+    return spaceTaskLaneFor(this.db, this.reactiveDb).call(spaceTaskWrites, 'deleteTask', taskId);
   }
 
   private validateTaskFieldGuards(task: SpaceTask, params: UpdateSpaceTaskParams): void {

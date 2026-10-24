@@ -1,4 +1,4 @@
-import { bindGateway, DbGateway } from './db-gateway/db-gateway.ts';
+import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
 import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
@@ -171,6 +171,7 @@ export class Database {
     this.reactiveDb = reactiveDb;
     bindGateway(this.core.getDb(), this.gateway);
     this.spaceTaskLane = new DbGateway(':memory:', this.core.getDb());
+    bindSpaceTaskLane(this.core.getDb(), this.spaceTaskLane);
     if (reactiveDb) {
       const replay = (changes: TableChange[]) => {
         reactiveDb.beginTransaction();
