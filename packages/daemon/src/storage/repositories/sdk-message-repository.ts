@@ -802,17 +802,16 @@ export class SDKMessageRepository {
       .run(messageId, Date.now(), messageId);
   }
 
-  flushMessageSearchIndex(limit = 500): number {
-    if (!this.hasMessageSearchIndex()) return 0;
-    if (!this.tableExists('message_search_pending')) return 0;
+  flushMessageSearchIndex(limit = 500, skip = 0): { attempted: number; failed: number } {
+    if (!this.hasMessageSearchIndex()) return { attempted: 0, failed: 0 };
+    if (!this.tableExists('message_search_pending')) return { attempted: 0, failed: 0 };
     const pending = this.db
-      .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ?`)
-      .all(limit) as Array<{ message_id: string }>;
-    if (pending.length === 0) return 0;
+      .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ? OFFSET ?`)
+      .all(limit, skip) as Array<{ message_id: string }>;
     const deletePendingStmt = this.db.prepare(
       `DELETE FROM message_search_pending WHERE message_id = ?`
     );
-    let processed = 0;
+    let failed = 0;
     for (const { message_id } of pending) {
       try {
         withBusyRetry(() => {
@@ -822,11 +821,11 @@ export class SDKMessageRepository {
           })();
         });
       } catch (err) {
+        failed++;
         this.logger.warn('message search index flush failed, will retry next flush:', err);
       }
-      processed++;
     }
-    return processed;
+    return { attempted: pending.length, failed };
   }
 
   private isMessageSuperseded(rowId: string, sessionId: string, sdkMessage: SDKMessage): boolean {

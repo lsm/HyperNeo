@@ -199,13 +199,16 @@ export class Database {
     if (this.messageSearchIndexFlushing) return;
     this.messageSearchIndexFlushing = true;
     try {
+      let skip = 0;
       for (let batch = 0; batch < 5; batch++) {
-        const flushed = await this.gateway.call(
+        const { attempted, failed } = await this.gateway.call(
           messageSearchIndexWrites,
           'flushMessageSearchIndex',
-          100
+          100,
+          skip
         );
-        if (flushed < 100) return;
+        if (attempted < 100) return;
+        skip += failed;
       }
     } catch (err) {
       this.logger.warn('message search index flush failed:', err);
