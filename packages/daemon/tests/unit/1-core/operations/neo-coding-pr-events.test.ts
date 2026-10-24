@@ -73,7 +73,7 @@ function setup() {
 }
 
 describe('PR ledger events', () => {
-  test('a CI failure reaches the owner once and never Neo, and a merge wakes no one', async () => {
+  test('CI recovery and a merge reach the owner once and never Neo', async () => {
     const { db, told, woken, cycle, own } = setup();
     await cycle(response([node(1)]), 100);
     own(1);
@@ -84,12 +84,18 @@ describe('PR ledger events', () => {
       response([], [node(1, { state: 'MERGED', closedAt: new Date(450).toISOString() })]),
       500
     );
+    await cycle(
+      response([], [node(1, { state: 'MERGED', closedAt: new Date(450).toISOString() })]),
+      600
+    );
     expect(told.map((item) => item.key)).toEqual([
       'neo-pr-event:lsm/a#1:head1abc:failing',
       'neo-pr-event:lsm/a#1:head1abc:waiting_human',
+      'neo-pr-event:lsm/a#1:head1abc:merged',
     ]);
     expect(told[0]).toMatchObject({ ref: owner });
     expect(told[1].text).toBe('lsm/a#1 "PR 1" has green CI again on head head1ab.');
+    expect(told[2].text).toBe('lsm/a#1 \"PR 1\" was merged on head head1ab.');
     expect(woken).toEqual([]);
     db.close();
   });
@@ -138,8 +144,8 @@ describe('planCodingPrEvent', () => {
     );
     expect(row('dirty')).toContain('Merge the base branch in');
     expect(row('changes_requested')).toContain('Address the review');
-    expect(row('closed')).toBeUndefined();
-    expect(row('merged', 'failing')).toBeUndefined();
+    expect(row('closed')).toBe('lsm/a#3 \"T\" was closed without merging on head abcdef1.');
+    expect(row('merged', 'failing')).toBe('lsm/a#3 \"T\" was merged on head abcdef1.');
     const fromFailing = (state: string, ci: string | null) =>
       planCodingPrEvent({
         repo: 'lsm/a',

@@ -108,6 +108,20 @@ describe('codingPrState', () => {
 });
 
 describe('planCodingLedgerRead', () => {
+  test.each(['review_bot', 'ci_only'] as const)('scopes %s human signoff to changed paths', (mergePolicy) => {
+    const state = (files: unknown) => planCodingLedgerRead(response([node(1, {
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+      files,
+    })]), 0, () => ({ mergePolicy, reviewBot: 'bot', humanSignoff: ['docs/design/**'] }))?.rows[0].state;
+    const files = (paths: string[], hasNextPage = false) => ({ nodes: paths.map(path => ({ path })), pageInfo: { hasNextPage } });
+    expect(state(files(['packages/daemon/src/app.ts']))).toBe('approved_green');
+    expect(state(files(['docs/design/nested/contract.md']))).toBe('waiting_human');
+    expect(state(files(['docs/designish/contract.md']))).toBe('approved_green');
+    expect(state(files([]))).toBe('approved_green');
+    expect(state(files(['packages/daemon/src/app.ts'], true))).toBe('waiting_human');
+    expect(state(undefined)).toBe('waiting_human');
+  });
+
   test('keeps open PRs and ones closed within 7 days, and refuses partial reads', () => {
     const now = 10 * CODING_LEDGER_KEEP_MS;
     const recent = new Date(now - 60_000).toISOString();
