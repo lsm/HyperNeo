@@ -2,6 +2,7 @@ import { externalEventSweeps } from '../../lib/external-events/external-event-st
 import { ingestSessionEvent } from '../../lib/external-events/session-external-event-store.ts';
 import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import { codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
+import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
 import { codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import {
@@ -34,6 +35,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     deleteWorkFeedBatch,
     sessionWrites,
     codingLedgerWrites,
+    codingAssignmentWrites,
     codingTodoPrWrites,
     codingSweepWrites,
   ].map((op) => [op.name, op])
