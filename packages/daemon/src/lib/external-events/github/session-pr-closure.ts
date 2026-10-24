@@ -24,6 +24,10 @@ export function normalizeSessionPrClosure(
     deliveryId: `poll:${identity}`,
     externalId: identity,
     dedupeKey: `${watched.owner}/${watched.repo}:${identity}`.toLowerCase(),
-    payload: { ...normalized.payload, closedAt: detail.closed_at },
+    payload: {
+      ...normalized.payload,
+      title: `PR #${number} ${normalized.payload?.merged ? 'merged' : 'closed'}: ${normalized.payload?.title ?? ''}`,
+      closedAt: detail.closed_at,
+    },
   });
 }
