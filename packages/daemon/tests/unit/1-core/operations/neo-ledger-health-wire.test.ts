@@ -39,11 +39,11 @@ describe('ledger reconciliation health', () => {
   ] as const)
     test(`records ${label} coverage without inventing PR rows`, () =>
       using(async (_db, ledger) => {
-        await reconcileCodingPrLedger(ledger, [repos[0]], async () => raw, 100);
+        await reconcileCodingPrLedger(ledger, [repos[0]], async () => raw, 0);
         expect(ledger.health.read(repos[0])).toMatchObject({
-          cycleAt: 100,
-          attemptedAt: 100,
-          completeAt: reason === 'complete' ? 100 : null,
+          cycleAt: 0,
+          attemptedAt: 0,
+          completeAt: reason === 'complete' ? 0 : null,
           misses: reason === 'complete' ? 0 : 1,
           reason,
         });
@@ -126,18 +126,34 @@ describe('ledger reconciliation health', () => {
         reason: 'cooldown',
         nextRetryAt: 1000,
       });
-      for (const reset of ['invalid', new Date(1000).toISOString()]) {
+      for (const [i, reset] of ['invalid', new Date(1000).toISOString()].entries()) {
         await reconcileCodingPrLedger(
           ledger,
           repos,
           async (repo) => response(repo, 499, false, reset),
-          2000
+          2000 + i
         );
         expect(ledger.health.read(repos[1])).toMatchObject({
           reason: 'not_reached',
-          misses: 1,
+          misses: 1 + i,
           nextRetryAt: null,
         });
       }
+    }));
+  test('partial coverage still honors explicit exhausted-budget reset evidence', () =>
+    using(async (_db, ledger) => {
+      const reads: string[] = [];
+      await reconcileCodingPrLedger(
+        ledger,
+        repos,
+        async (repo) => {
+          reads.push(repo);
+          return response(repo, 499, true, new Date(1000).toISOString());
+        },
+        100
+      );
+      expect(reads).toEqual([repos[0]]);
+      expect(ledger.health.read(repos[0])).toMatchObject({ reason: 'partial', nextRetryAt: 1000 });
+      expect(ledger.health.read(repos[1])).toMatchObject({ reason: 'cooldown', misses: 0 });
     }));
 });

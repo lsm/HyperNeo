@@ -68,5 +68,7 @@ export const readCodingLedgerRepo: CodingLedgerRead = async (repo) => {
     resetAt: budget.success ? budget.data.data.rateLimit.resetAt : null,
     retryAfterMs: outcome.ok ? null : (outcome.retryAfterMs ?? null),
   });
-  return outcome.ok ? outcome.data : { error: outcome.error };
+  return outcome.ok
+    ? outcome.data
+    : { error: outcome.error, retryAt: Date.now() + (outcome.retryAfterMs ?? 0) };
 };

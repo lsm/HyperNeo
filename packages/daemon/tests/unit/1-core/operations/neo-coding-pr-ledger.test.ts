@@ -62,13 +62,8 @@ const named =
     if (raw?.data?.repository) raw.data.repository.nameWithOwner = repo;
     return raw;
   };
-const reconcile = (
-  ledger: CodingPrLedgerRepository,
-  repos: string[],
-  read: Read,
-  now: number,
-  skips?: Map<string, number>
-) => reconcileCodingPrLedger(ledger, repos, named(read), now, skips);
+const reconcile = (ledger: CodingPrLedgerRepository, repos: string[], read: Read, now: number) =>
+  reconcileCodingPrLedger(ledger, repos, named(read), now);
 
 function setup() {
   const db = new Database(':memory:');
@@ -270,14 +265,13 @@ describe('PR ledger cleanup', () => {
 
   test('counts consecutive failed reads per repo and clears the count on a good read', async () => {
     const { db, ledger } = setup();
-    const skips = new Map<string, number>();
     let good = false;
     const read = async () => (good ? response([node(1)]) : null);
-    for (const at of [1, 2, 3]) await reconcile(ledger, ['a/a'], read, at, skips);
-    expect(skips.get('a/a')).toBe(3);
+    for (const at of [1, 2, 3]) await reconcile(ledger, ['a/a'], read, at);
+    expect(ledger.health.read('a/a')?.misses).toBe(3);
     good = true;
-    await reconcile(ledger, ['a/a'], read, 4, skips);
-    expect(skips.get('a/a')).toBe(0);
+    await reconcile(ledger, ['a/a'], read, 4);
+    expect(ledger.health.read('a/a')?.misses).toBe(0);
     db.close();
   });
 });
