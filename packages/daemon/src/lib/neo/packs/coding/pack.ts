@@ -128,14 +128,15 @@ export function createCodingPack(deps: {
     observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
       await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
+      await deliverCodingPrEvents(deps.prEvents, [], deps.prSweepDeps);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
-      await deliverCodingHealth(deps.prLedger, deps.projectRepos(), deps.prSweepDeps.wake, now);
       await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
+      await deliverCodingHealth(deps.prLedger, deps.projectRepos(), deps.prSweepDeps.wake, now);
       await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },

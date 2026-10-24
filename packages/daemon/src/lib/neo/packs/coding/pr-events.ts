@@ -1,7 +1,7 @@
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import type { CodingPrTransition } from './pr-ledger.ts';
+import { CodingPrLedgerRepository, type CodingPrTransition } from './pr-ledger.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
 import {
   codingUnownedPrKey,
@@ -43,6 +43,33 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
 
 export class CodingPrEventRepository {
   constructor(private readonly db: Database) {}
+
+  private delivery: Promise<void> = Promise.resolve();
+
+  exclusive(deliver: () => Promise<void>): Promise<void> {
+    const run = this.delivery.then(deliver, deliver);
+    this.delivery = run.catch(() => {});
+    return run;
+  }
+
+  pendingTerminals(): CodingPrTransition[] {
+    return (
+      this.db
+        .prepare(`SELECT terminal_event_json AS event FROM pack_coding_pr_ledger
+      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL AND state IN ('merged', 'closed')
+      ORDER BY state_since, repo, number`)
+        .all() as { event: string }[]
+    ).map((row) => JSON.parse(row.event) as CodingPrTransition);
+  }
+
+  acceptTerminal(row: CodingPrTransition, owner: WorkRef): Promise<void> {
+    return new CodingPrLedgerRepository(this.db).write(
+      'acceptTerminalEvent',
+      row,
+      JSON.stringify(owner),
+      Date.now()
+    );
+  }
 
   pendingUnowned(now: number): CodingUnownedNotice | null {
     return this.db.transaction(() => {
@@ -104,13 +131,21 @@ export async function deliverCodingPrEvents(
   transitions: readonly CodingPrTransition[],
   deps: CodingSweepDeps
 ): Promise<void> {
-  for (const row of transitions) {
-    const event = planCodingPrEvent(row);
-    const route = event ? repo.route(row) : null;
-    if (!event || !route?.owner) continue;
-    const told = await deps.tell(route.owner, event.key, event.text).catch(() => false);
-    log.warn(
-      `PR event ${event.key} to ${route.owner.adapter}:${route.owner.id}: ${told ? 'told' : 'not told'}`
-    );
-  }
+  return repo.exclusive(async () => {
+    const rows = [
+      ...transitions.filter((row) => !['merged', 'closed'].includes(row.state)),
+      ...repo.pendingTerminals(),
+    ];
+    for (const row of rows) {
+      const event = planCodingPrEvent(row);
+      const route = event ? repo.route(row) : null;
+      if (!event || !route?.owner) continue;
+      const told = await deps.tell(route.owner, event.key, event.text).catch(() => false);
+      if (told && ['merged', 'closed'].includes(row.state))
+        await repo.acceptTerminal(row, route.owner);
+      log.warn(
+        `PR event ${event.key} to ${route.owner.adapter}:${route.owner.id}: ${told ? 'told' : 'not told'}`
+      );
+    }
+  });
 }
