@@ -155,6 +155,43 @@ describe('NeoAskTodos', () => {
     expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
   });
 
+  it.each([
+    { link: null, opener: true },
+    { link: 'codex://threads/worker', opener: false },
+  ])('shows source identity without navigation: %j', ({ link, opener }) => {
+    locale.value = 'en';
+    const onAnswer = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('source', {
+              kind: 'yesno',
+              yesLabel: 'Approve',
+              noLabel: 'Wait',
+              sourceSession: {
+                adapter: 'claude-code',
+                id: 'worker',
+                name: 'Terminal worker',
+                label: 'Claude Code · Terminal worker',
+                provider: 'Claude',
+                link,
+              },
+            }),
+          ],
+        })}
+        onOpen={opener ? vi.fn() : undefined}
+        onAnswer={onAnswer}
+      />
+    );
+    const header = app.container.querySelector('[data-question-source]');
+    expect(header?.textContent).toContain('Terminal worker');
+    expect(header?.textContent).toContain('Claude');
+    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
+    expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
+  });
+
   it('offers no session opener for a question without one source', () => {
     locale.value = 'en';
     const app = render(
