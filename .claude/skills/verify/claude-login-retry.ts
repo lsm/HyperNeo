@@ -102,7 +102,8 @@ try {
     const root = resolve('packages/web/dist');
     web = Bun.serve({ hostname: '127.0.0.1', port: 0, websocket: createWebSocketHandlers(app.transport, app.sessionManager), async fetch(req, server) {
       const path = new URL(req.url).pathname;
-      app.observeRequest(req);
+      const refused = app.guardRequest(req);
+      if (refused) return refused;
       if (path.startsWith('/ws')) {
         if (server.upgrade(req, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null) } })) return;
         return new Response('Upgrade failed', { status: 500 });
