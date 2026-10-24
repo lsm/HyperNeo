@@ -12,6 +12,10 @@ import {
 import { defineDbOp, defineRepositoryOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { recordWouldRefuse } from '../../../../src/storage/repositories/device-pairing-repository';
+import {
+  ClaudeInboxRouteRepository,
+  recordClaudeInboxRoute,
+} from '../../../../src/storage/repositories/claude-inbox-route-repository';
 import { recordOperationRefusal } from '../../../../src/storage/repositories/operation-refusal-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -343,6 +347,19 @@ describe('DbGateway', () => {
   test('the worker registry holds every op the daemon sends through the gateway', () => {
     expect(DB_OPS.get(recordWouldRefuse.name)).toBe(recordWouldRefuse);
     expect(DB_OPS.get(recordOperationRefusal.name)).toBe(recordOperationRefusal);
+    expect(DB_OPS.get(recordClaudeInboxRoute.name)).toBe(recordClaudeInboxRoute);
+  });
+
+  test('a Claude inbox route is upserted through the gateway', async () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE claude_inbox_routes (session_id TEXT PRIMARY KEY,
+      return_to TEXT NOT NULL, inbox_dir TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
+    const routes = new ClaudeInboxRouteRepository(db);
+    await routes.record('session-1', 'neo:a', '/inbox/one', 1);
+    await routes.record('session-1', 'neo:b', '/inbox/two', 2);
+    expect(routes.returnTo('session-1')).toBe('neo:b');
+    expect(routes.inboxDirs()).toEqual(['/inbox/two']);
+    db.close();
   });
 
   test('an operation refusal is recorded through the gateway', async () => {

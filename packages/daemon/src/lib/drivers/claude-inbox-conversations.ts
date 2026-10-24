@@ -8,7 +8,7 @@ import {
 } from './claude-inbox.ts';
 
 export interface ClaudeInboxRoutes {
-  record(sessionId: string, returnTo: string, inboxDir: string): void;
+  record(sessionId: string, returnTo: string, inboxDir: string): Promise<void>;
   returnTo(sessionId: string): string | null;
   inboxDirs(): string[];
 }
@@ -77,8 +77,8 @@ export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps
       if (!returnTo.trim()) throw new Error('Claude inbox reply destination is missing.');
       const directory = dirname(target.socketPath);
       const opened = await inbox(directory);
+      await deps.routes.record(target.sessionId, returnTo, directory);
       if (closed) throw new Error('Claude inbox conversations are closed.');
-      deps.routes.record(target.sessionId, returnTo, directory);
       return opened.write(target, submission);
     },
     close(): Promise<void> {
