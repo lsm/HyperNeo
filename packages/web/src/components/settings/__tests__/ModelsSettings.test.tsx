@@ -446,3 +446,160 @@ describe('ModelsSettings — default model', () => {
     expect(await screen.findByText('gone (not available)')).toBeTruthy();
   });
 });
+
+describe('ModelsSettings — default thinking beside the default model', () => {
+  const settingsRef = globalSettings as { value: unknown };
+
+  function serveModels(models: unknown[]) {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({ models });
+  }
+
+  beforeEach(() => {
+    cleanup();
+    mockConnectionState.value = 'connected';
+    mockRequest.mockReset();
+    mockListProviderAuthStatus.mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(updateGlobalSettings)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    settingsRef.value = null;
+  });
+
+  it('shows the saved global thinking level and writes nothing on open', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'think24k',
+    };
+    serveModels([
+      {
+        id: 'claude-sonnet-5',
+        display_name: 'Sonnet',
+        description: '',
+        provider: 'anthropic',
+        thinkingModes: 'granular',
+      },
+    ]);
+    render(<ModelsSettings />);
+
+    const select = (await screen.findByLabelText('Default thinking')) as HTMLSelectElement;
+    await waitFor(() => expect(screen.getByText(/Sonnet · /)).toBeTruthy());
+    expect(select.value).toBe('think24k');
+    expect([...select.options].map((option) => option.value)).toEqual([
+      'off',
+      'think8k',
+      'think16k',
+      'think24k',
+      'think32k',
+      'think48k',
+      'think64k',
+    ]);
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('saves only the global thinkingLevel key when changed', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'off',
+    };
+    serveModels([
+      {
+        id: 'claude-sonnet-5',
+        display_name: 'Sonnet',
+        description: '',
+        provider: 'anthropic',
+        thinkingModes: 'granular',
+      },
+    ]);
+    render(<ModelsSettings />);
+
+    const select = (await screen.findByLabelText('Default thinking')) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'think16k' } });
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({ thinkingLevel: 'think16k' })
+    );
+  });
+
+  it('offers only Off for a model without thinking, keeping an unsupported saved value as is', async () => {
+    settingsRef.value = {
+      model: 'minimax-m3',
+      modelProvider: 'minimax',
+      thinkingLevel: 'think32k',
+    };
+    serveModels([
+      {
+        id: 'minimax-m3',
+        display_name: 'MiniMax M3',
+        description: '',
+        provider: 'minimax',
+        thinkingModes: 'off',
+      },
+    ]);
+    render(<ModelsSettings />);
+
+    await waitFor(() => expect(screen.getByText(/MiniMax M3 · /)).toBeTruthy());
+    const select = screen.getByLabelText('Default thinking') as HTMLSelectElement;
+    expect(select.value).toBe('think32k');
+    expect([...select.options].map((option) => option.value)).toEqual(['off', 'think32k']);
+    expect(screen.getByText(/not supported by this model/)).toBeTruthy();
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('uses the provider thinking capability when the model carries none', async () => {
+    settingsRef.value = { model: 'llama-4', modelProvider: 'ollama', thinkingLevel: 'off' };
+    serveModels([{ id: 'llama-4', display_name: 'Llama 4', description: '', provider: 'ollama' }]);
+    render(<ModelsSettings />);
+
+    await waitFor(() => expect(screen.getByText(/Llama 4 · /)).toBeTruthy());
+    const select = screen.getByLabelText('Default thinking') as HTMLSelectElement;
+    expect([...select.options].map((option) => option.value)).toEqual(['off']);
+    expect(screen.queryByText(/support for this model is unknown/)).toBeNull();
+  });
+
+  it('claims no unknown thinking support while the catalog is loading', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'off',
+    };
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockReturnValue(new Promise(() => {}));
+    render(<ModelsSettings />);
+
+    await screen.findAllByText('Loading models...');
+    expect(screen.getByLabelText('Default thinking')).toBeTruthy();
+    expect(screen.queryByText(/support for this model is unknown/)).toBeNull();
+  });
+
+  it('rolls the control back to the saved value when the save fails', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'think8k',
+    };
+    serveModels([
+      {
+        id: 'claude-sonnet-5',
+        display_name: 'Sonnet',
+        description: '',
+        provider: 'anthropic',
+        thinkingModes: 'granular',
+      },
+    ]);
+    vi.mocked(updateGlobalSettings).mockRejectedValueOnce(new Error('nope'));
+    render(<ModelsSettings />);
+
+    const select = (await screen.findByLabelText('Default thinking')) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'think64k' } });
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(select.value).toBe('think8k'));
+  });
+});

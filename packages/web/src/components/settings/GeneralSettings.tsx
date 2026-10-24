@@ -4,15 +4,8 @@ import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { resolveChatDisplayMode } from '../sdk/chat-display-mode.ts';
 import { FORM_CHECKBOX_CLASS } from '../ui/FormField.tsx';
-import {
-  THINKING_LEVELS,
-  THINKING_LEVEL_LABELS,
-  type ChatDisplayMode,
-  type PermissionMode,
-  type ThinkingLevel,
-  type SettingSource,
-} from '@hyperneo/shared';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@hyperneo/shared';
+import { type ChatDisplayMode, type PermissionMode, type SettingSource } from '@hyperneo/shared';
+import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import {
   SettingsSection,
@@ -48,11 +41,6 @@ const CHAT_DISPLAY_MODE_OPTIONS = [
   { value: 'minimal', label: 'Minimal' },
 ];
 
-const THINKING_LEVEL_OPTIONS = THINKING_LEVELS.map((value) => ({
-  value,
-  label: THINKING_LEVEL_LABELS[value],
-}));
-
 export function GeneralSettings() {
   const settings = globalSettings.value;
   const [localPermissionMode, setLocalPermissionMode] = useState<PermissionMode>(
@@ -63,9 +51,6 @@ export function GeneralSettings() {
   );
   const [localGitHubPollingInterval, setLocalGitHubPollingInterval] = useState(
     String(settings?.githubPollingInterval ?? 120)
-  );
-  const [localThinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>(
-    normalizeThinkingLevel(settings?.thinkingLevel)
   );
   const [localShowArchived, setLocalShowArchived] = useState(settings?.showArchived ?? false);
   const [localSettingSources, setLocalSettingSources] = useState<SettingSource[]>(
@@ -81,7 +66,6 @@ export function GeneralSettings() {
       setLocalPermissionMode(settings.permissionMode ?? 'default');
       setLocalDisplayMode(resolveChatDisplayMode(undefined, settings.chatDisplayMode));
       setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
-      setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
       setLocalShowArchived(settings.showArchived ?? false);
       setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
       setLocalLanguage(settings.language ?? 'system');
@@ -125,20 +109,6 @@ export function GeneralSettings() {
     } catch {
       toast.error('Failed to update default chat view');
       setLocalDisplayMode(resolveChatDisplayMode(undefined, settings?.chatDisplayMode));
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  const handleThinkingLevelChange = async (value: string) => {
-    const level = value as ThinkingLevel;
-    setLocalThinkingLevel(level);
-    setIsUpdating(true);
-    try {
-      await updateGlobalSettings({ thinkingLevel: level });
-    } catch {
-      toast.error('Failed to update thinking level');
-      setLocalThinkingLevel(normalizeThinkingLevel(settings?.thinkingLevel));
     } finally {
       setIsUpdating(false);
     }
@@ -223,15 +193,6 @@ export function GeneralSettings() {
             value={localPermissionMode}
             onChange={handlePermissionModeChange}
             options={permissionModeOptions(localPermissionMode)}
-            disabled={isUpdating}
-          />
-        </SettingsRow>
-
-        <SettingsRow label="Default Thinking Level" description="Thinking budget for new sessions">
-          <SettingsSelect
-            value={localThinkingLevel}
-            onChange={handleThinkingLevelChange}
-            options={THINKING_LEVEL_OPTIONS}
             disabled={isUpdating}
           />
         </SettingsRow>
