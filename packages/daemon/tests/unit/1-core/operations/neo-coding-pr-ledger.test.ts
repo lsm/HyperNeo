@@ -944,3 +944,73 @@ describe('PR ledger snapshot for a renamed repo', () => {
     db.close();
   });
 });
+
+test('ledger facts retain terminal state despite missing approval and red CI', () => {
+  const now = 10 * CODING_LEDGER_KEEP_MS;
+  const planned = planCodingLedgerRead(
+    response(
+      [],
+      [
+        node(
+          8,
+          {
+            state: 'MERGED',
+            closedAt: new Date(now - 1).toISOString(),
+            createdAt: new Date(now - 100).toISOString(),
+            author: { login: 'writer', __typename: 'User' },
+          },
+          'FAILURE'
+        ),
+      ]
+    ),
+    now
+  );
+  expect(planned?.rows).toEqual([
+    {
+      repo: 'x/x',
+      number: 8,
+      title: 'PR 8',
+      branch: 'b8',
+      head: 'h8',
+      state: 'merged',
+      ci: 'FAILURE',
+      replyAt: null,
+      closedAt: now - 1,
+      createdAt: now - 100,
+      authorIsBot: false,
+    },
+  ]);
+});
+
+test('ledger reads repo preferences before same-pack global fallback', () => {
+  const { db, ledger } = setup();
+  try {
+    const save = (pack: string, scope: string, key: string, value: unknown) =>
+      db
+        .prepare(`INSERT INTO neo_pack_preferences VALUES (?, ?, ?, ?, ?, 'human', 1)`)
+        .run(pack, scope ? 'repo' : 'global', scope, key, JSON.stringify(value));
+    save('other', '', 'mergePolicy', 'ci_only');
+    expect(ledger.policy('x/x')).toEqual({
+      mergePolicy: undefined,
+      reviewBot: undefined,
+      humanSignoff: undefined,
+    });
+    save('coding', '', 'mergePolicy', 'review_bot');
+    save('coding', '', 'reviewBot', 'global-bot');
+    save('coding', '', 'humanSignoff', ['global/**']);
+    save('coding', 'X/X', 'mergePolicy', 'human');
+    save('coding', 'X/X', 'humanSignoff', []);
+    expect(ledger.policy('x/x')).toEqual({
+      mergePolicy: 'human',
+      reviewBot: 'global-bot',
+      humanSignoff: [],
+    });
+    expect(ledger.policy('y/y')).toEqual({
+      mergePolicy: 'review_bot',
+      reviewBot: 'global-bot',
+      humanSignoff: ['global/**'],
+    });
+  } finally {
+    db.close();
+  }
+});

@@ -314,3 +314,39 @@ test('a first refresh after 60 minutes escalates without inventing sent reminder
   expect(f.notes.some((text) => text.includes('two reminders'))).toBe(false);
   expect(f.store.getTodo('first')?.state).toBe('doing');
 });
+
+test('issue judgement uses CLOSED/COMPLETED even without PR, review or deploy evidence', async () => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.issue('COMPLETED', []);
+  const facts = await f.pack.readFacts!(todo);
+  expect(facts).toMatchObject({ prs: [], issue: { state: 'CLOSED', stateReason: 'COMPLETED' } });
+  expect(f.pack.judge!(todo, facts)).toEqual({
+    state: 'done',
+    evidence: 'https://github.com/synthetic/plan/issues/1 completed',
+  });
+  expect(await f.pack.todos!.check(todo)).toEqual({
+    done: true,
+    evidence: 'https://github.com/synthetic/plan/issues/1 completed',
+  });
+  expect(f.store.getTodo(todo.id)?.state).toBe('doing');
+});
+
+test.each([
+  ['OPEN', 'COMPLETED', true],
+  ['CLOSED', undefined, true],
+  ['CLOSED', 'REOPENED', true],
+])('issue %s/%s ignores the reader done flag %s', async (state, stateReason, done) => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.issue('COMPLETED');
+  const facts = await f.pack.readFacts!(todo);
+  expect(facts).toMatchObject({ issue: { state: 'CLOSED' } });
+  const captured = facts as { issue: NeoRefState };
+  expect(
+    f.pack.judge!(todo, {
+      ...captured,
+      issue: { ...captured.issue, state, stateReason, done },
+    })
+  ).toEqual({ state: 'no_opinion' });
+});
