@@ -609,7 +609,16 @@ export class NeoAskTodoRepository {
     const text = neoStartQuestionTitle(
       startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
     );
-    if (open) this.extendStartQuestion(open.id, startTodos, text, now);
+    if (open)
+      this.extendStartQuestion(
+        open.id,
+        startTodos,
+        text,
+        now,
+        undefined,
+        undefined,
+        open.sourceSession
+      );
     else
       this.askQuestion(
         crypto.randomUUID(),
