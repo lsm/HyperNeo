@@ -70,7 +70,6 @@ export function NeoLive() {
   const nearBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
-  const projects = neo.snapshot?.projects ?? [];
   const view = neo.snapshot;
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
@@ -334,8 +333,6 @@ export function NeoLive() {
         connection={connectionState.value}
         onReconnect={() => void connectionManager.reconnect()}
         onRefresh={open}
-        projects={projects}
-        refreshProjects={neo.refresh}
       />
       <header class="neo-float-dock">
         <button

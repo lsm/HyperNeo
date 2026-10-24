@@ -18,7 +18,7 @@ const sessionId = `neo:${conversationId}`;
 let db: Awaited<ReturnType<typeof createTestDb>>;
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession(sessionId));
+  await db.createSession(createTestSession(sessionId));
   new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', projectId: null });
 });
 afterEach(() => db.close());
@@ -199,7 +199,7 @@ describe('scheduled wakes in the public conversation', () => {
 
   test('equal-time wakes page both ways and exclude other sessions, skips and undelivered origins', async () => {
     const foreign = '10000000-0000-4000-8000-000000000006';
-    db.createSession(createTestSession(`neo:${foreign}`));
+    await db.createSession(createTestSession(`neo:${foreign}`));
     seedNeoWake(db.getDatabase(), foreign, false);
     for (let i = 0; i < 4; i++) seedNeoWake(db.getDatabase(), conversationId, false);
     db.getDatabase()

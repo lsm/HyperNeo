@@ -44,7 +44,7 @@ try {
  app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
  await app.jobProcessor.stop();assert.notEqual(app.server.port,8399);
  const db=app.db.getDatabase(),github=app.extensionManager.getExtension('github') as GitHubEventExtension;
- app.db.createSession({id:'owner',title:'Synthetic owner',workspacePath:join(run,'home'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
+ await app.db.createSession({id:'owner',title:'Synthetic owner',workspacePath:join(run,'home'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  const subscriptions=new SessionEventSubscriptionRepository(db);
  for(const repo of ['conditional','large']) {
   const row=github.repo.upsertWatchedRepo({spaceId:'sessions',owner:'synthetic',repo,pollingEnabled:true});

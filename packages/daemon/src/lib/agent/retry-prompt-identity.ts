@@ -9,8 +9,10 @@ export class RetryPromptIdentity {
     this.pending.add(uuid);
   }
 
-  outgoing(message: SDKUserMessage): SDKUserMessage {
-    if (!message.uuid || !this.pending.delete(message.uuid)) return message;
+  outgoing(message: SDKUserMessage, fresh = false): SDKUserMessage {
+    if (!message.uuid) return message;
+    const retry = this.pending.delete(message.uuid);
+    if (!fresh && !retry) return message;
     const uuid = randomUUID();
     this.original.set(uuid, message.uuid);
     return { ...message, uuid };
@@ -19,10 +21,17 @@ export class RetryPromptIdentity {
   incoming(message: SDKMessage): SDKMessage {
     if (!this.original.size) return message;
     const refs = message as SDKMessage & {
+      parent_tool_use_id?: string | null;
       user_message_uuid?: string;
       user_message_uuids?: string[];
     };
-    return {
+    if (
+      !(message.type === 'user' && message.uuid && this.original.has(message.uuid)) &&
+      !(refs.user_message_uuid && this.original.has(refs.user_message_uuid)) &&
+      !refs.user_message_uuids?.some((id) => this.original.has(id))
+    )
+      return message;
+    const incoming = {
       ...message,
       ...(message.type === 'user' && message.uuid
         ? { uuid: this.original.get(message.uuid) ?? message.uuid }
@@ -34,5 +43,10 @@ export class RetryPromptIdentity {
         ? { user_message_uuids: refs.user_message_uuids.map((id) => this.original.get(id) ?? id) }
         : {}),
     } as SDKMessage;
+    if (message.type === 'result' && !refs.parent_tool_use_id) {
+      if (refs.user_message_uuid) this.original.delete(refs.user_message_uuid);
+      for (const id of refs.user_message_uuids ?? []) this.original.delete(id);
+    }
+    return incoming;
   }
 }

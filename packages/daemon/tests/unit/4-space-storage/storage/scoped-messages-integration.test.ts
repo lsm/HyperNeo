@@ -79,8 +79,8 @@ describe('Scoped invalidation — sdk_messages integration', () => {
   });
 
   test('writing message for sess-B does NOT trigger delta for sess-A subscription', async () => {
-    reactiveDb.db.createSession(makeSession('sess-A'));
-    reactiveDb.db.createSession(makeSession('sess-B'));
+    await reactiveDb.db.createSession(makeSession('sess-A'));
+    await reactiveDb.db.createSession(makeSession('sess-B'));
 
     const diffsA: QueryDiff<Record<string, unknown>>[] = [];
     engine.subscribe(SQL, ['sess-A'], (diff) => diffsA.push(diff), {
@@ -109,7 +109,7 @@ describe('Scoped invalidation — sdk_messages integration', () => {
   });
 
   test('writing message for sess-A DOES trigger delta for sess-A subscription', async () => {
-    reactiveDb.db.createSession(makeSession('sess-A'));
+    await reactiveDb.db.createSession(makeSession('sess-A'));
 
     const diffsA: QueryDiff<Record<string, unknown>>[] = [];
     engine.subscribe(SQL, ['sess-A'], (diff) => diffsA.push(diff), {
@@ -138,8 +138,8 @@ describe('Scoped invalidation — sdk_messages integration', () => {
   });
 
   test('unscoped change (updateMessageStatus) re-evaluates all queries', async () => {
-    reactiveDb.db.createSession(makeSession('sess-A'));
-    reactiveDb.db.createSession(makeSession('sess-B'));
+    await reactiveDb.db.createSession(makeSession('sess-A'));
+    await reactiveDb.db.createSession(makeSession('sess-B'));
 
     const msgId = await reactiveDb.db.saveUserMessage(
       'sess-A',
@@ -175,8 +175,8 @@ describe('Scoped invalidation — sdk_messages integration', () => {
   });
 
   test('concurrent sessions with scope filters have independent feeds', async () => {
-    reactiveDb.db.createSession(makeSession('sess-A'));
-    reactiveDb.db.createSession(makeSession('sess-B'));
+    await reactiveDb.db.createSession(makeSession('sess-A'));
+    await reactiveDb.db.createSession(makeSession('sess-B'));
 
     const diffsA: QueryDiff<Record<string, unknown>>[] = [];
     const diffsB: QueryDiff<Record<string, unknown>>[] = [];

@@ -18,7 +18,8 @@ let db: Awaited<ReturnType<typeof createTestDb>>;
 let wakes: NeoConversationWakeRepository;
 beforeEach(async () => {
   db = await createTestDb();
-  for (const id of [conversationId, foreignId]) db.createSession(createTestSession(`neo:${id}`));
+  for (const id of [conversationId, foreignId])
+    await db.createSession(createTestSession(`neo:${id}`));
   wakes = new NeoConversationWakeRepository(db.getDatabase());
 });
 afterEach(() => db.close());

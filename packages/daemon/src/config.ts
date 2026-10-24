@@ -102,7 +102,7 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 
   return {
     port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283', 10),
-    host: overrides?.host ?? (process.env.HOST || '0.0.0.0'),
+    host: overrides?.host ?? (process.env.HOST || '127.0.0.1'),
     dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,

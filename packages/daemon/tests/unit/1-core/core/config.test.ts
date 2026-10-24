@@ -32,7 +32,7 @@ describe('getConfig', () => {
     const config = getConfig();
 
     expect(config.port).toBe(9283);
-    expect(config.host).toBe('0.0.0.0');
+    expect(config.host).toBe('127.0.0.1');
     expect(config.dbPath).toBe(join(homedir(), '.hyperneo', 'data', 'daemon.db'));
     expect(config.defaultModel).toBe('default');
     expect(config.maxTokens).toBe(8192);
@@ -67,6 +67,15 @@ describe('getConfig', () => {
     expect(config.temperature).toBe(0.5);
     expect(config.maxSessions).toBe(20);
     expect(config.maxSubscriptionsPerClient).toBe(256);
+  });
+
+  test('preserves explicit all-interface hosts from the environment and overrides', () => {
+    process.env.HOST = '0.0.0.0';
+    expect(getConfig().host).toBe('0.0.0.0');
+    expect(getConfig({ host: '127.0.0.1' }).host).toBe('127.0.0.1');
+
+    delete process.env.HOST;
+    expect(getConfig({ host: '0.0.0.0' }).host).toBe('0.0.0.0');
   });
 
   test('HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT fails closed to the default on invalid input', () => {

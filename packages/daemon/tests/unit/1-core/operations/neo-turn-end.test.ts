@@ -21,7 +21,7 @@ describe('Neo turn end', () => {
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
-    db.createSession(createTestSession(root));
+    await db.createSession(createTestSession(root));
     service = createNeoService(
       db,
       { getSessionAsync: vi.fn() } as unknown as SessionManager,

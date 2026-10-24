@@ -15,7 +15,7 @@ describe('Neo terminal error results', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    for (const id of ['root', 'worker', 'other']) db.createSession(createTestSession(id));
+    for (const id of ['root', 'worker', 'other']) await db.createSession(createTestSession(id));
     service = createNeoService(
       db,
       {

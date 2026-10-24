@@ -43,7 +43,7 @@ function delivered(id: string, status: MessageSendStatus | null) {
 }
 
 function processing(state: unknown) {
-  db.updateSession(sessionId, {
+  return db.updateSession(sessionId, {
     processingState: typeof state === 'string' ? state : JSON.stringify(state),
   });
 }
@@ -68,7 +68,7 @@ async function reads(page: Record<string, unknown> = {}) {
 
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession(sessionId));
+  await db.createSession(createTestSession(sessionId));
   bus = new InternalEventBus<DaemonInternalEventMap>();
   notifications = [];
   service = createNeoService(
@@ -104,7 +104,7 @@ test.each(['deferred', 'enqueued', 'submitted'] as const)(
   async (status) => {
     const id = await input();
     delivered(id, status);
-    processing({ status: 'idle' });
+    await processing({ status: 'idle' });
     expect((await reads())[0]).toMatchObject({ requestId: id, messageStatus: 'queued' });
   }
 );
@@ -130,11 +130,15 @@ test('a durable intake without consumption evidence is received and a failed sen
 test('only the exact consumed active input is working, never the oldest unanswered input', async () => {
   const ids = [await input(), await input(), await input()];
   for (const id of ids.slice(0, 2)) delivered(id, 'consumed');
-  processing({ status: 'processing', phase: 'streaming', messageId: ids[1] });
+  await processing({ status: 'processing', phase: 'streaming', messageId: ids[1] });
   expect((await reads()).map((ask) => ask.messageStatus)).toEqual(['read', 'working', 'queued']);
-  processing({ status: 'processing', phase: 'streaming', messageId: 'unrelated-system-input' });
+  await processing({
+    status: 'processing',
+    phase: 'streaming',
+    messageId: 'unrelated-system-input',
+  });
   expect((await reads()).map((ask) => ask.messageStatus)).toEqual(['read', 'read', 'queued']);
-  processing({ status: 'idle' });
+  await processing({ status: 'idle' });
   expect((await reads()).map((ask) => ask.messageStatus)).toEqual(['read', 'read', 'queued']);
 });
 
@@ -147,7 +151,7 @@ test.each([
   async (state) => {
     const id = await input();
     delivered(id, 'consumed');
-    processing(typeof state === 'string' ? state : { ...state, messageId: id });
+    await processing(typeof state === 'string' ? state : { ...state, messageId: id });
     expect((await reads())[0].messageStatus).toBe('read');
   }
 );

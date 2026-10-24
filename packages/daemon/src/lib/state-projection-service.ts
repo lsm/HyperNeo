@@ -196,7 +196,6 @@ export class StateProjectionService {
     const persist = (lastError: string | null) =>
       db
         .setSessionLastError(sessionId, lastError)
-        .then(() => this.reactiveDb?.notifyChange('sessions'))
         .catch((err) => this.logger.warn(`Failed to persist session error for ${sessionId}:`, err));
     if (!details) return persist(null);
     const err = details as {

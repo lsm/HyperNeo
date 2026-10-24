@@ -67,7 +67,7 @@ Usage: hyperneod [options]
 
 Options:
   -p, --port <port>         Port to listen on (default: 9283)
-  --host <host>             Host to bind to (default: 0.0.0.0)
+  --host <host>             Host to bind to (default: 127.0.0.1)
   --db-path <path>          Database file path (default: <data-dir>/data/daemon.db)
   --data-dir <dir>          Data directory for daemon state (default: ~/.hyperneo)
   --workspace <path>        Default workspace root for file indexing

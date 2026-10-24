@@ -606,6 +606,11 @@ const runNormalizeDeliveryMessageForMailbox = (
   .pipe(applyDeliveryMessageRow, 'ctx', 'ctx')
   .end('ctx') as (ctx: NormalizeDeliveryMessageCtx) => NormalizeDeliveryMessageCtx;
 
+export type SdkMessageChanges = Pick<
+  ReactiveDatabase,
+  'notifyChange' | 'willEmitTableChange' | 'resolveTaskIdForSession'
+>;
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -614,7 +619,7 @@ export class SDKMessageRepository {
 
   constructor(
     private db: BunDatabase,
-    private reactiveDb?: ReactiveDatabase
+    private reactiveDb?: SdkMessageChanges
   ) {}
 
   private hasMessageSearchIndex(): boolean {

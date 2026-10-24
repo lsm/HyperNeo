@@ -936,7 +936,7 @@ describe('InterruptHandler', () => {
     async function makeRealFixture(sessionId: string): Promise<RealFixture> {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
-      db.createSession(session);
+      await db.createSession(session);
       const queue = new MessageQueue();
       const published: Array<{ channel: string; payload: Record<string, unknown> }> = [];
       const bus = {

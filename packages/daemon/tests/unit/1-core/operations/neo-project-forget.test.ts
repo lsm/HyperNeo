@@ -66,7 +66,7 @@ describe('neo.project.forget', () => {
     repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
     expect(await forget('inbox')).toEqual({ ok: false, reason: 'project_protected' });
     expect(repo.getProject('inbox')?.title).toBe('Inbox');
-    db.createSession(createTestSession('session:worker'));
+    await db.createSession(createTestSession('session:worker'));
     db.getDatabase()
       .prepare(
         "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES (?, ?, 'worker')"

@@ -103,6 +103,7 @@ describe('ArtifactPreviewPanel', () => {
     await screen.findByRole('heading', { name: 'Layout design' });
     expect(request.mock.calls.find((call) => call[1].input?.file)?.[1].input).toEqual({
       sourceMessageOrCard: source,
+      requestId: expect.any(String),
       reference: tapped,
       file: { path: 'docs/design/layout.md', headSha },
     });

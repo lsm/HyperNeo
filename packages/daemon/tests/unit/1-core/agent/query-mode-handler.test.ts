@@ -123,7 +123,7 @@ describe('QueryModeHandler', () => {
         toolCallCount: 0,
       },
     };
-    db.createSession(mockSession);
+    await db.createSession(mockSession);
 
     mockInternalEventBus = {
       publish: mock(async (event: string, payload: { messageIds?: string[]; status?: string }) => {

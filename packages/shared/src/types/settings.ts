@@ -128,7 +128,7 @@ export interface NeoSettings {
 
 export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermissionMode {
   const mode = settings?.workerPermissionMode;
-  return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'bypassPermissions';
+  return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'auto';
 }
 
 export const NEO_STANDING_RULES_MAX = 20;

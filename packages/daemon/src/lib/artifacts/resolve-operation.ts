@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -31,10 +30,7 @@ const inputSchema = z.strictObject({
       headSha: z.string().regex(/^[a-f0-9]{40}$/),
     })
     .optional(),
-  requestId: z
-    .string()
-    .uuid()
-    .default(() => randomUUID()),
+  requestId: z.string().uuid(),
 });
 type Input = z.infer<typeof inputSchema>;
 const unavailable = () => ({ accepted: false as const, reason: 'unavailable' as const });
@@ -124,7 +120,7 @@ export function createArtifactReferenceResolve(
   return defineOperation({
     name: 'artifact.reference.resolve',
     description:
-      'Paired-human tap: resolve an exact stored message/publication/todo reference to an immutable file snapshot or bound GitHub PR summary. PR file selection requires its displayed headSha and listed path. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch or agent invocation. File reads use anchored no-follow descriptors.',
+      'Paired-human tap: resolve an exact stored message/publication/todo reference to an immutable file snapshot or bound GitHub PR summary. Provide one requestId per tap and reuse it for retries. PR file selection requires its displayed headSha and listed path. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch or agent invocation. File reads use anchored no-follow descriptors.',
     inputSchema,
     resultSchema: z.union([
       ArtifactRefusalSchema,
