@@ -56,7 +56,7 @@ import {
 import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
-import { claudeInboxText } from './claude-inbox.ts';
+import { claudeInboxText, type ClaudeInboxSubmission } from './claude-inbox.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 import {
   readClaudeSessionOwner,
@@ -133,7 +133,8 @@ export interface ClaudeDesktopAdapterDeps {
   sendInbox?: (
     sessionId: string,
     message: string,
-    context: WorkCallContext
+    context: WorkCallContext,
+    fromMode?: ClaudeInboxSubmission['fromMode']
   ) => Promise<Result<WorkDelivery>>;
   prepareExecution?: WorkExecutionPreparer;
   sessionsDir: string;
@@ -1069,6 +1070,16 @@ export function claudeNativeInput(
   return undefined;
 }
 
+async function readCurrentDesktopReceiver(
+  record: ClaudeDesktopRecord & { cliSessionId: string },
+  deps: ClaudeDesktopAdapterDeps
+) {
+  return (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+    (candidate) =>
+      candidate.sessionId === record.sessionId && candidate.cliSessionId === record.cliSessionId
+  );
+}
+
 async function sendOwnedClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
@@ -1085,10 +1096,20 @@ async function sendOwnedClaudeMessage(
     return reject('unsupported', 'The Claude inbox requires a session reply destination.');
   const path = await locateClaudeTranscript(deps.projectsDir, record);
   const before = await transcriptSize(path);
+  const receiver = desktop ? await readCurrentDesktopReceiver(record, deps) : record;
   const direct =
-    deps.sendInbox && context
+    deps.sendInbox && context && receiver
       ? await deps
-          .sendInbox(record.cliSessionId, message, context)
+          .sendInbox(
+            record.cliSessionId,
+            message,
+            context,
+            desktop
+              ? receiver.permissionMode === 'bypassPermissions'
+                ? 'bypass'
+                : 'prompting'
+              : undefined
+          )
           .catch((error: unknown) =>
             reject('not_delivered', error instanceof Error ? error.message : String(error))
           )
@@ -1108,12 +1129,7 @@ async function sendOwnedClaudeMessage(
     };
   if (receipt && !desktop)
     return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
-  const current = desktop
-    ? (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
-        (candidate) =>
-          candidate.sessionId === record.sessionId && candidate.cliSessionId === record.cliSessionId
-      )
-    : record;
+  const current = desktop ? await readCurrentDesktopReceiver(record, deps) : record;
   if (!current)
     return reject(
       'not_delivered',

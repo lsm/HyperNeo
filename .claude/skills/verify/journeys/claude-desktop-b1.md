@@ -23,6 +23,11 @@ Check `evidence/observed.json` and `native-events.jsonl`:
   directly, including its initial task: the work.start receipt must match the
   initial inbox frame UUID and no initial relay may be spawned. It never opens
   a desktop-wake helper.
+- Direct sends to both auto and bypass receivers must be confirmed without a
+  relay or held receipt. The synthetic socket applies Desktop's bypass-side
+  rule to the actual frame, rather than accepting every payload. Sender mode
+  comes from a fresh receiver-metadata read before sending: prompting for
+  non-bypass receivers, bypass for bypass receivers.
 - After an unconfirmed direct input, the synthetic receiver's Desktop mode
   changes while the daemon is waiting. For auto, default and acceptEdits, the
   retry relay runs in auto; for bypassPermissions it runs in bypassPermissions.
