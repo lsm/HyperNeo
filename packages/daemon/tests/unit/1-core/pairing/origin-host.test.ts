@@ -162,3 +162,67 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     warn.mockRestore();
   });
 });
+
+describe('refusing cross-site WebSocket upgrades and mutating requests', () => {
+  const guard = (allowed: string[] = []) =>
+    createRequestObserver({
+      db: () => ({ run: () => Promise.resolve() }) as unknown as DbGateway,
+      allowedHosts: () => allowed,
+      exempt: (req) => new URL(req.url).pathname === '/webhooks/github',
+      now: () => 1,
+    });
+  const ws = (headers: Record<string, string>) => request({ upgrade: 'websocket', ...headers });
+  const refused = async (response: unknown) =>
+    response instanceof Response ? [response.status, await response.text()] : 'served';
+
+  test('a foreign or opaque Origin is refused on a WebSocket upgrade and a mutating request', async () => {
+    const check = guard();
+    for (const origin of ['https://evil.example', 'null', 'file://x']) {
+      expect(await refused(check(ws({ host: '127.0.0.1:9283', origin })))).toEqual([
+        403,
+        'Cross-site request refused',
+      ]);
+      expect(await refused(check(request({ host: '127.0.0.1:9283', origin }, 'POST')))).toEqual([
+        403,
+        'Cross-site request refused',
+      ]);
+    }
+  });
+
+  test('a foreign Origin still reads pages, and preflights still answer', async () => {
+    const check = guard();
+    for (const method of ['GET', 'HEAD', 'OPTIONS'])
+      expect(
+        await refused(
+          check(request({ host: '127.0.0.1:9283', origin: 'https://evil.example' }, method))
+        )
+      ).toBe('served');
+  });
+
+  test('same-origin, loopback-origin and Origin-less requests are served', async () => {
+    const check = guard();
+    const served = [
+      ws({ host: 'mac.example.ts.net', origin: 'https://mac.example.ts.net' }),
+      request({ host: 'mac.example.ts.net', origin: 'https://mac.example.ts.net' }, 'POST'),
+      ws({ host: '127.0.0.1:9283', origin: 'http://localhost:5173' }),
+      ws({ host: 'mac.example.ts.net', origin: 'http://[::1]:5173' }),
+      ws({ host: '127.0.0.1:9283' }),
+      request({ host: '127.0.0.1:9283' }, 'POST'),
+    ];
+    for (const req of served) expect(await refused(check(req))).toBe('served');
+  });
+
+  test('an Origin on a host the human allowed is served', async () => {
+    const req = () => ws({ host: '127.0.0.1:9283', origin: 'https://web.example.ts.net' });
+    expect(await refused(guard()(req()))).toEqual([403, 'Cross-site request refused']);
+    expect(await refused(guard(['Web.Example.ts.net'])(req()))).toBe('served');
+  });
+
+  test('an exempt route is never refused', async () => {
+    const hook = new Request('http://127.0.0.1:9283/webhooks/github', {
+      method: 'POST',
+      headers: { host: '127.0.0.1:9283', origin: 'https://evil.example' },
+    });
+    expect(await refused(guard()(hook))).toBe('served');
+  });
+});
