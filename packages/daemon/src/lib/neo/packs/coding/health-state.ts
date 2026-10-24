@@ -67,7 +67,10 @@ const reduceHealth = (superpipe({})('coding-repository-health') as PipelineAPI)
       if (health.incident) {
         const recovered = health.incident.resolvedAt !== null;
         const key = health.incident.key + (recovered ? ':recovery' : '');
-        if (!notices.some((notice) => notice.key === key))
+        if (
+          !notices.some((notice) => notice.key === key) &&
+          (!recovered || before?.incident?.resolvedAt === null)
+        )
           notices.push({
             key,
             text: `GitHub coverage ${recovered ? 'recovered' : 'stalled'} for ${repo}. Incident ${health.incident.key}.`,
