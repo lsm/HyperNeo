@@ -39,11 +39,13 @@ hyperneo [options]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-p, --port <port>` | `9283` | Port to listen on |
-| `--host <host>` | `0.0.0.0` | Host to bind to |
+| `--host <host>` | `127.0.0.1` | Host to bind to |
 | `--db-path <path>` | `~/.hyperneo/data/daemon.db` | Database file path |
 | `--workspace <path>` | — | Default workspace root for file indexing |
 | `-V, --version` | | Show version number |
 | `-h, --help` | | Show help |
+
+The daemon listens on loopback by default. For LAN clients such as the iOS app or another daemon, start it with `--host 0.0.0.0` (or set `HOST=0.0.0.0`) to listen on all IPv4 interfaces, or choose a specific LAN address.
 
 Subcommands such as `hyperneo send <session-id> <text>` and `hyperneo build` interact with a running daemon; see `hyperneo --help`. A standalone daemon without the web UI is published as [`hyperneod`](https://www.npmjs.com/package/hyperneod).
 
