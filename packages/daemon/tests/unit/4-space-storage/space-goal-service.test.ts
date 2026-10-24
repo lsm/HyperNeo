@@ -1185,6 +1185,25 @@ describe('SpaceGoalService', () => {
     expect(taskRepo.getTask(task.task!.id)?.result).toBeNull();
   });
 
+  it('leaves a task that moved on since its terminal transition was read', () => {
+    const goal = service.createGoal({ spaceId, title: 'Fenced goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    taskRepo.updateTask(task.task!.id, { status: 'blocked' });
+
+    expect(() =>
+      service.handleTaskTerminal(task.task!.id, {
+        fromStatus: 'in_progress',
+        updates: { status: 'done', result: 'shipped' },
+      })
+    ).toThrow('left in_progress');
+
+    expect(taskRepo.getTask(task.task!.id)?.status).toBe('blocked');
+    expect(taskRepo.getTask(task.task!.id)?.result).toBeNull();
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
+  });
+
   describe('goal workspacePath validation', () => {
     let resolvingService: SpaceGoalService;
 
