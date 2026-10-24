@@ -28,14 +28,14 @@ Review preferences do not apply when a review bot is configured.
 Provenance is a coding-pack preference, **on by default**, user-disableable.
 Use the existing first-use preference question; until answered, explicitly fall
 back to on without storing a value or marking the preference answered. When on,
-require `Author: <model> via <harness>` with actual identity; ask the author to fix
+require `Agent: <model> via <harness>` with actual identity; ask the author to fix
 missing/ambiguous provenance before assigning review. For the no-bot reviewer
 session, require a **different model** and prefer a different harness too (for
 example Codex CLI reviewing Claude Code). Fallback: same harness, different model.
 Same model/different harness cannot qualify. Record reviewer identity; a human is
 an alternative when no review bot is configured. Unavailable qualifying alternatives
 block for configuration. Provenance does not add
-a reviewer session alongside a configured bot. When off, no Author line is required
+a reviewer session alongside a configured bot. When off, no Agent line is required
 and reviewer diversity is not enforced. Repo review/sign-off rules remain mandatory.
 
 ## Verify
