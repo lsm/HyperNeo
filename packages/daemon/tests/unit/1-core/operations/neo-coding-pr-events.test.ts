@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { Logger } from '../../../../src/lib/logger.ts';
 import {
   CodingPrEventRepository,
   deliverCodingPrEvents,
@@ -285,6 +286,64 @@ describe('PR ledger events', () => {
     ]);
     expect(woken).toEqual([]);
     db.close();
+  });
+
+  test('a changes-requested transition survives a restart between the ledger write and delivery', async () => {
+    const { db, ledger, deps, told, cycle, own } = setup();
+    try {
+      await cycle(response([node(188)]), 100);
+      own(188);
+      const requested = response([node(188, { reviewDecision: 'CHANGES_REQUESTED' })]);
+      await reconcileCodingPrLedger(ledger, ['lsm/a'], async () => requested, 200);
+      await deliverCodingPrEvents(new CodingPrEventRepository(db), [], deps);
+      await cycle(requested, 300);
+      expect(told.map((item) => item.key)).toEqual([
+        'neo-pr-event:lsm/a#188:head188abc:changes_requested',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an owner cleared during delivery skips that PR and the sweep finishes', async () => {
+    const { db, ledger, deps, told, cycle, own } = setup();
+    try {
+      await cycle(response([node(1), node(2)]), 100);
+      own(1);
+      own(2);
+      await reconcileCodingPrLedger(
+        ledger,
+        ['lsm/a'],
+        async () => response([node(1, {}, 'FAILURE'), node(2, {}, 'FAILURE')]),
+        200
+      );
+      await deliverCodingPrEvents(new CodingPrEventRepository(db), [], {
+        ...deps,
+        tell: async (ref, key, text) => {
+          db.prepare('UPDATE pack_coding_pr_ledger SET owner = NULL WHERE number = 2').run();
+          return deps.tell(ref, key, text);
+        },
+      });
+      expect(told.map((item) => item.key)).toEqual(['neo-pr-event:lsm/a#1:head1abc:failing']);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an event skipped because its PR has no owner is logged with the PR and event', async () => {
+    const { db, told, cycle } = setup();
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      await cycle(response([node(188)]), 100);
+      await cycle(response([node(188, {}, 'FAILURE')]), 200);
+      expect(told).toEqual([]);
+      expect(warn.mock.calls.map((call) => call[0])).toContain(
+        'PR event neo-pr-event:lsm/a#188:head188abc:failing skipped: lsm/a#188 has no owner'
+      );
+    } finally {
+      warn.mockRestore();
+      db.close();
+    }
   });
 });
 

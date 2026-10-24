@@ -53,11 +53,11 @@ export class CodingPrEventRepository {
     return run;
   }
 
-  pendingTerminals(): CodingPrTransition[] {
+  pendingEvents(): CodingPrTransition[] {
     return (
       this.db
         .prepare(`SELECT terminal_event_json AS event FROM pack_coding_pr_ledger
-      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL AND state IN ('merged', 'closed')
+      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL
       ORDER BY state_since, repo, number`)
         .all() as { event: string }[]
     )
@@ -65,7 +65,7 @@ export class CodingPrEventRepository {
       .filter((row) => codingRepoWatched(this.db, row.repo));
   }
 
-  acceptTerminal(row: CodingPrTransition, owner: WorkRef): Promise<void> {
+  acceptEvent(row: CodingPrTransition, owner: WorkRef): Promise<void> {
     return new CodingPrLedgerRepository(this.db).write(
       'acceptTerminalEvent',
       row,
@@ -152,19 +152,20 @@ export async function deliverCodingPrEvents(
   deps: CodingSweepDeps
 ): Promise<void> {
   return repo.exclusive(async () => {
-    const rows = [
-      ...transitions.filter((row) => !['merged', 'closed'].includes(row.state)),
-      ...repo.pendingTerminals(),
-    ];
-    for (const row of rows) {
+    for (const row of transitions) {
       const event = planCodingPrEvent(row);
-      const route = event ? repo.route(row) : null;
-      if (!event || !route?.owner) continue;
-      const told = await deps.tell(route.owner, event.key, event.text).catch(() => false);
-      if (told && ['merged', 'closed'].includes(row.state))
-        await repo.acceptTerminal(row, route.owner);
+      if (event && !repo.route(row).owner)
+        log.warn(`PR event ${event.key} skipped: ${row.repo}#${row.number} has no owner`);
+    }
+    for (const row of repo.pendingEvents()) {
+      const event = planCodingPrEvent(row);
+      const owner = repo.route(row).owner;
+      if (!owner) continue;
+      const told = event ? await deps.tell(owner, event.key, event.text).catch(() => false) : true;
+      if (told) await repo.acceptEvent(row, owner);
+      if (!event) continue;
       log.warn(
-        `PR event ${event.key} to ${route.owner.adapter}:${route.owner.id}: ${told ? 'told' : 'not told'}`
+        `PR event ${event.key} to ${owner.adapter}:${owner.id}: ${told ? 'told' : 'not told'}`
       );
     }
   });
