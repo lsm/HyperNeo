@@ -607,7 +607,7 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts
+        run: bun build --compile --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
 
       - name: Smoke test
         run: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-linux-x64
@@ -615,7 +615,7 @@ jobs:
           GLM_API_KEY: smoke-test
 
       - name: Compile daemon binary
-        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts
+        run: bun build --compile --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
 
       - name: Smoke test daemon binary
         run: bun run scripts/smoke-test.ts ./dist/bin/hyperneod-linux-x64 --daemon
