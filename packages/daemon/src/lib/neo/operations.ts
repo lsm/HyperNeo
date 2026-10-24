@@ -765,12 +765,7 @@ export function createNeoOperations(service: NeoService) {
       createArtifactRefReader(() => service.db.getDatabase()),
       (ref) => service.readQuestionSource(ref),
       (caller, ids, askId) => {
-        const state =
-          !ids && !caller.consumedInputId && caller.sessionId
-            ? service.sessions.getCachedSession(caller.sessionId)?.getProcessingState()
-            : null;
-        const consumed =
-          caller.consumedInputId ?? (state?.status === 'processing' ? state.messageId : undefined);
+        const consumed = caller.consumedInputId;
         const source = ids ?? (consumed ? [consumed] : []);
         const inputs = caller.sessionId
           ? source.map((id) => receivedNeoHumanInput(service, caller.sessionId!, id))

@@ -327,19 +327,23 @@ export class AgentSession
     );
   }
 
-  getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
-    return (this.operationMcpServer ??= createOperationMcpServer(
+  getOperationMcpServer(
+    inputOrigin?: () => { messageId: string } | null
+  ): ReturnType<typeof createOperationMcpServer> {
+    if (!inputOrigin && this.operationMcpServer) return this.operationMcpServer;
+    const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
       () => {
-        const state = this.getProcessingState();
         return {
           ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
-          consumedInputId: state.status === 'processing' ? state.messageId : undefined,
+          consumedInputId: inputOrigin?.()?.messageId,
         };
       },
       '',
       this.recordOperationRefusal
-    ));
+    );
+    if (!inputOrigin) this.operationMcpServer = server;
+    return server;
   }
 
   private readonly recordOperationRefusal = (refusal: OperationRefusal) =>

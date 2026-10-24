@@ -11,6 +11,10 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   bun .claude/skills/verify/card-reply-daemon.ts "$RUN"
 ```
 
+This helper checks persistence and explicit caller context; it does not exercise
+the runtime's capture of consumed input. Run `card-reply-consumed-turn.md` for
+the actual SDK turn, including a teammate input consumed after human intake.
+
 The helper owns an ephemeral daemon and a gh stub that refuses every call. It
 seeds a synthetic #8442 sign-off ask, submits real quoted human intake through
 `neo.message.send`, and marks those synthetic prompts consumed with the normal

@@ -707,6 +707,10 @@ export class QueryRunner {
       () => attemptToken.isLive() && this.isRunOwnershipLive(queryGeneration)
     );
     const questionOrigin = () => questionInputs.origin();
+    const humanInputs = new QuestionInputScope(
+      session.id,
+      () => attemptToken.isLive() && this.isRunOwnershipLive(queryGeneration)
+    );
     const attemptHook = this.createAttemptBoundPreToolUseHook(attemptToken, questionOrigin);
 
     let startupPermit: SdkStartupPermit | null = null;
@@ -856,6 +860,7 @@ export class QueryRunner {
         optionsBuilder.build({
           askUserQuestionHook: attemptHook,
           canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
+          operationInputOrigin: () => humanInputs.origin(),
           session: providerSession,
         })
       );
@@ -1009,7 +1014,8 @@ export class QueryRunner {
           prompt: this.createMessageGeneratorWrapper(
             queryGeneration,
             recoveryState.startGuard,
-            questionInputs
+            questionInputs,
+            humanInputs
           ),
           options: queryOptions,
         })
@@ -1378,7 +1384,10 @@ export class QueryRunner {
             this.fedAfterTurnEnd = [];
           this.turnEndedGeneration = turnEndedGeneration;
           try {
-            if (message.type === 'result') questionInputs.endTurn();
+            if (message.type === 'result') {
+              questionInputs.endTurn();
+              humanInputs.endTurn();
+            }
             await this.handleSDKMessage(message, queryGeneration);
           } catch (error) {
             await this.handleStreamMessageError(message, error, queryGeneration, attemptToken);
@@ -2146,7 +2155,8 @@ export class QueryRunner {
   async *createMessageGeneratorWrapper(
     queryGeneration: number,
     startGuard?: () => void,
-    questionInputs?: QuestionInputScope
+    questionInputs?: QuestionInputScope,
+    humanInputs?: QuestionInputScope
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
@@ -2215,6 +2225,10 @@ export class QueryRunner {
 
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
+      if (humanInputs && message.uuid && neoCoordinatorBinding(this.ctx.db, session.id)) {
+        const prompt = this.ctx.db.getSDKMessageRepo().getDeliveryContent(session.id, message.uuid);
+        if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
+      }
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',

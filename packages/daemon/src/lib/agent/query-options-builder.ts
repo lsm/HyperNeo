@@ -82,6 +82,7 @@ import {
 import { awaitSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import { handoffDraftDirectory } from '../handoffs/outbox.ts';
+import type { QuestionInputOriginSource } from './question-input-origin.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -259,7 +260,7 @@ export function buildProviderSettings(
 
 export interface QueryOptionsBuilderContext {
   getGithubToken?(): Promise<string | null>;
-  getOperationMcpServer?(): SdkMcpServerConfig;
+  getOperationMcpServer?(inputOrigin?: QuestionInputOriginSource): SdkMcpServerConfig;
   getSpaceBriefing?(): string | undefined;
   readonly session: Session;
   readonly settingsManager: SettingsManager;
@@ -322,6 +323,7 @@ export function liveThinkingUpdate(
 }
 
 export class QueryOptionsBuilder {
+  private operationServer?: SdkMcpServerConfig;
   private askUserQuestionHook?: HookCallback;
   private deferredPermissionMode?: PermissionMode;
   private effectiveFallbackCaptured = false;
@@ -353,7 +355,7 @@ export class QueryOptionsBuilder {
       registryServers: this.getMcpServersFromRegistry(),
       skillServers: this.getMcpServersFromSkills(),
       runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
-      operationServer: this.ctx.getOperationMcpServer?.(),
+      operationServer: this.operationServer ?? this.ctx.getOperationMcpServer?.(),
     });
     for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
     const exa = this.exaWebToolsActivation;
@@ -375,6 +377,7 @@ export class QueryOptionsBuilder {
   async build(overrides?: {
     askUserQuestionHook?: HookCallback;
     canUseTool?: CanUseTool;
+    operationInputOrigin?: QuestionInputOriginSource;
     session?: import('@hyperneo/shared').Session;
   }): Promise<Options> {
     const session = overrides?.session ?? this.ctx.session;
@@ -494,6 +497,7 @@ export class QueryOptionsBuilder {
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = await this.getSDKCliPath();
 
+    this.operationServer = this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
     const mergedMcpServers = this.computeEffectiveMcpServers();
 
     const queryOptions: Options = {
