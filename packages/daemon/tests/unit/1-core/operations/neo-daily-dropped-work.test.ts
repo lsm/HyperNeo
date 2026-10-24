@@ -226,3 +226,49 @@ test('another enabled pack contributes its own labelled counts without core doma
   expect(history()[0].fullText).toContain('example: waiting items: 4');
   expect(history()[0].fullText).not.toContain('coding');
 });
+
+test('large pack labels still produce a valid bounded daily publication', async () => {
+  service.filePacks = [
+    {
+      id: 'large',
+      describe: 'Synthetic domain',
+      instructions: () => null,
+      stats: () => ({ ['x'.repeat(17000)]: 4 }),
+    },
+  ];
+  db.updateGlobalSettings({ neo: { packs: ['large'] } });
+  await service.sweepPacks();
+  expect(history()).toHaveLength(1);
+  expect(history()[0].shortText.length).toBeLessThanOrEqual(2000);
+  expect(history()[0].fullText.length).toBeLessThanOrEqual(16000);
+  expect(history()[0].fullText).toContain('Core: stalled asks: 0');
+});
+
+test('a broken pack cannot suppress core counts or another pack, or retry its hook all day', async () => {
+  let attempts = 0;
+  service.filePacks = [
+    {
+      id: 'broken',
+      describe: 'Synthetic failure',
+      instructions: () => null,
+      stats: () => {
+        attempts++;
+        throw new Error('Synthetic unavailable');
+      },
+    },
+    {
+      id: 'healthy',
+      describe: 'Synthetic domain',
+      instructions: () => null,
+      stats: () => ({ 'waiting items': 4 }),
+    },
+  ];
+  db.updateGlobalSettings({ neo: { packs: ['broken', 'healthy'] } });
+  await service.sweepPacks();
+  await service.sweepPacks();
+  expect(history()).toHaveLength(1);
+  expect(history()[0].fullText).toContain('Core: stalled asks: 0');
+  expect(history()[0].fullText).toContain('healthy: waiting items: 4');
+  expect(history()[0].fullText).toContain('broken: unavailable');
+  expect(attempts).toBe(1);
+});
