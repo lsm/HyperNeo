@@ -52,6 +52,7 @@ function fixture() {
         createdAt: now,
       });
     pack = createCodingPack({
+      database: () => db,
       todoPrs: new CodingTodoPrRepository(db),
       prLedger: new CodingPrLedgerRepository(db),
       prSweep: new CodingPrSweepRepository(db),

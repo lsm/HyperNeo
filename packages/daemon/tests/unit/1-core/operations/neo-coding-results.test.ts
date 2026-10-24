@@ -57,6 +57,46 @@ function setup() {
 }
 
 describe('linked coding assignment results', () => {
+  test.each(['review', 'qa'] as const)(
+    'persists the validated full %s worker ref rather than a claimed fact ref',
+    async (stage) => {
+      const { db, assignments, ledger, result } = setup();
+      try {
+        assignments.record('todo', 'review', assignment);
+        const assignedRef = {
+          adapter: 'codex-desktop',
+          id: 'independent',
+          daemon: 'fixture-daemon',
+        };
+        const assignedActor = { ...actor, id: assignedRef.id, harness: assignedRef.adapter };
+        if (stage === 'qa')
+          assignments.record('todo', 'qa', {
+            ...assignment,
+            ref: assignedRef,
+            actor: assignedActor,
+          });
+        const validatedRef = stage === 'qa' ? assignedRef : ref;
+        const validatedActor = stage === 'qa' ? assignedActor : actor;
+        expect(
+          await result({
+            todoId: 'todo',
+            ref: validatedRef,
+            fact: {
+              ...fact,
+              stage,
+              actor: validatedActor,
+              ref: { ...validatedRef, id: 'unassigned-claim' },
+            },
+          })
+        ).toEqual({ kind: 'completed', value: { ok: true } });
+        expect(ledger.stageFacts.read(url)).toEqual([
+          { ...fact, stage, actor: validatedActor, ref: validatedRef },
+        ]);
+      } finally {
+        db.close();
+      }
+    }
+  );
   test('persists the same contract for review and independent QA without changing the todo', async () => {
     const { db, assignments, ledger, result } = setup();
     try {
@@ -123,6 +163,7 @@ describe('linked coding assignment results', () => {
     { ref: { ...ref, id: 'other' } },
     { ref: { ...ref, daemon: 'other' } },
     { fact: { ...fact, actor: { ...actor, model: 'gpt-6' } } },
+    { fact: { ...fact, actor: { ...actor, harness: 'codex-desktop' } } },
     { fact: { ...fact, acceptanceContract: 'changed' } },
     { fact: { ...fact, head: 'head-b' } },
     { todoId: 'other' },

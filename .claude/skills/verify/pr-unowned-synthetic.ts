@@ -113,6 +113,7 @@ export async function verifySyntheticUnownedPrs(port: number, runText: string) {
   let accept = true;
   const makePack = () =>
     createCodingPack({
+      database: () => db,
       readPrs: async () => [],
       readClaudeOwners: async () => [],
       todoPrs: new CodingTodoPrRepository(db),

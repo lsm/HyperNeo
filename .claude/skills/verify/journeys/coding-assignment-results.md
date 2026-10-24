@@ -19,8 +19,10 @@ accepts assigned review and inconclusive QA evidence. An author ref, wrong model
 wrong contract or wrong head is rejected without replacing the recorded result.
 The actual daemon's MCP adapter also refuses a mismatched result from a synthetic
 bound Neo and supplies a readable explanation with the next action.
+Accepted results must retain the validated envelope worker ref, including a QA
+daemon identity. A conflicting ref claimed inside the fact cannot replace it.
 Restarting the daemon preserves the linked write/review/QA assignments and
-results. A failure cannot become a pass at the same head. A new head clears both
+results, including both full worker refs. A failure cannot become a pass at the same head. A new head clears both
 stage facts, exposes no assignments for that head and rejects late results.
 The todo stays `doing` throughout: this Build slice changes no completion gate.
 Both daemon instances and sockets close in finally.

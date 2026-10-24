@@ -40,6 +40,7 @@ function setup() {
   let nodes: unknown[] = [];
   const makePack = () =>
     createCodingPack({
+      database: () => db,
       readPrs: async () => [],
       readClaudeOwners: async () => [],
       todoPrs: new CodingTodoPrRepository(db),

@@ -86,7 +86,9 @@ export function captureGitArtifact(
     .then(async () => {
       const previous = repo.receipt(plan.context, key);
       if (!previous) return run(plan);
-      return previous.fingerprint === fingerprint && (await current())
+      if (previous.fingerprint !== fingerprint)
+        return { accepted: false, reason: 'source_changed' };
+      return (await current())
         ? { accepted: true, artifact: JSON.parse(previous.receipt).artifact }
         : unavailable();
     });
