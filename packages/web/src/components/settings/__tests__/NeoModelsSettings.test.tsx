@@ -75,8 +75,8 @@ test('edits each effort, reorders provider fallbacks and saves through the human
       input: { ...primary, fallbacks: [copilot, { ...glm, thinkingLevel: 'off' }] },
     })
   );
-  expect(ui.getByText(/Usable fallback providers:/).textContent).toContain('OpenRouter');
-  expect(ui.getByText(/Usable fallback providers:/).textContent).toContain('Z.ai');
+  expect(ui.getByText(/Providers with usable models:/).textContent).toContain('OpenRouter');
+  expect(ui.getByText(/Providers with usable models:/).textContent).toContain('Z.ai');
 });
 
 test('adds a different-provider model with supported thinking and can remove all fallbacks', async () => {
@@ -190,7 +190,7 @@ test('lists only runnable providers and offers every thinking level', async () =
     })),
   });
   const ui = await editor();
-  expect(ui.getByText(/Usable fallback providers:/).textContent).not.toContain('OpenRouter');
+  expect(ui.getByText(/Providers with usable models:/).textContent).not.toContain('OpenRouter');
   expect(
     [...ui.getByLabelText('Neo model 3 thinking').querySelectorAll('option')].map(
       (option) => option.value
@@ -313,4 +313,46 @@ test('a model saved under its alias shows the listed model name', async () => {
   const ui = await editor();
   const first = ui.getAllByTitle('Remove')[0].closest('.bg-surface-raised')?.textContent ?? '';
   expect(first).toContain('Opus 5.5');
+});
+
+test('states the saved preference does not promise recovery or return to the primary', async () => {
+  const ui = await editor();
+  const copy = ui.getByText(/Saved Neo model preference/).textContent ?? '';
+  expect(copy).toContain('Recovery uses the ordinary session policy');
+  expect(copy).not.toContain('returns to the primary');
+  expect(ui.queryByText(/returns to the primary/)).toBeNull();
+});
+
+test('compaction copy says percentage changes apply when Neo is idle', async () => {
+  const ui = await editor();
+  expect(ui.getByText(/Percentage changes apply when Neo is idle/)).toBeTruthy();
+  expect(ui.queryByText(/after the current reply/)).toBeNull();
+});
+
+test('an unsaved Neo preference shows that it follows the current default', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    model: 'opus',
+    modelProvider: 'anthropic',
+    neo: {},
+  } as GlobalSettings;
+  render(<NeoModelSettings />);
+  expect(await screen.findByText('Follows default (current: opus)')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Clear saved fallbacks' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Disable Neo fallbacks' })).toBeNull();
+});
+
+test('refresh reloads the model list and never saves a Neo default', async () => {
+  const { updateGlobalSettings } = await import('../../../lib/api-helpers.ts');
+  const ui = await editor();
+  request.mockClear();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith(
+      'models.list',
+      expect.objectContaining({ forceRefresh: true })
+    )
+  );
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  expect(updateGlobalSettings).not.toHaveBeenCalled();
+  expect(screen.getByText(/Refresh reloads the model list only/)).toBeTruthy();
 });
