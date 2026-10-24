@@ -168,6 +168,28 @@ export async function withKnownFeedFiles(
   return [...listed, ...extra.flat()].sort((a, b) => b.mtime - a.mtime);
 }
 
+export async function dropForeignFeeds<Meta extends FeedFileMeta>(
+  db: BunDatabase,
+  root: string,
+  source: FeedSource<Meta>,
+  own: ReadonlySet<string> | null | undefined
+): Promise<number> {
+  if (!own) return 0;
+  const paths = [...readWorkFeedOffsets(db).keys()].filter((path) =>
+    path.startsWith(`${root}${sep}`)
+  );
+  const foreign = paths.filter((path) => !own.has(source.sessionOf(path)));
+  let dropped = 0;
+  for (const path of foreign)
+    dropped += await dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
+  if (source.sharesTurnsWithSiblings && dropped > 0)
+    rereadWorkFeedPaths(
+      db,
+      paths.filter((path) => !foreign.includes(path))
+    );
+  return dropped;
+}
+
 export function ownFeedFiles<Meta extends FeedFileMeta>(
   files: readonly FeedFile[],
   source: FeedSource<Meta>,

@@ -47,6 +47,7 @@ feed() {
   echo "$1 feed sessions: $(sqlite3 -readonly "$DB" "SELECT group_concat(kind || ':' || session_id, ' ') FROM (SELECT DISTINCT kind, session_id FROM message_search_content WHERE kind IN ('claude','codex') ORDER BY kind, session_id)")"
 }
 sqlite3 "$DB" "INSERT INTO work_started_sessions VALUES ('claude-code', 'cli-mine', 1), ('codex-desktop', '$MINE_T', 1)"
+feed before | tee "$RUN/evidence/before.txt"
 rpc rpc:settings.global.update '{"updates":{"workFeedScope":"own"}}' > "$RUN/evidence/own-setting.json"
 feed own | tee "$RUN/evidence/own.txt"
 rpc rpc:settings.global.update '{"updates":{"workFeedScope":"all"}}' > "$RUN/evidence/all-setting.json"

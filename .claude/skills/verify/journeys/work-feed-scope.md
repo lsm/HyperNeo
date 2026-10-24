@@ -15,7 +15,11 @@ Claude/Codex starts need the apps, so that write is covered by
 `settings.global.update`, queues the `work.feed.claude` and `work.feed.codex` jobs (the feed
 is not scheduled in test mode), and reads which sessions were indexed.
 
-End state, in `$RUN/evidence/`:
-- `own.txt`: both jobs `completed`; feed sessions `claude:cli-mine codex:1111…` only.
-- `all.txt`: after switching to `all`, the foreign `claude:cli-foreign` and `codex:3333…`
-  appear too, as they do today with no setting.
+It runs the feed three times: with no setting (today's default), after setting `own`, and
+after setting `all` again.
+
+End state, in `$RUN/evidence/` (every job `completed`):
+- `before.txt`: all four sessions indexed, as a second instance shows today.
+- `own.txt`: only `claude:cli-mine codex:1111…`; the already-indexed foreign sessions are
+  gone from the index (their files are untouched).
+- `all.txt`: the foreign `claude:cli-foreign` and `codex:3333…` are re-indexed.

@@ -18,6 +18,7 @@ import {
   listFeedFilesAsync,
   pendingFeedPaths,
   pruneVanishedFeeds,
+  dropForeignFeeds,
   ownFeedFiles,
   withKnownFeedFiles,
 } from './work-feed.ts';
@@ -186,6 +187,16 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
       ),
     ['db', 'root', 'hyperneo'],
     'pruned'
+  )
+  .pipe(
+    (
+      db: BunDatabase,
+      root: string,
+      hyperneo: ReadonlySet<string>,
+      own: ReadonlySet<string> | null
+    ) => dropForeignFeeds(db, root, claudeFeedSource(hyperneo), own),
+    ['db', 'root', 'hyperneo', 'own'],
+    'foreign'
   )
   .pipe(
     (db: BunDatabase, root: string, now: number) =>

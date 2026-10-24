@@ -12,6 +12,7 @@ import {
   type FeedSource,
   feedWorkFiles,
   listFeedFilesAsync,
+  dropForeignFeeds,
   ownFeedFiles,
   pruneVanishedFeeds,
 } from './work-feed.ts';
@@ -138,6 +139,12 @@ export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
       runLagPhase('feed:codex:prune', () => pruneVanishedFeeds(db, root, codexFeedSource)),
     ['db', 'root'],
     'pruned'
+  )
+  .pipe(
+    (db: BunDatabase, root: string, own: ReadonlySet<string> | null) =>
+      dropForeignFeeds(db, root, codexFeedSource, own),
+    ['db', 'root', 'own'],
+    'foreign'
   )
   .pipe(
     (root: string, now: number) =>
