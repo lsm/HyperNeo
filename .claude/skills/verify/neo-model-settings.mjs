@@ -20,13 +20,14 @@ assert(rpc('rpc:providers.create', {
 }).success);
 const catalog = rpc('rpc:models.list', { forceRefresh: true }).models;
 const find = (family) => {
-  const model = catalog.find((entry) => entry.provider === 'anthropic' && entry.id.includes(family));
+  const model = catalog.find((entry) => entry.provider === 'anthropic' && (process.env.VERIFY_ANTHROPIC_1M === '1' ? entry.id === `claude-${family}-5-5` : entry.id.includes(family)));
   assert(model, JSON.stringify(catalog));
   return model;
 };
 const primary = find('opus'), first = find('sonnet'), second = find('haiku');
 const tokens = (count) => (count >= 1_000_000 ? `${Number((count / 1_000_000).toFixed(1))}M` : `${Math.round(count / 1000)}K`);
 const sizeText = (percent) => `${percent}% ≈ ${tokens(Math.floor((primary.contextWindow * percent) / 100))} of ${tokens(primary.contextWindow)} tokens`;
+if (process.env.VERIFY_ANTHROPIC_1M === '1') assert.equal(primary.contextWindow, 1_000_000);
 const thresholdText = sizeText(70);
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
@@ -37,6 +38,7 @@ try {
   const section = page.getByRole('region', { name: 'Neo models', exact: true });
   await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
   await page.getByRole('button', { name: primary.display_name, exact: true }).click();
+  if (process.env.VERIFY_ANTHROPIC_1M === '1') await section.getByText(sizeText(90), { exact: true }).waitFor();
   await section.getByLabel('Neo model 1 thinking', { exact: true }).selectOption('think24k');
   for (const model of [first, second]) {
     await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();

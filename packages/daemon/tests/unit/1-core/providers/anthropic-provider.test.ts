@@ -24,6 +24,33 @@ describe('AnthropicProvider', () => {
     process.env = originalEnv;
   });
 
+  it.each(['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])(
+    'launches %s with 1M context while preserving its API model id',
+    (id) => {
+      const models = provider.convertSdkModels([
+        { value: 'default', resolvedModel: id, displayName: id, description: '' },
+        { value: 'opus', resolvedModel: id, displayName: id, description: '' },
+      ]);
+      provider.setModelCache(models);
+      expect(models.every((model) => model.contextWindow === 1_000_000)).toBe(true);
+      expect(models.every((model) => !model.id.includes('[1m]'))).toBe(true);
+      expect(provider.translateModelIdForSdk(id)).toBe(`${id}[1m]`);
+      expect(provider.translateModelIdForSdk('opus')).toBe(`${id}[1m]`);
+      expect(provider.translateModelIdForSdk('default')).toBe(`${id}[1m]`);
+      expect(provider.translateModelIdForSdk(`${id}[1m]`)).toBe(`${id}[1m]`);
+    }
+  );
+
+  it('leaves legacy and unknown context windows unchanged', () => {
+    for (const id of ['claude-haiku-4-5-20251001', 'claude-future-unknown', 'opus']) {
+      expect(provider.translateModelIdForSdk(id)).toBe(id);
+      expect(
+        provider.convertSdkModels([{ value: id, displayName: id, description: '' }])[0]
+          .contextWindow
+      ).toBe(200000);
+    }
+  });
+
   describe('basic properties', () => {
     it('should have correct ID', () => {
       expect(provider.id).toBe('anthropic');
@@ -729,7 +756,9 @@ describe('AnthropicProvider', () => {
         ['claude-sonnet-5-5', 'sonnet', 'Sonnet 5.5', 'sonnet'],
         ['claude-sonnet-5', 'claude-sonnet-5', 'Sonnet 5', 'sonnet'],
       ]);
-      expect(converted.map((m) => m.contextWindow)).toEqual([200000, 1_000_000, 200000, 200000]);
+      expect(converted.map((m) => m.contextWindow)).toEqual([
+        1_000_000, 1_000_000, 1_000_000, 200000,
+      ]);
     });
 
     it('keeps the alias row when a pinned row for the same model is listed first', () => {
