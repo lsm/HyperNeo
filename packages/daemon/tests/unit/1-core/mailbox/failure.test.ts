@@ -19,6 +19,7 @@ import {
   type MailboxFailureCtx,
   type MailboxFailureDeps,
   materializeMailboxFailure,
+  persistExistingMailboxFailure,
   notifyFailureObserversStage,
   renderMailboxFailureNotice,
   sessionFailureTarget,
@@ -474,6 +475,76 @@ describe('createMailboxDeadHandler', () => {
     expect(publishFailed).not.toHaveBeenCalled();
     expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'boom-uuid');
     mailbox.close();
+  });
+});
+
+describe('persistExistingMailboxFailure', () => {
+  const fixture = () => {
+    const mailbox = createMailboxTestDb();
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'sync-failure' });
+    const target = { sessionId: SESSION_ID, messageUuid: 'sync-failure' };
+    const job = makeDeadJob(entry as unknown as Record<string, unknown>, 'delivery failed');
+    const projected = buildFailureMessageStage({ job, entry, target, deps: stubDeps() }).message!;
+    return { mailbox, entry, target, projected };
+  };
+
+  test('returns a synchronous missing-row decision without inserting a failed row', () => {
+    const { mailbox, entry, target, projected } = fixture();
+    try {
+      const result = persistExistingMailboxFailure(
+        mailbox.sdkMessageRepo,
+        target,
+        projected,
+        entry.id
+      );
+      expect(result).not.toBeInstanceOf(Promise);
+      expect(result).toEqual({ uuidOwned: true, save: true });
+      expect(mailbox.sdkRows()).toEqual([]);
+    } finally {
+      mailbox.close();
+    }
+  });
+
+  test('the existing-row transition rolls back with its owning transaction', () => {
+    const { mailbox, entry, target, projected } = fixture();
+    try {
+      const id = mailbox.sdkMessageRepo.saveUserMessage(SESSION_ID, projected, 'enqueued');
+      expect(() =>
+        mailbox.db.transaction(() => {
+          const result = persistExistingMailboxFailure(
+            mailbox.sdkMessageRepo,
+            target,
+            projected,
+            entry.id
+          );
+          expect(result).not.toBeInstanceOf(Promise);
+          expect(result).toEqual({ failedId: id, uuidOwned: true });
+          expect(mailbox.sdkRows()[0].send_status).toBe('failed');
+          throw new Error('outer rollback');
+        })()
+      ).toThrow('outer rollback');
+      expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+      expect(JSON.parse(mailbox.sdkRows()[0].sdk_message)).toEqual(projected);
+    } finally {
+      mailbox.close();
+    }
+  });
+
+  test('conflicting content cannot claim or fail an existing UUID', () => {
+    const { mailbox, entry, target, projected } = fixture();
+    try {
+      mailbox.sdkMessageRepo.saveUserMessage(SESSION_ID, projected, 'enqueued');
+      const conflicting = {
+        ...projected,
+        message: { ...projected.message, content: 'different content' },
+      };
+      expect(
+        persistExistingMailboxFailure(mailbox.sdkMessageRepo, target, conflicting, entry.id)
+      ).toEqual({ uuidOwned: false });
+      expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+    } finally {
+      mailbox.close();
+    }
   });
 });
 
