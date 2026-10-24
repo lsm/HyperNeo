@@ -14,6 +14,7 @@ export const COMPILED_WORKER_ENTRYPOINTS = [
 export const compileArgs = (target: string) => [
   'build',
   '--compile',
+  '--compile-autoload-package-json',
   '--root=packages',
   `--target=${target}`,
   ...(target === 'bun-darwin-x64' ? ['--external', '*onnxruntime_binding.node'] : []),

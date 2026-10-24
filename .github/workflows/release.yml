@@ -261,7 +261,7 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --root=packages --target=${{ matrix.target }} --define 'process.env.HYPERNEO_BUILD_COMMIT="${{ github.sha }}"' ${{ matrix.external }} --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }} $(bun scripts/compiled-worker-entrypoints.ts)
+        run: bun build --compile --compile-autoload-package-json --root=packages --target=${{ matrix.target }} --define 'process.env.HYPERNEO_BUILD_COMMIT="${{ github.sha }}"' ${{ matrix.external }} --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }} $(bun scripts/compiled-worker-entrypoints.ts)
 
       - name: Smoke test
         if: matrix.smoke
