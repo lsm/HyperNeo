@@ -4,6 +4,29 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-24
+
+### Added
+
+- **Focused discussions**: Prepare a fresh session, open its source from question cards, keep the session link on the ask, and record a settled decision while execution remains tracked (#8424, #8471, #8473, #8480).
+- **Documents**: Attach complete PR-head files through the coding pack and dock web previews beside Neo (#8454, #8459).
+- **Coding verification**: Record review and QA stage facts, use the configured review bot, require assigned QA smoke for completion, and prepare recorded manual merges (#8431, #8442, #8474, #8468).
+- **Ledger health**: Persist starvation and reconciliation coverage health, deliver coverage notices, and publish daily dropped-work counts (#8492, #8494, #8504, #8441).
+
+### Changed
+
+- **Database writes**: Expand awaited database paths for guarded session writes, SDK messages, search, task runtime, coding ledgers and the Claude Desktop outbox (#8382, #8349, #8350, #8367, #8406, #8413, #8447, #8450, #8508).
+- **SDK storage**: Extract bounded legacy SDK column-backfill chunks (#8510).
+- **GitHub observations**: Share readiness and review-thread facts across consumers and overlapping poll cycles (#8366, #8423, #8439, #8462, #8470, #8476, #8479).
+
+### Fixed
+
+- **SDK startup**: Bound startup permit holds so a slow launch cannot starve other sessions (#8500).
+- **Delivery**: Preserve queued Claude Desktop work and accepted session-event receipts, replay terminal events, and discover unrecorded subscribed PR closures (#8460, #8483, #8486, #8488, #8490).
+- **Session controls**: Default prepared Claude Desktop sessions to the configured worker permission mode, launch current Anthropic models with 1M context, and list registered adapters in unknown-adapter errors (#8387, #8437, #8503).
+- **Neo work**: Require todo references for dispatch, allow same-worker delivery channels, and remind Neo about stalled asks (#8430, #8453, #8436).
+- **GitHub reads**: Ignore expired successful quota readings and accept extra file metadata in PR previews (#8507, #8498).
+
 ## [0.46.0] - 2026-10-23
 
 ### Added
