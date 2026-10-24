@@ -1,3 +1,4 @@
+import { Logger } from '../logger.ts';
 import { STALLED_ASK_AFTER_MS } from './stalled-asks.ts';
 import type {
   NeoPublicationInput,
@@ -8,6 +9,7 @@ import { neoDerivedId } from './derived-id.ts';
 import type { NeoService } from './service.ts';
 
 const WAITING_AFTER_MS = 2 * 60 * 60 * 1000;
+const log = new Logger('neo-dropped-work');
 
 function readCounts(service: NeoService, now: number) {
   const todos = service.todos.listCheckable();
@@ -63,7 +65,14 @@ export const publishDroppedWork = (superpipe({})('neo-daily-dropped-work') as Pi
         ...service
           .packs()
           .filter((pack) => pack.stats)
-          .map((pack) => `${pack.id}: ${format(pack.stats!(now))}`),
+          .map((pack) => {
+            try {
+              return `${pack.id}: ${format(pack.stats!(now))}`;
+            } catch (error) {
+              log.warn(`Daily counts unavailable for ${pack.id}`, error);
+              return `${pack.id}: unavailable`;
+            }
+          }),
       ].join('\n'),
     ['service', 'now', 'day'],
     'text'
@@ -79,7 +88,7 @@ export const publishDroppedWork = (superpipe({})('neo-daily-dropped-work') as Pi
         conversationId: result.conversation,
         publicationId: result.publicationId,
         shortText: text.slice(0, 2000),
-        fullText: text,
+        fullText: text.slice(0, 16000),
         links: [],
       });
       if (!receipt.accepted) throw new Error(`Daily counts: ${receipt.reason}`);

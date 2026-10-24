@@ -11,7 +11,7 @@ acquisition is stubbed: the actual coding stats hook reads its cached ledger.
 The actual conversation WebSocket RPC must return one daily publication with
 separate core and coding counts. Overlapping sweeps send once. Restarting this
 helper's daemon must preserve today's receipt; tomorrow adds a new message and
-retains the previous counts unchanged. Both instances close in finally.
+retains the previous counts unchanged. A throwing extension reports unavailable without suppressing core or healthy-pack counts; oversized labels still yield a schema-valid bounded publication. Repeated sweeps do not retry the failed hook throughout the day. Both instances close in finally.
 
 Keep evidence/result.json and daemon output. The unit contracts also cover
 inactive packs, recent waiting work, a reported/running/unknown worker and a
