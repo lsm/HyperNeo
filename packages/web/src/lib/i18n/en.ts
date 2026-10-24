@@ -250,6 +250,8 @@ export const en = {
   'artifact.attached': 'Attached files',
   'artifact.region': 'File preview',
   'artifact.close': 'Close preview',
+  'artifact.closeFile': 'Close {name}',
+  'artifact.moreFiles': 'Other files ({count})',
   'artifact.dismiss': 'Dismiss preview',
   'artifact.back': 'Back',
   'artifact.untitled': 'Preview',

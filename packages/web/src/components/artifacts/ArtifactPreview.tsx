@@ -70,11 +70,13 @@ export function PreviewHeader({
   facts,
   onBack,
   children,
+  titleId = 'artifact-preview-title',
 }: {
   title: string;
   facts?: string;
   onBack: () => void;
   children?: ComponentChildren;
+  titleId?: string;
 }) {
   return (
     <header class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3">
@@ -87,7 +89,7 @@ export function PreviewHeader({
         ←
       </button>
       <div class="min-w-0 flex-1 basis-56">
-        <h1 id="artifact-preview-title" class="truncate text-sm font-medium" title={title}>
+        <h1 id={titleId} class="truncate text-sm font-medium" title={title}>
           {title}
         </h1>
         {facts && <p class="truncate text-xs text-fg-muted">{facts}</p>}
@@ -101,10 +103,14 @@ export function ArtifactPreview({
   artifactId,
   onBack,
   markdownClass,
+  titleId,
+  onMetadata,
 }: {
   artifactId: string;
   onBack: () => void;
   markdownClass?: string;
+  titleId?: string;
+  onMetadata?: (metadata: ArtifactFileMetadata) => void;
 }) {
   const connection = connectionState.value;
   const connected = connection === 'connected';
@@ -139,6 +145,9 @@ export function ArtifactPreview({
   }, [artifactId, connected, lost]);
 
   const metadata = 'metadata' in shown ? shown.metadata : null;
+  useEffect(() => {
+    if (metadata) onMetadata?.(metadata);
+  }, [metadata, onMetadata]);
   const activateLink = (event: Event) => {
     const target = event.target instanceof Element ? event.target : null;
     const url = target?.closest('[data-external-href]')?.getAttribute('data-external-href');
@@ -163,6 +172,7 @@ export function ArtifactPreview({
       aria-label={t('artifact.region')}
     >
       <PreviewHeader
+        titleId={titleId}
         title={metadata?.artifact.title ?? t('artifact.untitled')}
         facts={
           metadata

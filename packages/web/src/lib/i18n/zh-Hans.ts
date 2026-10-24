@@ -249,6 +249,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.attached': '附带的文件',
   'artifact.region': '文件预览',
   'artifact.close': '关闭预览',
+  'artifact.closeFile': '关闭文件：{name}',
+  'artifact.moreFiles': '其他文件（{count}）',
   'artifact.dismiss': '收起预览',
   'artifact.back': '返回',
   'artifact.untitled': '预览',
