@@ -1458,10 +1458,7 @@ export class TaskAgentManager {
             this.forgetAgentSession(sessionId);
             this.cancelBySessionId(sessionId);
             try {
-              this.config.db
-                .getDatabase()
-                .prepare('DELETE FROM sessions WHERE id = ?')
-                .run(sessionId);
+              await this.config.db.deleteSession(sessionId);
             } catch (err) {
               log.warn(
                 `TaskAgentManager: failed to delete never-streamed session row ${sessionId}: ${err instanceof Error ? err.message : String(err)}`

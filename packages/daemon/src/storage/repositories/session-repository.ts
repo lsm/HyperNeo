@@ -618,6 +618,10 @@ export class SessionRepository {
     this.db.prepare(`UPDATE sessions SET parent_id = ? WHERE id = ?`).run(parentId, id);
   }
 
+  setLastError(id: string, lastError: string | null): void {
+    this.db.prepare(`UPDATE sessions SET last_error = ? WHERE id = ?`).run(lastError, id);
+  }
+
   archiveSession(id: string): void {
     this.updateSession(id, { status: 'archived' });
   }
