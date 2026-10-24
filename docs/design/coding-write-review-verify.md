@@ -10,22 +10,20 @@ flows. Clarify missing criteria before dispatch; the author cannot broaden them.
 | Step | Actor | Required result |
 | --- | --- | --- |
 | Write | Worker session | Implements the task, maintains the repo's verify skill, opens the PR and addresses findings. Its own verification helps but cannot approve QA. |
-| Review | Repo review bot, otherwise a fresh review session, or a human | A code-soundness verdict. Reuse the review contract's two lenses: one pass hunting bugs/integration risks, one checking scope against the request. Static review does not replace running the change. |
+| Review | Repo review bot, otherwise a fresh review session, or a human | A soundness verdict covering every required review-contract dimension, with explicit bug/integration and goal/scope passes. Static review does not replace running the change. |
 | Verify | Independent session, distinct from both author and reviewer | Evidence answering “did this do what the human asked?” and “did it change anything else?” Never the author reviewing its own report. |
 
-A coding-pack provenance preference is **on by default**; the user may turn it
-off, for example when writing the code themselves. When on, every PR description
-includes `Author: <model> via <harness>` with the actual model and harness. The pack
-reads it before assigning review; missing or ambiguous provenance asks the author
-to correct it rather than guessing. An AI reviewer must use a **different model**;
-a different harness is preferred too. Best: both differ (for example a Codex model
-via Codex CLI reviewing Claude Code work). Fallback: same harness, different model.
-The same model through another harness does not qualify. Record reviewer identity.
-A human reviewer is an independent alternative. If a required repo bot cannot
-satisfy diversity, retain its approval and add a qualifying reviewer; unavailable
-alternatives block for configuration. When the preference is off, no Author line
-is required and reviewer diversity is not enforced. Existing repository review
-and sign-off rules remain mandatory in either mode.
+Provenance is a coding-pack preference, **on by default**, user-disableable.
+Use the existing first-use preference question; until answered, explicitly fall
+back to on without storing a value or marking the preference answered. When on,
+require `Author: <model> via <harness>` with actual identity; ask the author to fix
+missing/ambiguous provenance before assigning review. Require a **different model**
+and prefer a different harness too (for example Codex CLI reviewing Claude Code).
+Fallback: same harness, different model. Same model/different harness cannot qualify.
+Record reviewer identity; a human is an alternative. Retain any required repo bot
+and add a qualifying reviewer if needed; unavailable alternatives block for
+configuration. When off, no Author line is required and reviewer diversity is not enforced.
+Repo review/sign-off rules remain mandatory.
 
 ## Independent QA
 
@@ -58,9 +56,12 @@ does not authorize it. Findings go to the author with reproducible evidence.
 Attach review and QA facts to the existing PR/todo ledger: PR identity, exact
 head, actor identity, verdict, acceptance-contract reference and durable evidence
 links (CI/run/artifact identifiers). The pack reads the actual review verdict and
-QA artifacts; an author's “done” message or a link without results cannot open the gate. A new push
-invalidates **both** approvals. QA is bound to the PR head only; CI covers
-integration with the base. A rebase changes the head and reruns QA.
+QA artifacts; an author's “done” message or a link without results cannot open the gate.
+A new push invalidates **both** approvals. QA is bound to the PR head only; CI covers
+integration with the base. This explicitly proposes replacing the reused QA
+contract's base-integration and base-advance revalidation rules for coding-pack
+runs; align that contract before wiring this pipeline. A rebase changes the head
+and reruns QA.
 
 Merge requires matching-head passing review and QA, green required CI, resolved
 findings and any repository human sign-off. Re-read the head immediately before
