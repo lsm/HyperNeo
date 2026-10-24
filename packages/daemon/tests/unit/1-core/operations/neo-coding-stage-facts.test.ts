@@ -10,7 +10,7 @@ const url = 'https://github.com/synthetic/stages/pull/7';
 const reviewer = {
   kind: 'agent',
   id: 'reviewer-1',
-  model: 'Model B',
+  model: 'claude-opus-5-5',
   harness: 'Harness B',
 } as const;
 const fact: CodingStageFact = {
@@ -94,7 +94,7 @@ describe('coding provenance policy', () => {
   test('defaults on without saving, requires different model, prefers different harness, allows human', () => {
     const { db, ledger } = setup();
     try {
-      const body = 'Author: Model A via Harness A';
+      const body = 'Author: GPT-6 via Harness A';
       expect(ledger.reviewerPolicy('synthetic/stages', body, reviewer)).toMatchObject({
         qualifies: true,
         preferred: true,
@@ -103,7 +103,7 @@ describe('coding provenance policy', () => {
         ledger.reviewerPolicy('synthetic/stages', body, { ...reviewer, harness: 'Harness A' })
       ).toMatchObject({ qualifies: true, preferred: false });
       expect(
-        ledger.reviewerPolicy('synthetic/stages', body, { ...reviewer, model: ' model  a ' })
+        ledger.reviewerPolicy('synthetic/stages', body, { ...reviewer, model: ' GPT-6 ' })
       ).toMatchObject({ qualifies: false });
       expect(
         ledger.reviewerPolicy('synthetic/stages', body, { kind: 'human', id: 'person' })
@@ -120,6 +120,19 @@ describe('coding provenance policy', () => {
           qualifies: false,
         });
       }
+      for (const [author, model] of [
+        ['GPT-6', 'gpt-6-2026-09'],
+        ['GPT-6', 'openai/gpt-6'],
+        ['Claude Opus 5.5', 'claude-opus-5-5'],
+        ['GPT-6', 'unidentified-model'],
+        ['unidentified-model', 'claude-opus-5-5'],
+      ])
+        expect(
+          ledger.reviewerPolicy('synthetic/stages', `Author: ${author} via A`, {
+            ...reviewer,
+            model,
+          })
+        ).toMatchObject({ qualifies: false });
       expect(db.prepare('SELECT * FROM neo_pack_preferences').all()).toEqual([]);
       db.prepare(
         "INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', 'synthetic/stages', 'provenance', 'false', 'human', 1)"

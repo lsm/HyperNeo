@@ -16,7 +16,7 @@ assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
 const url = 'https://github.com/synthetic/stages/pull/7';
-const reviewer = { kind: 'agent', id: 'review-session', model: 'Model B', harness: 'Harness B' } as const;
+const reviewer = { kind: 'agent', id: 'review-session', model: 'claude-opus-5-5', harness: 'Harness B' } as const;
 const fact: CodingStageFact = { url, head: 'head-a', stage: 'review', actor: reviewer, verdict: 'pass', acceptanceContract: 'artifact:acceptance-7', evidence: ['https://ci.example/run/7'] };
 const setting = { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/stages' }, key: 'provenance' };
 const row = (head: string) => ({ repo: 'synthetic/stages', number: 7, head, title: 'Stages', branch: 'stages', state: 'waiting_human' as const, closedAt: null });
@@ -51,12 +51,17 @@ try {
         assert.equal(todos.stages('todo-7').length, 2);
         assert.deepEqual(await rpc('pack.preferences.get', setting), { preference: null });
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, false);
-        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: Model A via Harness A', reviewer).preferred, true);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer).preferred, true);
         const proposal = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'stage-provenance', values: [{ ...setting, value: true }] }) as { ok: boolean; questionId: string };
         assert.equal(proposal.ok, true);
         assert(proposal.questionId);
         assert.deepEqual(await rpc('pack.preferences.list', {}), { preferences: [] });
-        assert.deepEqual(await rpc('pack.preferences.set', { ...setting, value: false }), { ok: true });
+        const aliases = ['gpt-6-2026-09', 'openai/gpt-6', 'unidentified-model'].map(model => ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via A', { ...reviewer, model }));
+        await rpc('neo.question.answer', { questionId: proposal.questionId, answer: 'no' });
+        const afterNo = await rpc('pack.preferences.get', setting) as { preference: { value: unknown } | null };
+        evidence.push({ aliases, afterNo });
+        assert.equal(afterNo.preference?.value, false, 'No must disable provenance');
+        assert(aliases.every(policy => !policy.qualifies), 'Aliases and unknown models must not qualify');
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, true);
       } else {
         evidence.push({ phase, stages: todos.stages('todo-7') });
