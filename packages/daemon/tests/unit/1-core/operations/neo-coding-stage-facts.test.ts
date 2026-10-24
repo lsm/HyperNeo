@@ -2,7 +2,10 @@ import { describe, test, expect } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
-import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import {
+  CodingPrLedgerRepository,
+  reconcileCodingPrLedger,
+} from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { CodingStageFact } from '../../../../src/lib/neo/packs/coding/stage-facts.ts';
@@ -224,4 +227,59 @@ describe('provenance preference answers', () => {
       }
     }
   );
+});
+
+describe('per-repository stage head observations', () => {
+  test('a second repo read supersedes a todo read started during the first repo read', async () => {
+    const { db, ledger } = setup();
+    const originalNow = Date.now;
+    let clock = 100;
+    Date.now = () => clock;
+    try {
+      await reconcileCodingPrLedger(
+        ledger,
+        ['synthetic/first', 'synthetic/stages'],
+        async (repo) => {
+          if (repo === 'synthetic/first') {
+            ledger.stageFacts.observeHead(url, 'head-a', 150);
+            clock = 200;
+          }
+          return {
+            data: {
+              rateLimit: { remaining: 4000 },
+              repository: {
+                nameWithOwner: repo,
+                open: {
+                  pageInfo: { hasNextPage: false },
+                  nodes:
+                    repo === 'synthetic/stages'
+                      ? [
+                          {
+                            number: 7,
+                            title: 'Stages',
+                            headRefName: 'stages',
+                            headRefOid: 'head-b',
+                            state: 'OPEN',
+                            isDraft: false,
+                            mergeable: 'MERGEABLE',
+                            reviewDecision: null,
+                            closedAt: null,
+                          },
+                        ]
+                      : [],
+                },
+                done: { nodes: [] },
+              },
+            },
+          };
+        },
+        100
+      );
+      expect(ledger.recordStage(fact)).toBe(false);
+      expect(ledger.recordStage({ ...fact, head: 'head-b' })).toBe(true);
+    } finally {
+      Date.now = originalNow;
+      db.close();
+    }
+  });
 });
