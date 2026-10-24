@@ -38,7 +38,7 @@ const Reviews = z.array(
       state: z.string(),
       commit_id: z.string(),
       html_url: z.string().url(),
-      user: z.object({ login: z.string(), type: z.string() }),
+      user: z.object({ login: z.string(), type: z.string() }).nullable(),
     })
   )
 );
@@ -165,7 +165,7 @@ export function createCodingMergeOperation(deps: Deps) {
             reviewBot: state.policy.reviewBot,
             reviews: reviews.map((r) => ({
               state: r.state,
-              author: { login: r.user.login },
+              author: r.user,
               commit: { oid: r.commit_id },
             })),
           },
@@ -173,13 +173,13 @@ export function createCodingMergeOperation(deps: Deps) {
         );
         const latest = new Map<string, (typeof reviews)[number]>();
         for (const r of reviews)
-          if (!['COMMENTED', 'PENDING'].includes(r.state))
+          if (r.user && !['COMMENTED', 'PENDING'].includes(r.state))
             latest.set(r.user.login.toLowerCase(), r);
         const human = [...latest.values()].filter(
           (r) =>
             r.state === 'APPROVED' &&
             r.commit_id === pr.headRefOid &&
-            r.user.type === 'User' &&
+            r.user?.type === 'User' &&
             r.user.login.toLowerCase() !== pr.author.login.toLowerCase()
         );
         const signoff = state.policy.humanSignoff ?? [];
@@ -212,7 +212,7 @@ export function createCodingMergeOperation(deps: Deps) {
               ...(route.kind === 'bot'
                 ? reviews.filter(
                     (r) =>
-                      r.user.login.toLowerCase() === route.login.toLowerCase() &&
+                      r.user?.login.toLowerCase() === route.login.toLowerCase() &&
                       r.commit_id === route.head &&
                       r.state === 'APPROVED'
                   )

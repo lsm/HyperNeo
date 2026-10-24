@@ -13,7 +13,7 @@ const requests: string[] = [], commands: unknown[] = [];
 const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(request) {
   requests.push(request.url);
   const page = new URL(request.url).searchParams.get('page') ?? '1';
-  return Response.json([{ page }], { headers: page === '1' ? { Link: `<http://127.0.0.1:${server.port}/reviews?page=2>; rel="next"` } : {} });
+  return Response.json(page === '1' ? Array.from({ length: 100 }, (_, index) => ({ id: index })) : [{ id: 100 }], { headers: page === '1' ? { Link: `<http://127.0.0.1:${server.port}/reviews?page=2>; rel="next"` } : {} });
 } });
 assert.notEqual(server.port, 8399);
 process.env.GH_TOKEN = 'synthetic-localhost-only';
@@ -21,9 +21,9 @@ let result: unknown;
 try {
   result = await runGhJson([gh, 'api', `http://127.0.0.1:${server.port}/reviews`, '--paginate', '--slurp'], run,
     (args, options) => { commands.push(args); return spawnProcess(args, options); });
-  assert.deepEqual(result, { ok: true, data: [[{ page: '1' }], [{ page: '2' }]] });
+  assert.deepEqual(result, { ok: true, data: [Array.from({ length: 100 }, (_, id) => ({ id })), [{ id: 100 }]] });
   assert.equal(requests.length, 2);
-  console.log('PASS: installed gh paginates and slurps two real local HTTP responses through runGhJson.');
+  console.log('PASS: installed gh paginates and slurps 101 records across two real local HTTP pages through runGhJson.');
 } finally {
   server.stop(true);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ requests, commands, result }, null, 2));

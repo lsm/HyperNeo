@@ -171,7 +171,7 @@ export async function runGhJson(
   let proc;
   try {
     const requestArgs =
-      args[1] === 'api' && !args.includes('--include') && !args.includes('-i')
+      args[1] === 'api' && !['--slurp', '--include', '-i'].some((flag) => args.includes(flag))
         ? [...args, '--include']
         : args;
     proc = spawnImpl(requestArgs, {

@@ -22,7 +22,10 @@ Only a passing case records a receipt and returns the exact SHA-pinned manual
 squash command. It executes no merge and leaves the todo doing.
 
 Keep `evidence/observed.json` (`verified: true`) and `evidence/gh.jsonl` outside
-the worktree. Unit contracts also cover the no-bot assigned reviewer, author/ref
+the worktree. The fixture preserves a null-user historical review and puts the identified bot
+and human approvals on later pages. Use `coding-review-pages.md` for installed
+gh handling 101 records over two actual local HTTP pages through `runGhJson`.
+Unit contracts also cover the no-bot assigned reviewer, author/ref
 changes, policy changes, latched failure, path/label sign-off and inaccessible
 facts. The fixture uses `neo.coding.assign` for the bot route and seeds only the
 synthetic Verify assignment; it does not claim a real model or native-harness run.
