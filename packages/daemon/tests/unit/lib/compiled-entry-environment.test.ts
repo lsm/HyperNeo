@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 
@@ -19,9 +19,9 @@ test.each(['prod', 'daemon'])(
     const builder = join(run, 'build.ts');
     const guard = join(root, 'packages/daemon/src/lib/credential-discovery.ts');
     const report = `import { usesHumanLogin } from ${JSON.stringify(guard)};
-    export function startProdServer() {
+    export function startProdServer(config) {
       const environment = process.env;
-      console.log('COMPILED_ENTRY_ENVIRONMENT=' + JSON.stringify({ nodeEnv: environment.NODE_ENV, usesHumanLogin: usesHumanLogin() }));
+      console.log('COMPILED_ENTRY_ENVIRONMENT=' + JSON.stringify({ nodeEnv: environment.NODE_ENV, configEnv: config.nodeEnv, usesHumanLogin: usesHumanLogin() }));
     }
     export const startDaemonServer = startProdServer;
     export const installProcessFatalLogging = () => {};
@@ -46,7 +46,7 @@ test.each(['prod', 'daemon'])(
         `
       const result = await Bun.build({
         entrypoints: [${JSON.stringify(join(root, 'packages/cli', `${entry}-entry.ts`))}],
-        target: 'bun', minify: true, compile: { outfile: ${JSON.stringify(binary)} },
+        target: 'bun', compile: { outfile: ${JSON.stringify(binary)} },
         plugins: [{ name: 'synthetic-server-boundary', setup(build) {
           build.onLoad({ filter: /(?:prod-server-embedded|daemon-server|mcp-proxy-entry|session-cli|process-fatal-logger)\\.ts$/ }, () => ({ contents: ${JSON.stringify(report)}, loader: 'ts' }));
         } }],
@@ -55,6 +55,12 @@ test.each(['prod', 'daemon'])(
     `
       );
       execFileSync(bun, [builder], { cwd: root, env, timeout: 30000, stdio: 'pipe' });
+      const evidence = process.env.HYPERNEO_TEST_EVIDENCE_DIR;
+      if (evidence) {
+        mkdirSync(evidence, { recursive: true });
+        copyFileSync(binary, join(evidence, `${entry}-compiled`));
+        copyFileSync(builder, join(evidence, `${entry}-builder.ts`));
+      }
       for (const [index, input] of [
         'test',
         undefined,
@@ -79,8 +85,27 @@ test.each(['prod', 'daemon'])(
           .split('\n')
           .find((line) => line.startsWith('COMPILED_ENTRY_ENVIRONMENT='));
         expect(line).toBeDefined();
-        expect(JSON.parse(line!.slice('COMPILED_ENTRY_ENVIRONMENT='.length))).toEqual({
+        const observed = JSON.parse(line!.slice('COMPILED_ENTRY_ENVIRONMENT='.length));
+        console.log(entry, input, observed, {
+          discoveryAttempted: existsSync(join(data, 'security-attempts')),
+        });
+        if (evidence)
+          writeFileSync(
+            join(evidence, `${entry}-${index}.json`),
+            JSON.stringify(
+              {
+                input: input ?? null,
+                ...observed,
+                discoveryAttempted: existsSync(join(data, 'security-attempts')),
+              },
+              null,
+              2
+            )
+          );
+        if (input === 'test') expect(existsSync(join(data, 'security-attempts'))).toBe(false);
+        expect(observed).toEqual({
           nodeEnv: input === 'test' ? 'test' : 'production',
+          configEnv: input === 'test' ? 'test' : 'production',
           usesHumanLogin: input !== 'test',
         });
         if (input === 'test') expect(existsSync(join(data, 'security-attempts'))).toBe(false);
