@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import type { Database } from './sqlite-compat.ts';
@@ -73,9 +74,16 @@ export class SdkBodyCopyTerminalError extends Error {
 }
 
 export function sdkBodyBackupChannel(dbPath: string, backupPath: string, signal: AbortSignal) {
-  const worker = new Worker(new URL('./sdk-message-body-backup-worker.ts', import.meta.url).href, {
-    type: 'module',
-  });
+  const worker = new Worker(
+    runtimeWorkerUrl(
+      './sdk-message-body-backup-worker.ts',
+      './daemon/src/storage/sdk-message-body-backup-worker.ts',
+      import.meta.url
+    ).href,
+    {
+      type: 'module',
+    }
+  );
   let seq = 0;
   let fault: Error | undefined;
   const pending = new Map<

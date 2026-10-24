@@ -18,7 +18,17 @@
         "vitest.online.config.ts",
         "scripts/**/*.ts",
         "tests/**/*.ts",
-        "claude-desktop-bridge/hooks/register.ts"
+        "claude-desktop-bridge/hooks/register.ts",
+        "src/lib/db-query/db-query-worker.ts",
+        "src/lib/event-loop-watchdog-worker.ts",
+        "src/lib/message-search-merge-worker.ts",
+        "src/lib/message-search-worker.ts",
+        "src/lib/neo/project-mirror-worker.ts",
+        "src/storage/db-gateway/db-gateway-worker.ts",
+        "src/storage/repositories/agent-memory-embed-worker.ts",
+        "src/storage/sdk-message-body-admission-worker.ts",
+        "src/storage/sdk-message-body-backup-worker.ts",
+        "src/storage/sdk-status-worker.ts"
       ],
       "project": ["**/*.ts"]
     },

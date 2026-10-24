@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from './sqlite-compat.ts';
 
@@ -78,9 +79,16 @@ export function startSdkBodyWriteAdmission(
   dbPath: string,
   report: (mode: SdkBodyWriteMode) => void,
   createWorker = () =>
-    new Worker(new URL('./sdk-message-body-admission-worker.ts', import.meta.url).href, {
-      type: 'module',
-    })
+    new Worker(
+      runtimeWorkerUrl(
+        './sdk-message-body-admission-worker.ts',
+        './daemon/src/storage/sdk-message-body-admission-worker.ts',
+        import.meta.url
+      ).href,
+      {
+        type: 'module',
+      }
+    )
 ): () => void {
   modes.set(db, false);
   const reason = decide({ ...copyFacts(db), missing: false });

@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../runtime-worker-url.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type { DbScopeType } from './scope-config.ts';
 import {
@@ -35,9 +36,16 @@ function workerError(error: string | { code?: string; message: string }): Error 
 }
 
 function createDbQueryWorker(): Worker {
-  return new Worker(new URL('./db-query-worker.ts', import.meta.url).href, {
-    type: 'module',
-  });
+  return new Worker(
+    runtimeWorkerUrl(
+      './db-query-worker.ts',
+      './daemon/src/lib/db-query/db-query-worker.ts',
+      import.meta.url
+    ).href,
+    {
+      type: 'module',
+    }
+  );
 }
 
 export class DbQueryWorkerUnavailableError extends Error {

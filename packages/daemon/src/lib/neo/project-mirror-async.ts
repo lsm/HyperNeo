@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../runtime-worker-url.ts';
 import { getConfig } from '../../config.ts';
 import {
   forwardSQLiteWorkerLog,
@@ -11,7 +12,14 @@ import { mirrorNeoWorkspaceProjects } from './project-mirror.ts';
 
 const pending = new Map<string, Promise<boolean>>();
 const createWorker = () =>
-  new Worker(new URL('./project-mirror-worker.ts', import.meta.url).href, { type: 'module' });
+  new Worker(
+    runtimeWorkerUrl(
+      './project-mirror-worker.ts',
+      './daemon/src/lib/neo/project-mirror-worker.ts',
+      import.meta.url
+    ).href,
+    { type: 'module' }
+  );
 
 export function mirrorNeoWorkspaceProjectsAsync(
   db: Pick<Database, 'getDbPath' | 'getDatabase'>,

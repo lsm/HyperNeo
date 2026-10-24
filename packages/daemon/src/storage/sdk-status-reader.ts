@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
 import type { PendingTurn } from './turn-vectors.ts';
 import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
@@ -153,7 +154,14 @@ export class SDKStatusReader {
   constructor(
     private readonly dbPath: string,
     private readonly createWorker = () =>
-      new Worker(new URL('./sdk-status-worker.ts', import.meta.url).href, { type: 'module' }),
+      new Worker(
+        runtimeWorkerUrl(
+          './sdk-status-worker.ts',
+          './daemon/src/storage/sdk-status-worker.ts',
+          import.meta.url
+        ).href,
+        { type: 'module' }
+      ),
     private readonly timeoutMs = 30_000,
     private readonly queryObservability?: SQLiteQueryObservabilityOptions,
     private readonly beforeRead?: (args: SDKReadArgs) => Promise<void>
