@@ -16,6 +16,10 @@ import {
   ClaudeInboxRouteRepository,
   recordClaudeInboxRoute,
 } from '../../../../src/storage/repositories/claude-inbox-route-repository';
+import {
+  removeRemoteDaemonSecret,
+  saveRemoteDaemonSecret,
+} from '../../../../src/storage/repositories/remote-daemon-secret-repository';
 import { recordOperationRefusal } from '../../../../src/storage/repositories/operation-refusal-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -348,6 +352,8 @@ describe('DbGateway', () => {
     expect(DB_OPS.get(recordWouldRefuse.name)).toBe(recordWouldRefuse);
     expect(DB_OPS.get(recordOperationRefusal.name)).toBe(recordOperationRefusal);
     expect(DB_OPS.get(recordClaudeInboxRoute.name)).toBe(recordClaudeInboxRoute);
+    expect(DB_OPS.get(saveRemoteDaemonSecret.name)).toBe(saveRemoteDaemonSecret);
+    expect(DB_OPS.get(removeRemoteDaemonSecret.name)).toBe(removeRemoteDaemonSecret);
   });
 
   test('a Claude inbox route is upserted through the gateway', async () => {
