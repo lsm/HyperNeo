@@ -25,11 +25,11 @@ const find = (family) => {
   return model;
 };
 const start = find('sonnet'), picked = find('haiku');
-assert.equal(rpc('neo.preferences.set', { model: start.id, provider: 'anthropic', thinkingLevel: 'off' }).ok, true);
+assert.equal(rpc('neo.preferences.set', { model: start.id, provider: 'anthropic', thinkingLevel: 'off', autoCompactPercent: 70 }).ok, true);
 const preference = () => rpc('neo.snapshot').preferences;
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
-const evidence = { start, picked, observations: [] };
+const evidence = { start, picked, seeded: preference(), observations: [] };
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
   await page.goto(`http://127.0.0.1:${port}/neo`);
@@ -44,14 +44,16 @@ try {
   assert.equal(await page.getByText(/Restart Neo/).count(), 0);
   evidence.menuListsModelsAndThinkingOnly = true;
 
-  await option(picked).click();
-  await assertEventually(() => preference().model === picked.id);
   await menu.getByRole('slider', { name: 'Thinking', exact: true }).evaluate((slider) => {
     slider.value = '2';
     slider.dispatchEvent(new Event('input', { bubbles: true }));
     slider.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await assertEventually(() => preference().thinkingLevel === 'think16k');
+  evidence.afterThinking = preference();
+  assert.deepEqual([evidence.afterThinking.model, evidence.afterThinking.autoCompactPercent], [start.id, 70]);
+  await option(picked).click();
+  await assertEventually(() => preference().model === picked.id);
   evidence.saved = preference();
   assert.deepEqual([evidence.saved.model, evidence.saved.provider, evidence.saved.thinkingLevel], [picked.id, 'anthropic', 'think16k']);
 
@@ -67,7 +69,7 @@ try {
     await page.screenshot({ path: `${run}/evidence/neo-model-menu-${width}.png`, animations: 'disabled' });
     evidence.observations.push({ width, pickedSelected: true, thinkingLabel: label, menuFits: true });
   }
-  console.log('PASS: /neo menu lists models and thinking only, picks save Neo preferences, selection survives reload at 1280/390 px.');
+  console.log('PASS: /neo menu lists models and thinking only, picks save Neo preferences keeping the auto-compact percent on a thinking change, selection survives reload at 1280/390 px.');
 } finally {
   writeFileSync(`${run}/evidence/neo-model-menu.json`, JSON.stringify(evidence, null, 2));
   await browser.close();

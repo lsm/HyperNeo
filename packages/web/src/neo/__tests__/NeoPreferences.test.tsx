@@ -90,11 +90,95 @@ describe('Neo preferences', () => {
     await waitFor(() =>
       expect(api.request).toHaveBeenCalledWith('operation.invoke', {
         name: 'neo.preferences.set',
-        input: { model: 'sonnet', provider: 'anthropic', thinkingLevel: 'think16k' },
+        input: { model: 'haiku', provider: 'anthropic', thinkingLevel: 'think16k' },
       })
     );
     expect(api.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
     expect(api.request).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
+  });
+  it('keeps each model’s saved auto-compact percent across /neo picks', async () => {
+    const fallbacks = [
+      {
+        model: 'haiku',
+        provider: 'anthropic',
+        thinkingLevel: 'off' as const,
+        autoCompactPercent: 60,
+      },
+    ];
+    api.request.mockImplementation(async (method: string, params: { input?: object }) =>
+      method === 'operation.invoke'
+        ? { ok: true, preferences: { ...params.input, fallbacks } }
+        : { providers: [] }
+    );
+    render(
+      <NeoPreferences
+        sessionId="neo:root"
+        store={makeStore()}
+        onError={vi.fn()}
+        preference={{
+          model: 'sonnet',
+          provider: 'anthropic',
+          thinkingLevel: 'off',
+          autoCompactPercent: 70,
+          fallbacks,
+          saved: true,
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: {
+          model: 'sonnet',
+          provider: 'anthropic',
+          thinkingLevel: 'think16k',
+          autoCompactPercent: 70,
+        },
+      })
+    );
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: {
+          model: 'haiku',
+          provider: 'anthropic',
+          thinkingLevel: 'think16k',
+          autoCompactPercent: 60,
+        },
+      })
+    );
+  });
+  it('a thinking change right after a /neo model pick keeps the picked model', async () => {
+    api.request.mockImplementation(async (method: string, params: { input?: unknown }) =>
+      method === 'operation.invoke' ? { ok: true, preferences: params.input } : { providers: [] }
+    );
+    render(
+      <NeoPreferences
+        sessionId="neo:root"
+        store={makeStore()}
+        onError={vi.fn()}
+        preference={{ model: 'sonnet', provider: 'anthropic', thinkingLevel: 'off', saved: true }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
+    const slider = screen.getByRole('slider', { name: 'Thinking' }) as HTMLInputElement;
+    await waitFor(() => expect(slider.disabled).toBe(false));
+    fireEvent.change(slider, { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenLastCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: { model: 'haiku', provider: 'anthropic', thinkingLevel: 'think16k' },
+      })
+    );
   });
   it('closes the Neo menu on Escape and restores trigger focus', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);

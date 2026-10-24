@@ -11,13 +11,14 @@ NODE_PATH=<playwright node_modules> VERIFY_BROWSER=<chrome binary> \
 
 The launcher starts an `env -i` daemon with `NODE_ENV=test`, a fresh HOME, data
 dir and DB, and a local mock Anthropic API. The helper creates the synthetic
-Anthropic provider on that daemon only, saves Sonnet as Neo's starting model,
-then drives `/neo`:
+Anthropic provider on that daemon only, saves Sonnet with a 70% auto-compact
+percent as Neo's starting model, then drives `/neo`:
 
 - The composer's "Model and thinking" menu lists models and a Thinking slider.
   It has no link and no Restart Neo.
-- Picking Haiku and moving Thinking to 16K are read back from `neo.snapshot`
-  preferences (`neo.preferences.set`), not a per-session switch.
+- Moving Thinking to 16K and then picking Haiku are read back from
+  `neo.snapshot` preferences (`neo.preferences.set`), not a per-session switch.
+  The thinking-only change keeps Sonnet's saved 70%.
 - After reload at 1280px and 390px the menu shows Haiku selected and fits the
   viewport.
 

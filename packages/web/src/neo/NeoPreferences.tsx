@@ -39,6 +39,9 @@ export function NeoPreferences({
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [auth, setAuth] = useState(new Map<string, ProviderAuthStatus>());
+  const [saved, setSaved] = useState<NeoModelPreference | null>(null);
+  useEffect(() => setSaved(null), [preference]);
+  const neo = forSession ? undefined : (saved ?? preference);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const connected = connectionState.value === 'connected';
@@ -49,18 +52,16 @@ export function NeoPreferences({
           item.provider === pending.provider
       )
     : undefined;
-  const chosen =
-    preference && !forSession
-      ? model.availableModels.find(
-          (item) =>
-            (item.id === preference.model || item.alias === preference.model) &&
-            item.provider === preference.provider
-        )
-      : undefined;
+  const chosen = neo
+    ? model.availableModels.find(
+        (item) =>
+          (item.id === neo.model || item.alias === neo.model) && item.provider === neo.provider
+      )
+    : undefined;
   const info = chosen ?? model.currentModelInfo;
-  const currentId = (!forSession && preference?.model) || model.currentModel;
+  const currentId = neo?.model || model.currentModel;
   const level = normalizeThinkingLevel(
-    (!forSession && preference?.thinkingLevel) || store.sessionInfo.value?.config?.thinkingLevel
+    neo?.thinkingLevel || store.sessionInfo.value?.config?.thinkingLevel
   );
   const options = THINKING_OPTIONS;
   const busy = saving || model.loading || !connected;
@@ -110,10 +111,18 @@ export function NeoPreferences({
         await Promise.all([model.reload(), store.refresh()]);
         return;
       }
+      const autoCompactPercent = [neo, ...(neo?.fallbacks ?? [])].find(
+        (entry) => entry?.model === next.model && entry.provider === next.provider
+      )?.autoCompactPercent;
       const result = await invokeOperation<
         { ok: true; preferences: NeoModelPreference } | { ok: false; reason: string }
-      >(hub, 'neo.preferences.set', next);
+      >(
+        hub,
+        'neo.preferences.set',
+        autoCompactPercent === undefined ? next : { ...next, autoCompactPercent }
+      );
       if (!result.ok) throw new Error(result.reason);
+      setSaved(result.preferences);
       onSaved?.();
       await store.refresh();
     } catch (error) {
