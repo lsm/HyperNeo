@@ -14,6 +14,8 @@ import { createCodingAncestryReader } from './coding/ancestry-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './coding/deploy-checks.ts';
 import { createCodingPack } from './coding/pack.ts';
 import { CodingAssignmentsRepository } from './coding/assignments.ts';
+import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
+import type { NeoWorkPrReader } from './coding/work-prs.ts';
 import { createCodingResultOperation } from './coding/result-operation.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
 import { CodingPrLedgerRepository } from './coding/pr-ledger.ts';
@@ -29,24 +31,27 @@ import { createLifeAdminPack } from './life-admin/pack.ts';
 export function createNeoCodingReaders(db: () => Database) {
   const readMerge = createCodingMergeReader(db);
   const readAncestry = createCodingAncestryReader(db);
-  const readDeploys: NeoDeployReader = (urls) =>
+  const readPrs = createCodingWorkPrReader(db);
+  const readDeploys = (urls: readonly string[], heads?: NeoWorkPrReader) =>
     readGithubDeploys(
       urls,
       () =>
         readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons),
       undefined,
       readMerge,
-      readAncestry
+      readAncestry,
+      heads
     );
   return {
     readPrState: createCodingPrStateReader(db),
     readConnectorPr: createCodingConnectorPrReader(db),
     readReviewThreads: createCodingReviewThreadReader(db),
-    readPrs: createCodingWorkPrReader(db),
+    readPrs,
     readBranchPrs: createCodingBranchPrReader(db),
     readRefStates: createCodingRefReader(() => new CodingPrLedgerRepository(db()).refFacts),
     listGithub: createCodingQueryReader(db),
     readDeploys,
+    readDeliveryDeploys: ((urls) => readDeploys(urls, readPrs)) as NeoDeployReader,
   };
 }
 
@@ -92,6 +97,11 @@ export function createNeoService(...args: NeoServiceArgs) {
       });
       coding.operations = [
         ...(coding.operations ?? []),
+        createCodingSmokeOperation(
+          todoPrs.deliveryFacts,
+          new CodingAssignmentsRepository(db.getDatabase()),
+          (urls) => configured.readDeliveryDeploys(urls)
+        ),
         createCodingResultOperation(
           new CodingAssignmentsRepository(db.getDatabase()),
           new CodingPrLedgerRepository(db.getDatabase())
