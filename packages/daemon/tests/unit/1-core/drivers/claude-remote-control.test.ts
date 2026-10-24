@@ -380,32 +380,38 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     }
   );
 
-  test('a failed retry reports the receiver current mode and reason', async () => {
-    write(record('t1', { cwd: '/Users/test', permissionMode: 'acceptEdits' }));
-    live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
-    const base = deps();
-    const result = await runClaudeDesktopWake(
-      target,
-      'Refused marker',
-      {
-        ...base,
-        sendInbox: async () => ({ ok: false, reason: 'not_delivered', detail: 'direct held' }),
-        spawn: (args, options) => ({
-          ...base.spawn(args, options),
-          exited: Promise.resolve(1),
-          stderr: new Response('relay held').body,
-        }),
-      },
-      { from: 'session:origin', caller: { source: 'rpc' } }
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      reason: 'not_delivered',
-      detail: expect.stringContaining('acceptEdits'),
-    });
-    if (!result.ok) expect(result.detail).toContain('relay held');
-    expect(spawned).toHaveLength(1);
-  });
+  test.each([false, true])(
+    'a failed retry reports mode and reason after inbox throws: %s',
+    async (throws) => {
+      write(record('t1', { cwd: '/Users/test', permissionMode: 'acceptEdits' }));
+      live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
+      const base = deps();
+      const result = await runClaudeDesktopWake(
+        target,
+        'Refused marker',
+        {
+          ...base,
+          sendInbox: async () => {
+            if (throws) throw new Error('direct inbox exception');
+            return { ok: false, reason: 'not_delivered', detail: 'direct held' };
+          },
+          spawn: (args, options) => ({
+            ...base.spawn(args, options),
+            exited: Promise.resolve(1),
+            stderr: new Response('relay held').body,
+          }),
+        },
+        { from: 'session:origin', caller: { source: 'rpc' } }
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining('acceptEdits'),
+      });
+      if (!result.ok) expect(result.detail).toContain('relay held');
+      expect(spawned).toHaveLength(1);
+    }
+  );
 
   test('a stopped auto Desktop target runs a headless turn without a warm spawn', async () => {
     write(record('t1', { cwd: '/Users/test', permissionMode: 'auto' }));
