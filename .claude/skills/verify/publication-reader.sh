@@ -10,6 +10,7 @@ cd "$REPO"
 git rev-parse HEAD > "$RUN/evidence/head.txt"
 cd packages/daemon
 env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$RUN/bin:$PATH" NODE_ENV=test \
+  HYPERNEO_TEST_DISABLE_SANDBOX="${HYPERNEO_TEST_DISABLE_SANDBOX:-0}" \
   VERIFY_EVIDENCE_DIR="$RUN/evidence" node_modules/.bin/vitest run --config vitest.online.config.ts \
   tests/online/convo/neo-publication-sdk.test.ts > "$RUN/evidence/sdk.log" 2>&1
 cd ../web

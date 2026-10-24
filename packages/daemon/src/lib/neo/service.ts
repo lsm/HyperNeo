@@ -1,3 +1,4 @@
+import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -513,6 +514,7 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
   }
 

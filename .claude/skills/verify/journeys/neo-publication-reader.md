@@ -29,3 +29,9 @@ stored publication and the actual web-reader result. `evidence/sdk.log` and
 revisions alongside legacy attributed replies, malformed optional origins,
 public conversation rendering and bounded reads. This is a daemon-to-web-client
 proof plus component rendering; no GUI or browser rendering is claimed.
+
+For the CI-equivalent transport control without OS sandbox probing, run the same
+script with `HYPERNEO_TEST_DISABLE_SANDBOX=1`. This still uses the real SDK,
+loopback model and WebSocket/web reader, but does not claim OS sandbox proof.
+The conversation must contain the one daily count card alongside the scheduled
+wake and exactly one model-authored reply; a plain-text reply adds no publication.

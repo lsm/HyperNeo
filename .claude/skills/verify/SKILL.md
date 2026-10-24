@@ -78,6 +78,10 @@ agent, omit the 8000/8001 preflight loop when it specifies no HTTP mock. Such
 helpers own their ephemeral listeners; the remaining isolated environment and
 data-directory setup applies.
 
+SDK helpers that explicitly support `HYPERNEO_TEST_DISABLE_SANDBOX=1` may use
+that setting for synthetic transport-only checks. Their journey must say so;
+this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
+
 ## Doctor
 
 ```bash
