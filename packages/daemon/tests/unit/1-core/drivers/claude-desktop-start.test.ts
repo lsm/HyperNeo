@@ -63,9 +63,14 @@ describe('claude-desktop start', () => {
     killed = [];
     inbox = [];
     handoffs = 0;
+    vi.stubEnv('HYPERNEO_DATA_DIR', join(dir, 'data'));
+    mkdirSync(join(dir, 'prepared'), { recursive: true });
   });
 
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   function adapter(
     options: {
@@ -318,7 +323,7 @@ describe('claude-desktop start', () => {
       prepareExecution: async () => ({
         ok: true,
         value: {
-          directory: '/fresh/remote-base',
+          directory: join(dir, 'prepared'),
           release: async () => {
             released++;
           },
@@ -331,7 +336,7 @@ describe('claude-desktop start', () => {
     );
     expect(result).toMatchObject({
       ok: false,
-      detail: expect.stringContaining('/fresh/remote-base'),
+      detail: expect.stringContaining(join(dir, 'prepared')),
     });
     expect(!result.ok && result.detail).toContain('local_u1');
     expect(released).toBe(0);
@@ -410,7 +415,7 @@ describe('claude-desktop start', () => {
       prepareExecution: async () => ({
         ok: true,
         value: {
-          directory: '/fresh/remote-base',
+          directory: join(dir, 'prepared'),
           release: async () => {
             throw new Error('Live resource released');
           },
@@ -421,7 +426,7 @@ describe('claude-desktop start', () => {
       { ...request, preparation: { pack: 'coding', parameters: { target: 'dev' } } },
       user
     );
-    expect(cwds).toEqual(['/fresh/remote-base', '/fresh/remote-base']);
+    expect(cwds).toEqual([join(dir, 'prepared'), join(dir, 'prepared')]);
     expect(spawned[0]).not.toContain('--worktree');
     expect(spawned[1]).not.toContain('--worktree');
   });
@@ -435,7 +440,7 @@ describe('claude-desktop start', () => {
         prepareExecution: async () => ({
           ok: true,
           value: {
-            directory: '/fresh/remote-base',
+            directory: join(dir, 'prepared'),
             release: async () => {
               released++;
             },
@@ -450,6 +455,102 @@ describe('claude-desktop start', () => {
       expect(released).toBe(1);
     }
   );
+
+  test('prepared Desktop workers keep native path denies outside main across later siblings', async () => {
+    const main = join(dir, 'source');
+    mkdirSync(main);
+    const start = async (title: string) => {
+      let destination = '';
+      const result = await adapter({
+        prepareExecution: async (_preparation, location) => {
+          destination = location.destination;
+          mkdirSync(destination, { recursive: true });
+          return { ok: true, value: { directory: destination, release: async () => {} } };
+        },
+      }).start!(
+        {
+          ...request,
+          title,
+          place: { ...place, folder: main },
+          preparation: { pack: 'coding', parameters: {} },
+        },
+        user
+      );
+      expect(result.ok).toBe(true);
+      return destination;
+    };
+    const first = await start('First worker');
+    expect(first).toBe(join(dir, 'data/worktrees/source/u1'));
+    const settingsPath = join(first, '.claude/settings.local.json');
+    const initial = readFileSync(settingsPath, 'utf8');
+    expect(JSON.parse(initial).permissions).toMatchObject({
+      allow: [`Edit(/${first}/**)`],
+      deny: expect.arrayContaining([`Edit(/${main}/**)`]),
+      disableBypassPermissionsMode: 'disable',
+    });
+    const sibling = join(dir, 'data/worktrees/source/second');
+    mkdirSync(sibling, { recursive: true });
+    const secondDriver = adapter({
+      prepareExecution: async () => ({
+        ok: true,
+        value: { directory: sibling, release: async () => {} },
+      }),
+    });
+    expect(
+      (
+        await secondDriver.start!(
+          {
+            ...request,
+            place: { ...place, folder: main },
+            preparation: { pack: 'coding', parameters: {} },
+          },
+          user
+        )
+      ).ok
+    ).toBe(true);
+    const readPolicy = (root: string) =>
+      JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
+    expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+    expect(readPolicy(sibling).permissions.deny).toContain(`Edit(/${first}/**)`);
+    expect(readPolicy(first).permissions.deny).not.toContain(`Edit(/${first}/**)`);
+    expect(
+      spawned
+        .filter((args) => args.includes('--desktop'))
+        .every((args) => args.join(' ') === 'script -q /dev/null claude --desktop --resume u1')
+    ).toBe(true);
+    const reloaded = adapter();
+    expect((await reloaded.status!({ adapter: 'claude-desktop', id: 'local_u1' })).ok).toBe(true);
+    expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+  });
+
+  test('a native-policy setup failure is visible and releases only the unused clone', async () => {
+    let released = 0;
+    const prepared = join(dir, 'prepared');
+    mkdirSync(join(prepared, '.claude'));
+    const settings = join(prepared, '.claude/settings.local.json');
+    writeFileSync(settings, '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}');
+    const result = await adapter({
+      prepareExecution: async () => ({
+        ok: true,
+        value: {
+          directory: prepared,
+          release: async () => {
+            released++;
+          },
+        },
+      }),
+    }).start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user);
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preparation_failed',
+      detail: expect.stringContaining('native write policy'),
+    });
+    expect(readFileSync(settings, 'utf8')).toBe(
+      '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}'
+    );
+    expect(spawned).toEqual([]);
+    expect(released).toBe(1);
+  });
 
   test('failed preparation launches no Claude process', async () => {
     const driver = adapter({
