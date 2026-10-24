@@ -29,19 +29,20 @@ and sign-off rules remain mandatory in either mode.
 
 ## Independent QA
 
-QA pins the candidate head, then reuses the repo's existing verify skill
-(including scripts and journeys) in its own isolated checkout. Run the actual
-changed behavior against every acceptance criterion. For daemon work use
-`NODE_ENV=test`, a private synthetic data directory/database, separate ports and
-mock endpoints, with no real keys or production data. Record inputs, commands,
-outputs, test results, screenshots where applicable and pass/fail per criterion.
+QA pins the head and reuses the repo's verify skill (scripts and journeys) in its
+own checkout. Check every acceptance criterion by running the changed program in
+the isolated environment that skill defines: test configuration, its own synthetic
+data, separate ports, mocked external services, no real keys or production data.
+Record inputs, commands, outputs, test results, screenshots where applicable and
+pass/fail per criterion.
 Missing or inconclusive evidence is not a pass.
 
 QA runs autonomously, with no human watching. For UI changes it launches the
-Simulator or an isolated browser profile, performs the action and checks the
-result with screenshots (for “remove this button”, open the screen and confirm
-the button is gone); unit tests alone never pass UI QA. For backend/API changes
-it calls the changed API against an isolated test daemon and checks the response.
+platform's simulator or emulator, or an isolated browser profile, performs the
+action and checks screenshots (for “remove this button”, open the screen and
+confirm it is gone); unit tests alone never pass UI QA. For backend/API changes
+it runs the changed service in that isolated environment and calls the changed
+API, checking the response.
 QA never drives the human's own running apps or signed-in accounts; it uses its own isolated environment.
 Stop test resources.
 
