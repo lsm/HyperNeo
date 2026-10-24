@@ -1,3 +1,4 @@
+import { runMigration453 } from '../../../../src/storage/schema/m453-neo-ask-focused-session.ts';
 import { runMigration452 } from '../../../../src/storage/schema/m452-neo-question-source.ts';
 import { runMigration450 } from '../../../../src/storage/schema/m450-neo-question-artifacts.ts';
 import { runMigration446 } from '../../../../src/storage/schema/m446-neo-question-todo.ts';
@@ -56,6 +57,7 @@ describe('neo.message.send replyTo', () => {
     runMigration446(mailbox.db);
     runMigration450(mailbox.db);
     runMigration452(mailbox.db);
+    runMigration453(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     for (const id of [root, holder])

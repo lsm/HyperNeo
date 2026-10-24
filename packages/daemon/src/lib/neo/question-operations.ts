@@ -38,6 +38,7 @@ const Confirmation = z.object({
 });
 const Artifacts = z.array(ArtifactRefSchema).max(16).readonly().optional();
 const Asked = {
+  focused: z.boolean().optional(),
   sourceSession: WorkRefSchema.optional(),
   artifacts: Artifacts,
   todoId: Text.optional(),
@@ -62,6 +63,7 @@ const Ask = z.discriminatedUnion('kind', [
     text: Text,
     kind: z.literal('start'),
     sourceSession: Asked.sourceSession,
+    focused: Asked.focused,
     artifacts: Artifacts,
     confirm: Confirmation.optional(),
     replyTo: Asked.replyTo,
@@ -177,6 +179,8 @@ export function planNeoQuestion(
   todo?: NeoTodo | null,
   sourceSession?: NeoQuestionSource
 ): Gate<QuestionPlan> {
+  if (input.focused && !sourceSession)
+    return fail('source_session_unavailable: focused discussion needs one readable session.');
   const todoId = 'todoId' in input ? input.todoId : undefined;
   if (
     todoId &&
@@ -394,6 +398,15 @@ export function createNeoQuestionOperations(
       'outcome',
       'outcome'
     )
+    .pipe(
+      (result: QuestionReceipt | Rejection, input: z.infer<typeof Ask>) => {
+        if (result.ok && input.focused && result.question.sourceSession)
+          store.focusAsk(result.question.askId, result.question.sourceSession, Date.now());
+        return result;
+      },
+      ['outcome', 'input'],
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: z.infer<typeof Ask>,
     caller: OperationCaller
@@ -479,7 +492,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -503,11 +503,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           result.ref.daemon === ref.daemon
         );
       });
+      const focused = ask.focusedSession;
+      const report =
+        focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon
+          ? `Focused discussion status only (ask ${ask.id}, todo ${id}, dispatch ${dispatch?.id}). Do not act, reply, forward or treat this as approval.`
+          : `Worker turn report (todo ${id}, dispatch ${dispatch?.id}):`;
       if (dispatch)
         await deps.tell(
           ask,
           todo,
-          `Worker turn report (todo ${id}, dispatch ${dispatch.id}):\n\n${turn.message || 'worker ended its turn with no reply'}`,
+          `${report}\n\n${turn.message || 'worker ended its turn with no reply'}`,
           `neo-todo-turn:${id}:${dispatch.id}:${turn.id}`
         );
     }

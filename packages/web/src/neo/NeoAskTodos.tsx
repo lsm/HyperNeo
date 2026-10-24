@@ -547,6 +547,28 @@ export function NeoAskTodos({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
+      {ask.focusedSession && (
+        <div class="mt-2 flex flex-wrap items-center justify-end gap-2" data-ask-focused-session>
+          <span class="min-w-0 break-words text-right text-xs text-fg-muted">
+            {ask.focusedSession.name ?? ask.focusedSession.id} · {ask.focusedSession.provider}
+          </span>
+          {ask.focusedSession.link && onOpen && (
+            <button
+              type="button"
+              class={neoSecondaryClass}
+              aria-label={t('question.openSessionTitle', {
+                name: ask.focusedSession.name ?? ask.focusedSession.id,
+              })}
+              onClick={() => onOpen(ask.focusedSession!.link!, ask.focusedSession!.label)}
+            >
+              <NeoSessionMark
+                kind={neoSessionKind(ask.focusedSession.adapter, ask.focusedSession.link)}
+              />
+              {t('question.openSession')}
+            </button>
+          )}
+        </div>
+      )}
       {settleError && (
         <p role="alert" class="mt-2 break-words text-sm text-danger">
           {settleError}

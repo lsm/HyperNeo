@@ -173,6 +173,7 @@ const NeoTodoEntrySchema = NeoTodoSchema.extend({
 
 export const NeoAskEntrySchema = z.object({
   ask: z.object({
+    focusedSession: NeoQuestionSchema.shape.sourceSession,
     id: z.string(),
     goalId: Nullable.optional(),
     projectId: Nullable,
