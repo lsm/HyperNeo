@@ -35,7 +35,7 @@ Check `evidence/observed.json` and `native-events.jsonl`:
   changing its acceptEdits mode or native record. The former headless-mode
   refusal is not an origin-admission rule.
 - Concurrent send/steer requests after a stopped forwarding helper share one
-  new helper preparation/import, then return distinct target input receipts.
+  native reimport of the existing helper, then return distinct target input receipts.
   The fixture selects only live forwarding helpers, retaining stopped history.
 - The existing authorized synthetic `rc-toggle` receives the RC request. No
   replacement RC helper is created or granted permissions. A request is not
@@ -66,6 +66,25 @@ Check `evidence/observed.json` and `native-events.jsonl`:
 
 The standalone-clone journey uses the same fixture, preserving the prepared
 checkout and cleanup contracts through the new handoff.
+
+For delayed native delivery, run the same isolated command with
+`VERIFY_QUEUED_DELIVERY=1` in its environment and a fresh directory/free port.
+The fixture reports a queued native message while leaving the target mid-turn.
+A real todo runner dispatches through the daemon's `work.send` RPC; the retained
+receipt is sent-pending (`delivered: false`, `unconfirmed: true`), not a failure.
+The helper waits beyond the full 30-second delivery deadline, verifies the todo
+is still doing and receipt-bound `work.status` is pending, then appends only to
+the synthetic target transcript. The same opaque receipt becomes accepted when
+the exact native input appears and observed/completed after its synthetic reply.
+`evidence/observed.json` retains `queuedDelivery`, including the durable dispatch,
+todo state, elapsed time and each RPC result. No native UI is controlled. The
+original permission/refusal/import checks still run in this profile.
+
+A successful relay without target transcript evidence is deliberately
+unconfirmed: do not present the timeout as either proven delivery or proven
+failure. The pending receipt is scoped to the target execution, the transcript
+position before send and a fingerprint of the helper plus complete message.
+Other adapters and ordinary CLI inbox semantics are unchanged.
 
 For a task-authorized native check, use only a throwaway project/session and the
 existing authorized `rc-toggle`. Do not drive the GUI, read credential files,
