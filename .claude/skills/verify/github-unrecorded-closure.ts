@@ -70,17 +70,17 @@ try {
   subs().upsert({ sessionId: 'synthetic-general', topic: prefix + '7.*' }); subs().upsert({ sessionId: 'synthetic-review', topic: prefix + '7.review_*' });
   const github = () => app!.extensionManager.getExtension('github') as GitHubEventExtension;
   github().repo.upsertWatchedRepo({ spaceId: 'sessions', owner: 'synthetic', repo: 'discovery', pollingEnabled: true });
-  const seed = () => { const watched = github().repo.listPollingRepos()[0]; github().repo.updatePollCursor(watched.id, { ...watched.pollCursor, pollResume: { stage: 4, item: '7', skipFeeds: true }, recentPullRequestNumbers: [], mergeConflictEtags: { 7: 'old-etag', 8: 'old-etag' } }); };
+  const seed = () => { github().repo.upsertWatchedRepo({ spaceId: 'sessions', owner: 'synthetic', repo: 'discovery', pollingEnabled: true }); const watched = github().repo.listPollingRepos()[0]; github().repo.updatePollCursor(watched.id, { ...watched.pollCursor, pollResume: { stage: 4, item: '7', skipFeeds: true }, recentPullRequestNumbers: [], mergeConflictEtags: { 7: 'old-etag', 8: 'old-etag' } }); };
   const original = normalizeGitHubPollingRow({ owner: 'synthetic', repo: 'discovery' }, row(7, 'open'), 'pulls')!;
   new SessionExternalEventStore(sql()).store(toExternalEvent('sessions', original)); const originalRows = events();
-  for (phase of ['open', 'missing', 'unreadable', 'notmodified']) { seed(); await poll(); assert.equal(jobs().length, 0); assert.equal(subs().listAll().length, 2); }
+  for (phase of ['open', 'missing', 'unreadable', 'notmodified']) { seed(); await poll(); assert(requests.some(r => r.phase === phase && r.path.endsWith('/pulls/7'))); assert.equal(jobs().length, 0); assert.equal(subs().listAll().length, 2); assert.deepEqual(events(), originalRows); }
   phase = 'closed'; seed(); sql().exec("CREATE TRIGGER reject_discovery BEFORE INSERT ON job_queue WHEN NEW.queue='mailbox' AND json_extract(NEW.payload,'$.to.sessionId')='synthetic-review' BEGIN SELECT RAISE(ABORT,'synthetic rejection'); END");
   proof.discoveryPoll = await poll(); proof.discovered = { jobs: jobs(), events: events(), subscriptions: subs().listAll() };
-  assert(requests.filter(r => r.phase === 'closed' && r.path.endsWith('/pulls/7')).every(r => r.conditional === null), 'subscribed details need a full body');
-  assert.equal(jobs().length, 1); assert.equal(receipts().length, 1); assert.equal(events().length, 2); assert.equal(subs().listAll().length, 2);
+  const details = requests.filter(r => r.phase === 'closed' && r.path.endsWith('/pulls/7')); assert.equal(details.length, 1); assert(details.every(r => r.conditional === null), 'subscribed details need a full body');
+  assert.match(String((proof.discoveryPoll as Record<string, unknown>).error), /handler failure/); assert.equal(jobs().length, 1); assert.equal(receipts().length, 1); assert.equal(events().length, 2); assert.equal(subs().listAll().length, 2);
   const accepted = { jobs: jobs(), receipts: receipts() }, recorded = events();
   sql().prepare("UPDATE job_queue SET run_at=? WHERE queue='mailbox'").run(Date.now() + 86400000);
-  await close(); await open(); phase = 'restart'; await poll(); assert.deepEqual({ jobs: jobs(), receipts: receipts() }, accepted);
+  await close(); await open(); phase = 'restart'; await poll(); assert.equal(requests.filter(r => r.phase === 'restart' && r.path.endsWith('/pulls/7')).length, 0); assert.deepEqual({ jobs: jobs(), receipts: receipts() }, accepted);
   sql().exec('DROP TRIGGER reject_discovery'); phase = 'recover'; await poll(); assert.equal(jobs().length, 2); assert.equal(receipts().length, 2); assert.equal(subs().listAll().length, 0); assert.deepEqual(events(), recorded);
   subs().upsert({ sessionId: 'synthetic-general', topic: prefix + '7.*' }); await poll(); assert.equal(jobs().length, 2); assert.deepEqual(events(), recorded);
   const reopened = toExternalEvent('sessions', normalizeGitHubPollingRow({ owner: 'synthetic', repo: 'discovery' }, { ...row(8, 'open'), updated_at: '2026-10-24T00:00:00Z' }, 'pulls')!);

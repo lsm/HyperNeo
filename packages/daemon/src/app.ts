@@ -976,17 +976,28 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     };
     const extensionManager = new ExternalEventExtensionManager();
+    const replayRecordedTerminals = (subject = '') =>
+      replaySessionTerminals({
+        listSubscriptions: () =>
+          sessionEventSubscriptions
+            .listAll()
+            .filter((subscription) => subscription.topic.toLowerCase().startsWith(subject)),
+        readLatestPrState: (subject) => db.gateway.run(readLatestSessionPrState, subject),
+        publish: (event) => sessionExternalEventService.publish(event),
+      });
     const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
         collectPollPage: collectGitHubPollPage,
-        replaySessionTerminals: () =>
-          replaySessionTerminals({
-            listSubscriptions: () => sessionEventSubscriptions.listAll(),
-            readLatestPrState: (subject) => db.gateway.run(readLatestSessionPrState, subject),
-            publish: (event) => sessionExternalEventService.publish(event),
-          }),
+        replaySessionTerminals: replayRecordedTerminals,
+        recordSessionClosure: async (event) => {
+          const result = await db.gateway.run(ingestSessionEvent, event);
+          if (result.action === 'invalid') throw new Error(result.reason);
+          await replayRecordedTerminals(
+            event.topic.slice(0, event.topic.lastIndexOf('.') + 1).toLowerCase()
+          );
+        },
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
