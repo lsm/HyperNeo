@@ -8,6 +8,8 @@ import type { CodingPrState } from './pr-ledger.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
+export const CODING_MANUAL_MERGE_NEXT_STEP =
+  'Complete all required merge gates, re-read the head, then squash-merge manually with --match-head-commit and the full approved head SHA.';
 
 const log = new Logger('NeoPrSweep');
 
@@ -39,7 +41,7 @@ const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
 };
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
-  approved_green: 'Merge it now with a manual squash on this head.',
+  approved_green: CODING_MANUAL_MERGE_NEXT_STEP,
   dirty: 'Merge the base branch in, resolve the conflicts and push.',
   failing: 'Fix the failing CI and push.',
   changes_requested: 'Address the review and push.',
@@ -73,7 +75,7 @@ export function codingPrEscalationText(
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
     : `its owner ${owned(row.owner!)} has made no progress`;
-  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session.${row.state === 'approved_green' ? ' Or merge it yourself if the owner is gone.' : ''}`;
+  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session.${row.state === 'approved_green' ? ' If its owner is gone, complete the required merge gates before a SHA-pinned manual merge.' : ''}`;
 }
 
 export class CodingPrSweepRepository {

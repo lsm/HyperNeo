@@ -63,7 +63,7 @@ describe('PR sweep ladder', () => {
     ]);
     expect(told[0]).toMatchObject({ ref: owner });
     expect(told[0].text).toBe(
-      'lsm/hyperneo#7 "Fix login" has been approved and green for 20 min on head abc1234. Merge it now with a manual squash on this head.'
+      'lsm/hyperneo#7 "Fix login" has been approved and green for 20 min on head abc1234. Complete all required merge gates, re-read the head, then squash-merge manually with --match-head-commit and the full approved head SHA.'
     );
     expect(woken).toHaveLength(1);
     expect(woken[0].text).toContain('has made no progress');

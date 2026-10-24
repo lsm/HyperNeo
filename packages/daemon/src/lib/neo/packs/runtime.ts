@@ -14,6 +14,7 @@ import { createCodingAncestryReader } from './coding/ancestry-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './coding/deploy-checks.ts';
 import { createCodingPack } from './coding/pack.ts';
 import { CodingAssignmentsRepository } from './coding/assignments.ts';
+import { createCodingMergeOperation } from './coding/merge-operation.ts';
 import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
 import type { NeoWorkPrReader } from './coding/work-prs.ts';
 import { createCodingResultOperation } from './coding/result-operation.ts';
@@ -99,6 +100,13 @@ export function createNeoService(...args: NeoServiceArgs) {
       });
       coding.operations = [
         ...(coding.operations ?? []),
+        createCodingMergeOperation({
+          db: db.getDatabase(),
+          ledger: new CodingPrLedgerRepository(db.getDatabase()),
+          todos: todoPrs,
+          review: coding.review,
+          prepareMerge: coding.prepareMerge,
+        }),
         createCodingAssignmentOperation({
           db: db.getDatabase(),
           ledger: new CodingPrLedgerRepository(db.getDatabase()),
