@@ -14,6 +14,7 @@ import { PostApprovalRouter } from '../../../../src/lib/workflows/post-approval-
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { writeSpaceTaskOn } from '../../helpers/run-db-op';
 
 const SPACE_ID = 'space-par-retry';
 const RUN_ID = 'run-retry-1';
@@ -135,6 +136,7 @@ function makeHarness(
   let spawnCount = 0;
   const deps: PostApprovalRetryDeps = {
     taskRepo: repo,
+    writeTask: writeSpaceTaskOn(db),
     workflowRunRepo: {
       getRun: (id: string) =>
         db
@@ -358,6 +360,7 @@ describe('runPostApprovalRetry — concurrency against the real CAS', () => {
     let spawnCount = 0;
     const router = new PostApprovalRouter({
       taskRepo: repo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async () => {
           spawnCount += 1;
@@ -397,6 +400,7 @@ describe('runPostApprovalRetry — concurrency against the real CAS', () => {
     const workflow = stubWorkflow();
     const router = new PostApprovalRouter({
       taskRepo: repo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async () => ({ sessionId: 'worker-routed' }),
       },

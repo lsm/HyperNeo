@@ -461,6 +461,34 @@ describe('SpaceTaskRepository', () => {
       expect(cleared!.pendingCompletionSubmittedAt).toBeNull();
       expect(cleared!.pendingCompletionReason).toBeNull();
     });
+
+    it('skips the write when the approval it was read under has been replaced', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'approved', approvedAt: 1000 });
+      repo.updateTask(task.id, { approvedAt: 2000 });
+
+      const stale = repo.updateTask(
+        task.id,
+        { postApprovalBlockedReason: 'stale' },
+        'approved',
+        undefined,
+        undefined,
+        undefined,
+        1000
+      );
+      const current = repo.updateTask(
+        task.id,
+        { postApprovalBlockedReason: 'current' },
+        'approved',
+        undefined,
+        undefined,
+        undefined,
+        2000
+      );
+
+      expect(stale).toBeNull();
+      expect(current!.postApprovalBlockedReason).toBe('current');
+    });
   });
 
   describe('casStatus', () => {

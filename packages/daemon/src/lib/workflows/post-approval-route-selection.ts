@@ -1,7 +1,6 @@
 import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { PostApprovalRoute, SpaceWorkflow } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { builtInWorkflowRequiresPrMerge } from './built-in-workflows.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from './post-approval-validator.ts';
 
@@ -73,17 +72,12 @@ export function selectFirstDispatchablePostApprovalRoute(
   return { route: selected, nodeId: declaredByNodeId, agentName: targetAgent };
 }
 
-export function clearPendingCompletionState(
-  taskRepo: Pick<SpaceTaskRepository, 'updateTask'>,
-  taskId: string
-): void {
-  taskRepo.updateTask(taskId, {
-    pendingCheckpointType: null,
-    pendingCompletionSubmittedByNodeId: null,
-    pendingCompletionSubmittedAt: null,
-    pendingCompletionReason: null,
-  });
-}
+export const clearedPendingCompletion = {
+  pendingCheckpointType: null,
+  pendingCompletionSubmittedByNodeId: null,
+  pendingCompletionSubmittedAt: null,
+  pendingCompletionReason: null,
+} as const;
 
 export function mapPostApprovalDispatchWarning(detail: string): string {
   const trimmed = (detail ?? '').trim();

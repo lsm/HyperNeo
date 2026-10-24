@@ -65,6 +65,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import {
   type SpaceTaskRepository,
   spaceTaskWrites,
+  type WriteSpaceTask,
 } from '../../../storage/repositories/space-task-repository.ts';
 import { spaceTaskLaneFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
@@ -170,7 +171,7 @@ import {
 import { classifyLastMessageForIdleAgent } from '../../session/last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from '../../workflows/llm-workflow-selector.ts';
 import {
-  clearPendingCompletionState,
+  clearedPendingCompletion,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
@@ -2885,6 +2886,8 @@ export class SpaceRuntime {
   }
 
   private postApprovalRouter: PostApprovalRouter | null = null;
+  private readonly writeTask: WriteSpaceTask = (method, ...args) =>
+    spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(spaceTaskWrites, method, ...args);
   private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
 
   async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
@@ -2898,6 +2901,7 @@ export class SpaceRuntime {
       runPostApprovalRetry({
         taskId,
         taskRepo: this.config.taskRepo,
+        writeTask: this.writeTask,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
         isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
@@ -2923,6 +2927,7 @@ export class SpaceRuntime {
     if (!manager) return null;
     this.postApprovalRouter = new PostApprovalRouter({
       taskRepo: this.config.taskRepo,
+      writeTask: this.writeTask,
       resolveCompletionOutcome: (task) => {
         const artifactSummary = task.workflowRunId
           ? this.resolvePrimaryResultArtifactSummary(task.workflowRunId)
@@ -3111,14 +3116,16 @@ export class SpaceRuntime {
         expectedWorkflowRunId: options.expectedWorkflowRunId,
       });
     } finally {
-      const latest = this.config.taskRepo.getTask(taskId);
-      if (
-        latest?.status === 'approved' &&
-        latest.workflowRunId === approvedTask.workflowRunId &&
-        latest.approvedAt === approvedTask.approvedAt
-      ) {
-        clearPendingCompletionState(this.config.taskRepo, taskId);
-      }
+      await this.writeTask(
+        'updateTask',
+        taskId,
+        clearedPendingCompletion,
+        'approved',
+        undefined,
+        undefined,
+        approvedTask.workflowRunId ?? null,
+        approvedTask.approvedAt ?? null
+      );
     }
 
     if (routeResult.mode !== 'skipped') {
