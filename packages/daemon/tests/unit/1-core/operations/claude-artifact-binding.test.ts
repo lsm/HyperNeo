@@ -121,6 +121,9 @@ describe('loadRegistrationBinding for Claude workers', () => {
       sessions.recordRef('todo', ref);
       expect(load()).toBeNull();
     }
+    mkdirSync(join(home, '.claude/projects/-other/cli-dir.jsonl'), { recursive: true });
+    sessions.recordRef('todo', { adapter: 'claude-code', id: 'cli-dir' });
+    expect(load()).toBeNull();
   });
 
   test('accepts only a direct repo worktree under .claude, never home or deeper paths', () => {

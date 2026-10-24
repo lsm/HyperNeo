@@ -68,13 +68,16 @@ function claudeCodeWorkspace(id: string, home: string): string | null {
     .find((path) => existsSync(path));
   if (!file) return null;
   const head = Buffer.alloc(TRANSCRIPT_HEAD_BYTES);
-  const fd = openSync(file, 'r');
+  let fd: number | null = null;
   try {
+    fd = openSync(file, 'r');
     return (
       claudeTranscriptCwd(head.toString('utf8', 0, readSync(fd, head, 0, head.length, 0))) || null
     );
+  } catch {
+    return null;
   } finally {
-    closeSync(fd);
+    if (fd !== null) closeSync(fd);
   }
 }
 
