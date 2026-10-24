@@ -15,14 +15,15 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
 The production MCP adapter opens an ask whose todo uses target
 `{verb: "bind", ref: {adapter: "hyperneo", id: "synthetic-running-worker"}}`.
 The returned todo must have that worker and state doing without an instruction
-or start flag. The helper creates a failed synthetic backfill with old send
-evidence, then calls `neo.todo.bind` with `{todoId, ref}`. The same todo becomes
+or start flag. A second bind includes an instruction and start:true, retains that
+instruction and also becomes doing with no dispatch. The helper creates a failed
+synthetic backfill with old send evidence, then calls `neo.todo.bind` with `{todoId, ref}`. The same todo becomes
 doing, its failure and old delivery evidence clear, and its worker is set.
 
 Dispatch sentries in the isolated registry count and reject work.send/work.start;
 both counters and the delivery-input table must stay empty. This observes the
 actual operations and persistence, not a simulated todo implementation. After a
-real daemon restart both todos stay doing and retain their worker references.
+real daemon restart all three todos stay doing and retain their worker references.
 Synthetic fixtures never open a model turn, and no real database is copied.
 The helper closes both daemon instances in finally and retains
 `evidence/todo-bind.json` (all MCP replies, persisted todos/refs and zero sends).

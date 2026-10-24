@@ -47,6 +47,9 @@ try {
         const opened = await invoke('neo.ask.open', { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again', todos: [{ title: 'Running task', doneWhen: 'Synthetic result verified', target: { verb: 'bind', ref } }] });
         const todo = opened.todos[0];
         assert.equal(todo.state, 'doing'); assert.equal(todo.worker.id, ref.id); assert.equal(todo.worker.adapter, ref.adapter);
+        const withOptions = await invoke('neo.todo.add', { askId: todo.askId, title: 'Running task with retained instruction', doneWhen: 'Synthetic result verified', instruction: 'Synthetic work already running', start: true, target: { verb: 'bind', ref } });
+        assert.equal(withOptions.todo.state, 'doing'); assert.equal(withOptions.todo.worker.id, ref.id);
+        assert.equal(withOptions.todo.instruction, 'Synthetic work already running');
         const failed = await invoke('neo.todo.add', { askId: todo.askId, title: 'Synthetic backfill', doneWhen: 'Synthetic result verified' });
         store.updateTodo(store.getTodo(failed.todo.id)!, { state: 'failed', reason: 'Synthetic delivery was not confirmed', finishedAt: 2 }, 2);
         sessions.create(failed.todo.id, { verb: 'send', ref }); sessions.recordRef(failed.todo.id, ref, 1);
@@ -55,7 +58,7 @@ try {
         assert.equal(rebound.todo.state, 'doing'); assert.equal(rebound.todo.worker.id, ref.id);
         assert.equal(rebound.todo.reason, null); assert.equal(rebound.todo.finishedAt, null);
         assert.equal(sessions.readSent(rebound.todo.id), null);
-        ids = [todo.id, rebound.todo.id];
+        ids = [todo.id, withOptions.todo.id, rebound.todo.id];
       }
       for (const id of ids) {
         assert.equal(store.getTodo(id)?.state, 'doing'); assert.deepEqual(sessions.readRef(id), ref);
@@ -65,5 +68,5 @@ try {
       evidence.push({ phase, todos: ids.map(id => store.getTodo(id)), refs: ids.map(id => sessions.readRef(id)), sends, inputs });
     } finally { await app.cleanup(); }
   }
-  console.log(`PASS: actual daemon MCP bind/backfill and failed rebind are doing with the worker set; zero dispatches; restart preserved both. Evidence: ${run}/evidence/todo-bind.json`);
+  console.log(`PASS: actual daemon MCP bind/backfill and failed rebind are doing with the worker set; zero dispatches; restart preserved all bindings. Evidence: ${run}/evidence/todo-bind.json`);
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/todo-bind.json'), JSON.stringify(evidence, null, 2)); }

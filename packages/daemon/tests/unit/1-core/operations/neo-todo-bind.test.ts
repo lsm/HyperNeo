@@ -73,7 +73,12 @@ describe('bind an already running worker without dispatch', () => {
           title: 'Synthetic work',
           request: 'Track work already in progress',
           todos: [
-            { title: 'Running work', doneWhen: 'Result verified', target: { verb: 'bind', ref } },
+            {
+              title: 'Running work',
+              doneWhen: 'Result verified',
+              ...options,
+              target: { verb: 'bind', ref },
+            },
           ],
         });
         expect(result.ok).toBe(true);
