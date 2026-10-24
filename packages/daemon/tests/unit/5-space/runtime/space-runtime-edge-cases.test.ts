@@ -475,6 +475,24 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     });
   });
 
+  describe('reopening a terminal task', () => {
+    test('leaves a task whose status moved on after the reopen read it', async () => {
+      const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Reopen', description: '' });
+      taskRepo.updateTask(task.id, { status: 'done' });
+      const stale = taskRepo.getTask(task.id)!;
+      taskRepo.updateTask(task.id, { status: 'cancelled' });
+      const getTask = taskRepo.getTask.bind(taskRepo);
+      let reads = 0;
+      taskRepo.getTask = (id: string) => (reads++ === 0 ? stale : getTask(id));
+
+      const reopened = await runtime.blockWorkflowBackedTask(SPACE_ID, task.id, { status: 'open' });
+
+      taskRepo.getTask = getTask;
+      expect(reopened).toBeNull();
+      expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
+    });
+  });
+
   describe('workflow-backed dependency block cleanup', () => {
     test('blocking an in-progress workflow task stops run and active node agents', async () => {
       const tam = new MockTaskAgentManager();
