@@ -2,7 +2,7 @@ import type { SecurityCheckResult } from '@hyperneo/shared';
 import type { SecurityClassification } from './prompts/security-prompt.ts';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from './prompts/security-prompt.ts';
 import { Logger } from '../logger.ts';
-import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
+import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 
 const logger = new Logger('security-agent');
@@ -176,7 +176,7 @@ export class SecurityAgent {
         cwd: '/tmp',
         maxTurns: 1,
         systemPrompt: SECURITY_AGENT_SYSTEM_PROMPT,
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        pathToClaudeCodeExecutable: await awaitSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
         env: securityAgentEnv(process.env, this.options.apiKeyType, this.options.apiKey),

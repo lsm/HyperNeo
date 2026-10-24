@@ -79,7 +79,7 @@ import {
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
-import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
+import { awaitSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import { handoffDraftDirectory } from '../handoffs/outbox.ts';
 
@@ -492,7 +492,7 @@ export class QueryOptionsBuilder {
         : {}),
     };
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
-    const sdkCliPath = this.getSDKCliPath();
+    const sdkCliPath = await this.getSDKCliPath();
 
     const mergedMcpServers = this.computeEffectiveMcpServers();
 
@@ -1133,19 +1133,14 @@ export class QueryOptionsBuilder {
       : config;
   }
 
-  private getSDKCliPath(): string | undefined {
+  private async getSDKCliPath(): Promise<string | undefined> {
     const config = this.admittedConfig();
 
     if (config.pathToClaudeCodeExecutable) {
       return config.pathToClaudeCodeExecutable;
     }
 
-    const resolvedPath = resolveSDKCliPath();
-    if (resolvedPath) {
-      return resolvedPath;
-    }
-
-    return undefined;
+    return awaitSDKCliPath();
   }
 
   private getOverrideDisabledSkillIds(): Set<string> {

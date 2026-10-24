@@ -11,6 +11,7 @@ import {
   getCliBinaryName,
   warmupSDKCliBinary,
   _resetForTesting,
+  awaitSDKCliPath,
 } from '../../../../src/lib/agent/sdk-cli-resolver';
 
 const mocks = vi.hoisted(() => ({
@@ -89,6 +90,24 @@ function resetModuleMocks(): void {
   ]) {
     mockFn.mockReset();
   }
+}
+
+function curlMock(run: (file: string, args?: string[]) => unknown): void {
+  mocks.execFile.mockImplementation(
+    (file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) => {
+      try {
+        const out = run(file, args);
+        setImmediate(() => done(null, out, ''));
+      } catch (err) {
+        setImmediate(() => done(err));
+      }
+    }
+  );
+}
+
+function readMock(read: (path: fs.PathLike) => unknown): void {
+  mocks.readFileSync.mockImplementation(read);
+  mocks.readFile.mockImplementation(async (path: fs.PathLike) => read(path));
 }
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
@@ -268,13 +287,14 @@ describe('sdk-cli-resolver', () => {
       mocks.renameSync.mockImplementation(() => {});
       mocks.mkdirSync.mockImplementation(() => undefined as unknown as string);
       mocks.writeFileSync.mockImplementation(() => {});
+      mocks.writeFile.mockImplementation(async () => {});
     });
 
     afterEach(() => {
       resetModuleMocks();
     });
 
-    it('attempts download when node_modules and cache are empty', () => {
+    it('attempts download when node_modules and cache are empty', async () => {
       const originalExistsSync = mocks.actualFs.existsSync;
       const originalExecFileSync = mocks.actualCp.execFileSync;
 
@@ -286,7 +306,7 @@ describe('sdk-cli-resolver', () => {
       });
 
       let registryCalled = false;
-      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+      curlMock((file: string, args?: string[]) => {
         if (file === 'curl') {
           const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
           if (url) {
@@ -298,13 +318,13 @@ describe('sdk-cli-resolver', () => {
         throw new Error(`unexpected execFileSync: ${file}`);
       });
 
-      const result = resolveSDKCliPath();
+      const result = (await warmupSDKCliBinary()).path;
 
       expect(registryCalled).toBe(true);
       expect(result).toBeUndefined();
     });
 
-    it('verifies integrity hash before extracting', () => {
+    it('verifies integrity hash before extracting', async () => {
       const originalExistsSync = mocks.actualFs.existsSync;
 
       const tarData = createTarGzWithFile(`package/${getCliBinaryName()}`, Buffer.from('fake'));
@@ -318,7 +338,7 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
+      readMock((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) {
           return Buffer.from('different-tarball-data');
@@ -327,7 +347,7 @@ describe('sdk-cli-resolver', () => {
       });
 
       let registryFetched = false;
-      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+      curlMock((file: string, args?: string[]) => {
         if (file === 'curl') {
           const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
           if (url) {
@@ -344,13 +364,13 @@ describe('sdk-cli-resolver', () => {
         throw new Error(`unexpected execFileSync: ${file}`);
       });
 
-      const result = resolveSDKCliPath();
+      const result = (await warmupSDKCliBinary()).path;
 
       expect(registryFetched).toBe(true);
       expect(result).toBeUndefined();
     });
 
-    it('extracts binary with pure-JS tar parser when integrity matches', () => {
+    it('extracts binary with pure-JS tar parser when integrity matches', async () => {
       const originalExistsSync = mocks.actualFs.existsSync;
       const binaryName = getCliBinaryName();
 
@@ -367,20 +387,20 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
+      readMock((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) return tarData;
         return originalReadFileSync(p);
       });
 
-      mocks.writeFileSync.mockImplementation((path: fs.PathLike, data: unknown) => {
+      mocks.writeFile.mockImplementation(async (path: fs.PathLike, data: unknown) => {
         const p = String(path);
         if (p.endsWith(binaryName) && !p.includes('.hyperneo')) {
           extractedContent = Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array);
         }
       });
 
-      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+      curlMock((file: string, args?: string[]) => {
         if (file === 'curl') {
           const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
           if (url) {
@@ -396,13 +416,13 @@ describe('sdk-cli-resolver', () => {
         throw new Error(`unexpected execFileSync: ${file}`);
       });
 
-      const result = resolveSDKCliPath();
+      const result = (await warmupSDKCliBinary()).path;
 
       expect(result).toBeDefined();
       expect(result!).toContain('.hyperneo/sdk');
     });
 
-    it('fails when binary is missing from tarball', () => {
+    it('fails when binary is missing from tarball', async () => {
       const originalExistsSync = mocks.actualFs.existsSync;
 
       const tarData = createTarGzWithFile('package/other-file.txt', Buffer.from('hello'));
@@ -416,13 +436,13 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
+      readMock((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) return tarData;
         return originalReadFileSync(p);
       });
 
-      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+      curlMock((file: string, args?: string[]) => {
         if (file === 'curl') {
           const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
           if (url) {
@@ -438,7 +458,7 @@ describe('sdk-cli-resolver', () => {
         throw new Error(`unexpected execFileSync: ${file}`);
       });
 
-      const result = resolveSDKCliPath();
+      const result = (await warmupSDKCliBinary()).path;
       expect(result).toBeUndefined();
     });
   });
@@ -511,6 +531,7 @@ describe('warmupSDKCliBinary', () => {
     mocks.renameSync.mockImplementation(() => {});
     mocks.mkdirSync.mockImplementation(() => undefined as unknown as string);
     mocks.writeFileSync.mockImplementation(() => {});
+    mocks.writeFile.mockImplementation(async () => {});
     // oxlint-disable-next-line no-console
     logSpy = spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -520,8 +541,8 @@ describe('warmupSDKCliBinary', () => {
     logSpy.mockRestore();
   });
 
-  it('returns ready from node_modules in dev mode', () => {
-    const result = warmupSDKCliBinary();
+  it('returns ready from node_modules in dev mode', async () => {
+    const result = await warmupSDKCliBinary();
 
     expect(result.status).toBe('ready');
     expect(result.source).toBe('node_modules');
@@ -531,7 +552,7 @@ describe('warmupSDKCliBinary', () => {
     expect(result.version).toBeDefined();
   });
 
-  it('returns ready from cache when node_modules unavailable', () => {
+  it('returns ready from cache when node_modules unavailable', async () => {
     const originalExistsSync = mocks.actualFs.existsSync;
     const binaryName = getCliBinaryName();
 
@@ -551,29 +572,29 @@ describe('warmupSDKCliBinary', () => {
       return originalExistsSync(p);
     });
 
-    const result = warmupSDKCliBinary();
+    const result = await warmupSDKCliBinary();
 
     expect(result.status).toBe('ready');
     expect(result.source).toBe('cache');
     expect(result.path).toContain('.hyperneo/sdk');
   });
 
-  it('returns failed when all strategies fail', () => {
+  it('returns failed when all strategies fail', async () => {
     mocks.existsSync.mockReturnValue(false);
     mocks.execSync.mockImplementation(() => {
       throw new Error('not found');
     });
-    mocks.execFileSync.mockImplementation(() => {
+    curlMock(() => {
       throw new Error('not found');
     });
 
-    const result = warmupSDKCliBinary();
+    const result = await warmupSDKCliBinary();
 
     expect(result.status).toBe('failed');
     expect(result.error).toBeDefined();
   });
 
-  it('returns ready on download success when node_modules and cache miss', () => {
+  it('returns ready on download success when node_modules and cache miss', async () => {
     const originalExistsSync = mocks.actualFs.existsSync;
     const originalReadFileSync = mocks.actualFs.readFileSync;
     const binaryName = getCliBinaryName();
@@ -590,13 +611,13 @@ describe('warmupSDKCliBinary', () => {
       return originalExistsSync(p);
     });
 
-    mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
+    readMock((path: fs.PathLike) => {
       const p = String(path);
       if (p.endsWith('.tgz')) return tarData;
       return originalReadFileSync(p);
     });
 
-    mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+    curlMock((file: string, args?: string[]) => {
       if (file === 'curl') {
         const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
         if (url) {
@@ -612,7 +633,7 @@ describe('warmupSDKCliBinary', () => {
       throw new Error(`unexpected execFileSync: ${file}`);
     });
 
-    const result = warmupSDKCliBinary();
+    const result = await warmupSDKCliBinary();
 
     expect(result.status).toBe('ready');
     expect(result.source).toBe('download');
@@ -660,44 +681,91 @@ describe('warmupSDKCliBinary', () => {
     expect(ticks).toBeGreaterThan(10);
   });
 
-  it('logs startup messages regardless of HYPERNEO_VERBOSE', () => {
+  it('lets a session started during the first download wait for it and get the binary', async () => {
+    const originalExistsSync = mocks.actualFs.existsSync;
+    const tarData = createTarGzWithFile(`package/${getCliBinaryName()}`, Buffer.from('claude'));
+    const integrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
+    mocks.existsSync.mockImplementation((path: fs.PathLike) => {
+      const p = String(path);
+      if (p.includes('node_modules') || p.includes('.hyperneo/sdk')) return false;
+      if (p.endsWith('.tgz')) return true;
+      return originalExistsSync(p);
+    });
+    readMock((path: fs.PathLike) =>
+      String(path).endsWith('.tgz') ? tarData : mocks.actualFs.readFileSync(path)
+    );
+    let curlCalls = 0;
+    curlMock((_file, args) => {
+      curlCalls++;
+      return args?.includes('-o')
+        ? ''
+        : JSON.stringify({ dist: { tarball: 'https://registry.npmjs.org/f.tgz', integrity } });
+    });
+
+    const startup = warmupSDKCliBinary();
+    const session = awaitSDKCliPath();
+
+    expect(await session).toContain('.hyperneo/sdk');
+    expect((await startup).status).toBe('ready');
+    expect(curlCalls).toBe(2);
+  });
+
+  it('gives a session one clear error when the download fails', async () => {
+    mocks.existsSync.mockImplementation((path: fs.PathLike) => {
+      const p = String(path);
+      if (p.includes('node_modules') || p.includes('.hyperneo/sdk')) return false;
+      return mocks.actualFs.existsSync(p);
+    });
+    curlMock(() => {
+      throw new Error('offline');
+    });
+
+    const startup = warmupSDKCliBinary();
+
+    await expect(awaitSDKCliPath()).rejects.toThrow(
+      'Claude Code binary unavailable: All resolution strategies failed (node_modules, cache, download)'
+    );
+    expect((await startup).status).toBe('failed');
+  });
+
+  it('logs startup messages regardless of HYPERNEO_VERBOSE', async () => {
     delete process.env.HYPERNEO_VERBOSE;
 
-    warmupSDKCliBinary();
+    await warmupSDKCliBinary();
 
     const calls = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const sdkLogs = calls.filter((c: string) => c.includes('[SDK]'));
     expect(sdkLogs.length).toBeGreaterThan(0);
   });
 
-  it('returns cached result on second call without re-resolving', () => {
-    const first = warmupSDKCliBinary();
+  it('returns cached result on second call without re-resolving', async () => {
+    const first = await warmupSDKCliBinary();
     expect(first.status).toBe('ready');
 
     logSpy.mockClear();
 
-    const second = warmupSDKCliBinary();
+    const second = await warmupSDKCliBinary();
     expect(second.status).toBe('ready');
     expect(second.path).toBe(first.path);
   });
 
-  it('populates cachedCliPath so subsequent resolveSDKCliPath is instant', () => {
-    warmupSDKCliBinary();
+  it('populates cachedCliPath so subsequent resolveSDKCliPath is instant', async () => {
+    await warmupSDKCliBinary();
 
     const resolved = resolveSDKCliPath();
     expect(resolved).toBeDefined();
   });
 
-  it('does not set negative cache on failure, allowing resolveSDKCliPath to retry', () => {
+  it('does not set negative cache on failure, allowing resolveSDKCliPath to retry', async () => {
     mocks.existsSync.mockReturnValue(false);
     mocks.execSync.mockImplementation(() => {
       throw new Error('not found');
     });
-    mocks.execFileSync.mockImplementation(() => {
+    curlMock(() => {
       throw new Error('not found');
     });
 
-    const result = warmupSDKCliBinary();
+    const result = await warmupSDKCliBinary();
     expect(result.status).toBe('failed');
 
     resetModuleMocks();
@@ -706,27 +774,27 @@ describe('warmupSDKCliBinary', () => {
     expect(resolved).toBeDefined();
   });
 
-  it('returns failed for unsupported platform', () => {
+  it('returns failed for unsupported platform', async () => {
     mocks.existsSync.mockReturnValue(false);
     mocks.execSync.mockImplementation(() => {
       throw new Error('not found');
     });
-    mocks.execFileSync.mockImplementation(() => {
+    curlMock(() => {
       throw new Error('not found');
     });
 
-    const result = warmupSDKCliBinary();
+    const result = await warmupSDKCliBinary();
 
     expect(result.status).toBe('failed');
     expect(result.error).toBeDefined();
     expect(result.version).toBeDefined();
   });
 
-  it('handles sequential warmup calls correctly (mutex releases)', () => {
-    const first = warmupSDKCliBinary();
+  it('handles sequential warmup calls correctly (mutex releases)', async () => {
+    const first = await warmupSDKCliBinary();
     expect(first.status).toBe('ready');
 
-    const second = warmupSDKCliBinary();
+    const second = await warmupSDKCliBinary();
     expect(second.status).toBe('ready');
     expect(second.path).toBe(first.path);
   });

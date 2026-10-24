@@ -10,7 +10,7 @@ import type {
   ListRemoteModelsOptions,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
-import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { providerEnvCoordinator } from './provider-env-enrollment.ts';
@@ -362,7 +362,7 @@ export class AnthropicProvider implements Provider {
         env,
         cwd: process.cwd(),
         maxTurns: 0,
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        pathToClaudeCodeExecutable: await awaitSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
       },
