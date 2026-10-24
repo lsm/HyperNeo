@@ -1493,7 +1493,18 @@ describe('native Desktop message confirmation', () => {
     };
     const targetPath = join(folder, 'target.jsonl');
     const helperPath = join(folder, 'helper.jsonl');
-    writeFileSync(targetPath, '');
+    writeFileSync(
+      targetPath,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'old-same-message',
+        timestamp: new Date(0).toISOString(),
+        message: {
+          content:
+            '<cross-session-message from="local_helper" name="desktop-wake">\nSynthetic queued task\nExact tail\n</cross-session-message>',
+        },
+      }) + '\n'
+    );
     writeFileSync(helperPath, '');
     const message = 'Synthetic queued task\nExact tail';
     let elapsed = 0;
@@ -1550,15 +1561,36 @@ describe('native Desktop message confirmation', () => {
       if (!sent.ok || !sent.value.receipt) throw new Error('Missing queued receipt');
       expect(sent.value.confirmedAt).toBeUndefined();
       const receipt = sent.value.receipt;
-      expect(await readClaudeInputEvidence(deps, target, receipt)).toEqual({
+      for (const [from, text] of [
+        ['local_other', message],
+        ['local_helper', 'Synthetic queued task\nDifferent tail'],
+      ]) {
+        appendFileSync(
+          targetPath,
+          JSON.stringify({
+            type: 'user',
+            uuid: `unrelated-${from}`,
+            timestamp: new Date(elapsed).toISOString(),
+            message: {
+              content: `<cross-session-message from="${from}" name="desktop-wake">\n${text}\n</cross-session-message>`,
+            },
+          }) + '\n'
+        );
+      }
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toEqual({
         receipt,
         state: 'pending',
       });
       elapsed += 120_000;
-      expect(await readClaudeInputEvidence(deps, target, receipt)).toEqual({
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toEqual({
         receipt,
         state: 'pending',
       });
+      appendFileSync(
+        targetPath,
+        JSON.stringify({ type: 'assistant', message: { content: 'x'.repeat(2 * 1024 * 1024) } }) +
+          '\n'
+      );
       appendFileSync(
         targetPath,
         JSON.stringify({
@@ -1570,7 +1602,7 @@ describe('native Desktop message confirmation', () => {
           },
         }) + '\n'
       );
-      expect(await readClaudeInputEvidence(deps, target, receipt)).toMatchObject({
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toMatchObject({
         receipt,
         state: 'pending',
         transcriptState: 'accepted',
@@ -1586,7 +1618,7 @@ describe('native Desktop message confirmation', () => {
           },
         }) + '\n'
       );
-      expect(await readClaudeInputEvidence(deps, target, receipt)).toMatchObject({
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toMatchObject({
         receipt,
         state: 'observed',
         transcriptState: 'completed',
@@ -1596,7 +1628,7 @@ describe('native Desktop message confirmation', () => {
         ],
       });
       expect(
-        await readClaudeInputEvidence(deps, { ...target, cliSessionId: 'other' }, receipt)
+        await readClaudeInputEvidence({ ...target, cliSessionId: 'other' }, deps, receipt)
       ).toEqual({ receipt, state: 'unavailable' });
     } finally {
       rmSync(root, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,6 +81,47 @@ try {
   assert(events().some(e => e.kind === 'rc-request' && e.mode === 'bypassPermissions'));
   const recordPath = join(scope, `${ref.id}.json`);
   const importedHash = digest(recordPath);
+  if (process.env.VERIFY_QUEUED_DELIVERY === '1') {
+    const { NeoAskTodoRepository } = await import('../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts');
+    const { NeoTodoSessionRepository } = await import('../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts');
+    const { createNeoTodoRunner } = await import('../../../packages/daemon/src/lib/neo/todo-runner.ts');
+    const store = new NeoAskTodoRepository(app.db.getDatabase());
+    const sessions = new NeoTodoSessionRepository(app.db.getDatabase());
+    const now = Date.now();
+    store.openAsk({ id: 'synthetic-queued-ask', projectId: null, sessionId: 'neo', originMessageId: 'synthetic-input', title: 'Synthetic delivery', request: 'Synthetic queued delivery', createdAt: now });
+    const todo = store.addTodo('synthetic-queued-todo', 'synthetic-queued-ask', { title: 'Synthetic queued task', doneWhen: 'Synthetic task completes', check: null, instruction: 'Synthetic delayed task', named: null }, now);
+    sessions.create(todo.id, { verb: 'send', ref });
+    const runner = createNeoTodoRunner({ store, sessions, invoke: async (_caller, name, input) => ({ kind: 'completed', value: await rpc(name, input) }) as import('../../../packages/daemon/src/lib/operations/invoke.ts').OperationOutcome, packs: () => [], tell: async () => {}, changed: () => {} });
+    writeFileSync(join(run, 'evidence/fault'), 'queued');
+    const began = Date.now();
+    await runner.start(todo.id);
+    const dispatch = sessions.inputs.list(todo.id)[0];
+    assert(dispatch.outcome && 'receipt' in dispatch.outcome && dispatch.outcome.receipt, JSON.stringify(dispatch));
+    const receipt = dispatch.outcome.receipt;
+    assert.equal(store.getTodo(todo.id)?.state, 'doing');
+    assert(!('failure' in dispatch.outcome));
+    const pending = await rpc<Result<WorkDetail>>('work.status', { ref, receipt });
+    assert(pending.ok && pending.value.inputEvidence?.state === 'pending', JSON.stringify(pending));
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, dispatch.deadlineAt - Date.now() + 50)));
+    const elapsed = Date.now() - began;
+    assert(elapsed >= 30_000);
+    await runner.refresh((message, error) => { throw new Error(`${message}: ${error}`); });
+    assert.equal(store.getTodo(todo.id)?.state, 'doing');
+    const latePending = await rpc<Result<WorkDetail>>('work.status', { ref, receipt });
+    assert(latePending.ok && latePending.value.inputEvidence?.state === 'pending');
+    const queued = events().findLast(e => e.kind === 'native-queued')!;
+    const targetRecord = JSON.parse(readFileSync(recordPath, 'utf8'));
+    const targetTranscript = join(run, 'home/.claude/projects', targetRecord.cwd.replace(/[/.]/g, '-'), `${targetRecord.cliSessionId}.jsonl`);
+    const inputId = crypto.randomUUID();
+    appendFileSync(targetTranscript, JSON.stringify({ type: 'user', uuid: inputId, timestamp: new Date().toISOString(), message: { content: `<cross-session-message from="local_${queued.helper}" name="desktop-wake">\n${queued.message}\n</cross-session-message>` } }) + '\n');
+    const accepted = await rpc<Result<WorkDetail>>('work.status', { ref, receipt });
+    assert(accepted.ok && accepted.value.inputEvidence?.transcriptState === 'accepted', JSON.stringify(accepted));
+    appendFileSync(targetTranscript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: 'Synthetic delayed completion' }], stop_reason: 'end_turn' } }) + '\n');
+    const confirmed = await rpc<Result<WorkDetail>>('work.status', { ref, receipt });
+    assert(confirmed.ok && confirmed.value.inputEvidence?.state === 'observed' && confirmed.value.inputEvidence.transcriptState === 'completed', JSON.stringify(confirmed));
+    evidence.push({ queuedDelivery: { elapsed, dispatch, todo: store.getTodo(todo.id), pending, latePending, accepted, confirmed } });
+    writeFileSync(join(run, 'evidence/fault'), '');
+  }
   const follow = 'Exact native follow-up\nRetain this tail too';
   const sent = await rpc<Result<WorkDelivery>>('work.send', { ref, message: follow });
   assert(sent.ok, JSON.stringify(sent));
@@ -109,6 +150,7 @@ try {
   for (const helper of stopped.filter(s => s.title === 'desktop-wake')) helper.pid = 0;
   writeFileSync(join(run, 'evidence/native-sessions.json'), JSON.stringify(stopped));
   const helperPreparationsBefore = events().filter(e => e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake')).length;
+  const helperImportsBefore = events().filter(e => e.kind === 'import').length;
   writeFileSync(join(run, 'evidence/fault'), 'slow-helper');
   const concurrent = await Promise.all([
     rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Concurrent native send ONE' }),
@@ -116,7 +158,8 @@ try {
   ]);
   assert(concurrent.every(result => result.ok), JSON.stringify(concurrent));
   const helperPreparationsAfter = events().filter(e => e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake')).length;
-  assert.equal(helperPreparationsAfter - helperPreparationsBefore, 1);
+  assert.equal(helperPreparationsAfter - helperPreparationsBefore, 0);
+  assert.equal(events().filter(e => e.kind === 'import').length - helperImportsBefore, 1);
   assert(concurrent[0].ok && concurrent[1].ok && concurrent[0].value.receipt!.inputId !== concurrent[1].value.receipt!.inputId);
   evidence.push({ concurrentNativeMessages: concurrent, newHelpers: helperPreparationsAfter - helperPreparationsBefore });
   writeFileSync(join(run, 'evidence/fault'), '');

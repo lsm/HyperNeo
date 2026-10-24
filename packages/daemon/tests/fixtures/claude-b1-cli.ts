@@ -171,6 +171,18 @@ if (process.argv.includes('agents')) {
       process.exit(1);
     }
     log({ kind: 'native-send', helper: helper.id, target: target.id, message: request.message });
+    if (fault() === 'queued') {
+      target.status = 'running';
+      log({
+        kind: 'native-queued',
+        helper: helper.id,
+        target: target.id,
+        message: request.message,
+      });
+      save();
+      process.stdout.write('Native message queued while target is mid-turn');
+      process.exit(0);
+    }
     append(target, {
       type: 'user',
       uuid: crypto.randomUUID(),
