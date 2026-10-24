@@ -248,6 +248,14 @@ export class NeoAskTodoRepository {
     ).map(toAsk);
   }
 
+  recordAskOutcome(id: string, outcome: string, now: number): NeoAsk {
+    this.db
+      .prepare("UPDATE neo_asks SET outcome = ?, updated_at = ? WHERE id = ? AND status = 'open'")
+      .run(outcome, now, id);
+    this.changed();
+    return this.getAsk(id)!;
+  }
+
   settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {
     this.db
       .prepare(

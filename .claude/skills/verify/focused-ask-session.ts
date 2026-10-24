@@ -15,12 +15,19 @@ import { sdkMessageBodyAt } from '../../../packages/daemon/src/storage/repositor
 import { hyperneoInputText } from '../../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts';
 
 const run = resolve(process.argv[2]);
+const outcomeMode = process.argv[3] === 'outcome';
+const settledOutcome = 'Decision: prioritize beginner gardeners.\n\n[Positioning document](https://example.test/positioning.md) · [Implementation PR](https://github.com/example/project/pull/8)';
+const outcomeEvidence: Record<string, unknown> = {};
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
 for (const part of ['bin', 'workspace', 'evidence']) mkdirSync(join(run, part), { recursive: true });
 for (const command of ['gh', 'open', 'ps']) writeFileSync(join(run, 'bin', command), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+if (outcomeMode) writeFileSync(join(run, 'bin/gh'), `#!${process.execPath}
+if(process.argv[2]!=='pr'||process.argv[3]!=='view')process.exit(1);
+process.stdout.write(JSON.stringify({url:'https://github.com/example/project/pull/8',state:'OPEN',headRefOid:'a'.repeat(40),reviews:[],statusCheckRollup:[],title:'Synthetic implementation',body:'',files:[]}));
+`, { mode: 0o700 });
 writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
 const modelRequests: unknown[] = [];
 const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request) {
@@ -132,6 +139,34 @@ try {
   assert.equal(store.getTodo(todo.id)?.report, null);
   assert.equal(store.getTodo(todo.id)?.state, 'doing');
   assert.equal(store.getAsk(opened.ask.id)?.status, 'open');
+  if (outcomeMode) {
+    assert.equal(store.getAsk(opened.ask.id)?.outcome, null);
+    const worker = createOperationMcpHandler(() => registry, () => ({ sessionId: ref.id, role: 'worker' }));
+    const workerWrite = await worker({ name: 'neo.ask.outcome', input: { askId: opened.ask.id, outcome: settledOutcome } });
+    outcomeEvidence.workerWrite = workerWrite;
+    assert(workerWrite.isError || JSON.parse(workerWrite.content[0].text).ok === false);
+    const explicitReport = `Settled focused discussion outcome for ask ${opened.ask.id}. The human explicitly said the discussion is settled.\n\n${settledOutcome}`;
+    const sent = await worker({ name: 'message.send', input: { to: root, text: explicitReport, idempotencyKey: 'synthetic-settled-outcome' } });
+    assert(!sent.isError, JSON.stringify(sent));
+    assert.equal(JSON.parse(sent.content[0].text).kind, 'accepted');
+    const arrivedBy = Date.now() + 10000;
+    while (!readReports().some((text) => text.includes(explicitReport)) && Date.now() < arrivedBy) await new Promise((done) => setTimeout(done, 20));
+    assert(readReports().some((text) => text.includes(explicitReport)));
+    assert.equal(store.getAsk(opened.ask.id)?.outcome, null, 'A report must not automatically settle or record the ask');
+    const recorded = await call('neo.ask.outcome', { askId: opened.ask.id, outcome: settledOutcome });
+    assert(recorded.ok, JSON.stringify(recorded));
+    assert.equal(recorded.ask.status, 'open');
+    assert.equal(recorded.ask.settledAt, null);
+    assert.equal(recorded.ask.outcome, settledOutcome);
+    assert.equal(store.getTodo(todo.id)?.state, 'doing');
+    const execution = await call('neo.todo.add', { askId: opened.ask.id, title: 'Implement the settled positioning', doneWhen: 'Implementation PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/example/project/pull/8'] } } });
+    assert(execution.ok, JSON.stringify(execution));
+    assert.equal(execution.todo.state, 'todo');
+    const premature = await call('neo.ask.settle', { askId: opened.ask.id, status: 'done', outcome: 'Everything finished' });
+    assert.equal(premature.ok, false);
+    assert.match(premature.reason, /todos_unfinished/);
+    Object.assign(outcomeEvidence, { explicitReport, sent, recorded, execution, premature, ordinaryRelayDidNotRecord: true, reportDidNotRecordAutomatically: true });
+  }
   const modelDeadline = Date.now() + 15000;
   while (!modelRequests.length && Date.now() < modelDeadline) await new Promise((done) => setTimeout(done, 20));
   assert(modelRequests.length > 0, 'Relay did not reach the local model');
@@ -141,10 +176,15 @@ try {
   const snapshot = await call('neo.snapshot');
   const card = snapshot.todoAsks.find((entry: { ask: { id: string } }) => entry.ask.id === opened.ask.id);
   assert.deepEqual(card.ask.focusedSession, ready.question.sourceSession);
+  if (outcomeMode) {
+    assert.equal(card.ask.outcome, settledOutcome);
+    assert.equal(card.ask.status, 'open');
+    assert.equal(card.todos.find((todo: { title: string }) => todo.title === 'Implement the settled positioning').state, 'todo');
+  }
   assert(card.questions.every((question: { state: string }) => question.state === 'retired'));
   assert(card.questions.some((question: { id: string }) => question.id === ready.question.id));
   const source = ready.question.sourceSession;
-  const evidence = { status: 'daemon-pass-web-pending', sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), askId: opened.ask.id, root, ref, source, card, report, dispatch, restarted: true, noQuestionAfterRetirement: true, unchangedTodoResult: true, limits: 'Synthetic work.status turn-end injected; actual daemon relay delivery and restart persistence observed. This does not evaluate model compliance or native Desktop UI.' };
+  const evidence = { outcomeMode, outcomeEvidence, settledOutcome, status: 'daemon-pass-web-pending', sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), askId: opened.ask.id, root, ref, source, card, report, dispatch, restarted: true, noQuestionAfterRetirement: true, unchangedTodoResult: true, limits: 'Synthetic work.status turn-end injected; actual daemon relay delivery and restart persistence observed. This does not evaluate model compliance or native Desktop UI.' };
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   app.server.stop();
   const files = new Map([...new Bun.Glob('**/*').scanSync({ cwd: 'packages/web/dist', onlyFiles: true })].map((path) => [`/${path}`, Bun.file(resolve('packages/web/dist', path))]));

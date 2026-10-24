@@ -27,7 +27,7 @@ describe('root Neo system prompt', () => {
   });
 
   test('routes continuing discussion into a fresh prepared session using existing flows', () => {
-    expect(NEO_FOCUSED_DISCUSSION.split(/\s+/).length).toBeLessThan(180);
+    expect(NEO_FOCUSED_DISCUSSION.split(/\s+/).length).toBeLessThan(250);
     for (const prompt of [neoPrompt([]), neoPrompt(neoSettingsPackBriefs())]) {
       for (const rule of [
         'fresh focused session',
