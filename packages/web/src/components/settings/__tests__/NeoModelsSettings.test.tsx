@@ -75,8 +75,8 @@ test('edits each effort, reorders provider fallbacks and saves through the human
       input: { ...primary, fallbacks: [copilot, { ...glm, thinkingLevel: 'off' }] },
     })
   );
-  expect(ui.getByText(/Usable fallback providers:/).textContent).toContain('OpenRouter');
-  expect(ui.getByText(/Usable fallback providers:/).textContent).toContain('Z.ai');
+  expect(ui.getByText(/Providers with usable models:/).textContent).toContain('OpenRouter');
+  expect(ui.getByText(/Providers with usable models:/).textContent).toContain('Z.ai');
 });
 
 test('adds a different-provider model with supported thinking and can remove all fallbacks', async () => {
@@ -190,7 +190,7 @@ test('lists only runnable providers and offers every thinking level', async () =
     })),
   });
   const ui = await editor();
-  expect(ui.getByText(/Usable fallback providers:/).textContent).not.toContain('OpenRouter');
+  expect(ui.getByText(/Providers with usable models:/).textContent).not.toContain('OpenRouter');
   expect(
     [...ui.getByLabelText('Neo model 3 thinking').querySelectorAll('option')].map(
       (option) => option.value
@@ -335,10 +335,10 @@ test('an unsaved Neo preference shows that it follows the current default', asyn
     modelProvider: 'anthropic',
     neo: {},
   } as GlobalSettings;
-  const ui = await editor();
-  expect(ui.getByText('Follows default (current: opus)')).toBeTruthy();
-  expect(ui.queryByRole('button', { name: 'Clear saved fallbacks' })).toBeTruthy();
-  expect(ui.queryByRole('button', { name: 'Disable Neo fallbacks' })).toBeNull();
+  render(<NeoModelSettings />);
+  expect(await screen.findByText('Follows default (current: opus)')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Clear saved fallbacks' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Disable Neo fallbacks' })).toBeNull();
 });
 
 test('refresh reloads the model list and never saves a Neo default', async () => {
@@ -354,5 +354,5 @@ test('refresh reloads the model list and never saves a Neo default', async () =>
   );
   expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
   expect(updateGlobalSettings).not.toHaveBeenCalled();
-  expect(ui.getByText(/Refresh reloads the model list only/)).toBeTruthy();
+  expect(screen.getByText(/Refresh reloads the model list only/)).toBeTruthy();
 });
