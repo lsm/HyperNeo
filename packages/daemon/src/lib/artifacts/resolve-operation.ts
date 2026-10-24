@@ -46,7 +46,7 @@ export function createArtifactReferenceResolve(
   async function plan(input: Input, caller: OperationCaller) {
     const db = database();
     const daemonId = new ArtifactFileRepository(db).daemonId;
-    const sources = new ArtifactReferenceSourceRepository(db, daemonId);
+    const sources = new ArtifactReferenceSourceRepository(db, daemonId, home);
     const selected = await planStoredReference(
       { source: input.sourceMessageOrCard, reference: input.reference, context: input.context },
       caller,
@@ -87,7 +87,8 @@ export function createArtifactReferenceResolve(
             selected,
             input.requestId,
             async () => JSON.stringify(await plan(input, caller)) === JSON.stringify(selected),
-            readGit
+            readGit,
+            home
           )) as { accepted: boolean; reason?: string })
         : selected.kind === 'github-pr'
           ? await readPr(selected).then((pr) => (pr ? { accepted: true, pr } : unavailable()))

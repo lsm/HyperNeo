@@ -1,5 +1,6 @@
 import { Database } from './sqlite-compat.ts';
 import { runLagPhase } from '../lib/event-loop-activity.ts';
+import { join } from 'node:path';
 import type {
   CodexSnapshot,
   CodexRootRow,
@@ -13,6 +14,8 @@ export const THREAD_COLUMNS = `id, COALESCE(NULLIF(substr(trim(replace(replace($
   cwd AS folder, COALESCE(archived, 0) AS archived, COALESCE(updated_at_ms, 0) AS updatedAt`;
 const CLOSED_THREADS = 500;
 const BUSY_TIMEOUT_MS = 2_000;
+
+export const codexStatePath = (home: string): string => join(home, '.codex', 'state_5.sqlite');
 
 function readCodexStateOnce<T>(path: string, read: (db: Database) => T): T {
   const db = runLagPhase(

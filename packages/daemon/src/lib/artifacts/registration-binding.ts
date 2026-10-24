@@ -3,12 +3,11 @@ import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-re
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { ArtifactContext, ArtifactContextBinding } from './file-policy.ts';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { OWN_THREADS, withCodexState } from '../../storage/codex-desktop-read.ts';
+import { codexStatePath, OWN_THREADS, withCodexState } from '../../storage/codex-desktop-read.ts';
 
 function codexWorkspace(id: string, home: string): string | null {
   try {
-    return withCodexState(join(home, '.codex', 'state_5.sqlite'), (db) => {
+    return withCodexState(codexStatePath(home), (db) => {
       const row = db.prepare(`SELECT cwd FROM threads WHERE id = ? AND ${OWN_THREADS}`).get(id) as {
         cwd: string;
       } | null;

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -67,6 +69,38 @@ afterEach(() => {
 });
 
 describe('native artifact workspace ownership', () => {
+  test('keeps a custom home across registration and later authorization', () => {
+    const proof = join(root, 'proof');
+    mkdirSync(join(proof, 'home'), { recursive: true });
+    execFileSync(
+      'bun',
+      [
+        fileURLToPath(
+          new URL(
+            '../../../../../../.claude/skills/verify/native-artifact-register.ts',
+            import.meta.url
+          )
+        ),
+        proof,
+      ],
+      {
+        cwd: fileURLToPath(new URL('../../../../../..', import.meta.url)),
+        env: {
+          PATH: process.env.PATH,
+          HOME: join(proof, 'home'),
+          NODE_ENV: 'test',
+          HYPERNEO_DATA_DIR: join(proof, 'data'),
+          LOG_LEVEL: 'error',
+        },
+        timeout: 30000,
+        stdio: 'pipe',
+      }
+    );
+    expect(
+      JSON.parse(readFileSync(join(proof, 'evidence/native-registration.json'), 'utf8'))
+    ).toMatchObject({ passed: true, customHomeConsistent: true });
+  });
+
   test('binds only the native thread cwd and preserves producer identity', () => {
     expect(load()).toMatchObject({
       workspacePath: workspace,

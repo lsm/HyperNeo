@@ -10,6 +10,11 @@ import { createArtifactRegistration } from '../../../packages/daemon/src/lib/art
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import type { ArtifactRef } from '../../../packages/shared/src/types/artifact-file.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { createHash } from 'node:crypto';
+import { createArtifactRefReader } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
+import { ArtifactReferenceSourceRepository } from '../../../packages/daemon/src/storage/repositories/artifact-reference-source.ts';
+import { captureGitArtifact } from '../../../packages/daemon/src/lib/artifacts/git-capture.ts';
 
 const root = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -92,6 +97,28 @@ try {
   assert.deepEqual(await register.execute(input, worker), { accepted: false, reason: 'unavailable' });
   assert.deepEqual(await getter.execute({ artifactId: first.artifact.artifactId }, worker), { accepted: false, reason: 'unavailable' });
   evidence.revocationRechecked = true;
+  const customHome = join(root, 'custom-home');
+  await mkdir(join(customHome, '.codex'), { recursive: true });
+  const native = new Database(join(customHome, '.codex', 'state_5.sqlite'));
+  const customDb = new Database(join(root, 'data', 'daemon.db'));
+  try {
+    native.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, source TEXT)');
+    native.prepare('INSERT INTO threads VALUES (?, ?, ?)').run('custom-worker', join(root, 'workspace'), 'desktop');
+    customDb.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'codex-desktop', id: 'custom-worker' }), context.id);
+    const owner = { ...worker, sessionId: 'codex-desktop:custom-worker' };
+    const customInput = { ...input, requestId: 'custom-home' };
+    const custom = await createArtifactRegistration(() => customDb, join(root, 'data'), customHome).execute(customInput, owner) as { accepted: boolean; artifact: ArtifactRef };
+    assert.equal(custom.accepted, true);
+    const customGet = createArtifactReadOperations(() => customDb, join(root, 'data'), undefined, customHome).find((op) => op.name === 'artifact.file.get')!;
+    assert.equal((await customGet.execute({ artifactId: custom.artifact.artifactId }, owner) as { accepted: boolean }).accepted, true, 'custom-home authorization must use the registration native state');
+    assert.deepEqual(createArtifactRefReader(() => customDb, customHome)(custom.artifact.artifactId, owner), custom.artifact);
+    const sources = new ArtifactReferenceSourceRepository(customDb, custom.artifact.daemonId, customHome);
+    assert.equal(sources.load({ kind: 'todo', id: context.id })?.bindings[0]?.workspacePath, join(root, 'workspace'));
+    const bytes = Buffer.from('# Synthetic pinned blob\n');
+    const captured = await captureGitArtifact(customDb, join(root, 'data'), { repository: 'synthetic/repo', sha: 'a'.repeat(40), path: 'custom.md', context: { kind: 'todo', id: context.id } }, 'custom-home-git', async () => true, async () => ({ accepted: true, bytes, sha256: createHash('sha256').update(bytes).digest('hex'), blobSha: 'b'.repeat(40) }), customHome) as { accepted: boolean };
+    assert.equal(captured.accepted, true, 'Git authorization must use the same configured home');
+    evidence.customHomeConsistent = true;
+  } finally { customDb.close(); native.close(); }
   evidence.passed = true;
 } finally {
   await writeFile(join(root, 'evidence', 'native-registration.json'), JSON.stringify(evidence, null, 2));

@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { ARTIFACT_DEFAULT_LIMITS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -35,18 +36,26 @@ const rowContext = (row: StoredArtifactFile): ArtifactContext => ({
   id: row.context_id,
 });
 
-function authorizesContext(db: Database, context: ArtifactContext, caller: OperationCaller) {
+function authorizesContext(
+  db: Database,
+  context: ArtifactContext,
+  caller: OperationCaller,
+  home: string
+) {
   const daemonId = new ArtifactFileReadRepository(db).daemonId();
-  const binding = daemonId ? loadRegistrationBinding(db, daemonId, context) : null;
+  const binding = daemonId ? loadRegistrationBinding(db, daemonId, context, home) : null;
   return !!binding && 'value' in authorizeArtifactCaller(binding, caller);
 }
 
 export type ArtifactRefReader = (artifactId: string, caller: OperationCaller) => ArtifactRef | null;
 
-export function createArtifactRefReader(database: () => Database): ArtifactRefReader {
+export function createArtifactRefReader(
+  database: () => Database,
+  home = homedir()
+): ArtifactRefReader {
   return (artifactId, caller) => {
     const row = new ArtifactFileReadRepository(database()).get(artifactId);
-    return row && authorizesContext(database(), rowContext(row), caller)
+    return row && authorizesContext(database(), rowContext(row), caller, home)
       ? (JSON.parse(row.receipt).artifact as ArtifactRef)
       : null;
   };
@@ -55,11 +64,12 @@ export function createArtifactRefReader(database: () => Database): ArtifactRefRe
 export function createArtifactReadOperations(
   database: () => Database,
   data = getDataDir(),
-  readChunk = readArtifactChunk
+  readChunk = readArtifactChunk,
+  home = homedir()
 ) {
   const repo = () => new ArtifactFileReadRepository(database());
   function authorizeContext(context: ArtifactContext, caller: OperationCaller) {
-    return authorizesContext(database(), context, caller)
+    return authorizesContext(database(), context, caller, home)
       ? { value: context }
       : { reason: unavailable() };
   }

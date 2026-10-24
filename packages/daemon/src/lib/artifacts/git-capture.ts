@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
@@ -17,7 +18,8 @@ export function captureGitArtifact(
   plan: Plan,
   requestId: string,
   current: () => Promise<boolean>,
-  readBlob = readBoundGitBlob
+  readBlob = readBoundGitBlob,
+  home = homedir()
 ) {
   const repo = new ArtifactFileRepository(db);
   const key = `git:${requestId}`;
@@ -26,7 +28,7 @@ export function captureGitArtifact(
   async function publish(
     blob: Extract<Awaited<ReturnType<typeof readBoundGitBlob>>, { accepted: true }>
   ) {
-    const binding = loadRegistrationBinding(db, repo.daemonId, plan.context);
+    const binding = loadRegistrationBinding(db, repo.daemonId, plan.context, home);
     if (!binding || !(await current())) return unavailable();
     const snapshot = await (await artifactCaptureOwner(db, data)).capture(blob.bytes);
     if (!snapshot.accepted) return snapshot;
@@ -36,7 +38,7 @@ export function captureGitArtifact(
     if (!kind.value) return { accepted: false, reason: 'unsupported_type' };
     if (
       !(await current()) ||
-      JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context)) !==
+      JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context, home)) !==
         JSON.stringify(binding)
     )
       return unavailable();
