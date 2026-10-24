@@ -52,3 +52,11 @@ control delays only that observed stamp by one second and still correlates,
 while a disjoint holder interval is rejected. These are replay controls, not a
 claim that the real worker was descheduled. Interval and close summaries must
 retain worker provenance but carry no single operation or request identity.
+
+Before opening any synthetic DB, the helper builds both actual worker modules
+with a loader that rejects application-config or credential-discovery imports.
+The old worker config import fails this check before any credential code can run.
+The passing graph contains neither; parent code resolves observability options
+and includes them in each worker request. The subsequent real worker runs still
+verify forwarded slow SQL, proving that configuration forwarding retained the
+requested instrumentation. No human-login mode or real credentials are used.

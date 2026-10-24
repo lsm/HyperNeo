@@ -1,4 +1,4 @@
-import { getConfig } from '../../config.ts';
+import type { SQLiteQueryObservabilityOptions } from '../../storage/sqlite-query-observability.ts';
 import {
   publishSQLiteWorkerLogs,
   type SQLiteWorkerLog,
@@ -9,7 +9,12 @@ import { mirrorNeoWorkspaceProjects } from './project-mirror.ts';
 
 const worker = globalThis as unknown as {
   onmessage: (
-    event: MessageEvent<{ dbPath: string; groups: PlaceGroup[]; requestId?: string }>
+    event: MessageEvent<{
+      dbPath: string;
+      groups: PlaceGroup[];
+      requestId?: string;
+      queryObservability?: SQLiteQueryObservabilityOptions;
+    }>
   ) => void;
   postMessage(result: { changed: boolean } | { error: string } | SQLiteWorkerLog): void;
 };
@@ -25,7 +30,7 @@ worker.onmessage = ({ data }) => {
   let db: Database | undefined;
   let result: { changed: boolean } | { error: string };
   try {
-    db = new Database(data.dbPath, { queryObservability: getConfig().sqlQueryObservability });
+    db = new Database(data.dbPath, { queryObservability: data.queryObservability });
     db.exec('PRAGMA foreign_keys=ON');
     db.exec('PRAGMA busy_timeout=5000');
     db.exec('PRAGMA synchronous=NORMAL');

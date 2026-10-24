@@ -1,3 +1,4 @@
+import { getConfig } from '../config.ts';
 import {
   forwardSQLiteWorkerLog,
   type SQLiteWorkerLog,
@@ -75,7 +76,11 @@ export function runMessageSearchMerge(
         finish('worker-unavailable');
       };
       timer = setTimeout(() => finish('timeout'), timeoutMs);
-      worker.postMessage({ dbPath, requestId: crypto.randomUUID() });
+      worker.postMessage({
+        dbPath,
+        requestId: crypto.randomUUID(),
+        queryObservability: getConfig().sqlQueryObservability,
+      });
     } catch (error) {
       log.warn('message_search_fts background merge could not start:', error);
       finish('worker-unavailable');

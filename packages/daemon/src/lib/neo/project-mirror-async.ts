@@ -1,3 +1,4 @@
+import { getConfig } from '../../config.ts';
 import {
   forwardSQLiteWorkerLog,
   type SQLiteWorkerLog,
@@ -53,7 +54,12 @@ export function mirrorNeoWorkspaceProjectsAsync(
               () => finish(false, new Error('Project mirror worker timed out')),
               30_000
             );
-            worker.postMessage({ dbPath: path, groups, requestId: crypto.randomUUID() });
+            worker.postMessage({
+              dbPath: path,
+              groups,
+              requestId: crypto.randomUUID(),
+              queryObservability: getConfig().sqlQueryObservability,
+            });
           } catch (error) {
             finish(false, error instanceof Error ? error : new Error(String(error)));
           }

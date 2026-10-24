@@ -1,4 +1,4 @@
-import { getConfig } from '../config.ts';
+import type { SQLiteQueryObservabilityOptions } from '../storage/sqlite-query-observability.ts';
 import {
   publishSQLiteWorkerLogs,
   type SQLiteWorkerLog,
@@ -11,6 +11,7 @@ const FTS_MERGE_RANK = 1024;
 type MergeWorkerRequest = {
   dbPath: string;
   requestId?: string;
+  queryObservability?: SQLiteQueryObservabilityOptions;
 };
 
 type MergeWorkerResponse = {
@@ -40,7 +41,7 @@ worker.onmessage = (event) => {
   let mergeMs = 0,
     closeMs = 0;
   try {
-    db = new BunDatabase(dbPath, { queryObservability: getConfig().sqlQueryObservability });
+    db = new BunDatabase(dbPath, { queryObservability: event.data.queryObservability });
     db.exec(`PRAGMA busy_timeout = 5000`);
     const mergeStart = performance.now();
     withBusyRetry(() => {
