@@ -67,6 +67,7 @@ try {
   const caller = 'synthetic-delivery-origin';
   await app.db.createSession({ id: caller, title: caller, workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const initialFrames: Array<{ uuid: string }> = [];
+  const heldReceipts: Array<{ orig_msg_id: string; status: string }> = [];
   const initialSocket = join(run, '9001.sock');
   const initialPeer = createServer(socket => {
     let buffer = '';
@@ -76,6 +77,10 @@ try {
       if (!buffer.endsWith('\n')) return;
       const frame = JSON.parse(buffer); initialFrames.push(frame);
       const record = JSON.parse(readFileSync(join(scope, `local_${frame.session_id}.json`), 'utf8'));
+      if (frame.message.content.includes('from-mode="bypass"') !== (record.permissionMode === 'bypassPermissions')) {
+        heldReceipts.push({ orig_msg_id: frame.msg_id, status: 'held' });
+        return;
+      }
       const transcript = join(run, 'home/.claude/projects', record.cwd.replace(/[/.]/g, '-'), `${frame.session_id}.jsonl`);
       appendFileSync(transcript, JSON.stringify({ type: 'user', uuid: frame.uuid, timestamp: new Date().toISOString(), message: frame.message }) + '\n');
       appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: 'Initial direct completion' }], stop_reason: 'end_turn' } }) + '\n');
@@ -86,7 +91,9 @@ try {
   let started: Result<WorkStarted>;
   try {
     started = await rpc<Result<WorkStarted>>('work.start', { adapter: 'claude-desktop', from: `session:${caller}`, place: { machine: hostname(), folder: join(run, 'workspace'), name: 'Synthetic delivery project' }, title: 'TEST Desktop delivery worker', message: 'Initial delivery marker' });
+    evidence.push({ initialDirectFrames: initialFrames, heldReceipts });
     assert(started.ok, JSON.stringify(started));
+    assert.equal(heldReceipts.length, 0, 'Auto receiver must not hold the initial direct frame');
     assert.equal(initialFrames.length, 1, 'work.start must use the initial direct inbox');
     assert.equal(started.value.receipt?.inputId, initialFrames[0].uuid);
     assert(!events().some(e => e.kind === 'target-relay'), 'Initial task must not spawn a relay');
@@ -119,6 +126,11 @@ try {
         writeFileSync(recordPath, JSON.stringify({ ...JSON.parse(readFileSync(recordPath, 'utf8')), permissionMode: changeMode }));
         return;
       }
+      const current = JSON.parse(readFileSync(recordPath, 'utf8'));
+      if (frame.message.content.includes('from-mode="bypass"') !== (current.permissionMode === 'bypassPermissions')) {
+        heldReceipts.push({ orig_msg_id: frame.msg_id, status: 'held' });
+        return;
+      }
       appendFileSync(transcript, JSON.stringify({ type: 'user', uuid: frame.uuid, timestamp: new Date().toISOString(), message: frame.message }) + '\n');
       appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: 'Direct completion' }], stop_reason: 'end_turn' } }) + '\n');
     });
@@ -130,6 +142,15 @@ try {
     const direct = await rpc<Result<WorkDelivery>>('work.send', { ref, from: `session:${caller}`, message: 'Confirmed direct marker' });
     assert(direct.ok && direct.value.delivered, JSON.stringify(direct));
     assert.equal(events().slice(before).filter(e => e.kind === 'target-relay' || (e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake'))).length, 0);
+    for (const mode of ['auto', 'bypassPermissions']) {
+      writeFileSync(recordPath, JSON.stringify({ ...JSON.parse(readFileSync(recordPath, 'utf8')), permissionMode: mode }));
+      const before = events().length;
+      const sent = await rpc<Result<WorkDelivery>>('work.send', { ref, from: `session:${caller}`, message: `Direct same-side ${mode}` });
+      assert(sent.ok && sent.value.delivered, JSON.stringify(sent));
+      assert.equal(heldReceipts.length, 0);
+      assert.equal(events().slice(before).filter(e => e.kind === 'target-relay').length, 0);
+      evidence.push({ directReceiverMode: mode, sent, heldReceipts: [...heldReceipts] });
+    }
     for (const mode of ['auto', 'default', 'acceptEdits', 'bypassPermissions']) {
       writeFileSync(recordPath, JSON.stringify({ ...JSON.parse(readFileSync(recordPath, 'utf8')), permissionMode: mode === 'bypassPermissions' ? 'auto' : 'bypassPermissions' }));
       changeMode = mode;

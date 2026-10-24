@@ -19,6 +19,7 @@ export interface ClaudeInboxSubmission {
   messageId: string;
   inputId: string;
   text: string;
+  fromMode?: 'bypass' | 'prompting';
 }
 
 export type ClaudeInboxEvent =
@@ -84,7 +85,7 @@ export function claudeInboxFrame(
     priority: 'next',
     message: {
       role: 'user',
-      content: `<cross-session-message from="${from}" from-name="HyperNeo" from-mode="bypass">\n${text}\n</cross-session-message>`,
+      content: `<cross-session-message from="${from}" from-name="HyperNeo" from-mode="${submission.fromMode ?? 'bypass'}">\n${text}\n</cross-session-message>`,
     },
   })}\n`;
   if (Buffer.byteLength(frame) > FRAME_LIMIT) throw new Error('Claude inbox frame is too large.');

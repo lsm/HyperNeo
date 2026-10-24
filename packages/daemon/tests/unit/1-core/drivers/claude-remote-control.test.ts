@@ -279,44 +279,60 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     }
   );
 
-  test('a live Desktop target receives directly without opening a helper', async () => {
-    write(record('t1', { cwd: '/Users/test' }));
-    live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
-    const project = join(dir, 'projects/-Users-test');
-    mkdirSync(project, { recursive: true });
-    writeFileSync(join(project, 'cli-t1.jsonl'), '');
-    const context = { from: 'session:origin', caller: { source: 'rpc' as const } };
-    const result = await runClaudeDesktopWake(
-      target,
-      'Exact direct marker',
-      {
-        ...deps(),
-        sendInbox: async (id, message, receivedContext) => {
-          expect(id).toBe('cli-t1');
-          expect(receivedContext).toEqual(context);
-          writeFileSync(
-            join(project, 'cli-t1.jsonl'),
-            JSON.stringify({ type: 'user', uuid: 'direct-input', message: { content: message } }) +
-              '\n'
-          );
-          return {
-            ok: true,
-            value: {
-              delivered: false,
-              unconfirmed: true,
-              receipt: { executionId: id, inputId: 'direct-input' },
-            },
-          };
+  test.each(['auto', 'default', 'acceptEdits', 'bypassPermissions'])(
+    'a live %s target receives directly using fresh mode without a helper',
+    async (mode) => {
+      write(
+        record('t1', {
+          cwd: '/Users/test',
+          permissionMode: mode === 'bypassPermissions' ? 'auto' : 'bypassPermissions',
+        })
+      );
+      live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
+      const project = join(dir, 'projects/-Users-test');
+      mkdirSync(project, { recursive: true });
+      writeFileSync(join(project, 'cli-t1.jsonl'), '');
+      const context = { from: 'session:origin', caller: { source: 'rpc' as const } };
+      const result = await runClaudeDesktopWake(
+        target,
+        'Exact direct marker',
+        {
+          ...deps(),
+          liveSessions: async () => {
+            write(record('t1', { cwd: '/Users/test', permissionMode: mode }));
+            return live;
+          },
+          sendInbox: async (id, message, receivedContext, fromMode) => {
+            expect(id).toBe('cli-t1');
+            expect(receivedContext).toEqual(context);
+            expect(fromMode).toBe(mode === 'bypassPermissions' ? 'bypass' : 'prompting');
+            writeFileSync(
+              join(project, 'cli-t1.jsonl'),
+              JSON.stringify({
+                type: 'user',
+                uuid: 'direct-input',
+                message: { content: message },
+              }) + '\n'
+            );
+            return {
+              ok: true,
+              value: {
+                delivered: false,
+                unconfirmed: true,
+                receipt: { executionId: id, inputId: 'direct-input' },
+              },
+            };
+          },
         },
-      },
-      context
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      value: { delivered: true, receipt: { inputId: 'direct-input' } },
-    });
-    expect(spawned).toEqual([]);
-  });
+        context
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: { delivered: true, receipt: { inputId: 'direct-input' } },
+      });
+      expect(spawned).toEqual([]);
+    }
+  );
 
   test.each(['auto', 'default', 'acceptEdits', 'bypassPermissions'])(
     'retries an unconfirmed direct send using the freshly changed %s receiver mode',
