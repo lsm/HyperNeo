@@ -154,7 +154,9 @@ try {
     delayedResult = await Promise.race([send(), new Promise<never>((_, reject) => { callerTimer=setTimeout(()=>reject(new Error('Default 10s RPC caller timed out')),10_000); })]);
   } finally { clearTimeout(callerTimer); }
   assert.equal(delayedResult.reason,'not_delivered');
-  assert(performance.now()-delayedStarted<10_000,'Admission settles before the default caller timeout');
+  const delayedElapsedMs=performance.now()-delayedStarted;
+  assert(delayedElapsedMs<9_000,'Eight-second admission settles before the default caller timeout');
+  timings.push({ delayedOwnerAdmissionMs: delayedElapsedMs, delayedOwnerReadyAfterMs: 11_000, noLateDispatch: true });
   await new Promise(done=>setTimeout(done,Math.max(0,ownerReadyAt-Date.now()+100)));
   assert(!calls.slice(delayedBefore).some(call=>['thread-follower-steer-turn','thread-follower-start-turn'].includes((call as {desktop?:string}).desktop??'') || (call as {server?:string}).server),'A late owner must not receive a turn after refusal');
   owner='missing';
@@ -288,7 +290,7 @@ try {
     assert(existsSync(openLog), 'Desktop handoffs must request the supported open');
     const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.deepEqual(opens[0].args, ['-g', 'codex://threads/new-handoff-control']);
-    assert.equal(opens.length, 3, 'Only new-thread control, ownerless handoff and refused handoff may open Desktop');
+    assert.equal(opens.length, 4, 'New-thread control, ownerless, refused and deadline handoffs each open once');
     assert(opens.slice(1).every(open => JSON.stringify(open.args) === JSON.stringify(['-g', 'codex://threads/synthetic'])));
     timings.push({ desktopOpens: opens, noDesktopFallbackOnly: true });
     assert(logs.length > 0, 'retained routing diagnostics required');

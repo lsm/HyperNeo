@@ -168,6 +168,12 @@ export function connectCodexAppServer(
       ) {
         completed.add(`${message.params.threadId}/${message.params.turn.id}`);
         release(message.params.threadId);
+      } else if (message.method === 'turn/completed') {
+        log.warn('work.send app-server completion unrecognized', {
+          hasThreadId: typeof message.params?.threadId === 'string',
+          hasTurnId: typeof message.params?.turn?.id === 'string',
+          trackedTurns: turns.size,
+        });
       }
       const waiting = typeof message.id === 'number' ? pending.get(message.id) : undefined;
       if (!waiting || typeof message.id !== 'number') return;

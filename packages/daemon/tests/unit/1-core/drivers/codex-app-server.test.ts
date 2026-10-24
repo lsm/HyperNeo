@@ -197,7 +197,8 @@ describe('connectCodexAppServer', () => {
             params: { threadId: 'synthetic-thread', turn: {}, privateMarker: 'MUST_NOT_BE_LOGGED' },
           })
         );
-      await new Promise((done) => setTimeout(done, 20));
+      for (let n = 0; n < 50 && !logs.length; n++)
+        await new Promise((done) => setTimeout(done, 10));
       expect(logs).toHaveLength(1);
       expect(logs[0]).toContain('"hasThreadId":true');
       expect(logs[0]).toContain('"hasTurnId":false');

@@ -10,10 +10,10 @@ const TIMEOUT_MS = 30_000;
 
 export type CodexSendGate<Value> = { value: Value } | { reason: Result<WorkDelivery> };
 
-async function codexDesktopRunning(spawn: SpawnFn): Promise<boolean> {
-  const probe = spawn(['ps', '-axo', 'comm='], { stdout: 'pipe', stderr: 'ignore' });
+async function codexDesktopRunning(spawn: SpawnFn, platform = process.platform): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const probe = spawn(['ps', '-axo', 'comm='], { stdout: 'pipe', stderr: 'ignore' });
     const [code, processes] = await Promise.race([
       Promise.all([probe.exited, new Response(probe.stdout).text()]),
       new Promise<never>((_, reject) => {
@@ -29,6 +29,9 @@ async function codexDesktopRunning(spawn: SpawnFn): Promise<boolean> {
       .some((path) =>
         /\/(Codex|ChatGPT)\.app\/Contents\/MacOS\/(Codex|ChatGPT)$/.test(path.trim())
       );
+  } catch (error) {
+    if (platform !== 'darwin') return false;
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -37,22 +40,26 @@ async function codexDesktopRunning(spawn: SpawnFn): Promise<boolean> {
 async function openCodexDesktopOwner(
   { call }: CodexDesktopIpc,
   spawn: SpawnFn,
-  threadId: string
+  threadId: string,
+  deadline = Date.now() + TIMEOUT_MS
 ): Promise<string> {
+  if (Date.now() >= deadline) throw new Error('Codex Desktop open timed out.');
   const launcher = spawn(['open', '-g', `codex://threads/${threadId}`], {
     stdout: 'ignore',
     stderr: 'pipe',
   });
-  const deadline = Date.now() + TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const [code, stderr] = await Promise.race([
       Promise.all([launcher.exited, new Response(launcher.stderr).text()]),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          launcher.kill();
-          reject(new Error('Codex Desktop open timed out.'));
-        }, TIMEOUT_MS);
+        timer = setTimeout(
+          () => {
+            launcher.kill();
+            reject(new Error('Codex Desktop open timed out.'));
+          },
+          Math.max(0, deadline - Date.now())
+        );
       }),
     ]);
     clearTimeout(timer);
@@ -67,7 +74,9 @@ async function openCodexDesktopOwner(
         return discovered.handledByClientId;
       if (discovered.resultType !== 'success' && discovered.error !== 'no-client-found')
         throw new Error(discovered.error ?? 'Codex Desktop ownership discovery failed.');
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(200, Math.max(0, deadline - Date.now())))
+      );
     } while (Date.now() < deadline);
     throw new Error('Codex Desktop did not take ownership of the thread in time.');
   } finally {
@@ -82,8 +91,10 @@ export async function steerCodexDesktopTurn(
   text: string,
   messageId: string,
   mode: 'auto' | 'steer' = 'auto',
-  desktopRunning = () => codexDesktopRunning(spawn)
+  desktopRunning = () => codexDesktopRunning(spawn, probePlatform),
+  probePlatform = process.platform
 ): Promise<CodexSendGate<'app-server'>> {
+  const deadline = Date.now() + 8_000;
   try {
     if (!(await desktopRunning())) {
       log.warn('work.send route', {
@@ -120,7 +131,7 @@ export async function steerCodexDesktopTurn(
   }
   let dispatched = false;
   try {
-    return await withCodexDesktopIpc(socketPath, async ({ call }) => {
+    const admit = async ({ call }: CodexDesktopIpc): Promise<CodexSendGate<'app-server'>> => {
       let owner = await call(
         'thread-owner-discovery',
         { hostId: 'local', conversationId: threadId },
@@ -138,7 +149,7 @@ export async function steerCodexDesktopTurn(
           throw new Error(owner.error ?? 'Codex Desktop did not confirm an owner.');
         owner = {
           resultType: 'success',
-          handledByClientId: await openCodexDesktopOwner({ call }, spawn, threadId),
+          handledByClientId: await openCodexDesktopOwner({ call }, spawn, threadId, deadline),
         };
       }
       log.warn('work.send route', { threadId, messageId, path: 'desktop-steer' });
@@ -166,7 +177,9 @@ export async function steerCodexDesktopTurn(
         )
       ) {
         if (mode === 'steer')
-          return { reason: reject('not_delivered', response.error ?? 'Desktop refused steering.') };
+          return {
+            reason: reject('not_delivered', response.error ?? 'Desktop refused steering.'),
+          };
         const started = await call(
           'thread-follower-start-turn',
           {
@@ -206,7 +219,8 @@ export async function steerCodexDesktopTurn(
                 'Desktop did not confirm steering; the message may have been accepted. Check work.status before retrying.'
             ),
           };
-    });
+    };
+    return await withCodexDesktopIpc(socketPath, admit, deadline);
   } catch (error) {
     log.warn('work.send desktop transport failed', {
       threadId,
@@ -231,16 +245,22 @@ export async function startCodexDesktopTurn(
   threadId: string,
   request: Record<string, unknown>
 ): Promise<void> {
-  return withCodexDesktopIpc(socketPath, (client) => handoff(client, spawn, threadId, request));
+  const deadline = Date.now() + TIMEOUT_MS;
+  return withCodexDesktopIpc(
+    socketPath,
+    (client) => handoff(client, spawn, threadId, request, deadline),
+    deadline
+  );
 }
 
 async function handoff(
   { call }: CodexDesktopIpc,
   spawn: SpawnFn,
   threadId: string,
-  request: Record<string, unknown>
+  request: Record<string, unknown>,
+  deadline: number
 ): Promise<void> {
-  const owner = await openCodexDesktopOwner({ call }, spawn, threadId);
+  const owner = await openCodexDesktopOwner({ call }, spawn, threadId, deadline);
   const started = await call(
     'thread-follower-start-turn',
     {

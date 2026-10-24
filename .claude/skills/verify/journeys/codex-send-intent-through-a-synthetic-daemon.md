@@ -17,8 +17,14 @@ the Desktop steer receipt and must never call app-server resume/start. A refused
 open, a protocol refusal, and missing/stale IPC while Desktop is running must
 return `not_delivered`, without any app-server request. With the process flag
 absent and the socket missing/stale, app-server delivery remains prompt. Only
-three opens are expected: new-thread control, successful existing handoff and
-refused existing handoff. Evidence is in `evidence/desktop-open.jsonl`.
+four opens are expected: new-thread control, successful existing handoff,
+refused existing handoff and a delayed-owner handoff. The delayed owner becomes
+available at 11 seconds; admission must return not_delivered within 9 seconds,
+before the caller’s 10-second timeout, then make no follower or app-server request
+when that late owner appears. The production admission budget is 8 seconds total
+including process probing, IPC initialization, open and discovery. Its IPC closes
+at the absolute deadline and an outstanding open launcher is killed. New-thread
+handoff retains its separate 30-second budget. Evidence is in `evidence/desktop-open.jsonl`.
 
 Explicit queue is a separate path: while Desktop is running, the journey observes
 `thread/queue/add` and its queue ID without a resume/start request. It is not
@@ -77,3 +83,19 @@ helper-level controls pass no endpoint or a failing process probe, require
 not_delivered without spawning, and observe work.send route with the explicit
 desktop_socket_missing / desktop_running_probe_failed reason. These controls
 are distinguished from the full RPC path, whose adapter supplies a socket path.
+Non-macOS process-probe failures preserve CLI/app-server routing; macOS probe
+failures refuse. Unit controls cover both host contracts and prevent a follower
+request after an absolute IPC deadline.
+
+Completion ownership uses the installed CLI’s generated notification contract.
+For codex-cli 0.163.0-alpha.11.1, `app-server generate-json-schema --out <owned-dir>`
+produces `v2/TurnCompletedNotification.json` requiring `threadId` and `turn`, with
+`turn.id` required. The reviewed schema’s SHA-256 is
+`69413578ec3ecd02691424bdeb9d640c7244b4ca4c5c3ef26f69a2efe7c37db8`.
+Generate it under a fresh HOME, without connecting to any server or loading a
+thread. [Upstream generation guidance](https://developers.openai.com/codex/app-server/)
+explains that this contract is specific to the generating CLI version. A malformed
+completion logs only field-presence booleans and tracked-turn count, never its
+contents. Unit tests retain that warning and assert a synthetic private marker
+is absent. Installed-schema verification does not prove every running server uses
+the installed version.

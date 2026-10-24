@@ -149,7 +149,8 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
-    test('refuses when an opened Desktop never acquires the thread', async () => {
+    test('refuses within eight seconds when Desktop never acquires the thread', async () => {
+      const started = performance.now();
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -177,11 +178,47 @@ describe('withCodexDesktopIpc', () => {
         reason: {
           ok: false,
           reason: 'not_delivered',
-          detail: expect.stringContaining('did not take ownership'),
+          detail: expect.stringContaining('No background writer was started'),
         },
       });
       expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
-    }, 35_000);
+      expect(performance.now() - started).toBeLessThan(9_000);
+    }, 10_000);
+
+    test('kills a stalled launcher and closes IPC at the existing-turn deadline', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'error',
+          error: 'no-client-found',
+        })
+      );
+      let killed = false;
+      const started = performance.now();
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        () => ({
+          stdout: null,
+          stderr: null,
+          exited: new Promise<number>(() => {}),
+          exitCode: null,
+          kill: () => {
+            killed = true;
+          },
+        }),
+        'thread-1',
+        'marker',
+        'input-1',
+        'auto',
+        async () => true
+      );
+      await f.closed;
+      expect(result).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+      expect(killed).toBe(true);
+      expect(performance.now() - started).toBeLessThan(9_000);
+      expect(f.seen.some((message) => message.method?.startsWith('thread-follower-'))).toBe(false);
+    }, 10_000);
 
     test('opens an unloaded thread and waits for its Desktop owner before delivering', async () => {
       let opened = false;
