@@ -6,6 +6,7 @@ import {
   deleteAppMcpServer,
   setAppMcpServerEnabled,
 } from '../../lib/api-helpers.ts';
+import { formatMcpArgs, parseMcpArgs } from '../../lib/mcp-args.ts';
 import { appMcpStore } from '../../lib/app-mcp-store.ts';
 import { skillsStore } from '../../lib/skills-store.ts';
 import { toast } from '../../lib/toast.ts';
@@ -107,9 +108,10 @@ export function AppMcpServersSettings() {
     }
 
     if (formData.args.trim()) {
-      const args = formData.args.trim().split(/\s+/);
-      if (args.some((a) => a.includes('"'))) {
-        errors.args = 'Args should be space-separated without quotes';
+      try {
+        parseMcpArgs(formData.args);
+      } catch {
+        errors.args = 'Args contain an unmatched quote';
       }
     }
 
@@ -165,7 +167,7 @@ export function AppMcpServersSettings() {
       description: server.description ?? '',
       sourceType: server.sourceType,
       command: server.command ?? '',
-      args: server.args?.join(' ') ?? '',
+      args: formatMcpArgs(server.args),
       envVars: server.env
         ? Object.entries(server.env)
             .map(([k, v]) => `${k}=${v}`)
@@ -195,7 +197,7 @@ export function AppMcpServersSettings() {
     setIsSubmitting(true);
 
     try {
-      const parsedArgs = formData.args.trim() ? formData.args.trim().split(/\s+/) : undefined;
+      const parsedArgs = formData.args.trim() ? parseMcpArgs(formData.args) : undefined;
       const parsedEnv = formData.envVars.trim()
         ? Object.fromEntries(
             formData.envVars
@@ -521,7 +523,9 @@ export function AppMcpServersSettings() {
                   placeholder="e.g., -y @tokenizin/mcp-npx-fetch"
                 />
                 {formErrors.args && <p class="text-xs text-danger mt-1">{formErrors.args}</p>}
-                <p class="text-xs text-fg-faint mt-1">Space-separated arguments</p>
+                <p class="text-xs text-fg-faint mt-1">
+                  Space-separated arguments; quote values containing spaces
+                </p>
               </div>
             </>
           )}

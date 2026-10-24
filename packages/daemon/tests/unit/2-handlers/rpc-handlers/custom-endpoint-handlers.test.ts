@@ -295,6 +295,80 @@ describe('Custom Endpoint RPC handlers', () => {
     });
   });
 
+  describe('customEndpoints.testConnection', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('uses discovery URL normalization and Anthropic authentication', async () => {
+      const requests: Array<{ url: string; headers: Headers }> = [];
+      global.fetch = mock(async (url: string, options: RequestInit) => {
+        requests.push({ url, headers: new Headers(options.headers) });
+        return new Response(JSON.stringify({ data: [{ id: 'fixture', type: 'model' }] }));
+      }) as unknown as typeof fetch;
+      const params = {
+        baseUrl: 'http://fixture/v1/messages?version=fixture',
+        type: 'anthropic-messages',
+        apiKey: 'synthetic-key',
+      };
+      await hubData.handlers.get('customEndpoints.listModels')!(params, {});
+      const result = await hubData.handlers.get('customEndpoints.testConnection')!(params, {});
+      expect(result).toEqual({
+        success: true,
+        message: 'Reached http://fixture/v1/models?version=fixture',
+      });
+      expect(requests).toHaveLength(2);
+      expect(requests[1]).toEqual(requests[0]);
+      expect(requests[1].headers.get('authorization')).toBe('Bearer synthetic-key');
+      expect(requests[1].headers.get('x-api-key')).toBe('synthetic-key');
+      expect(requests[1].headers.get('anthropic-version')).toBe('2023-06-01');
+    });
+
+    it('honors header overrides on a successful bodyless probe', async () => {
+      const requests: Headers[] = [];
+      global.fetch = mock(async (_url: string, options: RequestInit) => {
+        requests.push(new Headers(options.headers));
+        return new Response(null, { status: 204 });
+      }) as unknown as typeof fetch;
+      const result = await hubData.handlers.get('customEndpoints.testConnection')!(
+        {
+          baseUrl: 'http://fixture',
+          type: 'anthropic-messages',
+          apiKey: 'synthetic-key',
+          headers: { 'anthropic-version': '2099-01-01', 'x-api-key': 'synthetic-override' },
+        },
+        {}
+      );
+      expect(result).toEqual({ success: true, message: 'Reached http://fixture/v1/models' });
+      expect(requests[0].get('anthropic-version')).toBe('2099-01-01');
+      expect(requests[0].get('x-api-key')).toBe('synthetic-override');
+    });
+
+    it('reports current HTTP failure instead of using cached discovery success', async () => {
+      let attempts = 0;
+      global.fetch = mock(async () => {
+        attempts++;
+        return new Response(JSON.stringify({ data: [] }), { status: attempts === 1 ? 200 : 503 });
+      }) as unknown as typeof fetch;
+      await hubData.handlers.get('customEndpoints.listModels')!({ baseUrl: 'http://fixture' }, {});
+      await expect(
+        hubData.handlers.get('customEndpoints.testConnection')!({ baseUrl: 'http://fixture' }, {})
+      ).rejects.toThrow('Endpoint returned HTTP 503');
+      expect(attempts).toBe(2);
+    });
+
+    it('rejects non-HTTP URLs before making a request', async () => {
+      const requests = mock(async () => new Response());
+      global.fetch = requests as unknown as typeof fetch;
+      await expect(
+        hubData.handlers.get('customEndpoints.testConnection')!({ baseUrl: 'file:///fixture' }, {})
+      ).rejects.toThrow('baseUrl must use http:// or https://');
+      expect(requests).not.toHaveBeenCalled();
+    });
+  });
+
   describe('customEndpoints.listModels', () => {
     const originalFetch = global.fetch;
 

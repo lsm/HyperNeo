@@ -15,8 +15,8 @@ function makeRowDeps(
 ) {
   const publishStatusChanged = mock(async () => {});
   const saveUserMessage = mock(async () => opts.savedDbId ?? 'db-id');
-  const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
-  const markDeliveryDeferredByUuid = mock(() => opts.deferredDbId ?? null);
+  const reopenDeliveryByUuid = mock(async () => opts.reopenDbId ?? null);
+  const markDeliveryDeferredByUuid = mock(async () => opts.deferredDbId ?? null);
   const deps: InjectionDeliveryRowDeps = {
     publishStatusChanged,
     saveUserMessage,

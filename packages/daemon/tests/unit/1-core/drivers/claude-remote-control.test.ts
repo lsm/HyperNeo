@@ -225,28 +225,22 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(prepare[prepare.indexOf('--permission-mode') + 1]).toBe('auto');
   });
 
-  test('a stopped forwarding helper retains its history while a fresh acceptEdits helper is prepared', async () => {
+  test('a stopped desktop-wake is reopened by id instead of preparing a second helper', async () => {
     const old = record('old', {
       title: 'desktop-wake',
       cwd: '/Users/test',
-      permissionMode: 'acceptEdits',
+      permissionMode: 'bypassPermissions',
     });
     write(old);
-    const oldPath = join(dir, 'acct/scope/local_old.json');
-    const bytes = readFileSync(oldPath, 'utf8');
-    const result = await openRcToggle(
-      [old],
-      [],
-      { ...deps(), permissionMode: () => 'acceptEdits' },
-      'desktop-wake'
-    );
+    const result = await openRcToggle([old], [], deps(), 'desktop-wake');
     expect(result).toMatchObject({
-      value: { record: { sessionId: 'local_new-rc', permissionMode: 'acceptEdits' } },
+      value: { record: { sessionId: 'local_old', permissionMode: 'bypassPermissions' } },
     });
-    expect(spawned[0].args).toContain('--session-id');
-    expect(spawned[0].args).toContain('acceptEdits');
-    expect(spawned[0].args).not.toContain('bypassPermissions');
-    expect(readFileSync(oldPath, 'utf8')).toBe(bytes);
+    expect(spawned.some((call) => call.args.includes('--session-id'))).toBe(false);
+    expect(spawned.find((call) => call.args.includes('--desktop'))?.args.slice(-2)).toEqual([
+      '--resume',
+      'cli-old',
+    ]);
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {

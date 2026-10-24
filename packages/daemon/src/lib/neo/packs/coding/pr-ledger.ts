@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
 import { CodingAncestryFactsRepository } from './ancestry-facts.ts';
 import { CodingRefFactsRepository } from './ref-facts.ts';
@@ -299,6 +301,15 @@ export class CodingPrLedgerRepository {
     this.refFacts = new CodingRefFactsRepository(db);
     this.workFacts = new CodingWorkFactsRepository(db);
     this.queryFacts = new CodingQueryFactsRepository(db);
+  }
+
+  write<K extends CodingLedgerWrite>(
+    method: K,
+    ...args: Parameters<CodingPrLedgerRepository[K]>
+  ): Promise<ReturnType<CodingPrLedgerRepository[K]>> {
+    return gatewayFor(this.db).run(codingLedgerWrites, { method, args }) as Promise<
+      ReturnType<CodingPrLedgerRepository[K]>
+    >;
   }
 
   policy(repo: string): CodingMergePolicy {
@@ -609,15 +620,40 @@ export async function reconcileCodingPrLedger(
         `PR ledger read for ${repo} failed or was partial ${skipped} times in a row${typeof error === 'string' ? `: ${error.slice(0, 200)}` : ''}`
       );
     if (typeof error === 'string' && isRateLimitError(error)) break;
-    if (planned) ledger.recordAlias(repo.toLowerCase(), planned.repo);
-    if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
+    if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
+    if (planned && planned.repo !== repo.toLowerCase())
+      await ledger.write('dropRepo', repo.toLowerCase());
     if (planned && !seen.has(planned.repo))
-      transitions.push(...ledger.replace(planned.repo, planned.rows, now));
+      transitions.push(...(await ledger.write('replace', planned.repo, planned.rows, now)));
     if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
-  ledger.prune([...repos, ...seen], now);
-  ledger.pruneSessions(now);
-  ledger.assignOwners();
+  await ledger.write('prune', [...repos, ...seen], now);
+  await ledger.write('pruneSessions', now);
+  await ledger.write('assignOwners');
   return transitions;
 }
+
+type CodingLedgerWrite =
+  | 'recordAlias'
+  | 'dropRepo'
+  | 'replace'
+  | 'prune'
+  | 'pruneSessions'
+  | 'assignOwners'
+  | 'observeSessions';
+
+export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, CodingLedgerWrite>(
+  'coding.ledgerWrites',
+  'write',
+  CodingPrLedgerRepository,
+  [
+    'recordAlias',
+    'dropRepo',
+    'replace',
+    'prune',
+    'pruneSessions',
+    'assignOwners',
+    'observeSessions',
+  ]
+);

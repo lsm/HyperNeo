@@ -12,6 +12,7 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { codexStatePath } from '../../../storage/codex-desktop-read.ts';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -333,7 +334,7 @@ function codexDesktopAdapters(
   prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
   const codexHome = join(homedir(), '.codex');
-  const statePath = join(codexHome, 'state_5.sqlite');
+  const statePath = codexStatePath(homedir());
   if (!existsSync(statePath)) return [];
   return [
     createCodexDesktopAdapter({

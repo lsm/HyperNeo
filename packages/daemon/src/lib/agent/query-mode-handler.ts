@@ -211,11 +211,17 @@ export class QueryModeHandler {
     deliverables: string[]
   ): Promise<string[]> {
     const deliverableSet = new Set(deliverables);
-    const repo = this.ctx.db.getSDKMessageRepo();
     const flipped: string[] = [];
     for (const message of flushMessages) {
       if (!message.isTaskInput || !deliverableSet.has(message.uuid)) continue;
-      if (repo.transitionMessageSendStatus(message.dbId, 'enqueued', 'deferred')) {
+      if (
+        await this.ctx.db.writeSDKMessage(
+          'transitionMessageSendStatus',
+          message.dbId,
+          'enqueued',
+          'deferred'
+        )
+      ) {
         flipped.push(message.dbId);
       }
     }

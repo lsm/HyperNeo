@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
@@ -89,6 +91,10 @@ export class CodingPrSweepRepository {
     ).map((row) => ({ ...row, owner: JSON.parse(row.owner) as WorkRef }));
   }
 
+  markLater(row: CodingSweepRow, nudges: number, now: number): Promise<void> {
+    return gatewayFor(this.db).call(codingSweepWrites, 'mark', row, nudges, now);
+  }
+
   mark(row: CodingSweepRow, nudges: number, now: number): void {
     this.db
       .prepare(
@@ -114,13 +120,20 @@ export async function sweepCodingPrs(
     if (nudge.kind === 'remind')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {
-      repo.mark(row, nudge.nudges, now);
+      await repo.markLater(row, nudge.nudges, now);
       continue;
     }
     const woken = await deps
       .wake(key, codingPrEscalationText(row, now, nudge.kind === 'remind'))
       .catch(() => false);
     log.warn(`PR sweep ${key} escalated to Neo: ${woken ? 'woken' : 'not woken'}`);
-    if (woken) repo.mark(row, CODING_PR_REMINDERS + 1, now);
+    if (woken) await repo.markLater(row, CODING_PR_REMINDERS + 1, now);
   }
 }
+
+export const codingSweepWrites = defineRepositoryOp(
+  'coding.sweepWrites',
+  'write',
+  CodingPrSweepRepository,
+  ['mark']
+);

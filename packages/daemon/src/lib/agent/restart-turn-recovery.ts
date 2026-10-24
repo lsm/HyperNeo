@@ -15,7 +15,7 @@ export interface RestartRecoveryDeps {
     sessionId: string
   ): RestartRecoveryEvidence | null | Promise<RestartRecoveryEvidence | null>;
   hasActiveDelivery(sessionId: string, uuid: string): boolean;
-  resend(sessionId: string, uuid: string, enqueueDelivery: boolean): boolean;
+  resend(sessionId: string, uuid: string, enqueueDelivery: boolean): Promise<boolean>;
   sendNote(sessionId: string, promptUuid: string): Promise<boolean>;
 }
 
@@ -55,7 +55,7 @@ async function applyRecoveryPlan(
   deps: RestartRecoveryDeps
 ): Promise<RestartRecoveryResult> {
   if (plan.kind === 'resend')
-    return { ...plan, resumed: deps.resend(plan.sessionId, plan.uuid, plan.enqueueDelivery) };
+    return { ...plan, resumed: await deps.resend(plan.sessionId, plan.uuid, plan.enqueueDelivery) };
   if (plan.kind === 'continue')
     return { ...plan, resumed: await deps.sendNote(plan.sessionId, plan.promptUuid) };
   return { ...plan, resumed: false };

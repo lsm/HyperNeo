@@ -13,6 +13,7 @@ import {
 } from '@hyperneo/shared';
 import { useEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { testCustomEndpointConnection } from '../../lib/api-helpers.ts';
 import { Button } from '../ui/Button.tsx';
 import {
   FORM_CHECKBOX_CLASS,
@@ -185,26 +186,12 @@ export async function testCustomEndpoint(
   const err = validateEditor(state);
   if (err) return { success: false, message: err };
 
-  const url = state.baseUrl.trim().replace(/\/+$/, '');
-  const probe =
-    state.type === 'ollama-native'
-      ? `${url}/api/tags`
-      : state.type === 'anthropic-messages'
-        ? `${url}/v1/models`
-        : `${url}/models`;
-
-  const headers: Record<string, string> = {};
-  if (state.apiKey.trim()) headers.Authorization = `Bearer ${state.apiKey.trim()}`;
-  try {
-    const parsed = parseHeaders(state.headersText);
-    if (parsed) Object.assign(headers, parsed);
-  } catch {}
-
-  const resp = await fetch(probe, { method: 'GET', headers });
-  if (!resp.ok) {
-    return { success: false, message: `Probe ${probe} → HTTP ${resp.status}` };
-  }
-  return { success: true, message: `Reached ${probe}` };
+  return testCustomEndpointConnection({
+    baseUrl: state.baseUrl.trim(),
+    type: state.type,
+    apiKey: state.apiKey.trim() || undefined,
+    headers: parseHeaders(state.headersText),
+  });
 }
 
 export function validateEditor(state: EditorState): string | null {

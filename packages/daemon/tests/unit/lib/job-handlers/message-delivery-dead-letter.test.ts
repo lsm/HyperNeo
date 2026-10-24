@@ -15,7 +15,7 @@ function recordingSettlement(markFailedResult: string | null = 'db-1'): {
 } {
   const calls: string[] = [];
   const settlement: MessageDeliveryDeadLetterSettlement = {
-    markDeliveryFailedByUuid: mock(() => {
+    markDeliveryFailedByUuid: mock(async () => {
       calls.push('markFailed');
       return markFailedResult;
     }),

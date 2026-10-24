@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -186,6 +187,7 @@ describe('SessionLifecycle', () => {
     createdSessions = [];
 
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock((session: Session) => {
         createdSessions.push(session);
       }),
@@ -497,6 +499,7 @@ describe('SessionLifecycle', () => {
         repo = new SessionRepository(rawDb);
 
         mockDb = {
+          writeSDKMessage: writeThroughRepo,
           createSession: (
             session: Session,
             options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
@@ -1653,6 +1656,7 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),
@@ -1800,6 +1804,7 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),
@@ -1910,6 +1915,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),
@@ -2040,6 +2046,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),

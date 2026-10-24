@@ -698,9 +698,12 @@ export class SDKMessageHandler {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
-      const consumed = db
-        .getSDKMessageRepo()
-        .markDeliveriesConsumedAtTurnEnd(session.id, [messageId], resultUuid);
+      const consumed = await db.writeSDKMessage(
+        'markDeliveriesConsumedAtTurnEnd',
+        session.id,
+        [messageId],
+        resultUuid
+      );
       const consumedId = consumed.ids[0];
       if (!consumedId) continue;
       if (messageQueue.acknowledgeYielded(messageId, invocationGeneration ?? undefined)) {
@@ -760,9 +763,9 @@ export class SDKMessageHandler {
     }
   }
 
-  markACPDeliveryFailed(messageId: string): void {
+  async markACPDeliveryFailed(messageId: string): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
-    const flipped = db.getSDKMessageRepo().markDeliveryFailedByUuid(session.id, messageId);
+    const flipped = await db.writeSDKMessage('markDeliveryFailedByUuid', session.id, messageId);
     if (!flipped) return;
     internalEventBus
       .publish('messages.statusChanged', {
@@ -1222,7 +1225,8 @@ export class SDKMessageHandler {
         const resultUuid = (message as SDKResultMessage).uuid;
         if (resultUuid) {
           try {
-            db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
+            await db.writeSDKMessage(
+              'markResultRecoveryIntercepted',
               session.id,
               resultUuid,
               limitBillingTerminal
