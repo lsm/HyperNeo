@@ -38,7 +38,9 @@ function fixture() {
     adapters: () => [adapter],
     remote: { list: () => [], invoke: async () => ({}) },
     daemonName: 'fixture',
-    isOpenTodo: (id: string) => id === 'open-todo',
+    isOpenTodo: (id: string, owner?: string) =>
+      ['open-todo', 'foreign-todo'].includes(id) &&
+      (!owner || owner === (id === 'open-todo' ? 'root' : 'another-root')),
   };
   const registry = createOperationRegistry(createWorkVerbOperations(deps));
   return { delivered, registry };
@@ -71,7 +73,7 @@ describe('Neo work todo reference', () => {
     });
 
     test(`${name} refuses an unknown or closed-ask todo`, async () => {
-      for (const todoId of ['missing-todo', 'closed-ask-todo']) {
+      for (const todoId of ['missing-todo', 'closed-ask-todo', 'foreign-todo']) {
         const { registry, delivered } = fixture();
         const reply = await invokeOperation(registry, name, { ...input, todoId }, neo);
         expect(reply).toMatchObject({

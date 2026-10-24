@@ -32,8 +32,8 @@ try {
   for (const id of [root, worker]) db.prepare('INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)').run(id, 'Synthetic work', 'general', join(run, 'workspace'), timestamp, timestamp, 'active', '{}', '{}');
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   const store = new NeoAskTodoRepository(db);
-  for (const id of ['open', 'closed']) {
-    const ask = store.openAsk({ id, projectId: null, sessionId: root, originMessageId: null, title: 'Synthetic ask', request: 'Synthetic admission proof', createdAt: Date.now() });
+  for (const id of ['open', 'closed', 'foreign']) {
+    const ask = store.openAsk({ id, projectId: null, sessionId: id === 'foreign' ? worker : root, originMessageId: null, title: 'Synthetic ask', request: 'Synthetic admission proof', createdAt: Date.now() });
     store.addTodo(id + '-todo', ask.id, { title: 'Synthetic todo', doneWhen: 'Tracked', instruction: null, named: null, check: null }, Date.now());
     if (id === 'closed') store.settleAsk(ask, 'done', 'Synthetic closure', Date.now());
   }
@@ -49,7 +49,7 @@ try {
     return result;
   };
   const failures = [];
-  for (const extra of [{}, { todoId: 'unknown' }, { todoId: 'closed-todo' }, { message: 'todoId open-todo appears only in text', source: 'internal' }]) {
+  for (const extra of [{}, { todoId: 'unknown' }, { todoId: 'closed-todo' }, { todoId: 'foreign-todo' }, { message: 'todoId open-todo appears only in text', source: 'internal' }]) {
     failures.push(await call('work.send', { ref, message: 'Synthetic new work', ...extra }));
   }
   failures.push(await call('work.queue', { ref, message: 'Untracked next-turn work' }));
