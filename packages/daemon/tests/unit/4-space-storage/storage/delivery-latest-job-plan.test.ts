@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import {
-  persistAndEnqueueDelivery,
-  redeliverPrompt,
-} from '../../../../src/lib/agent/message-delivery-outbox';
+import { ensurePrompt, retryPrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -28,8 +25,8 @@ function seed(db: Database): void {
   })();
 }
 
-describe('redeliverPrompt', () => {
-  test('finds the latest delivery job of a message by its keys, not by reading every delivery job', () => {
+describe('retryPrompt', () => {
+  test('finds the latest delivery job of a message by its keys, not by reading every delivery job', async () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -37,7 +34,7 @@ describe('redeliverPrompt', () => {
     seed(db);
     const jobQueue = new JobQueueRepository(db);
     const sdkMessageRepo = new SDKMessageRepository(db);
-    persistAndEnqueueDelivery({
+    ensurePrompt({
       db: db as never,
       jobQueue,
       sdkMessageRepo,
@@ -47,11 +44,11 @@ describe('redeliverPrompt', () => {
         uuid: 'steered',
         message: { role: 'user', content: 'hi' },
       } as SDKMessage,
-      sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
     const [job] = jobQueue.dequeue(MESSAGE_DELIVERY, 1);
     jobQueue.complete(job.id, {}, job.claimToken);
+    db.prepare(`UPDATE sdk_messages SET send_status = 'failed' WHERE sdk_uuid = 'steered'`).run();
     const plans: string[] = [];
     const prepare = db.prepare.bind(db);
     const watched = Object.assign(Object.create(db), {
@@ -67,12 +64,13 @@ describe('redeliverPrompt', () => {
       },
     });
     expect(
-      redeliverPrompt({
+      await retryPrompt({
         db: watched,
         jobQueue,
         sdkMessageRepo,
         sessionId: SESSION,
         messageUuid: 'steered',
+        origin: 'chat',
       })
     ).not.toBeNull();
     expect(plans.join('\n')).toMatch(/SEARCH job_queue USING INDEX \S+ \([^)]*<expr>=\?/);
