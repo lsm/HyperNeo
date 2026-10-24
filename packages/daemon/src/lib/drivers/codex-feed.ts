@@ -12,8 +12,11 @@ import {
   type FeedSource,
   feedWorkFiles,
   listFeedFilesAsync,
+  dropForeignFeeds,
+  ownFeedFiles,
   pruneVanishedFeeds,
 } from './work-feed.ts';
+import type { StartedWork } from '../../storage/work-started-sessions.ts';
 
 export const WORK_FEED_CODEX = 'work.feed.codex';
 const FEED_INTERVAL_MS = 60_000;
@@ -117,6 +120,10 @@ export const codexFeedSource: FeedSource<CodexRolloutMeta & FeedFileMeta> = {
   turns: (lines, meta) => codexRolloutTurns(lines, meta.threadId),
 };
 
+export function ownCodexSessions(started: readonly StartedWork[]): Set<string> {
+  return new Set(started.flatMap((ref) => (ref.adapter === 'codex-desktop' ? [ref.id] : [])));
+}
+
 export function feedCodexFiles(
   db: BunDatabase,
   files: readonly FeedFile[]
@@ -125,13 +132,19 @@ export function feedCodexFiles(
 }
 
 export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
-  .input(['queue', 'db', 'root', 'now'])
+  .input(['queue', 'db', 'root', 'now', 'own'])
   .pipe(scheduleCodexFeed, 'queue')
   .pipe(
     (db: BunDatabase, root: string) =>
       runLagPhase('feed:codex:prune', () => pruneVanishedFeeds(db, root, codexFeedSource)),
     ['db', 'root'],
     'pruned'
+  )
+  .pipe(
+    (db: BunDatabase, root: string, own: ReadonlySet<string> | null) =>
+      dropForeignFeeds(db, root, codexFeedSource, own),
+    ['db', 'root', 'own'],
+    'foreign'
   )
   .pipe(
     (root: string, now: number) =>
@@ -145,10 +158,17 @@ export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
     ['db', 'files'],
     'changed'
   )
-  .pipe(feedCodexFiles, ['db', 'changed'], 'result')
+  .pipe(
+    (changed: FeedFile[], own: ReadonlySet<string> | null) =>
+      ownFeedFiles(changed, codexFeedSource, own),
+    ['changed', 'own'],
+    'owned'
+  )
+  .pipe(feedCodexFiles, ['db', 'owned'], 'result')
   .endAsync('result') as (
   queue: JobQueueRepository,
   db: BunDatabase,
   root: string,
-  now: number
+  now: number,
+  own: ReadonlySet<string> | null
 ) => Promise<{ files: number; turns: number }>;

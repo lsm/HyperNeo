@@ -19,6 +19,7 @@ import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
+import { recordStartedWork, type StartedWork } from '../../../storage/work-started-sessions.ts';
 import {
   ACP_AGENTS,
   createAcpAgentAdapter,
@@ -218,13 +219,29 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
   };
 }
 
-const CLAUDE_DESKTOP_SESSIONS = join(
+export const CLAUDE_DESKTOP_SESSIONS = join(
   homedir(),
   'Library',
   'Application Support',
   'Claude',
   'claude-code-sessions'
 );
+
+export async function ownClaudeSessions(
+  started: readonly StartedWork[],
+  desktopSessionsDir: string
+): Promise<Set<string>> {
+  const desktop = new Set(
+    started.flatMap((ref) => (ref.adapter === 'claude-desktop' ? [ref.id] : []))
+  );
+  const records = desktop.size ? await readClaudeDesktopRecords(desktopSessionsDir, new Map()) : [];
+  return new Set([
+    ...started.flatMap((ref) => (ref.adapter === 'claude-code' ? [ref.id] : [])),
+    ...records.flatMap((record) =>
+      desktop.has(record.sessionId) && record.cliSessionId ? [record.cliSessionId] : []
+    ),
+  ]);
+}
 
 function claudeCodeAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
@@ -566,6 +583,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       const ask = todo ? store.getAsk(todo.askId) : null;
       return ask?.status === 'open' && ask.sessionId === sessionId;
     },
+    recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
     namedFolder: {
       machine,
       homeDir: homedir(),

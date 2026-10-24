@@ -18,6 +18,8 @@ import {
   listFeedFilesAsync,
   pendingFeedPaths,
   pruneVanishedFeeds,
+  dropForeignFeeds,
+  ownFeedFiles,
   withKnownFeedFiles,
 } from './work-feed.ts';
 
@@ -163,7 +165,7 @@ export function scheduleClaudeFeed(queue: JobQueueRepository): void {
 }
 
 export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
-  .input(['queue', 'db', 'root', 'now', 'purge'])
+  .input(['queue', 'db', 'root', 'now', 'purge', 'own'])
   .pipe(scheduleClaudeFeed, 'queue')
   .pipe(readHyperneoSdkSessions, 'db', 'hyperneo')
   .pipe(
@@ -187,6 +189,16 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
     'pruned'
   )
   .pipe(
+    (
+      db: BunDatabase,
+      root: string,
+      hyperneo: ReadonlySet<string>,
+      own: ReadonlySet<string> | null
+    ) => dropForeignFeeds(db, root, claudeFeedSource(hyperneo), own),
+    ['db', 'root', 'hyperneo', 'own'],
+    'foreign'
+  )
+  .pipe(
     (db: BunDatabase, root: string, now: number) =>
       runLagPhase('feed:claude:list', async () =>
         withKnownFeedFiles(
@@ -204,9 +216,16 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
     'changed'
   )
   .pipe(
-    (db: BunDatabase, changed: FeedFile[], hyperneo: ReadonlySet<string>) =>
-      feedWorkFiles(db, changed, claudeFeedSource(hyperneo)),
-    ['db', 'changed', 'hyperneo'],
+    (
+      db: BunDatabase,
+      changed: FeedFile[],
+      hyperneo: ReadonlySet<string>,
+      own: ReadonlySet<string> | null
+    ) => {
+      const source = claudeFeedSource(hyperneo);
+      return feedWorkFiles(db, ownFeedFiles(changed, source, own), source);
+    },
+    ['db', 'changed', 'hyperneo', 'own'],
     'result'
   )
   .endAsync('result') as (
@@ -214,5 +233,6 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
   db: BunDatabase,
   root: string,
   now: number,
-  purge?: (sessionIds: string[]) => Promise<void>
+  purge?: (sessionIds: string[]) => Promise<void>,
+  own?: ReadonlySet<string> | null
 ) => Promise<{ files: number; turns: number }>;
