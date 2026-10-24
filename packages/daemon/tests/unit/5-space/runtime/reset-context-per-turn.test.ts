@@ -5,7 +5,7 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import {
-  ensurePrompt,
+  ensurePromptInTransaction as ensurePrompt,
   PromptContentConflictError,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import {

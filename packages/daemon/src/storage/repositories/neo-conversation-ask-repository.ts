@@ -9,7 +9,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import { admitNeoConversationAsk } from '../../lib/neo/conversation-ask.ts';
 import {
-  ensurePrompt,
+  ensurePromptInTransaction,
   PromptContentConflictError,
   type PromptHold,
 } from '../../lib/agent/message-delivery-outbox.ts';
@@ -140,7 +140,7 @@ function commitNeoIntake(
         .length === 0
     )
       return { ...stored, created: false };
-    const prompt = ensurePrompt({
+    const prompt = ensurePromptInTransaction({
       db,
       sdkMessageRepo,
       jobQueue,
@@ -264,7 +264,17 @@ export class NeoConversationAskRepository {
     return row ? decode(row) : null;
   }
 
-  acceptPrompt(
+  async acceptPrompt(
+    conversationId: string,
+    message: IntakePrompt,
+    hold: PromptHold,
+    sdkMessageRepo: SDKMessageRepository,
+    jobQueue: JobQueueRepository
+  ): Promise<NeoConversationAskAppendResult> {
+    return this.acceptPromptSync(conversationId, message, hold, sdkMessageRepo, jobQueue);
+  }
+
+  acceptPromptSync(
     conversationId: string,
     message: IntakePrompt,
     hold: PromptHold,

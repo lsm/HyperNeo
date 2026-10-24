@@ -350,7 +350,11 @@ async function acceptOutcome(ctx: SessionDeliveryCtx): Promise<SessionDeliveryCt
 
 async function failDelivery(ctx: SessionDeliveryCtx, error: unknown): Promise<void> {
   if (error instanceof PromptContentConflictError) return;
-  const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(ctx.sessionId, ctx.messageId);
+  const failedDbId = await ctx.deps.sdkMessageRepo.write(
+    'markDeliveryFailedByUuid',
+    ctx.sessionId,
+    ctx.messageId
+  );
   if (failedDbId) {
     await ctx.deps.publishStatusChanged(ctx.sessionId, failedDbId, 'failed').catch(() => {});
   }

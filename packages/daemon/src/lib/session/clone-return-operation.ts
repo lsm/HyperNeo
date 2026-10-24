@@ -116,7 +116,7 @@ export async function deliverReport(
   const text = buildReturnText(clone, input.summary);
   const uuid = buildReturnMessageUuid(clone.id, text);
   const mechanics = deps.getSessionStatus(parent.id) === 'processing' ? 'steer' : 'turn';
-  ensurePrompt({
+  await ensurePrompt({
     db: deps.getDatabase(),
     sdkMessageRepo: deps.getSdkMessageRepo(),
     jobQueue: deps.jobQueue,
