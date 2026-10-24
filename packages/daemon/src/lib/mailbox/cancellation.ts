@@ -1,3 +1,5 @@
+import { ChangeRecorder } from '../../storage/db-gateway/db-op.ts';
+import { sdkMessageWrites } from '../../storage/repositories/sdk-message-writes.ts';
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -5,12 +7,13 @@ import type { Database } from '../../storage/database.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { parseMailboxEntry } from './entry.ts';
 import {
   createMailboxSenderNotifier,
   type MailboxFailureDeps,
-  materializeMailboxFailure,
-  sessionFailureTarget,
+  persistMailboxFailure,
+  notifyFailureObserversStage,
+  notifyFailureSenderStage,
+  type MailboxFailureState,
 } from './failure.ts';
 
 export interface MailboxCancelMaterializerDeps {
@@ -18,6 +21,7 @@ export interface MailboxCancelMaterializerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   settleSkipped?: (sessionId: string, messageUuid: string) => Promise<void> | void;
   preserveDeferred?: boolean;
+  deliveries?: { failEnqueued: boolean; failDeferred: boolean };
 }
 
 type MailboxCancellingJobQueue = JobQueueRepository & {
@@ -32,7 +36,8 @@ export interface MailboxCancelCtx {
   deps: MailboxCancelMaterializerDeps;
   jobQueue: MailboxCancellingJobQueue | null;
   sdkMessageRepo: SDKMessageRepository | null;
-  deleted: Array<{ id: string; payload: string }>;
+  deleted: Array<{ id: string; payload: string; failure?: MailboxFailureState }>;
+  failedDbIds: string[];
   cancelled: string[];
 }
 
@@ -62,6 +67,54 @@ function deletedRowAsJob(id: string, payload: Record<string, unknown>): Job {
   } as Job;
 }
 
+export function persistSessionDeliveryTeardown(
+  sessionId: string,
+  jobQueue: JobQueueRepository,
+  messages: SDKMessageRepository,
+  getRows: Database['getUserMessageIdsByStatus'] | undefined,
+  options: Pick<MailboxCancelMaterializerDeps, 'preserveDeferred' | 'deliveries'> = {},
+  saveFailed?: Parameters<typeof persistMailboxFailure>[2]
+): Pick<MailboxCancelCtx, 'deleted' | 'failedDbIds'> {
+  const deleted = jobQueue
+    .cancelMailboxForSession(
+      sessionId,
+      options.preserveDeferred === true ? { excludeDeferred: true } : undefined
+    )
+    .map((row) => {
+      try {
+        const payload = JSON.parse(row.payload) as Record<string, unknown>;
+        return {
+          ...row,
+          failure: persistMailboxFailure(deletedRowAsJob(row.id, payload), messages, saveFailed),
+        };
+      } catch {
+        return row;
+      }
+    });
+  const failedDbIds: string[] = [];
+  const fail = (uuids: Array<string | undefined>) => {
+    for (const uuid of uuids) {
+      if (!uuid) continue;
+      const id = messages.markDeliveryFailedByUuid(sessionId, uuid);
+      if (id) failedDbIds.push(id);
+    }
+  };
+  if (options.deliveries) {
+    const uuids = jobQueue.cancelForSessionWithMessages(sessionId);
+    fail(uuids);
+    const cancelled = new Set(uuids);
+    if (options.deliveries.failEnqueued)
+      fail(
+        (getRows?.(sessionId, 'enqueued') ?? [])
+          .filter((row) => !row.uuid || !cancelled.has(row.uuid))
+          .map((row) => row.uuid)
+      );
+    if (options.deliveries.failDeferred)
+      fail((getRows?.(sessionId, 'deferred') ?? []).map((row) => row.uuid));
+  }
+  return { deleted, failedDbIds };
+}
+
 export function resolveCancelMailboxReposStage(ctx: MailboxCancelCtx): MailboxCancelCtx {
   const jobQueue = ctx.deps.db.getJobQueueRepo?.() ?? null;
   return {
@@ -76,12 +129,29 @@ function cancelUnsupported(ctx: MailboxCancelCtx): boolean {
 }
 
 export function cancelMailboxJobsStage(ctx: MailboxCancelCtx): MailboxCancelCtx {
-  if (ctx.jobQueue === null) return ctx;
+  if (ctx.jobQueue === null || ctx.sdkMessageRepo === null) return ctx;
   return {
     ...ctx,
-    deleted: ctx.jobQueue.cancelMailboxForSession(
+    ...persistSessionDeliveryTeardown(
       ctx.sessionId,
-      ctx.deps.preserveDeferred === true ? { excludeDeferred: true } : undefined
+      ctx.jobQueue,
+      ctx.sdkMessageRepo,
+      ctx.deps.db.getUserMessageIdsByStatus?.bind(ctx.deps.db),
+      ctx.deps,
+      (sessionId, message, origin) => {
+        const changes = new ChangeRecorder();
+        const id = sdkMessageWrites.run(
+          ctx.deps.db.getDatabase(),
+          {
+            method: 'saveUserMessage',
+            args: [sessionId, message, 'failed', origin],
+          },
+          changes
+        ) as string;
+        for (const change of changes.changes)
+          ctx.deps.db.notifyChange?.(change.table, change.scope);
+        return id;
+      }
     ),
   };
 }
@@ -116,10 +186,11 @@ export async function materializeCancelledEntriesStage(
   const cancelled: string[] = [];
   for (const row of ctx.deleted) {
     try {
-      const payload = JSON.parse(row.payload) as Record<string, unknown>;
-      const target = sessionFailureTarget(parseMailboxEntry(payload));
-      await materializeMailboxFailure(deletedRowAsJob(row.id, payload), failureDeps);
-      if (target) cancelled.push(target.messageUuid);
+      if (!row.failure) continue;
+      const failure = { ...row.failure, deps: failureDeps };
+      notifyFailureObserversStage(failure);
+      notifyFailureSenderStage(failure);
+      if (failure.target) cancelled.push(failure.target.messageUuid);
     } catch {}
   }
   return { ...ctx, cancelled };
@@ -147,7 +218,25 @@ export async function materializeMailboxFailuresForSession(
     jobQueue: null,
     sdkMessageRepo: null,
     deleted: [],
+    failedDbIds: [],
     cancelled: [],
   });
   return ctx.cancelled;
+}
+
+export async function teardownSessionDeliveries(
+  sessionId: string,
+  deps: MailboxCancelMaterializerDeps,
+  deliveries = { failEnqueued: false, failDeferred: true }
+): Promise<string[]> {
+  const ctx = await runCancelMailboxForSession({
+    sessionId,
+    deps: { ...deps, deliveries },
+    jobQueue: null,
+    sdkMessageRepo: null,
+    deleted: [],
+    failedDbIds: [],
+    cancelled: [],
+  });
+  return ctx.failedDbIds;
 }
