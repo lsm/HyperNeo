@@ -11,10 +11,20 @@ test.each([
     'file:///repo/packages/daemon/src/lib/worker.ts',
   ],
   ['file:///$bunfs/root/hyperneo', 'file:///$bunfs/root/daemon/src/lib/worker.ts'],
-  ['file:///B:/~BUN/root/hyperneo.exe', 'file:///B:/~BUN/root/daemon/src/lib/worker.ts'],
+  ['file:///C:/repo/main.ts', 'file:///C:/repo/worker.ts'],
 ])('resolves a worker for source or compiled runtime %s', (moduleUrl, expected) => {
   expect(runtimeWorkerUrl('./worker.ts', './daemon/src/lib/worker.ts', moduleUrl).href).toBe(
     expected
+  );
+});
+
+test.each([
+  String.raw`B:\~BUN\root\hyperneo.exe`,
+  'B:/~BUN/root/hyperneo.exe',
+  'file:///B:/~BUN/root/hyperneo.exe',
+])('Windows compiled workers use an embedded absolute path for %s', (moduleUrl) => {
+  expect(runtimeWorkerUrl('./worker.ts', './daemon/src/lib/worker.ts', moduleUrl)).toBe(
+    String.raw`B:\~BUN\root\daemon\src\lib\worker.ts`
   );
 });
 
