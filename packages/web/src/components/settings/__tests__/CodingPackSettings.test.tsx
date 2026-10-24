@@ -141,3 +141,70 @@ test('switching repository drops an unsaved draft instead of saving it to the ne
   await waitFor(() => expect(ui.getByText('Editing: other/repo')).toBeTruthy());
   expect(box.value).toBe('');
 });
+
+test('the instance watch list starts empty and opening settings subscribes to nothing', async () => {
+  seed('watchedRepos', global, []);
+  const ui = await page();
+  expect(
+    (ui.getByRole('textbox', { name: 'Watched repositories' }) as HTMLTextAreaElement).value
+  ).toBe('');
+  expect(ui.getByText('No repositories watched.')).toBeTruthy();
+  expect(sets()).toHaveLength(0);
+});
+
+test('editing the watch list saves the instance scope even while editing a repository policy', async () => {
+  seed('watchedRepos', global, []);
+  seed('mergePolicy', repo, 'ci_only');
+  const ui = await page('acme/app');
+  fireEvent.input(ui.getByRole('textbox', { name: 'Watched repositories' }), {
+    target: { value: 'ACME/APP\nother/repo\nacme/app' },
+  });
+  fireEvent.click(ui.getByRole('button', { name: 'Save watched repositories' }));
+  await waitFor(() =>
+    expect(
+      (ui.getByRole('textbox', { name: 'Watched repositories' }) as HTMLTextAreaElement).value
+    ).toBe('acme/app\nother/repo')
+  );
+  expect(sets().map(([, call]) => call.input)).toEqual([
+    { pack: 'coding', scope: global, key: 'watchedRepos', value: ['acme/app', 'other/repo'] },
+  ]);
+  expect(request).toHaveBeenCalledWith('operation.invoke', {
+    name: 'pack.preferences.get',
+    input: { pack: 'coding', scope: global, key: 'watchedRepos' },
+  });
+  expect(rows.find((row) => row.key === 'mergePolicy')?.value).toBe('ci_only');
+});
+
+test('clearing the watch list stores an empty list and survives reopening the page', async () => {
+  seed('watchedRepos', global, ['acme/app']);
+  const ui = await page();
+  fireEvent.input(ui.getByRole('textbox', { name: 'Watched repositories' }), {
+    target: { value: '' },
+  });
+  fireEvent.click(ui.getByRole('button', { name: 'Save watched repositories' }));
+  await waitFor(() => expect(sets()).toHaveLength(1));
+  await waitFor(() => expect(rows.find((row) => row.key === 'watchedRepos')?.value).toEqual([]));
+  cleanup();
+  const reopened = await page();
+  expect(reopened.getByText('No repositories watched.')).toBeTruthy();
+  expect(sets()).toHaveLength(1);
+});
+
+test('a refused watch-list edit shows the reason and preserves the saved list', async () => {
+  seed('watchedRepos', global, ['acme/app']);
+  const ui = await page();
+  const answer = request.getMockImplementation()!;
+  request.mockImplementation((method, call) =>
+    call.name === 'pack.preferences.set'
+      ? { ok: false, reason: 'Unknown setting, invalid scope or invalid value.' }
+      : answer(method, call)
+  );
+  fireEvent.input(ui.getByRole('textbox', { name: 'Watched repositories' }), {
+    target: { value: 'not a repository' },
+  });
+  fireEvent.click(ui.getByRole('button', { name: 'Save watched repositories' }));
+  expect((await ui.findByRole('alert')).textContent).toBe(
+    'Unknown setting, invalid scope or invalid value.'
+  );
+  expect(rows.find((row) => row.key === 'watchedRepos')?.value).toEqual(['acme/app']);
+});
