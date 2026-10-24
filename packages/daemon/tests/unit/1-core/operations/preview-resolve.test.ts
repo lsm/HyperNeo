@@ -36,6 +36,17 @@ describe('human stored reference capture', () => {
       }).success
     ).toBe(false);
   });
+  test('requires a caller-owned retry id before capture can allocate an immutable receipt', () => {
+    const operation = createArtifactReferenceResolve(() => {
+      throw new Error('SQLite touched');
+    });
+    const tap = { sourceMessageOrCard: { kind: 'todo', id: 'todo' }, reference: 'report.md' };
+    expect(operation.inputSchema.safeParse(tap).success).toBe(false);
+    expect(
+      operation.inputSchema.safeParse({ ...tap, requestId: '11111111-1111-4111-8111-111111111111' })
+        .success
+    ).toBe(true);
+  });
   test('captures only source-bound synthetic bytes and rechecks current authority', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-resolve-')));
     mkdirSync(join(root, 'home'));
