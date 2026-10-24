@@ -52,6 +52,17 @@ if (phase === 'seed') {
   const ordinary = saved?.ordinary ?? await rpc('neo.question.ask', { askId: 'source-ask', kind: 'reply', text: 'A general question without a single worker' });
   assert(ordinary.ok);
   assert(!ordinary.question.sourceSession);
+  const draft = { askId: 'source-ask', doneWhen: 'Synthetic work complete', instruction: 'Synthetic work; do not start', target: { verb: 'send', ref } };
+  let start = saved?.start;
+  if (!start) {
+    assert((await rpc('neo.todo.add', { ...draft, title: 'First review task' })).ok);
+    start = await rpc('neo.question.ask', { askId: 'source-ask', kind: 'start', text: 'Start after the worker review?', sourceSession: ref });
+    assert(start.ok);
+    assert((await rpc('neo.todo.add', { ...draft, title: 'Additional review task' })).ok);
+  }
+  const joined = await rpc('neo.question.get', { questionId: start.question.id });
+  assert.equal(joined.question.state, 'open');
+  assert.deepEqual(joined.question.sourceSession, expected);
   const got = await rpc('neo.question.get', { questionId: source.question.id });
   assert.deepEqual(got.question.sourceSession, expected);
   const snapshot = await rpc('neo.snapshot', {});
@@ -63,6 +74,6 @@ if (phase === 'seed') {
   assert.match(refused.reason, /source_session_unavailable/);
   if (phase === 'capture') assert.equal(got.question.state, 'open');
   else { assert.equal(got.question.state, 'answered'); assert.equal(got.question.answer, 'yes'); }
-  writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, got, entry, refused }, null, 2));
+  writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, start, joined, got, entry, refused }, null, 2));
   console.log(`PASS: ${phase} source-session identity/ref survives the operation and snapshot payloads`);
 }

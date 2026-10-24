@@ -22,6 +22,11 @@ try {
       const header = question.locator('[data-question-source]');
       assert((await header.innerText()).includes('Review worker'));
       assert((await header.innerText()).includes('glm'));
+      const joined = page.locator(`[data-ask-question="${saved.start.question.id}"]:visible`);
+      assert((await joined.locator('[data-question-source]').innerText()).includes('Review worker'));
+      await joined.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
+      await page.locator('.neo-session-pane').getByRole('heading', { name: 'HyperNeo · Review worker', exact: true }).waitFor();
+      await page.locator('.neo-session-pane').getByRole('button', { name: 'Back to Neo', exact: true }).click();
       const ordinary = page.locator(`[data-ask-question="${saved.ordinary.question.id}"]:visible`);
       assert.equal(await ordinary.getByRole('button', { name: /^Open session/ }).count(), 0);
       await page.waitForFunction(({ id, width }) => {
@@ -48,7 +53,7 @@ try {
         assert.equal(result.question.answer, 'yes');
         assert.deepEqual(result.question.sourceSession, saved.source.question.sourceSession);
       }
-      observed.push({ width, header: 'Review worker · glm', bounds, adapterOpener: '/session/source-worker', ordinaryHasNoOpener: true, answerControlsPreserved: true });
+      observed.push({ width, header: 'Review worker · glm', bounds, adapterOpener: '/session/source-worker', ordinaryHasNoOpener: true, answerControlsPreserved: true, joinedStartHasWorkingOpener: true });
     } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/question-source-web.json`, JSON.stringify(observed, null, 2));

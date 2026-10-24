@@ -5,6 +5,8 @@ import {
   neoQuestionAnsweredNote,
   planNeoQuestionAnswer,
 } from '../../../../src/lib/neo/question-operations.ts';
+import { addNeoTodo, NeoTodoDraftSchema } from '../../../../src/lib/neo/todo-operations.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import type { ArtifactRefReader } from '../../../../src/lib/artifacts/read-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -125,6 +127,63 @@ describe('neo.question operations', () => {
     expect(general.id).toBe(initial.id);
     expect(general).not.toHaveProperty('sourceSession');
   });
+
+  test.each(['add', 'move'] as const)(
+    'retains the captured source when an instructed todo joins through %s',
+    async (operation) => {
+      const { db, store, asked, call, daemonStart } = setup();
+      try {
+        daemonStart(['t1']);
+        const question = await asked({
+          kind: 'start',
+          text: 'Start after the worker review?',
+          sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+        });
+        const draft = NeoTodoDraftSchema.parse({
+          title: 'Additional work',
+          doneWhen: 'Merged',
+          instruction: 'Do the additional work',
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+        });
+        let joinedId: string;
+        if (operation === 'add') {
+          const result = await addNeoTodo(
+            store,
+            new NeoTodoSessionRepository(db),
+            async () => ({ ok: false, reason: 'not started' }),
+            store.getAsk('ask')!,
+            draft,
+            []
+          );
+          if (!result.ok) throw new Error(result.reason);
+          joinedId = result.todo.id;
+        } else {
+          store.openAsk({
+            id: 'other',
+            sessionId: 'neo-a',
+            projectId: null,
+            originMessageId: null,
+            title: 'Other work',
+            request: 'Other work',
+            createdAt: 1,
+          });
+          const todo = store.addTodo('moved', 'other', draft, 1);
+          joinedId = store.moveTodo(todo, 'ask', '', 2).id;
+        }
+        expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
+          ok: true,
+          question: {
+            id: question.id,
+            state: 'open',
+            sourceSession: question.sourceSession,
+          },
+        });
+        expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1', joinedId]);
+      } finally {
+        db.close();
+      }
+    }
+  );
 
   test('retains one explicit source session through read, answer and list payloads', async () => {
     const { asked, call, store } = setup();
