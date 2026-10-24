@@ -191,3 +191,22 @@ test('asks with deleted or archived recipients do not create doomed wake jobs', 
   await service.refreshDriverWork();
   expect(tell.mock.calls.map((call) => call[0])).toEqual(['recipient-live', 'recipient-live']);
 });
+
+test('a stalled-ask query failure never suppresses the independent session watcher', async () => {
+  ask('live');
+  spyOn(service.todos, 'listStalledAsks').mockImplementation(() => {
+    throw new Error('Synthetic query fault');
+  });
+  await service.refreshDriverWork();
+  expect(service.sessionWatcher.watchSessions).toHaveBeenCalledTimes(1);
+});
+
+test('a watcher failure never suppresses the stalled-ask wake', async () => {
+  ask('live');
+  spyOn(service.sessionWatcher, 'watchSessions').mockRejectedValue(
+    new Error('Synthetic watcher fault')
+  );
+  const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell.mock.calls.map((call) => call[0])).toEqual(['recipient-live']);
+});
