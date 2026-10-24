@@ -44,3 +44,7 @@ export function replaceArtifactPreview(target: ArtifactPreviewTarget) {
 export function backArtifactPreview() {
   artifactPreviewStack.value = artifactPreviewStack.value.slice(0, -1);
 }
+
+export function closeArtifactPreview() {
+  artifactPreviewStack.value = [];
+}

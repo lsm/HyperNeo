@@ -603,3 +603,84 @@
 .neo-message-flash .neo-message-bubble {
   animation: neo-message-flash 1.5s ease-out;
 }
+
+.artifact-preview-panel {
+  position: fixed;
+  inset: 10% 0 0;
+  z-index: 50;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 20px 20px 0 0;
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 32px rgb(0 0 0 / 0.15);
+  animation: artifact-sheet-enter 180ms ease-out;
+}
+.artifact-preview-panel section > header {
+  padding-right: 44px;
+}
+.artifact-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: rgb(0 0 0 / 0.2);
+}
+.artifact-preview-handle {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+.artifact-preview-handle span {
+  width: 36px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--line-strong);
+}
+@keyframes artifact-sheet-enter {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-preview-panel {
+    animation: none;
+  }
+}
+@media (min-width: 1120px) {
+  .neo-shell:has(> .artifact-preview-panel) {
+    --artifact-preview-width: min(40rem, 42vw);
+    padding-right: var(--artifact-preview-width);
+  }
+  .neo-shell:has(> .artifact-preview-panel) > .neo-float-dock {
+    right: calc(var(--artifact-preview-width) + 12px);
+  }
+  .neo-shell:has(> .artifact-preview-panel) > .neo-composer-dock {
+    right: var(--artifact-preview-width);
+    transition: none;
+  }
+  .neo-shell:has(> .artifact-preview-panel) > .neo-scroll {
+    transition: none;
+  }
+  .neo-has-scenes:has(> .artifact-preview-panel) > .neo-composer-dock {
+    width: calc((100% - var(--artifact-preview-width)) * 0.58);
+  }
+  .neo-has-scenes.neo-has-session:has(> .artifact-preview-panel) > .neo-composer-dock {
+    width: calc((100% - var(--artifact-preview-width)) * 0.45);
+  }
+  .artifact-preview-panel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: var(--artifact-preview-width);
+    border-radius: 0;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    box-shadow: none;
+    animation: none;
+  }
+  .artifact-preview-backdrop,
+  .artifact-preview-handle {
+    display: none;
+  }
+}
