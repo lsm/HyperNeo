@@ -9786,6 +9786,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         occurredAt: Date.parse(closedAt),
         payload: { state: 'closed', closedAt },
       });
+      expect(recorded[0].payload.title).toContain('closed');
       const key = recorded[0].dedupeKey;
       detail = { ...detail, head: { sha: 'another-head' } };
       await poll();
@@ -9800,9 +9801,10 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         await poll();
       }
       expect(recorded).toHaveLength(2);
-      detail = { ...detail, number: 42, closed_at: '2026-10-24T10:00:00Z' };
+      detail = { ...detail, number: 42, closed_at: '2026-10-24T10:00:00Z', ...{ merged: true } };
       await poll();
       expect(recorded[2].dedupeKey).not.toBe(key);
+      expect(recorded[2].payload.title).toContain('merged');
     } finally {
       await extension.stop();
       db.close();

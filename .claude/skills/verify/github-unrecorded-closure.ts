@@ -78,6 +78,7 @@ try {
   proof.discoveryPoll = await poll(); proof.discovered = { jobs: jobs(), events: events(), subscriptions: subs().listAll() };
   const details = requests.filter(r => r.phase === 'closed' && r.path.endsWith('/pulls/7')); assert.equal(details.length, 1); assert(details.every(r => r.conditional === null), 'subscribed details need a full body');
   assert.match(String((proof.discoveryPoll as Record<string, unknown>).error), /handler failure/); assert.equal(jobs().length, 1); assert.equal(receipts().length, 1); assert.equal(events().length, 2); assert.equal(subs().listAll().length, 2);
+  assert.match(JSON.parse(jobs()[0].payload).message.message.content, /PR #7 closed/);
   const accepted = { jobs: jobs(), receipts: receipts() }, recorded = events();
   sql().prepare("UPDATE job_queue SET run_at=? WHERE queue='mailbox'").run(Date.now() + 86400000);
   await close(); await open(); phase = 'restart'; await poll(); assert.equal(requests.filter(r => r.phase === 'restart' && r.path.endsWith('/pulls/7')).length, 0); assert.deepEqual({ jobs: jobs(), receipts: receipts() }, accepted);
