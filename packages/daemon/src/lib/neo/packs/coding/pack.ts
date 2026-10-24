@@ -1,5 +1,6 @@
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
+import { runCodingReview } from './review.ts';
 import { withCodingWorkGoal } from './work-goal.ts';
 import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
@@ -45,6 +46,7 @@ export function createCodingPack(deps: {
 }): NeoPack & {
   recordSmoke: typeof recordCodingSmoke;
   prepareMerge: typeof prepareCodingMerge;
+  review: typeof runCodingReview;
 } {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const todos = createCodingTodoPack(
@@ -115,6 +117,7 @@ export function createCodingPack(deps: {
       },
     },
     prepareExecution: prepareCodingExecution,
+    review: runCodingReview,
     todos,
     readFacts: todos.readFacts,
     judge: todos.judge,

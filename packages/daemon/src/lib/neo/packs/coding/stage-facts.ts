@@ -121,10 +121,12 @@ function parseAuthor(body: string) {
       else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
       return false;
     }
-    return !fence && /^Author:/i.test(line.trim());
+    return !fence && /^(?:Agent|Author):/i.test(line.trim());
   });
   const match =
-    lines.length === 1 ? /^Author: ([^<>\n]+?) via ([^<>\n]+?)$/i.exec(lines[0].trim()) : null;
+    lines.length === 1
+      ? /^(?:Agent|Author): ([^<>\n]+?) via ([^<>\n]+?)$/i.exec(lines[0].trim())
+      : null;
   if (!match) return null;
   const model = normalize(match[1]),
     harness = normalize(match[2]);
@@ -146,7 +148,7 @@ export const codingReviewerPolicy = (superpipe({})('coding.reviewer-provenance')
           qualifies: false,
           preferred: false,
           reason:
-            'author_provenance_required: ask the author to fix missing or ambiguous Author: <model> via <harness>',
+            'author_provenance_required: ask the author to fix missing or ambiguous Agent: <model> via <harness>',
         };
       if (reviewer.kind === 'human') return { qualifies: true, preferred: true, reason: 'human' };
       const authorModel = canonicalModel(author.model),
