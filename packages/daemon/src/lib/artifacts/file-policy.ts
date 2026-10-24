@@ -111,13 +111,18 @@ function within(root: string, path: string): boolean {
   return relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative);
 }
 
+function withoutClaudeWorktree(root: string, home: string): string {
+  const repo = /^(.+)\/\.claude\/worktrees\/[^/]+$/.exec(posix.normalize(root))?.[1];
+  return repo && repo !== posix.normalize(home) ? repo : root;
+}
+
 function eligibleRoot(root: string, home: string): boolean {
   return (
     posix.isAbsolute(root) &&
     !unsafePath(root) &&
     !sensitivePath(root) &&
     !posix
-      .normalize(root)
+      .normalize(withoutClaudeWorktree(root, home))
       .split('/')
       .some((part) => ['.codex', '.claude', '.config'].includes(part.toLowerCase())) &&
     !within(root, home) &&
