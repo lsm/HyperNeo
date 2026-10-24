@@ -7,7 +7,15 @@ import { CodingStageFact } from './stage-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingAssignmentsRepository } from './assignments.ts';
 
-const Input = z.object({ todoId: z.string().min(1), ref: WorkRefSchema, fact: CodingStageFact });
+const Input = z.object({
+  todoId: z.string().min(1),
+  ref: WorkRefSchema,
+  fact: CodingStageFact.extend({
+    stage: z
+      .enum(['review', 'verify', 'qa'])
+      .transform((stage) => (stage === 'verify' ? 'qa' : stage)),
+  }),
+});
 type Input = z.infer<typeof Input>;
 type Result = { ok: boolean; reason?: string };
 
@@ -43,7 +51,7 @@ export function createCodingResultOperation(
   return defineOperation({
     name: 'neo.coding.result',
     description:
-      'Record review or QA evidence for the exact persisted coding assignment. Requires its todo, worker ref, actor identity, PR head and acceptance-contract reference; rejects stale heads, mismatches and attempts to erase a failure. Bot approval is read from GitHub, never submitted through this operation.',
+      'Record Review or Verify evidence for the exact persisted coding assignment (legacy qa remains accepted). Requires its todo, worker ref, actor identity, PR head and acceptance-contract reference; rejects stale heads, mismatches and attempts to erase a failure. Bot approval is read from GitHub, never submitted through this operation.',
     inputSchema: Input,
     resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
     policy: { safetyClass: 'mutate', roles: ['neo'] },

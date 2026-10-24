@@ -17,14 +17,18 @@ export const CodingAssignment = z
     actor: CodingActor.optional(),
     ref: WorkRefSchema.optional(),
     bot: z.string().optional(),
+    effort: z.string().optional(),
+    fallback: z.array(z.string()).optional(),
   })
   .refine((value) =>
     value.bot
       ? !value.actor && !value.ref
-      : value.actor?.kind === 'agent' &&
+      : value.actor &&
         value.ref &&
         value.actor.id === value.ref.id &&
-        value.actor.harness === value.ref.adapter &&
+        (value.actor.kind === 'human'
+          ? value.ref.adapter === 'human'
+          : value.actor.harness === value.ref.adapter) &&
         !isDeepStrictEqual(value.write, value.ref)
   );
 export type CodingAssignment = z.infer<typeof CodingAssignment>;

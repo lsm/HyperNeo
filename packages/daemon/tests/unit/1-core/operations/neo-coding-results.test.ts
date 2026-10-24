@@ -57,6 +57,41 @@ function setup() {
 }
 
 describe('linked coding assignment results', () => {
+  test('assigned human Review results retain their explicit identity and ref', async () => {
+    const { db, assignments, ledger, result } = setup();
+    try {
+      const human = { kind: 'human', id: 'person' } as const,
+        humanRef = { adapter: 'human', id: 'person' };
+      assignments.record('todo', 'review', { ...assignment, actor: human, ref: humanRef });
+      expect(
+        await result({ todoId: 'todo', ref: humanRef, fact: { ...fact, actor: human } })
+      ).toEqual({ kind: 'completed', value: { ok: true } });
+      expect(ledger.stageFacts.read(url)).toEqual([{ ...fact, actor: human, ref: humanRef }]);
+    } finally {
+      db.close();
+    }
+  });
+  test('public Verify results keep the legacy stored stage and historical facts readable', async () => {
+    const { db, assignments, ledger, result } = setup();
+    try {
+      assignments.record('todo', 'review', assignment);
+      const verifyRef = { ...ref, id: 'verify' },
+        verifyActor = { ...actor, id: 'verify' };
+      assignments.record('todo', 'qa', { ...assignment, ref: verifyRef, actor: verifyActor });
+      expect(
+        await result({
+          todoId: 'todo',
+          ref: verifyRef,
+          fact: { ...fact, stage: 'verify', actor: verifyActor },
+        })
+      ).toEqual({ kind: 'completed', value: { ok: true } });
+      expect(ledger.stageFacts.read(url)).toEqual([
+        { ...fact, stage: 'qa', actor: verifyActor, ref: verifyRef },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
   test.each(['review', 'qa'] as const)(
     'persists the validated full %s worker ref rather than a claimed fact ref',
     async (stage) => {
