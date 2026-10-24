@@ -125,9 +125,19 @@ export class CodingPollFactsRepository {
     validator: string | null,
     request: () => Promise<Response>
   ): Promise<Response> {
+    return this.shareResponse(JSON.stringify(['request', pageKey(subject), validator]), request);
+  }
+
+  acquireObservation(subject: Subject, validator: string | null, request: () => Promise<Response>) {
+    return this.shareResponse(
+      JSON.stringify(['observation', pageKey(subject), validator]),
+      request
+    );
+  }
+
+  private async shareResponse(key: string, request: () => Promise<Response>): Promise<Response> {
     const active = acquisitions.get(this.db) ?? new Map<string, Promise<Response>>();
     acquisitions.set(this.db, active);
-    const key = JSON.stringify([pageKey(subject), validator]);
     let pending = active.get(key);
     if (!pending) {
       pending = Promise.resolve()

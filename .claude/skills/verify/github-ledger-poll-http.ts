@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { DatabaseCore } from '../../../packages/daemon/src/storage/database-core.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
@@ -32,7 +33,7 @@ const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
 assert.notEqual(server.port, 8399);
 const subject = { credentialId: 'opaque-synthetic-only', url: 'https://api.github.com/repos/synthetic/ledger/pulls?page=1', accept: 'application/vnd.github+json', apiVersion: '2022-11-28' };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
-const evidence: Record<string, unknown> = { productionWired: false, apiSavingsClaimed: false };
+const evidence: Record<string, unknown> = { publicPollingExercised: false, apiSavingsClaimed: false };
 const request = (endpoint = '/page') => () => network(`http://127.0.0.1:${server.port}${endpoint}`, endpoint === '/conditional' ? { headers: { 'If-None-Match': '"page"' } } : undefined);
 try {
   for (const phase of ['initial', 'restarted']) {
@@ -43,6 +44,7 @@ try {
     assert.deepEqual(rows, legacy.map(row => ({ ...row, http_json: null })));
     const facts = new CodingPrLedgerRepository(db).pollFacts;
     if (phase === 'initial') {
+      evidence.runtime = { commit: BUILD_METADATA.commit, pid: process.pid, port: app.server.port };
       for (let n = 0; n < 3; n++) assert.deepEqual(await (await facts.collect(subject, 'cycle-one', null, request(), () => 100)).json(), [{ id: 7 }]);
       assert.equal(requests, 1);
       evidence.sameCycle = { sequentialCallers: 3, upstreamRequests: requests };
@@ -61,6 +63,11 @@ try {
       assert.deepEqual(await Promise.all(overlap.map(response => response.json())), [[{ id: 7 }], [{ id: 7 }]]);
       assert.equal(requests - beforeOverlap, 1); assert.equal(facts.read(overlapSubject, 125, Infinity).observationRevision, 1);
       evidence.overlappingCycles = { consumersAccepted: 2, upstreamRequests: 1, observations: 1 };
+      const beforeFresh = requests;
+      await Promise.all([facts.collect(overlapSubject, 'overlap-a', null, request(), () => 126), peer.collect(overlapSubject, 'overlap-c', null, request(), () => 126)]);
+      assert.equal(requests - beforeFresh, 1);
+      evidence.freshCycleBesideCoveredCycle = { refreshRequests: 1 };
+
       evidence.validation = { valid304: true, rateHeadersPreserved: true, metadataOnlyFactRevision: 1, failureUnknown: true };
     } else {
       assert.equal(facts.read(subject, 120, 100).page.status, 'unknown');
@@ -73,7 +80,7 @@ try {
   }
   evidence.migration = { oldRowsAndRawValueBytesUnchanged: true, newMetadataNullableAndNotBackfilled: true };
   evidence.unsafeHeadersOmitted = true; evidence.verified = true;
-  console.log('PASS: additive old-schema migration preserves rows/value bytes; local HTTP pages reuse same-cycle coverage, validate 304, preserve rate headers, reject failures and survive daemon restart without false fact changes. Public wiring remains pending.');
+  console.log('PASS: additive old-schema migration preserves rows/value bytes; local HTTP pages reuse same-cycle coverage, validate 304, preserve rate headers, reject failures and survive daemon restart without false fact changes. This collector-only proof leaves public polling to its separate journey.');
 } finally {
   await app?.cleanup(); await server.stop(true); globalThis.fetch = network;
   evidence.ownedResourcesClosed = true;
