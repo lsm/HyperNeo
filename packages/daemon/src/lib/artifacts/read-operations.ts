@@ -17,7 +17,7 @@ import {
   ArtifactFileMetadataSchema,
 } from './file-contracts.ts';
 import { authorizeArtifactCaller, type ArtifactContext } from './file-policy.ts';
-import { loadRegistrationBinding } from './registration-binding.ts';
+import { loadArtifactOwnershipBinding } from './registration-binding.ts';
 import { readArtifactChunk } from './read-snapshot.ts';
 import { prepareArtifactHtml, type ArtifactHtmlAsset } from './html-preview.ts';
 import { ArtifactBundleSchema, artifactBundleLimit, bindArtifactBundle } from './bundle.ts';
@@ -37,7 +37,7 @@ const rowContext = (row: StoredArtifactFile): ArtifactContext => ({
 
 function authorizesContext(db: Database, context: ArtifactContext, caller: OperationCaller) {
   const daemonId = new ArtifactFileReadRepository(db).daemonId();
-  const binding = daemonId ? loadRegistrationBinding(db, daemonId, context) : null;
+  const binding = daemonId ? loadArtifactOwnershipBinding(db, daemonId, context) : null;
   return !!binding && 'value' in authorizeArtifactCaller(binding, caller);
 }
 

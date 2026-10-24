@@ -76,7 +76,7 @@ function registrationService(db: Database, data: string, home: string) {
     daemonId: registry.daemonId,
     home,
     loadBinding: (context: Input['context']) =>
-      loadRegistrationBinding(db, registry.daemonId, context),
+      loadRegistrationBinding(db, registry.daemonId, context, home),
   };
   async function prepare(input: Input, caller: OperationCaller) {
     const plan = await admitArtifactCapture(input.context, input.path, caller, policy);
@@ -97,10 +97,12 @@ function registrationService(db: Database, data: string, home: string) {
   async function capture(plan: Plan, input: Input, caller: OperationCaller) {
     const binding = policy.loadBinding(input.context);
     if (!binding) return refused('unavailable');
-    const producer = JSON.stringify({
-      adapter: 'hyperneo',
-      id: binding.workerSessionId ?? binding.neoSessionId,
-    });
+    const producer = JSON.stringify(
+      binding.workerRef ?? {
+        adapter: 'hyperneo',
+        id: binding.workerSessionId ?? binding.neoSessionId,
+      }
+    );
     const fingerprint = createHash('sha256')
       .update(JSON.stringify([plan, producer, input.title]))
       .digest('hex');

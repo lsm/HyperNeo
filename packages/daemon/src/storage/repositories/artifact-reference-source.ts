@@ -1,4 +1,5 @@
 import type { Database } from '../sqlite-compat.ts';
+import { homedir } from 'node:os';
 import type { ArtifactContext } from '../../lib/artifacts/file-policy.ts';
 import type {
   ReferenceBinding,
@@ -17,7 +18,8 @@ type Text = { text: readonly string[]; contexts: ArtifactContext[] };
 export class ArtifactReferenceSourceRepository {
   constructor(
     private readonly db: Database,
-    private readonly daemonId: string
+    private readonly daemonId: string,
+    private readonly home = homedir()
   ) {}
 
   private sessionContexts(sessionId: string): ArtifactContext[] {
@@ -106,7 +108,7 @@ export class ArtifactReferenceSourceRepository {
     const work = new NeoAskTodoRepository(this.db);
     const todo = context.kind === 'todo' ? work.getTodo(context.id) : null;
     const ask = work.getAsk(todo?.askId ?? context.id);
-    const local = loadRegistrationBinding(this.db, this.daemonId, context);
+    const local = loadRegistrationBinding(this.db, this.daemonId, context, this.home);
     const ref = todo ? new NeoTodoSessionRepository(this.db).readRef(todo.id) : null;
     const binding =
       local ??

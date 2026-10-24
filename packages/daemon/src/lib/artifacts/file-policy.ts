@@ -15,6 +15,7 @@ export interface ArtifactContextBinding {
   readonly daemonId: string;
   readonly neoSessionId: string | null;
   readonly workerSessionId: string | null;
+  readonly workerRef?: { readonly adapter: string; readonly id: string };
   readonly workspacePath: string | null;
   readonly approvedEvidenceRoots: readonly string[];
 }
