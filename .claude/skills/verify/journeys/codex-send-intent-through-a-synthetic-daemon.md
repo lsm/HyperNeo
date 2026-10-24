@@ -12,7 +12,14 @@ process state; they never open a GUI or inspect the host's processes. The real
 new-thread control opens `new-handoff-control` and starts through its owner.
 
 For auto/steer delivery to an unloaded existing thread with running Desktop, the open shim registers
-ownership only after the supported deep link is requested. `work.send` must return
+ownership only after the supported deep link is requested. The first ownerless
+probe deliberately holds its negative response for10 seconds, reproducing the
+native wait seen after #8370. The client bounds each read-only ownership probe
+to1 second, logs the initial pending result, then opens and positively confirms Desktop
+ownership within the unchanged8-second overall deadline. The fixture makes ownership available400ms after open, holding negative
+responses for10s both before and during that asynchronous load. Already-loaded
+owners still deliver without opening. This delayed-negative case must deliver within
+3 seconds through Desktop, with no shared-server resume/start. `work.send` must return
 the Desktop steer receipt and must never call app-server resume/start. A refused
 open, a protocol refusal, and missing/stale IPC while Desktop is running must
 return `not_delivered`, without any app-server request. With the process flag

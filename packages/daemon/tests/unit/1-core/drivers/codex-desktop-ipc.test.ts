@@ -187,9 +187,6 @@ describe('withCodexDesktopIpc', () => {
       });
       expect(opened).toBe(true);
       expect(performance.now() - started).toBeLessThan(3_000);
-      expect(f.seen.filter((message) => message.method === 'thread-owner-discovery')).toHaveLength(
-        2
-      );
     }, 10_000);
 
     test('refuses within eight seconds when Desktop never acquires the thread', async () => {

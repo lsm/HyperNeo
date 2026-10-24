@@ -18,7 +18,8 @@ export interface CodexDesktopIpc {
     method: string,
     params: object,
     version: number,
-    targetClientId?: string
+    targetClientId?: string,
+    timeoutMs?: number
   ): Promise<DesktopResponse>;
 }
 
@@ -86,7 +87,8 @@ export async function withCodexDesktopIpc<T>(
     method: string,
     params: object,
     version: number,
-    targetClientId?: string
+    targetClientId?: string,
+    timeoutMs = TIMEOUT_MS
   ): Promise<DesktopResponse> => {
     if (deadline !== undefined && Date.now() >= deadline)
       throw new Error('Codex Desktop handoff timed out.');
@@ -98,7 +100,9 @@ export async function withCodexDesktopIpc<T>(
         pending.set(requestId, { resolve, reject });
         timer = setTimeout(
           () => reject(new Error(`Codex Desktop ${method} timed out.`)),
-          deadline === undefined ? TIMEOUT_MS : Math.max(0, deadline - Date.now())
+          deadline === undefined
+            ? timeoutMs
+            : Math.max(0, Math.min(timeoutMs, deadline - Date.now()))
         );
         write({
           type: 'request',
