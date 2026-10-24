@@ -488,7 +488,7 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
-    publishDroppedWork(this, Date.now());
+    publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
   }
 

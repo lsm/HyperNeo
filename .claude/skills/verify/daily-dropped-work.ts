@@ -26,7 +26,7 @@ const evidence: Record<string, unknown> = { head: execFileSync('git', ['rev-pars
 const config = getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') });
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, service: ReturnType<typeof createNeoService> | undefined;
 const open = async () => {
-  app = await createDaemonApp({ config, disableWorktrees: true, disableGoalProcessing: true, verbose: false });
+  app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);

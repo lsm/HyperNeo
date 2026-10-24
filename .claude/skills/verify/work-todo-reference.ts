@@ -19,7 +19,7 @@ for (const name of ['home', 'workspace', 'bin', 'evidence']) mkdirSync(join(run,
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
 const evidence: Record<string, unknown> = { head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() };
-const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true, verbose: false });
+const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();

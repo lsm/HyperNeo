@@ -1,3 +1,8 @@
+import { STALLED_ASK_AFTER_MS } from './stalled-asks.ts';
+import type {
+  NeoPublicationInput,
+  NeoPublicationAppendResult,
+} from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoDerivedId } from './derived-id.ts';
 import type { NeoService } from './service.ts';
@@ -5,22 +10,9 @@ import type { NeoService } from './service.ts';
 const WAITING_AFTER_MS = 2 * 60 * 60 * 1000;
 
 function readCounts(service: NeoService, now: number) {
-  const asks = service.todos.listOpenAsks();
   const todos = service.todos.listCheckable();
-  const active = new Set(
-    todos.filter((todo) => ['todo', 'doing'].includes(todo.state)).map((todo) => todo.askId)
-  );
-  const questioned = new Set(
-    service.todos
-      .listQuestionsForAsks(asks.map((ask) => ask.id))
-      .filter((question) => question.state === 'open')
-      .map((question) => question.askId)
-  );
   return {
-    'stalled asks': asks.filter(
-      (ask) =>
-        ask.updatedAt <= now - WAITING_AFTER_MS && !active.has(ask.id) && !questioned.has(ask.id)
-    ).length,
+    'stalled asks': service.todos.listStalledAsks(now - STALLED_ASK_AFTER_MS).length,
     'todos waiting >2h': todos.filter(
       (todo) => todo.state === 'todo' && todo.updatedAt <= now - WAITING_AFTER_MS
     ).length,
@@ -44,22 +36,24 @@ const format = (counts: Record<string, number>) =>
     .join('; ');
 
 export const publishDroppedWork = (superpipe({})('neo-daily-dropped-work') as PipelineAPI)
-  .input(['service', 'now'])
+  .input(['service', 'now', 'append'])
   .pipe(
     (service: NeoService) => {
       const conversation = service.repo.conversationId();
-      return conversation ? { value: conversation } : { reason: null };
+      return conversation ? { value: { conversation } } : { reason: null };
     },
     'service',
-    'result:conversation'
+    'result:result'
   )
   .pipe((now: number) => new Date(now).toISOString().slice(0, 10), 'now', 'day')
   .pipe((day: string) => neoDerivedId(`dropped-work:${day}`), 'day', 'id')
   .pipe(
-    (service: NeoService, conversation: string, id: string) =>
-      service.publications.get(conversation, id) ? { reason: null } : { value: id },
-    ['service', 'conversation', 'id'],
-    'result:publicationId'
+    (service: NeoService, result: { conversation: string }, id: string) =>
+      service.publications.get(result.conversation, id)
+        ? { reason: null }
+        : { value: { ...result, publicationId: id } },
+    ['service', 'result', 'id'],
+    'result:result'
   )
   .pipe(
     (service: NeoService, now: number, day: string) =>
@@ -75,18 +69,28 @@ export const publishDroppedWork = (superpipe({})('neo-daily-dropped-work') as Pi
     'text'
   )
   .pipe(
-    (service: NeoService, conversation: string, publicationId: string, text: string) => {
-      const receipt = service.publications.append({
-        conversationId: conversation,
-        publicationId,
+    (
+      service: NeoService,
+      result: { conversation: string; publicationId: string },
+      text: string,
+      append: (input: NeoPublicationInput) => NeoPublicationAppendResult
+    ) => {
+      const receipt = append({
+        conversationId: result.conversation,
+        publicationId: result.publicationId,
         shortText: text.slice(0, 2000),
         fullText: text,
         links: [],
       });
       if (!receipt.accepted) throw new Error(`Daily counts: ${receipt.reason}`);
-      if (receipt.created) service.notifyPublicationsChanged(conversation);
+      if (receipt.created) service.notifyPublicationsChanged(result.conversation);
+      return null;
     },
-    ['service', 'conversation', 'publicationId', 'text'],
+    ['service', 'result', 'text', 'append'],
     'result'
   )
-  .end('result') as (service: NeoService, now: number) => void;
+  .end('result') as (
+  service: NeoService,
+  now: number,
+  append: (input: NeoPublicationInput) => NeoPublicationAppendResult
+) => void;

@@ -18,3 +18,9 @@ inactive packs, recent waiting work, a reported/running/unknown worker and a
 new head resetting the ready duration. Existing coding ledger contracts pin
 head-specific review and CI classification. This proves the backend and its
 existing human-conversation API, not new UI rendering or live-daemon behavior.
+
+CI publication-path control: run `HYPERNEO_TEST_DISABLE_SANDBOX=1 bash
+.claude/skills/verify/publication-reader.sh <fresh-run-dir>`. This runs the real
+SDK with synthetic model responses and then the web reader contracts, without
+driving a GUI. Exactly one daily card must coexist with the scheduled wake and
+the single authored reply. The daemon still has only one publication writer.
