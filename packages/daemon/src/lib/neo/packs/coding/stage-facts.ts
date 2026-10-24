@@ -1,4 +1,4 @@
-import { WorkRefSchema } from '../../../drivers/types.ts';
+import { WorkRefSchema, type WorkRef } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -24,6 +24,27 @@ export const CodingStageFact = z.object({
   evidence: z.array(z.string().trim().min(1)).min(1),
 });
 export type CodingStageFact = z.infer<typeof CodingStageFact>;
+
+export function codingStagePasses(
+  fact: CodingStageFact,
+  url: string,
+  head: string,
+  acceptanceContract: string,
+  ref: WorkRef
+): boolean {
+  return (
+    fact.verdict === 'pass' &&
+    githubUrlKey(fact.url) === githubUrlKey(url) &&
+    fact.head === head &&
+    fact.acceptanceContract === acceptanceContract &&
+    fact.evidence.length > 0 &&
+    fact.ref?.adapter === ref.adapter &&
+    fact.ref.id === ref.id &&
+    fact.ref.daemon === ref.daemon &&
+    fact.actor.id === ref.id &&
+    (fact.actor.kind === 'human' || fact.actor.harness === ref.adapter)
+  );
+}
 
 export class CodingStageFactsRepository {
   constructor(private readonly db: Database) {}

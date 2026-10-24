@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { CodingStageFactsRepository } from './stage-facts.ts';
-import { CodingDeliveryFactsRepository } from './delivery-facts.ts';
+import { CodingDeliveryFactsRepository, type CodingDeliverySnapshot } from './delivery-facts.ts';
+import { gateCodingCompletion } from './delivery-completion.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
@@ -440,6 +441,7 @@ type CodingTodoFacts = {
   prs: readonly NeoWorkPr[];
   observedAt: number;
   incomplete?: true;
+  delivery?: CodingDeliverySnapshot;
   issue?: NeoRefState;
 };
 
@@ -495,7 +497,7 @@ export function createCodingTodoPack(
       ...repo.claimsOn([...recorded]).filter((row) => row.todoId === todo.id),
     ];
   };
-  const readFacts = async (todo: NeoTodo): Promise<CodingTodoFacts | null> => {
+  const readPrFacts = async (todo: NeoTodo): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
     if (todo.check?.kind === 'issue_closed')
       return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo);
@@ -513,15 +515,27 @@ export function createCodingTodoPack(
     await repo.write('record', todo.id, [...prs, ...open], observedAt);
     return { prs, observedAt };
   };
+  const readFacts = async (todo: NeoTodo): Promise<CodingTodoFacts | null> => {
+    const facts = await readPrFacts(todo);
+    if (!facts) return null;
+    const delivery = repo.deliveryFacts.snapshot(todo.id, facts.prs);
+    return delivery.required ? { ...facts, delivery } : facts;
+  };
+  const checked = (todo: NeoTodo, facts: CodingTodoFacts) => {
+    const legacy =
+      todo.check?.kind === 'issue_closed'
+        ? codingIssueCheck(facts.issue)
+        : todo.check
+          ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt)
+          : null;
+    return facts.delivery ? gateCodingCompletion(legacy, facts.prs, facts.delivery) : legacy;
+  };
   return {
     readFacts,
     judge: (todo, facts) => {
       if (!facts || facts.incomplete || todo.check?.pack !== 'coding')
         return { state: 'no_opinion' };
-      const result =
-        todo.check.kind === 'issue_closed'
-          ? codingIssueCheck(facts.issue)
-          : codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt);
+      const result = checked(todo, facts);
       if (result?.failed) return { state: 'failed', reason: result.failed };
       return result?.done ? { state: 'done', evidence: result.evidence } : { state: 'no_opinion' };
     },
@@ -540,11 +554,7 @@ export function createCodingTodoPack(
       const facts = await readFacts(todo);
       if (!facts) return null;
       if (facts.incomplete) return todo.check ? { done: false, evidence: null } : null;
-      return todo.check?.kind === 'issue_closed'
-        ? codingIssueCheck(facts.issue)
-        : todo.check
-          ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt)
-          : null;
+      return checked(todo, facts);
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),

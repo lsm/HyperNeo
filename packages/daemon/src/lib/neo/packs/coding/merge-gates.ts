@@ -1,13 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { WorkRef } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 import {
   CodingMergeGate,
   sameCodingWorkRef,
   type CodingDeliveryFactsRepository,
 } from './delivery-facts.ts';
-import type { CodingStageFact } from './stage-facts.ts';
+import { codingStagePasses, type CodingStageFact } from './stage-facts.ts';
 type Candidate = {
   url: string;
   head: string;
@@ -50,19 +49,11 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
       review: { kind: string; head: string },
       facts: readonly CodingStageFact[]
     ): Gate<CodingMergeGate> => {
-      const matching = (fact: CodingStageFact) =>
-        githubUrlKey(fact.url) === githubUrlKey(candidate.url) &&
-        fact.head === candidate.head &&
-        fact.acceptanceContract === contract.reference &&
-        fact.verdict === 'pass' &&
-        fact.evidence.length > 0;
-      const assigned = (fact: CodingStageFact | undefined, ref: WorkRef | undefined) =>
-        !!fact?.ref &&
-        !!ref &&
-        sameCodingWorkRef(fact.ref, ref) &&
-        fact.actor.id === ref.id &&
-        (fact.actor.kind === 'human' || fact.actor.harness === ref.adapter);
-      const reviewFact = facts.find((fact) => fact.stage === 'review' && matching(fact));
+      const passes = (fact: CodingStageFact, ref: WorkRef) =>
+        codingStagePasses(fact, candidate.url, candidate.head, contract.reference, ref);
+      const reviewFact = facts.find(
+        (fact) => fact.stage === 'review' && contract.reviewer && passes(fact, contract.reviewer)
+      );
       const reviewerId =
         review.kind === 'bot' &&
         'approved' in review &&
@@ -75,7 +66,7 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
               review.kind === 'session' &&
               'sessionId' in review &&
               typeof review.sessionId === 'string' &&
-              assigned(reviewFact, contract.reviewer) &&
+              !!reviewFact &&
               contract.reviewer?.id === review.sessionId
             ? review.sessionId
             : null;
@@ -86,9 +77,7 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
         (contract.reviewer && sameCodingWorkRef(contract.reviewer, contract.write))
       )
         return refuse('matching_head_review_required');
-      const qa = facts.find(
-        (fact) => fact.stage === 'qa' && matching(fact) && assigned(fact, contract.qa)
-      );
+      const qa = facts.find((fact) => fact.stage === 'qa' && passes(fact, contract.qa));
       if (
         !qa ||
         sameCodingWorkRef(contract.qa, contract.write) ||
