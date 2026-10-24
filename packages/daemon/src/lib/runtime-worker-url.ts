@@ -5,7 +5,10 @@ export function runtimeWorkerUrl(
   compiled: string,
   moduleUrl: string
 ): string | URL {
-  const windowsModule = moduleUrl.replaceAll('\\', '/').replace(/^file:\/\/\//, '');
+  const modulePath = moduleUrl.startsWith('file:')
+    ? decodeURIComponent(new URL(moduleUrl).pathname)
+    : moduleUrl;
+  const windowsModule = modulePath.replaceAll('\\', '/').replace(/^\/(?=[A-Za-z]:)/, '');
   if (/^[A-Za-z]:\/~BUN\/root\//.test(windowsModule)) {
     return win32.resolve(win32.dirname(windowsModule), compiled);
   }
