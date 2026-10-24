@@ -822,16 +822,17 @@ describe('a session outside any Space', () => {
     expect(sessionRefreshed).toEqual([]);
   });
 
-  test('a PR its live card already follows is answered covered and stores nothing', async () => {
+  test('a PR its live card follows still persists the explicit subscription and starts its watch', async () => {
     const caller = plainSession('s-covered');
     coveredTopics = [PR_TOPIC];
     expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toEqual({
       ok: true,
       topicPattern: PR_TOPIC,
-      covered: true,
     });
-    expect(unscopedSubscriptions.listBySession('s-covered')).toEqual([]);
-    expect(watchedRepos).toEqual([]);
+    expect(unscopedSubscriptions.listBySession('s-covered').map((row) => row.topic)).toEqual([
+      PR_TOPIC,
+    ]);
+    expect(watchedRepos).toEqual(['Acme/Widgets']);
   });
 
   test('a PR subscription watches its repo, and a wildcard owner or repo does not', async () => {
