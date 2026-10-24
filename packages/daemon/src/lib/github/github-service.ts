@@ -13,6 +13,7 @@ import type {
   SecurityCheckResult,
   InboxItem,
 } from './types.ts';
+import type { GitHubPollCollector } from './poll-source.ts';
 import { GitHubPollingService, createPollingService } from './polling-service.ts';
 import {
   GitHubEventFilter,
@@ -38,6 +39,7 @@ export interface GitHubServiceOptions {
   jobQueue?: JobQueueRepository;
   jobProcessor?: JobQueueProcessor;
   getPollingIntervalSeconds?: () => number | undefined;
+  collectPollPage?: GitHubPollCollector;
 }
 
 export class GitHubService {
@@ -47,6 +49,7 @@ export class GitHubService {
   private apiKey: string;
   private apiKeyType?: 'api_key' | 'oauth';
   private githubToken?: string;
+  private collectPollPage?: GitHubPollCollector;
 
   private pollingService?: GitHubPollingService;
   private eventFilter: GitHubEventFilter;
@@ -66,6 +69,7 @@ export class GitHubService {
     this.apiKey = options.apiKey;
     this.apiKeyType = options.apiKeyType;
     this.githubToken = options.githubToken;
+    this.collectPollPage = options.collectPollPage;
     this.jobQueue = options.jobQueue;
     this.jobProcessor = options.jobProcessor;
     this.getPollingIntervalSeconds = options.getPollingIntervalSeconds;
@@ -124,6 +128,7 @@ export class GitHubService {
       this.pollingService = createPollingService(
         {
           token: this.githubToken,
+          collectPollPage: this.collectPollPage,
           interval: intervalMs,
         },
         async (event) => {

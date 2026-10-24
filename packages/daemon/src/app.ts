@@ -802,6 +802,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       );
     });
 
+    const collectGitHubPollPage = (
+      ...args: Parameters<CodingPollFactsRepository['collectExternalEventPage']>
+    ) =>
+      new CodingPollFactsRepository(
+        db.getDatabase(),
+        getGitHubPollingIntervalSeconds() * 1000
+      ).collectExternalEventPage(...args);
     startupTimer.start('github + external event setup');
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
@@ -833,6 +840,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           apiKey,
           apiKeyType,
           githubToken: process.env.GITHUB_TOKEN,
+          collectPollPage: collectGitHubPollPage,
           jobQueue,
           jobProcessor,
           getPollingIntervalSeconds: getGitHubPollingIntervalSeconds,
@@ -969,11 +977,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
-        collectPollPage: (...args) =>
-          new CodingPollFactsRepository(
-            db.getDatabase(),
-            getGitHubPollingIntervalSeconds() * 1000
-          ).collectExternalEventPage(...args),
+        collectPollPage: collectGitHubPollPage,
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
