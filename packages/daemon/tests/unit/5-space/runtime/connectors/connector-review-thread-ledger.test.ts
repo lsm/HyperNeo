@@ -25,7 +25,11 @@ const page = (
 ) => ({
   data: {
     repository: {
-      pullRequest: { headRefOid, reviewThreads: { nodes, pageInfo: { hasNextPage, endCursor } } },
+      pullRequest: {
+        url,
+        headRefOid,
+        reviewThreads: { nodes, pageInfo: { hasNextPage, endCursor } },
+      },
     },
   },
 });
@@ -132,4 +136,68 @@ test('invalid thread subjects refuse before opening the DB', async () => {
   );
   for (const identity of ['bad', 'https://foreign.invalid/synthetic/threads/pull/7'])
     expect((await read(identity, '/tmp')).ok).toBe(false);
+});
+
+test('GraphQL rate-limit errors remain retryable and cannot certify empty threads', async () => {
+  const { db, read, facts } = fixture(() =>
+    response({ errors: [{ message: 'API rate limit exceeded' }] })
+  );
+  try {
+    expect(await read(url, '/tmp')).toMatchObject({
+      ok: false,
+      retryable: true,
+      retryAfterMs: 60_000,
+    });
+    expect(facts.read(subject, 200, Infinity).page).toMatchObject({
+      status: 'unknown',
+      reason: 'rate_limited',
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('a delayed thread read cannot replace a newer persisted observation', async () => {
+  let release!: () => void;
+  let started!: () => void;
+  const held = new Promise<void>((done) => {
+    release = done;
+  });
+  const ready = new Promise<void>((done) => {
+    started = done;
+  });
+  const { db, read, facts } = fixture(() => {
+    const result = response(page());
+    result.exited = held.then(() => 0);
+    started();
+    return result;
+  });
+  try {
+    const pending = read(url, '/tmp');
+    await ready;
+    expect(
+      facts.record(
+        subject,
+        {
+          value: { headOid: 'b'.repeat(40), unresolvedThreadUrls: ['newer'] },
+          etag: null,
+          next: null,
+        },
+        300,
+        0
+      )
+    ).toBe(true);
+    release();
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('superseded'),
+    });
+    expect(facts.read(subject, 400, Infinity).page.value).toEqual({
+      headOid: 'b'.repeat(40),
+      unresolvedThreadUrls: ['newer'],
+    });
+  } finally {
+    release();
+    db.close();
+  }
 });

@@ -19,6 +19,7 @@ import { CodingPrSweepRepository } from './coding/pr-sweep.ts';
 import { createCodingQueryReader } from './coding/query-reader.ts';
 import { createCodingRefReader } from './coding/ref-reader.ts';
 import { createCodingWorkPrReader } from './coding/work-reader.ts';
+import { createCodingReviewThreadReader } from './coding/connector-review-thread-reader.ts';
 import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
@@ -38,6 +39,7 @@ export function createNeoCodingReaders(db: () => Database) {
   return {
     readPrState: createCodingPrStateReader(db),
     readConnectorPr: createCodingConnectorPrReader(db),
+    readReviewThreads: createCodingReviewThreadReader(db),
     readPrs: createCodingWorkPrReader(db),
     readBranchPrs: createCodingBranchPrReader(db),
     readRefStates: createCodingRefReader(() => new CodingPrLedgerRepository(db()).refFacts),

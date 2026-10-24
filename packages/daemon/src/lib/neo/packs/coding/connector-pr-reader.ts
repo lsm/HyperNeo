@@ -17,9 +17,10 @@ const Pr = z.object({
 type Subject = Parameters<CodingPollFactsRepository['read']>[0];
 type Target = { facts: CodingPollFactsRepository; subject: Subject };
 
-function target(
+export function codingConnectorPrTarget(
   getDatabase: () => Database,
-  url: string
+  url: string,
+  accept = 'application/vnd.hyperneo.pr-basic+json'
 ): { value: Target } | { reason: ConnectorOutcome } {
   const pr = parsePrUrl(url.toLowerCase());
   if (!pr) return { reason: { ok: false, error: 'Unable to parse GitHub PR URL' } };
@@ -40,7 +41,7 @@ function target(
       subject: {
         credentialId: 'github-connector',
         url: `https://${pr.host}/${alias?.canonical.toLowerCase() ?? repo}/pull/${pr.number}`,
-        accept: 'application/vnd.hyperneo.pr-basic+json',
+        accept,
         apiVersion: 'v1',
       },
     },
@@ -101,7 +102,7 @@ export function createCodingConnectorPrReader(
 ): (url: string, workspacePath: string) => Promise<ConnectorOutcome> {
   return (superpipe({ getDatabase, spawn, now })('coding-ledger-connector-pr-read') as PipelineAPI)
     .input(['url', 'workspacePath'])
-    .pipe(target, ['getDatabase', 'url'], 'result:outcome')
+    .pipe(codingConnectorPrTarget, ['getDatabase', 'url'], 'result:outcome')
     .pipe(acquire, ['outcome', 'workspacePath', 'spawn', 'now'], 'acquired')
     .pipe(project, ['acquired', 'now'], 'outcome')
     .endAsync('outcome') as (url: string, workspacePath: string) => Promise<ConnectorOutcome>;
