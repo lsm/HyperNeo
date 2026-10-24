@@ -265,6 +265,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/
     } finally { cleanupDb.close(); }
     console.log("[deno-smoke] job cleanup preserves cutoffs and retained payloads");
     const claimDb = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
+    claimDb.exec("PRAGMA busy_timeout=5000");
     const holder = new Worker("data:application/javascript," + encodeURIComponent(`
       import { DatabaseSync } from "node:sqlite";
       onmessage = ({data}) => {
