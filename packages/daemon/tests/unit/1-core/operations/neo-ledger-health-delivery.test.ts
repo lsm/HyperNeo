@@ -57,6 +57,22 @@ const notices = (db: Database) =>
   ).notices ?? [];
 
 describe('repository health delivery', () => {
+  test('an existing active health record without notice metadata is delivered on its next sweep', () =>
+    using(async (db, pack) => {
+      const ledger = new CodingPrLedgerRepository(db);
+      for (const at of [1, 2, 3]) ledger.recordHealth(repo, { at, outcome: 'failed' });
+      db.exec(
+        "UPDATE pack_coding_repo_health SET health_json=json_remove(health_json,'$.notices')"
+      );
+      const keys: string[] = [];
+      await pack(async (key) => {
+        keys.push(key);
+        return true;
+      }).sweep!(4);
+      expect(keys).toEqual(['github-health:synthetic/health:1']);
+      expect(notices(db)).toHaveLength(1);
+      expect(notices(db)[0].acceptedAt).toBe(4);
+    }));
   test('the third miss wakes once and accepted state survives pack reconstruction and recovery', () =>
     using(async (db, pack) => {
       const calls: { key: string; text: string }[] = [];

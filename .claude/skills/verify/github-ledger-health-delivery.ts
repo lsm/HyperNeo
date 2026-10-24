@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
+import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
@@ -23,6 +24,9 @@ const network = globalThis.fetch;
 globalThis.fetch = (async () => { throw new Error('No network in health delivery proof'); }) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, neo: ReturnType<typeof createNeoService> | undefined;
 let complete = false;
+const wakeAttempts: { key: string; text: string }[] = [];
+const healthLogs: Record<string, unknown>[] = [];
+const unsubscribe = subscribeToStructuredLogs(event => { if (event.module === 'coding-health') healthLogs.push(event.metadata); });
 const proof: Record<string, unknown> = { verified: false, providerTurns: 0, recipientConsumptionVerified: false };
 const sql = () => app!.db.getDatabase();
 const notices = () => JSON.parse(sql().prepare('SELECT health_json FROM pack_coding_repo_health WHERE repo=?').get(repo).health_json).notices ?? [];
@@ -40,7 +44,7 @@ async function cycle(at: number) {
     database: () => db, readPrs: async () => [], readClaudeOwners: async () => [],
     todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db),
     prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo],
-    prSweepDeps: { tell: async () => true, wake: (key, text) => neo!.wakeNeo(key, text) },
+    prSweepDeps: { tell: async () => true, wake: (key, text) => { wakeAttempts.push({ key, text }); return neo!.wakeNeo(key, text); } },
     readLedgerRepo: async () => complete ? { data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [] }, done: { nodes: [] } } } } : null,
   });
   await pack.sweep!(at);
@@ -63,16 +67,19 @@ try {
   const accepted = notices(); assert(accepted.every((notice: { acceptedAt: number | null }) => notice.acceptedAt === 5));
   assert.equal(jobs().length, 2);
   const payloads = jobs().map((job: { payload: string }) => JSON.parse(job.payload));
-  assert.deepEqual(payloads.map((payload: { messageUuid: string }) => payload.messageUuid), accepted.map((notice: { key: string }) => notice.key));
-  proof.accepted = { notices: accepted, jobs: jobs() };
+  assert.deepEqual(payloads.map((payload: { messageUuid: string }) => payload.messageUuid).sort(), accepted.map((notice: { key: string }) => notice.key).sort());
+  assert.deepEqual(wakeAttempts.slice(-2).map(notice => notice.key), accepted.map((notice: { key: string }) => notice.key));
+  assert.deepEqual(wakeAttempts.slice(0, -1), Array(3).fill(wakeAttempts[0]));
+  const acceptedAttempts = wakeAttempts.length; proof.accepted = { notices: accepted, jobs: jobs(), attempts: [...wakeAttempts] };
   await cycle(6); assert.deepEqual(notices(), accepted); assert.equal(jobs().length, 2);
   sql().prepare("UPDATE job_queue SET run_at=? WHERE queue='mailbox'").run(Date.now() + 86400000);
   await close(); await open(); await cycle(7);
-  assert.deepEqual(notices(), accepted); assert.equal(jobs().length, 2); assert.deepEqual(history(), protectedRows);
+  assert.deepEqual(notices(), accepted); assert.equal(jobs().length, 2); assert.deepEqual(history(), protectedRows); assert.equal(wakeAttempts.length, acceptedAttempts);
   assert.equal(sql().prepare('SELECT count(*) AS count FROM sdk_messages WHERE session_id=?').get(session).count, 0);
-  proof.afterRestart = { notices: notices(), jobs: jobs(), protectedHistory: history() }; proof.verified = true;
+  proof.afterRestart = { notices: notices(), jobs: jobs(), protectedHistory: history() };
+  assert(healthLogs.some(log => log.repo === repo && typeof log.lagMs === 'number' && typeof log.coverage === 'string' && 'nextRetryAt' in log)); proof.structuredLogs = healthLogs; proof.verified = true;
   console.log(JSON.stringify({ verified: true, realWakeAndMailbox: true, rejectedThenAccepted: true, restartVerified: true, providerTurns: 0 }));
 } finally {
-  await close(); globalThis.fetch = network; proof.resourcesStopped = true;
+  await close(); unsubscribe(); globalThis.fetch = network; proof.resourcesStopped = true;
   writeFileSync(join(run, 'evidence/health-delivery.json'), JSON.stringify(proof, null, 2));
 }
