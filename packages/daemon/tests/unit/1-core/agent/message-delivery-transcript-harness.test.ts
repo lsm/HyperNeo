@@ -164,6 +164,22 @@ function instrumentDeliveryTranscript(
     transcript.push({ op: 'db:clearTurnEnd', sessionId, uuid: messageUuid });
   };
 
+  const originalWrite = db.writeSDKMessage.bind(db);
+  db.writeSDKMessage = (async (method: string, ...args: unknown[]) => {
+    const result = await (originalWrite as (...args: unknown[]) => Promise<unknown>)(
+      method,
+      ...args
+    );
+    if (method === 'markDeliveryConsumedByUuids')
+      transcript.push({
+        op: 'db:markConsumedBatch',
+        sessionId: args[0] as string,
+        uuids: args[1] as string[],
+        dbIds: result as string[],
+      });
+    return result;
+  }) as Database['writeSDKMessage'];
+
   const dbOriginals = {
     updateMessageStatus: db.updateMessageStatus.bind(db),
     updateMessageTimestamp: db.updateMessageTimestamp.bind(db),
@@ -282,6 +298,7 @@ function instrumentDeliveryTranscript(
       sdkRepo.markDeliveryFailedByUuid = sdkOriginals.markDeliveryFailedByUuid;
       sdkRepo.recordDeliveryTurnEnd = sdkOriginals.recordDeliveryTurnEnd;
       sdkRepo.clearDeliveryTurnEnd = sdkOriginals.clearDeliveryTurnEnd;
+      db.writeSDKMessage = originalWrite;
       db.updateMessageStatus = dbOriginals.updateMessageStatus;
       db.updateMessageTimestamp = dbOriginals.updateMessageTimestamp;
       jobRepo.requeue = jobOriginals.requeue;

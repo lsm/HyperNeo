@@ -131,13 +131,14 @@ export function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | unde
     'roomId',
     'spaceId',
     'taskId',
+    'messageSubtype',
   ];
   for (const scope of scopes) {
     for (const key of keys) {
       const value = scope[key];
-      if (!value) continue;
-      if (merged[key] && merged[key] !== value) return undefined;
-      merged[key] = value;
+      if (value === undefined) continue;
+      if (merged[key] !== undefined && merged[key] !== value) return undefined;
+      Object.assign(merged, { [key]: value });
     }
   }
   return Object.keys(merged).length === 0 ? undefined : merged;

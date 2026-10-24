@@ -474,9 +474,9 @@ describe('refreshDriverWork', () => {
     await db.createSession(createTestSession('neo:inbox'));
     service.repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
   });
-  afterEach(() => {
-    service.dispose();
-    db.close();
+  afterEach(async () => {
+    await service.dispose();
+    await db.close();
   });
 
   test('keeps what it saw when a listing comes back partial', async () => {
@@ -622,9 +622,11 @@ describe('refreshDriverWork', () => {
         },
         () => clock
       );
-      const save = spyOn(db.getSDKMessageRepo(), 'saveSDKMessage').mockReturnValue(false);
+      db.getDatabase().exec(
+        "CREATE TRIGGER fail_notice BEFORE INSERT ON sdk_messages WHEN NEW.message_subtype='session_notices' BEGIN SELECT RAISE(ABORT,'synthetic notice fault'); END"
+      );
       await service.refreshDriverWork();
-      save.mockRestore();
+      db.getDatabase().exec('DROP TRIGGER fail_notice');
       expect(events.filter(([name]) => name === 'neo.session.notices')).toEqual([]);
       expect(service.sessionNoticeGroups).toEqual([]);
     } finally {
@@ -638,7 +640,7 @@ describe('refreshDriverWork', () => {
     try {
       listed = [work({ lastActivityAt: clock - 1_000 })];
       await service.refreshDriverWork();
-      service.dispose();
+      await service.dispose();
       clock += RUN_MS;
       listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
       status = { status: 'failed', lastActivityAt: clock - 1_000 };
@@ -658,7 +660,7 @@ describe('refreshDriverWork', () => {
         expect(announced.filter((name) => name === 'neo.session.notice')).toHaveLength(1);
         expect(restarted.sessionNotices).toEqual([expect.objectContaining({ kind: 'failed' })]);
       } finally {
-        restarted.dispose();
+        await restarted.dispose();
       }
     } finally {
       time.mockRestore();
@@ -700,7 +702,7 @@ describe('refreshDriverWork', () => {
       await service.refreshDriverWork();
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([]);
 
-      service.dispose();
+      await service.dispose();
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toHaveLength(1);
       const restarted = createNeoService(
         db,
@@ -719,7 +721,7 @@ describe('refreshDriverWork', () => {
           expect.objectContaining({ notices: [expect.objectContaining({ kind: 'failed' })] }),
         ]);
       } finally {
-        restarted.dispose();
+        await restarted.dispose();
       }
     } finally {
       time.mockRestore();
@@ -835,7 +837,7 @@ describe('refreshDriverWork', () => {
         await restarted.recover();
         expect(restarted.sessionNoticeGroups).toEqual(service.sessionNoticeGroups);
       } finally {
-        restarted.dispose();
+        await restarted.dispose();
       }
     } finally {
       time.mockRestore();

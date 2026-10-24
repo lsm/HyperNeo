@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { Database } from '../../../../src/storage/index';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { createReactiveDatabase, mergeScopes } from '../../../../src/storage/reactive-database';
 import type {
   ReactiveDatabase,
   TableChangeScope,
@@ -237,7 +237,7 @@ describe('ReactiveDatabase — scope extraction', () => {
     reactiveDb.commitTransaction();
 
     const txEvent = events[events.length - 1];
-    expect(txEvent.scope).toEqual({ sessionId: 'sess-5' });
+    expect(txEvent.scope).toEqual({ sessionId: 'sess-5', messageSubtype: null });
   });
 
   test('sdk message scope includes taskId for task sessions', async () => {
@@ -562,4 +562,25 @@ describe('LiveQueryEngine — scope filtering', () => {
     expect(diffsB.length).toBe(2);
     expect(diffsC.length).toBe(1);
   });
+});
+
+test('scope merge retains explicit null and matching SDK subtypes', () => {
+  expect(mergeScopes([{ sessionId: 's', messageSubtype: null }, { sessionId: 's' }])).toEqual({
+    sessionId: 's',
+    messageSubtype: null,
+  });
+  expect(
+    mergeScopes([
+      { sessionId: 's', messageSubtype: 'session_notices' },
+      { sessionId: 's', messageSubtype: 'session_notices' },
+    ])
+  ).toEqual({ sessionId: 's', messageSubtype: 'session_notices' });
+});
+test('scope merge widens conflicting SDK subtypes instead of filtering a change out', () => {
+  expect(
+    mergeScopes([
+      { sessionId: 's', messageSubtype: 'session_notices' },
+      { sessionId: 's', messageSubtype: 'task_progress' },
+    ])
+  ).toBeUndefined();
 });

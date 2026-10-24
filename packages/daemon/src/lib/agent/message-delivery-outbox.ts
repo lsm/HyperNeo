@@ -760,10 +760,9 @@ export function activatePromptsInTransaction(args: ActivatePromptsArgs): Activat
 async function applyActivatePrompts(
   args: ActivatePromptsArgs
 ): Promise<ActivatePromptsCommittedCtx> {
-  const result =
-    args.canDeliver?.() === false
-      ? { activated: [] }
-      : await gatewayFor(args.db).run(sdkPromptActivate, sdkTransactionArgs(args));
+  const result = !admitsDeliveryClaim(args)
+    ? { activated: [] }
+    : await gatewayFor(args.db).run(sdkPromptActivate, sdkTransactionArgs(args));
   return { ...args, ...result };
 }
 
@@ -847,10 +846,9 @@ export function retryPromptInTransaction(args: RetryPromptArgs): RetryPromptResu
 
 async function applyRetryPrompt(args: RetryPromptArgs): Promise<RetryPromptCtx> {
   validateRetryPromptUuid(args);
-  const retried =
-    args.canDeliver?.() === false
-      ? null
-      : await gatewayFor(args.db).run(sdkPromptRetry, sdkTransactionArgs(args));
+  const retried = !admitsDeliveryClaim(args)
+    ? null
+    : await gatewayFor(args.db).run(sdkPromptRetry, sdkTransactionArgs(args));
   return { ...args, retried };
 }
 
