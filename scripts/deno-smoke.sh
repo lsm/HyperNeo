@@ -250,6 +250,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
     if (first.action !== "ingested" || duplicate.action !== "duplicate" || duplicate.eventId !== event.id) Deno.exit(1);
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
+    db.exec("PRAGMA busy_timeout=5000");
     try {
       const insert = db.prepare("INSERT INTO message_search_content(kind,source_id,session_id,message_type,title,body,timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)");
       for (const kind of ["claude", "codex"]) insert.run(kind, "deno-purge-"+kind, "deno-purge-sdk", "user", "Synthetic", "complete retained result", 1);
@@ -264,7 +265,6 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       const kept = db.prepare("SELECT id,payload FROM job_queue WHERE id LIKE ?").all("deno-cleanup-%");
       if (count !== 2 || kept.length !== 1 || kept[0].id !== "deno-cleanup-keep" || JSON.parse(kept[0].payload).body !== "complete retained job") Deno.exit(1);
       console.log("[deno-smoke] job cleanup preserves cutoffs and retained payloads");
-      db.exec("PRAGMA busy_timeout=5000");
       const holder = new Worker("data:application/javascript," + encodeURIComponent(`
         import { DatabaseSync } from "node:sqlite";
         onmessage = ({data}) => {
