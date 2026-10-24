@@ -68,6 +68,13 @@ test.each([
   }
 );
 
+test('shows no worker permission until the settings have loaded', () => {
+  (globalSettings as { value: GlobalSettings | null }).value = null;
+  render(<NeoModelSettings />);
+  expect(screen.queryByRole('combobox', { name: 'Claude worker permission' })).toBeNull();
+  expect(updateGlobalSettings).not.toHaveBeenCalled();
+});
+
 test('says it applies only to Claude workers Neo starts from now on', () => {
   settle();
   render(<NeoModelSettings />);

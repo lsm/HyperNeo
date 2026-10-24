@@ -10,9 +10,11 @@ import { toast } from '../../lib/toast.ts';
 import { SettingsGroup, SettingsRow, SettingsSection } from './SettingsSection.tsx';
 
 export function NeoWorkerPermissionSettings() {
-  const neo = globalSettings.value?.neo;
+  const settings = globalSettings.value;
+  const neo = settings?.neo;
   const [saving, setSaving] = useState(false);
   const effective = neoWorkerPermissionMode(neo);
+  if (!settings) return null;
 
   const save = async (workerPermissionMode: NeoWorkerPermissionMode) => {
     setSaving(true);
