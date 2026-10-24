@@ -1,3 +1,5 @@
+import { NeoPublicationRepository } from './neo-publication-repository.ts';
+import { neoDerivedId } from '../../lib/neo/derived-id.ts';
 import {
   recomputeTodoState,
   recomputeTodoStateAsync,
@@ -165,12 +167,62 @@ const toTodo = ({
 const isStartable = (todo: NeoTodo) =>
   todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question');
 
+export interface NeoCardReplyContext {
+  conversationId: string;
+  sourceMessageIds: readonly string[];
+  language?: string;
+}
+
 export class NeoAskTodoRepository {
   constructor(
     private readonly db: Database,
     private readonly changed: () => void = () => {},
     private readonly rulesChanged: () => void = () => {}
   ) {}
+
+  cardReplyQuestion(conversationId: string, mutationId: string): NeoQuestion | null {
+    const row = this.db
+      .prepare(`SELECT json_extract(payload_json, '$.cardReply.questionId') AS id
+      FROM neo_publications WHERE conversation_id = ? AND
+      (json_extract(payload_json, '$.cardReply.mutationId') = ? OR EXISTS
+        (SELECT 1 FROM json_each(payload_json, '$.revisions') r WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1`)
+      .get(conversationId, mutationId, mutationId) as { id: string } | null;
+    return row ? this.getQuestion(row.id) : null;
+  }
+
+  writeCardReply(
+    context: NeoCardReplyContext | null,
+    mutationId: string,
+    write: () => NeoQuestion | null
+  ): NeoQuestion | null {
+    return this.db.transaction(() => {
+      const prior = context ? this.cardReplyQuestion(context.conversationId, mutationId) : null;
+      if (prior) return prior;
+      const question = write();
+      if (question && context) {
+        const zh =
+          context.language === 'zh-Hans' ||
+          ((!context.language || context.language === 'auto') &&
+            Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh'));
+        const shortText = `${zh ? '我给你回了 · 查看卡片' : 'I replied · View card'} · ${question.text.slice(0, 120)}`;
+        const result = new NeoPublicationRepository(this.db).append({
+          conversationId: context.conversationId,
+          publicationId: neoDerivedId(`card-reply:${context.conversationId}:${mutationId}`),
+          shortText,
+          fullText: shortText,
+          links: [],
+          cardReply: {
+            sourceMessageIds: [...new Set(context.sourceMessageIds)].sort(),
+            askId: question.askId,
+            questionId: question.id,
+            mutationId,
+          },
+        });
+        if (!result.accepted) throw new Error('Card reply publication rejected');
+      }
+      return question;
+    })();
+  }
 
   openAsk(
     ask: Omit<NeoAsk, 'repo' | 'parentId' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'> &

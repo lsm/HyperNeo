@@ -1,3 +1,4 @@
+import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
 import type { NeoQuestionSource } from '@hyperneo/shared/types/neo-ask';
@@ -13,6 +14,7 @@ import { z } from 'zod';
 import type {
   NeoAskTodoRepository,
   NeoQuestionDraft,
+  NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -306,7 +308,13 @@ export function createNeoQuestionOperations(
   start: (todoId: string) => Promise<{ ok: boolean; reason?: string }>,
   receivedHumanInput: (caller: OperationCaller, messageId: string) => boolean = () => false,
   artifact: ArtifactRefReader = () => null,
-  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null> = async () => null
+  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null> = async () => null,
+  replyContext: (
+    caller: OperationCaller,
+    ids: readonly string[] | undefined,
+    askId: string
+  ) => NeoCardReplyContext | null = () => null,
+  publicationChanged: (conversationId: string) => void = () => {}
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -316,6 +324,36 @@ export function createNeoQuestionOperations(
           ? { value: input }
           : fail('invalid_reply_to: cite only received human messages in this conversation.'),
       ['input', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (input: z.infer<typeof Ask>, caller: OperationCaller) => {
+        const context = replyContext(caller, input.replyTo, input.askId);
+        return {
+          context,
+          mutationId: context
+            ? neoDerivedId(
+                JSON.stringify([
+                  'card-reply',
+                  context.conversationId,
+                  [...context.sourceMessageIds].sort(),
+                  { ...input, replyTo: [...new Set(context.sourceMessageIds)].sort() },
+                ])
+              )
+            : crypto.randomUUID(),
+        };
+      },
+      ['input', 'caller'],
+      'reply'
+    )
+    .pipe(
+      (reply: { context: NeoCardReplyContext | null; mutationId: string }) => {
+        const existing = reply.context
+          ? store.cardReplyQuestion(reply.context.conversationId, reply.mutationId)
+          : null;
+        return existing ? { reason: { ok: true, question: existing } } : { value: null };
+      },
+      'reply',
       'result:outcome'
     )
     .pipe(
@@ -357,6 +395,16 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
+      (plan: QuestionPlan, reply: { context: NeoCardReplyContext | null; mutationId: string }) => {
+        const existing = reply.context
+          ? store.cardReplyQuestion(reply.context.conversationId, reply.mutationId)
+          : null;
+        return existing ? { reason: { ok: true, question: existing } } : { value: plan };
+      },
+      ['outcome', 'reply'],
+      'result:outcome'
+    )
+    .pipe(
       (plan: QuestionPlan, input: z.infer<typeof Ask>) => {
         const replaces = input.kind === 'start' ? undefined : input.replaces;
         const replaced = requireNeoQuestionReplaceable(
@@ -370,32 +418,36 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (plan: QuestionPlan & { replaced: NeoQuestion | null }): QuestionReceipt | Rejection => {
-        if (plan.reworded) {
-          const { id, startTodos } = plan.reworded;
-          store.extendStartQuestion(
-            id,
-            startTodos ?? [],
-            plan.draft.text,
-            Date.now(),
-            plan.draft.replyTo,
-            plan.draft.artifacts,
-            plan.draft.sourceSession
-          );
-          const question = store.getQuestion(id);
-          return question?.state === 'open'
-            ? { ok: true, question }
-            : { ok: false, reason: 'question_closed: the start question is no longer open.' };
-        }
-        const id = crypto.randomUUID();
-        const question = plan.replaced
-          ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
-          : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
+      (
+        plan: QuestionPlan & { replaced: NeoQuestion | null },
+        reply: { context: NeoCardReplyContext | null; mutationId: string }
+      ): QuestionReceipt | Rejection => {
+        const question = store.writeCardReply(reply.context, reply.mutationId, () => {
+          if (plan.reworded) {
+            const { id, startTodos } = plan.reworded;
+            store.extendStartQuestion(
+              id,
+              startTodos ?? [],
+              plan.draft.text,
+              Date.now(),
+              plan.draft.replyTo,
+              plan.draft.artifacts,
+              plan.draft.sourceSession
+            );
+            const question = store.getQuestion(id);
+            return question?.state === 'open' ? question : null;
+          }
+          const id = reply.mutationId;
+          return plan.replaced
+            ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
+            : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
+        });
+        if (question && reply.context) publicationChanged(reply.context.conversationId);
         return question
           ? { ok: true, question }
           : { ok: false, reason: 'question_closed: the question to replace is no longer open.' };
       },
-      'outcome',
+      ['outcome', 'reply'],
       'outcome'
     )
     .pipe(

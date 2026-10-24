@@ -9,6 +9,7 @@ export type OperationCallerRole =
   | 'universal_read';
 
 export interface OperationCaller {
+  readonly consumedInputId?: string;
   readonly source: 'rpc' | 'mcp' | 'internal';
   readonly principal?: string;
   readonly device?: { readonly deviceId: string; readonly kind: 'human' | 'relay' | 'daemon' };

@@ -180,7 +180,9 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
       (proof: Proof, draft: Draft) =>
-        (draft.replyTo ?? []).every((id) => runtime.receivedHumanInput(proof.binding.sessionId, id))
+        [...(draft.replyTo ?? []), ...(draft.cardReply?.sourceMessageIds ?? [])].every((id) =>
+          runtime.receivedHumanInput(proof.binding.sessionId, id)
+        )
           ? { value: proof }
           : { reason: { accepted: false, reason: 'invalid_reply_to' } },
       ['publication', 'draft'],

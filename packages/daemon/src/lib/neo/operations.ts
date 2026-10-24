@@ -1,3 +1,4 @@
+import { readNeoReply } from './intake.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { readNeoMessageStatuses, type NeoMessageStatusPresenter } from './message-status.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
@@ -762,7 +763,33 @@ export function createNeoOperations(service: NeoService) {
       (todoId) => service.todoRunner.start(todoId),
       (caller, id) => !!caller.sessionId && !!receivedNeoHumanInput(service, caller.sessionId, id),
       createArtifactRefReader(() => service.db.getDatabase()),
-      (ref) => service.readQuestionSource(ref)
+      (ref) => service.readQuestionSource(ref),
+      (caller, ids, askId) => {
+        const state = caller.sessionId
+          ? service.sessions.getCachedSession(caller.sessionId)?.getProcessingState()
+          : null;
+        const consumed =
+          caller.consumedInputId ?? (state?.status === 'processing' ? state.messageId : undefined);
+        const source = ids ?? (consumed ? [consumed] : []);
+        const inputs = caller.sessionId
+          ? source.map((id) => receivedNeoHumanInput(service, caller.sessionId!, id))
+          : [];
+        const conversationId = service.repo.conversationId();
+        const related = inputs.every(
+          (input) =>
+            !input?.replyTo ||
+            input.replyTo.kind === 'message' ||
+            readNeoReply(input.replyTo, service.todos)?.ask?.id === askId
+        );
+        return conversationId && inputs.length && inputs.every(Boolean) && related
+          ? {
+              conversationId,
+              sourceMessageIds: source,
+              language: service.db.getGlobalSettings().language,
+            }
+          : null;
+      },
+      (id) => service.notifyPublicationsChanged(id)
     ),
     defineOperation({
       name: 'neo.open',

@@ -329,7 +329,13 @@ export class AgentSession
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
       () => this.resolveOperationRegistry(),
-      () => resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+      () => {
+        const state = this.getProcessingState();
+        return {
+          ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+          consumedInputId: state.status === 'processing' ? state.messageId : undefined,
+        };
+      },
       '',
       this.recordOperationRefusal
     ));
