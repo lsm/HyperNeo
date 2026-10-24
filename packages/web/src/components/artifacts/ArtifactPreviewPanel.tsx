@@ -1,8 +1,10 @@
 import { generateUUID } from '@hyperneo/shared/utils';
-import { useLayoutEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import type { ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
 import { t } from '../../lib/i18n/index.ts';
 import {
   artifactPreviewStack,
+  artifactPreviewWorkspace,
   backArtifactPreview,
   closeArtifactPreview,
   takeArtifactPreviewOpener,
@@ -10,11 +12,35 @@ import {
 import type { ArtifactResolution } from '../../lib/artifact-reference-client.ts';
 import { ArtifactPreview } from './ArtifactPreview.tsx';
 import { ReferenceView } from './ReferenceView.tsx';
+import { ArtifactPreviewTabs, artifactTabIds } from './ArtifactPreviewTabs.tsx';
 
-export function ArtifactPreviewPanel({ markdownClass }: { markdownClass?: string } = {}) {
+const rememberMetadata = (metadata: ArtifactFileMetadata) =>
+  artifactPreviewWorkspace.update(metadata.artifact);
+
+export function ArtifactPreviewPanel({
+  markdownClass,
+  fileTabs = false,
+}: {
+  markdownClass?: string;
+  fileTabs?: boolean;
+} = {}) {
   const stack = artifactPreviewStack.value;
   const top = stack.at(-1);
   const open = !!top;
+  const [desktop, setDesktop] = useState(
+    () => fileTabs && window.matchMedia('(min-width: 1120px)').matches
+  );
+  useEffect(() => {
+    if (!fileTabs) return;
+    const update = () => setDesktop(window.matchMedia('(min-width: 1120px)').matches);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [fileTabs]);
+  const tabbed = fileTabs && desktop;
+  const files = artifactPreviewWorkspace.state.value.files;
+  const selectedId = top?.kind === 'artifact' ? top.artifactId : null;
+  const focusEntry = tabbed && selectedId ? open : stack[0];
   const dialog = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const resolved = useRef(new Map<string, ArtifactResolution>());
@@ -58,8 +84,9 @@ export function ArtifactPreviewPanel({ markdownClass }: { markdownClass?: string
   }, [open]);
 
   useLayoutEffect(() => {
+    if (tabbed && document.activeElement?.getAttribute('role') === 'tab') return;
     dialog.current?.focus({ preventScroll: true });
-  }, [stack[0]]);
+  }, [focusEntry]);
 
   if (!top) return null;
   return (
@@ -73,7 +100,9 @@ export function ArtifactPreviewPanel({ markdownClass }: { markdownClass?: string
       <div
         ref={dialog}
         role="dialog"
-        aria-labelledby="artifact-preview-title"
+        aria-labelledby={
+          tabbed && selectedId ? artifactTabIds(selectedId).title : 'artifact-preview-title'
+        }
         tabIndex={-1}
         class="artifact-preview-panel flex min-h-0 flex-col bg-surface focus:outline-none"
         onTouchStart={(event) => {
@@ -125,21 +154,45 @@ export function ArtifactPreviewPanel({ markdownClass }: { markdownClass?: string
         >
           ×
         </button>
-        {top.kind === 'artifact' ? (
+        {tabbed && selectedId && files.length > 0 && (
+          <div class="flex shrink-0 px-3 py-3 pr-14">
+            <ArtifactPreviewTabs files={files} selectedId={selectedId} />
+          </div>
+        )}
+        {tabbed &&
+          files.map((file) => (
+            <div
+              key={file.artifactId}
+              id={artifactTabIds(file.artifactId).panel}
+              role="tabpanel"
+              hidden={file.artifactId !== selectedId}
+              aria-labelledby={artifactTabIds(file.artifactId).tab}
+              class={file.artifactId === selectedId ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+            >
+              <ArtifactPreview
+                artifactId={file.artifactId}
+                onBack={backArtifactPreview}
+                markdownClass={markdownClass}
+                titleId={artifactTabIds(file.artifactId).title}
+                onMetadata={rememberMetadata}
+              />
+            </div>
+          ))}
+        {!tabbed && top.kind === 'artifact' ? (
           <ArtifactPreview
             key={stack.length}
             artifactId={top.artifactId}
             onBack={backArtifactPreview}
             markdownClass={markdownClass}
           />
-        ) : (
+        ) : top.kind === 'reference' ? (
           <ReferenceView
             key={stack.length}
             target={top}
             resolved={resolved.current}
             markdownClass={markdownClass}
           />
-        )}
+        ) : null}
       </div>
     </>
   );
