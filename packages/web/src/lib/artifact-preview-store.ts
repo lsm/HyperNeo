@@ -1,5 +1,8 @@
 import { signal } from '@preact/signals';
 
+/** @public */
+export { previewWorkspace } from './artifact-preview-workspace.ts';
+
 export type ArtifactPreviewSource = {
   kind: 'message' | 'publication' | 'todo';
   id: string;
