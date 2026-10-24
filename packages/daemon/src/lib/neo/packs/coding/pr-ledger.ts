@@ -8,6 +8,7 @@ import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
 import { CodingRepoHealthRepository, type RepoHealthCycle } from './health-state.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { CodingAncestryFactsRepository } from './ancestry-facts.ts';
 import { CodingRefFactsRepository } from './ref-facts.ts';
 import { CodingQueryFactsRepository } from './query-facts.ts';
@@ -647,29 +648,65 @@ export class CodingPrLedgerRepository {
   }
 }
 
+const planLedgerHealth = (superpipe({})('coding-ledger-cycle-outcome') as PipelineAPI)
+  .input(['raw', 'complete', 'now'])
+  .pipe(
+    (raw: unknown, complete: boolean, now: number) => {
+      const value = raw as {
+        error?: unknown;
+        retryAt?: number;
+        data?: { rateLimit?: { remaining?: number; resetAt?: string } };
+      } | null;
+      const stop =
+        (typeof value?.error === 'string' && isRateLimitError(value.error)) ||
+        (value?.data?.rateLimit?.remaining ?? Infinity) < CODING_LEDGER_MIN_RATE;
+      const retryAt = stop
+        ? (value?.retryAt ?? Date.parse(value?.data?.rateLimit?.resetAt ?? ''))
+        : NaN;
+      return {
+        at: now,
+        outcome: complete ? 'complete' : value?.data ? 'partial' : 'failed',
+        ...(Number.isSafeInteger(retryAt) && retryAt > now ? { retryAt } : {}),
+        stop,
+      };
+    },
+    ['raw', 'complete', 'now'],
+    'observation'
+  )
+  .end('observation') as (
+  raw: unknown,
+  complete: boolean,
+  now: number
+) => RepoHealthCycle & { stop: boolean };
+
 export async function reconcileCodingPrLedger(
   ledger: CodingPrLedgerRepository,
   repos: readonly string[],
   read: CodingLedgerRead,
-  now: number,
-  skips: Map<string, number> = new Map()
+  now: number
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
   const last = ledger.lastReads();
   const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
+  const reached = new Set<string>();
+  let retryAt: number | undefined;
   for (const repo of order) {
+    const before = ledger.health.read(repo);
+    if (before?.nextRetryAt && before.nextRetryAt > now) {
+      retryAt = before.nextRetryAt;
+      break;
+    }
     const observedAt = Date.now();
     const raw = await read(repo);
     const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
-    const error = (raw as { error?: unknown } | null)?.error;
-    const skipped = planned ? 0 : (skips.get(repo) ?? 0) + 1;
-    skips.set(repo, skipped);
-    if (skipped === CODING_LEDGER_WARN_SKIPS)
-      log.warn(
-        `PR ledger read for ${repo} failed or was partial ${skipped} times in a row${typeof error === 'string' ? `: ${error.slice(0, 200)}` : ''}`
-      );
-    if (typeof error === 'string' && isRateLimitError(error)) break;
+    const cycle = planLedgerHealth(raw, planned !== null, now);
+    const health = await ledger.write('recordHealth', repo, cycle);
+    reached.add(repo);
+    retryAt = cycle.retryAt;
+    if (health.misses === CODING_LEDGER_WARN_SKIPS && before?.misses !== health.misses)
+      log.warn('PR ledger coverage missed three eligible cycles', { repo, reason: health.reason });
+    if (!planned && cycle.stop) break;
     if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
     if (planned && planned.repo !== repo.toLowerCase())
       await ledger.write('dropRepo', repo.toLowerCase());
@@ -678,8 +715,14 @@ export async function reconcileCodingPrLedger(
         ...(await ledger.write('replace', planned.repo, planned.rows, now, observedAt))
       );
     if (planned) seen.add(planned.repo);
-    if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
+    if (cycle.stop) break;
   }
+  for (const repo of order.filter((repo) => !reached.has(repo)))
+    await ledger.write('recordHealth', repo, {
+      at: now,
+      outcome: retryAt ? 'cooldown' : 'not_reached',
+      retryAt,
+    });
   await ledger.write('prune', [...repos, ...seen], now);
   await ledger.write('pruneSessions', now);
   await ledger.write('assignOwners');

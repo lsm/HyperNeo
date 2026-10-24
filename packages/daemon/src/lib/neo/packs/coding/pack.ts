@@ -47,7 +47,6 @@ export function createCodingPack(deps: {
   prepareMerge: typeof prepareCodingMerge;
 } {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
-  const ledgerSkips = new Map<string, number>();
   const todos = createCodingTodoPack(
     deps.todoPrs,
     deps.readPrs,
@@ -126,8 +125,7 @@ export function createCodingPack(deps: {
         deps.prLedger,
         deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
-        now,
-        ledgerSkips
+        now
       );
       await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
       await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);

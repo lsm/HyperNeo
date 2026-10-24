@@ -18,10 +18,10 @@ type Health = {
 };
 
 function admitCycle(before: Health | null, cycle: RepoHealthCycle) {
-  if (!Number.isSafeInteger(cycle.at) || cycle.at <= 0)
-    throw new Error('Health cycle time must be a positive safe integer');
+  if (!Number.isSafeInteger(cycle.at) || cycle.at < 0)
+    throw new Error('Health cycle time must be a nonnegative safe integer');
   if (
-    cycle.outcome === 'cooldown' &&
+    (cycle.outcome === 'cooldown' || cycle.retryAt !== undefined) &&
     (!Number.isSafeInteger(cycle.retryAt) || cycle.retryAt! <= cycle.at)
   )
     throw new Error('Health cooldown requires a later retry time');
@@ -50,7 +50,7 @@ function projectHealth(repo: string, before: Health | null, cycle: RepoHealthCyc
     misses,
     firstMissAt,
     reason: cycle.outcome,
-    nextRetryAt: cooldown ? cycle.retryAt! : null,
+    nextRetryAt: cycle.retryAt ?? null,
     incident,
   };
 }
