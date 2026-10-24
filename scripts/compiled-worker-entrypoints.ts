@@ -11,4 +11,12 @@ export const COMPILED_WORKER_ENTRYPOINTS = [
   'packages/daemon/src/storage/sdk-status-worker.ts',
 ];
 
+export const compileArgs = (target: string) => [
+  'build',
+  '--compile',
+  '--root=packages',
+  `--target=${target}`,
+  ...(target === 'bun-darwin-x64' ? ['--external', '*onnxruntime_binding.node'] : []),
+];
+
 if (import.meta.main) process.stdout.write(COMPILED_WORKER_ENTRYPOINTS.join(' '));

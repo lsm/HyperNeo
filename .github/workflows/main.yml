@@ -623,6 +623,9 @@ jobs:
           GLM_API_KEY: smoke-test
           HYPERNEO_DATA_DIR: /tmp/hyperneod-smoke-data
 
+      - name: Load embeddings from a compiled binary in a fresh data dir
+        run: bun .claude/skills/verify/compiled-embedding-load.ts ${{ runner.temp }}/hyperneo-embedding-load bun-linux-x64
+
 
   windows-compiled-smoke:
     name: Windows Compiled Worker Smoke
@@ -653,6 +656,8 @@ jobs:
           $env:HYPERNEO_DATA_DIR = "$run\data"
           $env:NODE_ENV = 'test'
           bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-windows-x64.exe $run
+      - name: Load embeddings from a compiled binary in a fresh data dir
+        run: bun .claude/skills/verify/compiled-embedding-load.ts ${{ runner.temp }}/hyperneo-embedding-load
       - uses: actions/upload-artifact@v7
         if: always()
         with:
