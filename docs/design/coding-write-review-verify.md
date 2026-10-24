@@ -10,15 +10,15 @@ flows. Clarify missing criteria before dispatch; the author cannot broaden them.
 | Step | Actor | Required result |
 | --- | --- | --- |
 | Write | Worker session | Implements the task, maintains the repo's verify skill, opens the PR and addresses findings. Its own verification helps but cannot approve QA. |
-| Review | Configured repo review bot; otherwise a fresh review session | A soundness verdict covering every required review-contract dimension, with explicit bug/integration and goal/scope passes. Static review does not replace running the change. |
+| Review | Configured repo review bot; otherwise a fresh review session, or a human | A soundness verdict covering every required review-contract dimension, with explicit bug/integration and goal/scope passes. Static review does not replace running the change. |
 | Verify | Independent session, distinct from both author and reviewer | Evidence answering “did this do what the human asked?” and “did it change anything else?” Never the author reviewing its own report. |
 
 Review routing is a coding-pack code decision keyed only on whether the repository
 has a review bot configured. When configured, that bot's approval on the exact
 latest PR head **is the review stage**; never open a separate reviewer session,
 including while approval is missing, stale or negative. When no review bot is
-configured, open a separate reviewer session. Bot and repository names are not
-routing rules. Actor assignment and merge gates reuse this decision.
+configured, open a separate reviewer session, or use a human reviewer. Bot and
+repository names are not routing rules. Actor assignment and merge gates reuse this decision.
 
 Provenance is a coding-pack preference, **on by default**, user-disableable.
 Use the existing first-use preference question; until answered, explicitly fall
@@ -27,8 +27,9 @@ require `Author: <model> via <harness>` with actual identity; ask the author to 
 missing/ambiguous provenance before assigning review. For the no-bot reviewer
 session, require a **different model** and prefer a different harness too (for
 example Codex CLI reviewing Claude Code). Fallback: same harness, different model.
-Same model/different harness cannot qualify. Record reviewer identity; unavailable
-qualifying session alternatives block for configuration. Provenance does not add
+Same model/different harness cannot qualify. Record reviewer identity; a human is
+an alternative when no review bot is configured. Unavailable qualifying alternatives
+block for configuration. Provenance does not add
 a reviewer session alongside a configured bot. When off, no Author line is required
 and reviewer diversity is not enforced. Repo review/sign-off rules remain mandatory.
 
