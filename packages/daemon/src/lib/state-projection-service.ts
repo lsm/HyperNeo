@@ -391,7 +391,7 @@ export class StateProjectionService {
   }
 
   private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
-    await this.db?.waitForSdkMessageColumns(sessionId);
+    await this.db?.waitForSdkMessageColumns(sessionId, false);
     const agentSession = await this.sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       if ((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db) {

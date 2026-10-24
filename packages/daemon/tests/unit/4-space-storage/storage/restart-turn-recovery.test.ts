@@ -188,7 +188,7 @@ describe('restart recovery reads', () => {
       release = resolve;
     });
     const resent: string[] = [];
-    const deps = {
+    const deps: RestartRecoveryDeps = {
       readEvidence: async () => {
         await ready;
         return sdk.readRestartRecoveryEvidence('asked');
@@ -199,7 +199,7 @@ describe('restart recovery reads', () => {
         return true;
       },
       sendNote: async () => false,
-    } as unknown as RestartRecoveryDeps;
+    };
     const recovery = recoverRestartCutTurns(['asked'], deps);
     try {
       await new Promise((resolve) => setTimeout(resolve, 10));

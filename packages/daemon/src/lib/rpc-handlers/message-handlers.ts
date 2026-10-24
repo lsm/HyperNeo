@@ -50,7 +50,7 @@ export function setupMessageHandlers(
     if (query.length < MESSAGE_SEARCH_MIN_TERM_LENGTH) {
       return { results: [], limit, offset };
     }
-    await db.waitForSdkMessageColumns(request.sessionId);
+    await db.waitForSdkMessageColumns(request.sessionId, false);
     const params = {
       query,
       sessionId: request.sessionId,

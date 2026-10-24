@@ -11,7 +11,7 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(port > 0 && port !== 8399);
-assert(['seed', 'serve', 'verify'].includes(mode));
+assert(['seed', 'recovery-seed', 'serve', 'verify'].includes(mode));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const pause = (ms = 25) => new Promise<void>(done => setTimeout(done, ms));
 const doneKey = 'sdk_message_columns_backfilled_v2', prefix = 'sdk_message_columns_backfill_v2:';
@@ -33,7 +33,17 @@ if (mode === 'seed') {
   })();
   writeFileSync(join(run, 'evidence/seed.json'), JSON.stringify({ rows: count, hash: hash.digest('hex') }));
   core.close();
+} else if (mode === 'recovery-seed') {
+  const db = new Database(path);
+  assert(!db.prepare('SELECT 1 FROM migration_markers WHERE key=?').get(doneKey));
+  db.prepare(`INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata,processing_state)
+    VALUES ('synthetic-cut-turn','Synthetic cut turn',?,datetime('now'),datetime('now'),'active','{}','{}',?)`).run(run, JSON.stringify({status:'processing',messageId:'synthetic-tool-result'}));
+  db.prepare(`INSERT INTO sdk_messages(id,session_id,message_type,sdk_message,timestamp,send_status,sdk_uuid,replacement_metadata_normalized)
+    VALUES ('synthetic-tool-result','synthetic-cut-turn','user',?,'2026-10-23T00:00:01Z','consumed','synthetic-tool-result',1)`).run(JSON.stringify({type:'user',uuid:'synthetic-tool-result',message:{role:'user',content:[{type:'tool_result',tool_use_id:'synthetic-tool',content:'retained result'}]}}));
+  db.close();
 } else if (mode === 'serve') {
+  const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
+  JobQueueProcessor.prototype.start = () => {};
   const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
   const { getConfig } = await import('../../../packages/daemon/src/config.ts');
   const app = await createDaemonApp({ config: getConfig({ host: '127.0.0.1', port, dbPath: path }), verbose: false, standalone: true });
@@ -43,6 +53,7 @@ if (mode === 'seed') {
 } else {
   assert(existsSync(join(run, 'evidence/seed.json')));
   const evidence: Record<string, unknown> = { startup: [], interrupted: null, resumed: null };
+  const checkpoint = () => writeFileSync(join(run, 'evidence/startup.json'), JSON.stringify(evidence, null, 2));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   let ws: WebSocket | undefined;
   const pending = new Map<string, { done: (value: any) => void; fail: (error: Error) => void }>();
@@ -72,7 +83,7 @@ if (mode === 'seed') {
       await pause();
     }
     const result = { label, healthStatus: response?.status ?? null, elapsedMs: performance.now() - began, progress: progress(), health: response?.status === 200 ? await response.json() : null };
-    (evidence.startup as unknown[]).push(result);
+    (evidence.startup as unknown[]).push(result); checkpoint();
     assert.equal(result.healthStatus, 200, 'REPRO: long data backfill blocks HTTP health startup');
     assert.equal(result.progress.complete, false, 'Health must serve while backfill is pending');
     return result;
@@ -81,6 +92,11 @@ if (mode === 'seed') {
   try {
     assert(!progress().complete);
     await start('first'); await connect();
+    const recoveryRow = () => probe.prepare("SELECT send_status FROM sdk_messages WHERE id='synthetic-tool-result'").get() as {send_status:string} | null;
+    if (recoveryRow()) {
+      evidence.restartRecoveryDuringBackfill = recoveryRow();
+      assert.equal(recoveryRow()!.send_status, 'consumed', 'Restart recovery must not resend an unprojected tool result');
+    }
     const health = await rpc('system.health');
     assert(['pending', 'running'].includes(health.dataMigration.state));
     evidence.healthDuringBackfill = health;
@@ -95,10 +111,10 @@ if (mode === 'seed') {
     const fresh = await rpc('message.sdkMessages', { sessionId: created.sessionId, limit: 2 });
     evidence.newSessionDuringBackfill = { sessionId: created.sessionId, page: fresh };
     assert.equal((await rpc('system.health')).status, 'ok');
-    evidence.historyReadRefusedAsPreparing = true;
+    evidence.historyReadRefusedAsPreparing = true; checkpoint();
     const until = Date.now() + 30000;
     while (progress().through === 0) { assert(Date.now() < until, 'No persisted progress'); await pause(); }
-    await stop('SIGKILL'); const interrupted = progress(); evidence.interrupted = interrupted;
+    await stop('SIGKILL'); const interrupted = progress(); evidence.interrupted = interrupted; checkpoint();
     assert(interrupted.through > 0 && !interrupted.complete);
     const second = await start('restart'); assert(second.progress.through >= interrupted.through); await connect();
     const finishBy = Date.now() + 120000;
@@ -112,11 +128,18 @@ if (mode === 'seed') {
     const restored = await rpc('message.sdkMessages', { sessionId: 'synthetic-backfill', limit: 2 });
     assert.equal(restored.sdkMessages.length, 2);
     evidence.historyAfterBackfill = { count: restored.sdkMessages.length, hasMore: restored.hasMore };
-    evidence.healthAfterBackfill = completed;
+    evidence.healthAfterBackfill = completed; checkpoint();
+    if (recoveryRow()) {
+      await pause(100);
+      evidence.restartRecoveryAfterBackfill = recoveryRow();
+      assert.equal(recoveryRow()!.send_status, 'consumed');
+      assert.equal((probe.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue='message.delivery' AND payload LIKE '%synthetic-tool-result%'").get() as {n:number}).n, 0);
+    }
     assert(progress().through === 0, 'Completed pass retires only its cursor');
+    checkpoint();
     const hash = createHash('sha256'); let after = 0, count = 0;
     for (;;) {
-      const page = probe.prepare('SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS sdk_message FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE m.session_id=? AND m.seq>? ORDER BY m.seq LIMIT 512').all('synthetic-backfill', after) as { seq: number; sdk_message: string }[];
+      const page = probe.prepare('SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS sdk_message FROM sdk_messages m NOT INDEXED LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE m.session_id=? AND m.seq>? ORDER BY m.seq LIMIT 512').all('synthetic-backfill', after) as { seq: number; sdk_message: string }[];
       if (!page.length) break;
       for (const row of page) { hash.update(row.sdk_message); after = row.seq; count++; }
     }

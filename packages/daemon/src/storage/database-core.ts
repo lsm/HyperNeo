@@ -179,7 +179,7 @@ export class DatabaseCore {
     return { ...this.sdkMigration };
   }
 
-  async waitForSdkMessageColumns(sessionId?: string): Promise<void> {
+  async waitForSdkMessageColumns(sessionId?: string, wait = true): Promise<void> {
     if (this.getDataMigrationStatus().state === 'complete') return;
     if (
       sessionId &&
@@ -192,6 +192,8 @@ export class DatabaseCore {
       if (this.sdkMigrationClosed) throw new Error('Message history preparation stopped');
       if (this.sdkMigration.state === 'failed')
         throw new Error('Message history preparation failed; restart to resume');
+      if (!wait)
+        throw new Error('Message history is being prepared. Try again when preparation completes.');
       await new Promise<void>((resolve) => setTimeout(resolve, 25));
     }
   }

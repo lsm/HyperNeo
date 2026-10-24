@@ -212,9 +212,13 @@ describe('Rewind RPC Handlers', () => {
 
     await handler!({ sessionId: 'session-123', checkpointId: 'checkpoint-1' }, {});
 
-    expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123', {
-      replayPendingMessages: false,
-    });
+    expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith(
+      'session-123',
+      {
+        replayPendingMessages: false,
+      },
+      false
+    );
   });
 
   describe('rewind.execute', () => {

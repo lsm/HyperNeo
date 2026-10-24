@@ -914,7 +914,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
     const restartRecoveryDeps: RestartRecoveryDeps = {
-      readEvidence: (sessionId) => db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId),
+      readEvidence: async (sessionId) => {
+        await db.waitForSdkMessageColumns(sessionId);
+        return db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId);
+      },
       hasActiveDelivery: (sessionId, uuid) =>
         db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
       resend: (sessionId, uuid, enqueueDelivery) => {

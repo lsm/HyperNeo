@@ -65,10 +65,7 @@ describe('Startup SDK history preparation', () => {
 
   test('public reads report preparation promptly instead of waiting past the client deadline', async () => {
     const { core } = await legacy();
-    const request = (core.waitForSdkMessageColumns as (id: string, wait: boolean) => Promise<void>)(
-      'old-session',
-      false
-    ).then(
+    const request = core.waitForSdkMessageColumns('old-session', false).then(
       () => 'empty history',
       (error: Error) => error.message
     );

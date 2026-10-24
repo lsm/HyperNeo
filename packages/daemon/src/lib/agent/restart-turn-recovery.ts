@@ -11,7 +11,9 @@ export interface RestartRecoveryEvidence {
 }
 
 export interface RestartRecoveryDeps {
-  readEvidence(sessionId: string): RestartRecoveryEvidence | null;
+  readEvidence(
+    sessionId: string
+  ): RestartRecoveryEvidence | null | Promise<RestartRecoveryEvidence | null>;
   hasActiveDelivery(sessionId: string, uuid: string): boolean;
   resend(sessionId: string, uuid: string, enqueueDelivery: boolean): boolean;
   sendNote(sessionId: string, promptUuid: string): Promise<boolean>;
@@ -38,8 +40,8 @@ export function planRestartRecovery(
       };
 }
 
-function readRecoveryEvidence(sessionId: string, deps: RestartRecoveryDeps) {
-  const evidence = deps.readEvidence(sessionId);
+async function readRecoveryEvidence(sessionId: string, deps: RestartRecoveryDeps) {
+  const evidence = await deps.readEvidence(sessionId);
   return {
     evidence,
     deliveryActive: evidence ? deps.hasActiveDelivery(sessionId, evidence.promptUuid) : false,

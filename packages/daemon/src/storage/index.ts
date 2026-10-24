@@ -453,7 +453,10 @@ export class Database {
       (args) =>
         'codexSnapshot' in args
           ? Promise.resolve()
-          : this.core.waitForSdkMessageColumns('sessionId' in args ? args.sessionId : undefined)
+          : this.core.waitForSdkMessageColumns(
+              'sessionId' in args ? args.sessionId : undefined,
+              false
+            )
     ));
   }
 
@@ -605,8 +608,8 @@ export class Database {
     return this.core.getDataMigrationStatus();
   }
 
-  waitForSdkMessageColumns(sessionId?: string) {
-    return this.core.waitForSdkMessageColumns(sessionId);
+  waitForSdkMessageColumns(sessionId?: string, wait = true) {
+    return this.core.waitForSdkMessageColumns(sessionId, wait);
   }
 
   stopSdkMessageColumnsBackfill(): void {
