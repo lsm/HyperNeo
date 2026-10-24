@@ -34,12 +34,18 @@ const Page = z.object({
   errors: z.array(z.unknown()).optional(),
 });
 type Target = Extract<ReturnType<typeof codingConnectorPrTarget>, { value: unknown }>['value'];
-const partial = (): ConnectorOutcome => ({
-  ok: false,
-  error: 'GitHub review-thread facts unavailable: partial',
+type Fetched =
+  | { kind: 'known'; value: { headOid: string; unresolvedThreadUrls: string[] } }
+  | {
+      kind: 'partial' | 'rate_limited' | 'failed';
+      outcome: Extract<ConnectorOutcome, { ok: false }>;
+    };
+const partial = (): Fetched => ({
+  kind: 'partial',
+  outcome: { ok: false, error: 'GitHub review-thread facts unavailable: partial' },
 });
 
-async function fetchPages(url: string, cwd: string, spawn: SpawnFn): Promise<ConnectorOutcome> {
+async function fetchPages(url: string, cwd: string, spawn: SpawnFn): Promise<Fetched> {
   const meta = parsePrUrl(url)!;
   const seen = new Set<string>();
   const unresolvedThreadUrls: string[] = [];
@@ -67,14 +73,17 @@ async function fetchPages(url: string, cwd: string, spawn: SpawnFn): Promise<Con
       hostHint: meta.host,
       resourceHint: 'graphql',
     });
-    if (!outcome.ok) return outcome;
+    if (!outcome.ok) return { kind: 'failed', outcome };
     const errors = z.object({ errors: z.array(z.unknown()) }).safeParse(outcome.data);
     if (errors.success && isRateLimitError(JSON.stringify(errors.data.errors)))
       return {
-        ok: false,
-        error: 'GitHub review-thread rate limit',
-        retryable: true,
-        retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+        kind: 'rate_limited',
+        outcome: {
+          ok: false,
+          error: 'GitHub review-thread rate limit',
+          retryable: true,
+          retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+        },
       };
     const parsed = Page.safeParse(outcome.data);
     if (!parsed.success || parsed.data.errors?.length) return partial();
@@ -85,7 +94,7 @@ async function fetchPages(url: string, cwd: string, spawn: SpawnFn): Promise<Con
     for (const node of pr.reviewThreads.nodes)
       if (!node.isResolved) unresolvedThreadUrls.push(node.comments.nodes[0]?.url ?? node.id);
     const info = pr.reviewThreads.pageInfo;
-    if (!info.hasNextPage) return { ok: true, data: { headOid, unresolvedThreadUrls } };
+    if (!info.hasNextPage) return { kind: 'known', value: { headOid, unresolvedThreadUrls } };
     if (!info.endCursor || seen.has(info.endCursor)) return partial();
     cursor = info.endCursor;
     seen.add(cursor);
@@ -97,20 +106,13 @@ async function acquire(target: Target, cwd: string, spawn: SpawnFn, now: () => n
   const { facts, subject } = target;
   const before = facts.read(subject, now(), Infinity);
   const response = await facts.acquire(subject, null, async () => {
-    const result = await fetchPages(subject.url, cwd, spawn);
-    const observation = result.ok
-      ? {
-          value: result.data as { headOid: string; unresolvedThreadUrls: string[] },
-          etag: null,
-          next: null,
-        }
-      : {
-          reason: result.error.endsWith(': partial')
-            ? ('partial' as const)
-            : isRateLimitError(result.error)
-              ? ('rate_limited' as const)
-              : ('failed' as const),
-        };
+    const fetched = await fetchPages(subject.url, cwd, spawn);
+    const result: ConnectorOutcome =
+      fetched.kind === 'known' ? { ok: true, data: fetched.value } : fetched.outcome;
+    const observation =
+      fetched.kind === 'known'
+        ? { value: fetched.value, etag: null, next: null }
+        : { reason: fetched.kind };
     const recorded = withBusyRetry(() =>
       facts.record(subject, observation, now(), before.observationRevision)
     );

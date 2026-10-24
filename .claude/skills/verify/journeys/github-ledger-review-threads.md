@@ -18,7 +18,8 @@ reduction: existing readiness consumers are intentionally not wired in Build.
 
 Stop/restart the owned daemon on the same synthetic DB. Saved facts survive;
 a new demand refreshes. Failed, incomplete and cross-head refreshes refuse while
-retaining prior JSON/success time. Recovery succeeds. Unit contracts also reject
+retaining prior JSON/success time. Stderr ending in `: partial` remains a failed
+transport observation; only incomplete coverage is partial. Recovery succeeds. Unit contracts also reject
 malformed nodes, GraphQL errors, repeated/missing cursors, coverage beyond the
 page cap, foreign subjects and superseded observations; rate limits stay retryable.
 

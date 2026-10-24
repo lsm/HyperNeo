@@ -18,7 +18,7 @@ const root=${JSON.stringify(run)},args=process.argv.slice(2),phase=readFileSync(
 appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase,args})+'\\n');
 if(args[0]!=='api'||!args.includes('graphql')||!args.some(a=>a.includes('reviewThreads')))process.exit(2);
 await Bun.sleep(120);
-if(phase==='failed'){process.stderr.write('Synthetic GitHub unavailable');process.exit(1);}
+if(phase==='failed'||phase==='partial-stderr'){process.stderr.write(phase==='failed'?'Synthetic GitHub unavailable':'Synthetic transport failure: partial');process.exit(1);}
 const later=args.includes('cursor=next'),headRefOid=(phase==='head'&&later?'b':'a').repeat(40);
 const nodes=later?[]:[{id:'thread',isResolved:false,comments:{nodes:[{url:'https://github.com/synthetic/threads/pull/7#discussion_1'}]}}];
 const info=phase==='partial'?{hasNextPage:true,endCursor:null}:{hasNextPage:!later,endCursor:later?null:'next'};
@@ -39,13 +39,13 @@ try{
  assert.equal(calls().length,2);proof.coldAcquisitions=2;
  const prior=rows();assert.equal(prior.length,1);await app!.cleanup();app=undefined;await start();assert.deepEqual(rows(),prior);
  phase('repeat');assert((await read()).ok);const saved=rows()[0];
- for(const name of ['failed','partial','head']){
+ for(const name of ['failed','partial-stderr','partial','head']){
   phase(name);const result=await read();assert.equal(result.ok,false);proof[name]=result;
-  assert.equal(rows()[0].value_json,saved.value_json);assert.equal(rows()[0].observed_at,saved.observed_at);assert(rows()[0].reason);
+  assert.equal(rows()[0].value_json,saved.value_json);assert.equal(rows()[0].observed_at,saved.observed_at);assert.equal(rows()[0].reason,name==='failed'||name==='partial-stderr'?'failed':'partial');
  }
  phase('recovered');assert((await read()).ok);assert.equal(rows()[0].reason,null);
  proof.counts=Object.fromEntries([...new Set(calls().map(r=>r.phase))].map(p=>[p,calls().filter(r=>r.phase===p).length]));
- assert.deepEqual(proof.counts,{cold:2,repeat:2,failed:1,partial:1,head:2,recovered:2});
+ assert.deepEqual(proof.counts,{cold:2,repeat:2,failed:1,'partial-stderr':1,partial:1,head:2,recovered:2});
  proof.historyPreserved=true;proof.verified=true;
  console.log(JSON.stringify({verified:true,coldAcquisitions:2,productionConsumerWired:false}));
 }finally{
