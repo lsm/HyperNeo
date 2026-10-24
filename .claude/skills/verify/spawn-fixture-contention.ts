@@ -49,13 +49,14 @@ try {
   const completion = new Promise<unknown>(done => { committed = done; });
   worker.onmessage = event => { if (event.data.ready) ready(); else committed(event.data); };
   worker.onerror = event => { ready(); committed({ error: event.message }); };
-  worker.postMessage({ dbPath: join(run, 'data/daemon.db'), barrier });
+  const hold = scenario === 'task';
+  worker.postMessage({ dbPath: join(run, 'data/daemon.db'), barrier, hold });
   await readiness;
   const prepare = db.prepare.bind(db);
   let armed = true;
   db.prepare = ((sql: string, ...rest: unknown[]) => {
     const statement = prepare(sql, ...rest as []);
-    const selected = scenario === 'space' ? sql === 'SELECT * FROM spaces WHERE workspace_path = ?' : sql.includes('MAX(task_number)');
+    const selected = !hold && sql === 'SELECT * FROM spaces WHERE workspace_path = ?';
     return !selected ? statement : new Proxy(statement, {
       get(target, property) {
         const value = Reflect.get(target, property);
@@ -73,7 +74,16 @@ try {
   }) as typeof db.prepare;
   let reply;
   try {
-    reply = scenario === 'space' ? await createSpace() : await rpc('operation.invoke', { name: 'task.create', input: { spaceId, title: 'Synthetic spawn fixture' } });
+    if (hold) {
+      armed = false;
+      const pending = rpc('operation.invoke', { name: 'task.create', input: { spaceId, title: 'Synthetic spawn fixture' } });
+      await new Promise(done => setTimeout(done, 250));
+      evidence.createdWhileWriterHeld = db.prepare('SELECT COUNT(*) AS count FROM space_tasks').get();
+      Atomics.store(state, 0, 1); Atomics.notify(state, 0);
+      reply = await pending;
+    } else {
+      reply = await createSpace();
+    }
   } finally { db.prepare = prepare; }
   evidence.reply = reply;
   evidence.writer = await completion;
@@ -84,6 +94,7 @@ try {
   assert.deepEqual(evidence.writer, { committed: true });
   if (mode === 'before') assert.match(typeof reply.error === 'string' ? reply.error : reply.error?.message ?? '', /database is locked/i);
   else assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+  if (hold) assert.deepEqual(evidence.createdWhileWriterHeld, { count: 0 });
   evidence.verified = true;
   console.log(JSON.stringify(evidence));
 } finally {

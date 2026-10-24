@@ -135,7 +135,6 @@ export class Database {
   private readonly embedder = new WorkerAgentMemoryEmbedder();
   private sdkStatusReader: SDKStatusReader | null = null;
   private dbGateway: DbGateway | null = null;
-  private spaceTaskLane!: DbGateway;
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
@@ -160,7 +159,7 @@ export class Database {
     return this.core.getDbPath();
   }
 
-  readonly runSpaceTaskOp: RunDbOp = (op, args) => this.spaceTaskLane.run(op, args);
+  readonly runSpaceTaskOp: RunDbOp = (op, args) => this.gateway.run(op, args);
 
   notifyChange(table: string, scope?: { sessionId?: string; taskId?: string }): void {
     this.reactiveDb?.notifyChange(table, scope);
@@ -170,8 +169,7 @@ export class Database {
     await this.core.initialize();
     this.reactiveDb = reactiveDb;
     bindGateway(this.core.getDb(), this.gateway);
-    this.spaceTaskLane = new DbGateway(':memory:', this.core.getDb());
-    bindSpaceTaskLane(this.core.getDb(), this.spaceTaskLane);
+    bindSpaceTaskLane(this.core.getDb(), this.gateway);
     if (reactiveDb) {
       const replay = (changes: TableChange[]) => {
         reactiveDb.beginTransaction();
@@ -179,7 +177,6 @@ export class Database {
         reactiveDb.commitTransaction();
       };
       this.gateway.onChanges = replay;
-      this.spaceTaskLane.onChanges = replay;
     }
 
     const db = this.core.getDb();
