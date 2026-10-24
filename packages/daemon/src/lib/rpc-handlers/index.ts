@@ -124,7 +124,10 @@ import type { SpaceManager } from '../space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../tasks/task-manager.ts';
 import { SpaceWorkflowManager, createSpaceAgentLookup } from '../workflows/workflow-manager.ts';
 import type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import {
+  SpaceTaskRepository,
+  spaceTaskWriter,
+} from '../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
@@ -1371,6 +1374,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     spaceRuntimeService,
     taskRepo: spaceTaskRepo,
+    writeTask: spaceTaskWriter(deps.reactiveDb.db.getDatabase(), deps.reactiveDb),
     workflowRunRepo: spaceWorkflowRunRepo,
     channelCycleRepo,
     messageHub: deps.messageHub,

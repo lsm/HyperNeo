@@ -46,7 +46,10 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type {
+  SpaceTaskRepository,
+  WriteSpaceTask,
+} from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
@@ -261,6 +264,7 @@ export interface TaskAgentManagerConfig {
   spaceWorkflowManager: SpaceWorkflowManager;
   spaceRuntimeService: SpaceRuntimeService;
   taskRepo: SpaceTaskRepository;
+  writeTask: WriteSpaceTask;
   workflowRunRepo: SpaceWorkflowRunRepository;
   channelCycleRepo: ChannelCycleRepository;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -455,14 +459,12 @@ export class TaskAgentManager {
             kind: event.kind,
             reason: event.reason,
           });
-          try {
-            this.recomputeTaskRestriction(taskId);
-          } catch (err) {
+          void this.recomputeTaskRestriction(taskId).catch((err) => {
             log.warn(
               `TaskAgentManager: failed to mark task ${taskId} limited for session ${event.sessionId}:`,
               err
             );
-          }
+          });
         },
         { subscriberName: 'TaskAgentManager.rateLimitPause' }
       )
@@ -487,14 +489,12 @@ export class TaskAgentManager {
               });
               return;
             }
-            try {
-              this.recomputeTaskRestriction(taskId);
-            } catch (err) {
+            void this.recomputeTaskRestriction(taskId).catch((err) => {
               log.warn(
                 `TaskAgentManager: failed to recompute task ${taskId} restriction after session ${event.sessionId} resumed:`,
                 err
               );
-            }
+            });
             return;
           }
           void this.restoreTaskFromRateLimit(taskId).catch((err) => {
@@ -544,7 +544,7 @@ export class TaskAgentManager {
     }
   }
 
-  private recomputeTaskRestriction(taskId: string): void {
+  private async recomputeTaskRestriction(taskId: string): Promise<void> {
     const entries = this.limitedSessionsByTask.get(taskId);
     if (!entries || entries.size === 0) {
       return;
@@ -588,7 +588,8 @@ export class TaskAgentManager {
     ) {
       return;
     }
-    const outcome = this.config.taskRepo.casStatusWithPayload(
+    const outcome = await this.config.writeTask(
+      'casStatusWithPayload',
       taskId,
       ['in_progress', 'rate_limited', 'usage_limited'],
       status,
@@ -600,7 +601,8 @@ export class TaskAgentManager {
   }
 
   private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
-    const outcome = this.config.taskRepo.casStatusWithPayload(
+    const outcome = await this.config.writeTask(
+      'casStatusWithPayload',
       taskId,
       ['rate_limited', 'usage_limited'],
       'in_progress',
@@ -2968,7 +2970,11 @@ export class TaskAgentManager {
       try {
         if (
           task.taskAgentSessionId &&
-          this.config.taskRepo.clearMissingTaskAgentSession(task.id, task.taskAgentSessionId)
+          (await this.config.writeTask(
+            'clearMissingTaskAgentSession',
+            task.id,
+            task.taskAgentSessionId
+          ))
         ) {
           danglingLinksCleared++;
         }

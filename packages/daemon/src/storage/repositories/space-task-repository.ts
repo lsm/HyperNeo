@@ -1,3 +1,4 @@
+import { spaceTaskLaneFor } from '../db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { decodeTaskCoreRow } from '../tasks/task-row.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
@@ -1062,6 +1063,8 @@ export const spaceTaskWrites = defineRepositoryOp(
     'deleteTask',
     'promoteDraftTasksByCreator',
     'casStatus',
+    'casStatusWithPayload',
+    'clearMissingTaskAgentSession',
     'clearAllSpawnReservations',
     'markReconcileCheckedAt',
   ]
@@ -1073,3 +1076,10 @@ export type WriteSpaceTask = <K extends SpaceTaskWriteMethod>(
   method: K,
   ...args: SpaceTaskRepository[K] extends (...args: infer P) => unknown ? P : never
 ) => Promise<SpaceTaskRepository[K] extends (...args: never[]) => infer T ? Awaited<T> : never>;
+
+export function spaceTaskWriter(
+  db: BunDatabase,
+  changes?: Pick<ReactiveDatabase, 'notifyChange'>
+): WriteSpaceTask {
+  return (method, ...args) => spaceTaskLaneFor(db, changes).call(spaceTaskWrites, method, ...args);
+}
