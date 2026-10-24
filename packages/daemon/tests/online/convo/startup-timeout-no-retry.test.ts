@@ -173,7 +173,8 @@ describe('Startup Timeout Error Surfacing', () => {
         expect(errorMsg).toContain('failed to start');
         expect(errorMsg).toContain('did not emit its first message within the startup window');
         expect(errorMsg).toContain('after one automatic retry');
-        expect(errorMsg).toContain('bounded by the startup gate');
+        expect(errorMsg).toContain('Startup permits expire independently of query recovery');
+        expect(errorMsg).toContain('slow startups may overlap after lease expiry');
         expect(errorMsg).not.toContain('stale lock file');
         expect(errorMsg).not.toContain('another Claude Code session');
         expect(errorMsg).toContain('HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS');

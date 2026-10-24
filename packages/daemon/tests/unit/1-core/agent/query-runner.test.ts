@@ -2188,7 +2188,8 @@ describe('QueryRunner', () => {
       expect(userMessage).toContain('current: 600000ms');
       expect(userMessage).toContain('did not emit its first message within the startup window');
       expect(userMessage).toContain('after one automatic retry');
-      expect(userMessage).toContain('bounded by the startup gate');
+      expect(userMessage).toContain('Startup permits expire independently of query recovery');
+      expect(userMessage).toContain('slow startups may overlap after lease expiry');
       expect(userMessage).not.toContain('stale lock file');
       expect(userMessage).not.toContain('another Claude Code session');
     });
