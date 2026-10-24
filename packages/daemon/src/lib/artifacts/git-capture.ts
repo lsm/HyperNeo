@@ -52,7 +52,12 @@ export function captureGitArtifact(
         kind: kind.value,
         byteLength: snapshot.byteLength,
       },
-      JSON.stringify({ adapter: 'hyperneo', id: binding.workerSessionId ?? binding.neoSessionId }),
+      JSON.stringify(
+        binding.workerRef ?? {
+          adapter: 'hyperneo',
+          id: binding.workerSessionId ?? binding.neoSessionId,
+        }
+      ),
       plan.path,
       { kind: 'commit', repository: plan.repository, commitSha: plan.sha, blobSha: blob.blobSha }
     );
