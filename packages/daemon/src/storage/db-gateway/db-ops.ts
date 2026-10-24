@@ -20,6 +20,7 @@ import {
   jobQueueReads,
   jobQueueWrites,
 } from '../repositories/job-queue-repository.ts';
+import { recordClaudeInboxRoute } from '../repositories/claude-inbox-route-repository.ts';
 import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
@@ -48,5 +49,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingSweepWrites,
     claudeDesktopOutboxWrites,
     recordOperationRefusal,
+    recordClaudeInboxRoute,
   ].map((op) => [op.name, op])
 );
