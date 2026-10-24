@@ -40,3 +40,24 @@ Keep running `card-reply-daemon.md` as the separate atomicity, replacement,
 retry/restart and explicit caller-context contract. Its injected identity alone
 does not prove this real-turn fallback. No web/iOS rendering or post-deploy phone
 retry is claimed by either daemon-only journey.
+
+For the ACP coordinator path, use another fresh run from the worktree root:
+
+```sh
+RUN=$(mktemp -d /private/tmp/hn-card-reply-acp-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
+  bun .claude/skills/verify/card-reply-acp.ts "$RUN"
+```
+
+No HTTP model mock or credentials are needed. A synthetic stdio ACP agent uses
+the daemon's shipped MCP proxy command to call `neo.question.ask` without replyTo
+twice after actual human chat intake is consumed. The publication page must have
+one notice linked to that human UUID and the question must not duplicate. Its
+next background-only prompt creates a question without borrowing the human
+association. The first assertion fails with zero notices before ACP wiring.
+Evidence is `evidence/card-reply-acp.json` and `evidence/acp-protocol.jsonl` in
+the synthetic run. The same ACP proof runs in the online regression file above.
+The helper closes its owned daemon, ACP client and MCP proxy in finally; no real
+provider, live DB, credential file, fixed TCP port or GUI is used.

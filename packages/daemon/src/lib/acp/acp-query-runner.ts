@@ -40,6 +40,8 @@ import {
   runStartupWatch,
 } from '../agent/startup-watch-pipeline.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from '../agent/query-attempt-token.ts';
+import { QuestionInputScope } from '../agent/question-input-origin.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -500,6 +502,7 @@ export class AcpQueryRunner {
       attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
     const ownsSessionWrite = () =>
       attemptOwnsRun() && !runAbortController.signal.aborted && !this.ctx.isCleaningUp();
+    const humanInputs = new QuestionInputScope(session.id, ownsSessionWrite);
     const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
       const yieldedUuid = yieldedMessage.uuid;
       if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
@@ -664,7 +667,9 @@ export class AcpQueryRunner {
           }
           assertActiveAcpStartup();
 
-          let queryOptions = await optionsBuilder.build();
+          let queryOptions = await optionsBuilder.build({
+            operationInputOrigin: () => humanInputs.origin(),
+          });
           assertActiveAcpStartup();
 
           const acpCommand =
@@ -962,6 +967,16 @@ export class AcpQueryRunner {
         }
 
         assertActiveAcpStartup();
+        if (
+          message.uuid &&
+          !queuedMessage.internal &&
+          neoCoordinatorBinding(this.ctx.db, session.id)
+        ) {
+          const prompt = this.ctx.db
+            .getSDKMessageRepo()
+            .getDeliveryContent(session.id, message.uuid);
+          if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
+        }
         const promptContext = await acpPromptContext(promptHooks, session.id);
         const promptContent = [
           ...(prependInstructionsToNextPrompt ? instructionBlocks : []),
@@ -1042,6 +1057,7 @@ export class AcpQueryRunner {
             this.ctx.firstMessageReceived = true;
 
             const sdkMessage = acpMessage as SDKMessage & { user_message_uuid?: string };
+            if (sdkMessage.type === 'result') humanInputs.endTurn();
             if (sdkMessage.type === 'result' && !sdkMessage.user_message_uuid) {
               sdkMessage.user_message_uuid = message.uuid;
             }
@@ -1103,6 +1119,7 @@ export class AcpQueryRunner {
             throw new Error('ACP startup timeout - query aborted');
           }
         } finally {
+          humanInputs.endTurn();
           if (!accepted && attemptOwnsRun()) {
             await this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
           }
