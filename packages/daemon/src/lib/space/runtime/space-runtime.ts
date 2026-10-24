@@ -3633,8 +3633,8 @@ export class SpaceRuntime {
       this.config.reactiveDb?.beginTransaction();
       try {
         updated = this.config.db.transaction(() => {
-          const result = this.config.taskRepo.updateTask(taskId, writeParams);
-          this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
+          const result = this.config.taskRepo.updateTask(taskId, writeParams, previous.status);
+          if (result) this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
           return result;
         })();
         this.config.reactiveDb?.commitTransaction();
@@ -3643,7 +3643,7 @@ export class SpaceRuntime {
         throw err;
       }
     } else {
-      updated = this.config.taskRepo.updateTask(taskId, writeParams);
+      updated = await this.writeTask('updateTask', taskId, writeParams);
     }
     if (updated) {
       let emitUpdated = true;

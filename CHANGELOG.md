@@ -4,6 +4,23 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-24
+
+Patch release: v0.47.0 did not reach npm or GitHub Releases because compiled binaries could not load their worker modules. This release includes the v0.47.0 changes below.
+
+### Added
+
+- **Coding workspaces**: Prepare pinned actor checkouts for coding work (#8522).
+
+### Changed
+
+- **Database writes**: Route post-approval and task-agent task writes, operation refusals, Claude inbox routes and Neo session-watch state through their database lanes (#8517, #8521, #8516, #8524, #8527).
+- **Delivery persistence**: Extract mailbox failure transitions and consolidate session-delivery teardown persistence (#8519, #8526).
+
+### Fixed
+
+- **Compiled binaries**: Embed JavaScript worker entrypoints for database gateway, embedding and event-loop workers, with a compiled startup smoke check (#8528).
+
 ## [0.47.0] - 2026-10-24
 
 ### Added

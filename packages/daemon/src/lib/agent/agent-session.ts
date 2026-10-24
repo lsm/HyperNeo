@@ -3099,23 +3099,23 @@ export class AgentSession
   }
 
   private persistAgentChild(pid: number, proc: TrackedAgentProcess): void {
-    try {
-      this.agentChildProcesses()?.record({
+    this.agentChildProcesses()
+      ?.record({
         pid,
         sessionId: this.session.id,
         command: (proc as unknown as ChildProcess).spawnfile ?? '',
         startedAt: Date.now(),
         daemonPid: process.pid,
-      });
-    } catch (error) {
-      this.logger.warn('Failed to persist the agent child pid for crash cleanup:', error);
-    }
+      })
+      .catch((error: unknown) =>
+        this.logger.warn('Failed to persist the agent child pid for crash cleanup:', error)
+      );
   }
 
   private forgetAgentChild(pid: number): void {
-    try {
-      this.agentChildProcesses()?.forget(pid);
-    } catch {}
+    this.agentChildProcesses()
+      ?.forget(pid)
+      .catch(() => {});
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {

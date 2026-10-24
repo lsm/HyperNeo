@@ -17,6 +17,8 @@ import { CodingAssignmentsRepository } from './coding/assignments.ts';
 import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
 import type { NeoWorkPrReader } from './coding/work-prs.ts';
 import { createCodingResultOperation } from './coding/result-operation.ts';
+import { createCodingAssignmentOperation } from './coding/assign-operation.ts';
+import { invokeOperation } from '../../operations/invoke.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
 import { CodingPrLedgerRepository } from './coding/pr-ledger.ts';
 import { CodingPrSweepRepository } from './coding/pr-sweep.ts';
@@ -97,6 +99,14 @@ export function createNeoService(...args: NeoServiceArgs) {
       });
       coding.operations = [
         ...(coding.operations ?? []),
+        createCodingAssignmentOperation({
+          db: db.getDatabase(),
+          ledger: new CodingPrLedgerRepository(db.getDatabase()),
+          todos: todoPrs,
+          review: coding.review,
+          invoke: (name, input, caller) =>
+            invokeOperation(core.sessions.getOperationRegistry(), name, input, caller),
+        }),
         createCodingSmokeOperation(
           todoPrs.deliveryFacts,
           new CodingAssignmentsRepository(db.getDatabase()),

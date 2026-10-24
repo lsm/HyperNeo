@@ -3,6 +3,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.ask.open',
   'neo.ask.outcome',
   'neo.ask.settle',
+  'neo.coding.assign',
   'neo.coding.pr.file',
   'neo.coding.result',
   'neo.coding.smoke',
