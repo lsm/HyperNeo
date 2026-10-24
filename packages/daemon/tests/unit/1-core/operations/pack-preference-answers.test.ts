@@ -74,7 +74,15 @@ async function propose() {
   expect(typeof (reply as { value: { questionId: string } }).value.questionId).toBe('string');
   return (reply as { value: { questionId: string } }).value.questionId;
 }
-const saved = () => invoke('pack.preferences.list', {});
+const saved = async () => {
+  const result = await invoke('pack.preferences.list', {});
+  if (result.kind !== 'completed') return result;
+  const value = result.value as { preferences: { key: string }[] };
+  return {
+    ...result,
+    value: { preferences: value.preferences.filter((row) => row.key !== 'watchedRepos') },
+  };
+};
 
 describe('immutable human settings proposals', () => {
   test('renders global and project settings without losing false, zero or literal paths', async () => {

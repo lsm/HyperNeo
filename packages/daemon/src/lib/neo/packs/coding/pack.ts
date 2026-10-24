@@ -1,3 +1,4 @@
+import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
 import { runCodingReview } from './review.ts';
@@ -73,6 +74,14 @@ export function createCodingPack(deps: {
       }),
     ],
     preferences: {
+      watchedRepos: {
+        label: { en: 'Watched repositories', 'zh-Hans': '关注的仓库' },
+        valueLabels: {},
+        scope: 'global',
+        type: { kind: 'repositories' },
+        default: [],
+        ask: 'Which repositories should this instance watch?',
+      },
       ...CODING_STAGE_PREFERENCES,
       provenance: {
         label: { en: 'Independent model provenance', 'zh-Hans': '独立模型来源' },
@@ -122,7 +131,16 @@ export function createCodingPack(deps: {
     },
     prepareExecution: prepareCodingExecution,
     review: runCodingReview,
-    todos,
+    todos: {
+      ...todos,
+      schema(db) {
+        const legacy = !!db
+          .prepare("SELECT 1 FROM sqlite_master WHERE name = 'pack_coding_session_facts'")
+          .get();
+        todos.schema(db);
+        initializeCodingWatches(db, legacy ? deps.projectRepos() : []);
+      },
+    },
     readFacts: todos.readFacts,
     judge: todos.judge,
     observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
@@ -131,12 +149,17 @@ export function createCodingPack(deps: {
       await deliverCodingPrEvents(deps.prEvents, [], deps.prSweepDeps);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
-        deps.projectRepos(),
+        codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
       await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
-      await deliverCodingHealth(deps.prLedger, deps.projectRepos(), deps.prSweepDeps.wake, now);
+      await deliverCodingHealth(
+        deps.prLedger,
+        codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
+        deps.prSweepDeps.wake,
+        now
+      );
       await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },

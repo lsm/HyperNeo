@@ -186,6 +186,11 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     db.exec(
       'ALTER TABLE pack_coding_pr_ledger ADD COLUMN author_is_bot INTEGER NOT NULL DEFAULT 1'
     );
+  const unowned = db.prepare('PRAGMA table_info(pack_coding_pr_unowned_state)').all() as {
+    name: string;
+  }[];
+  if (!unowned.some((column) => column.name === 'pending_rows'))
+    db.exec('ALTER TABLE pack_coding_pr_unowned_state ADD COLUMN pending_rows TEXT');
   db.prepare(
     'INSERT OR IGNORE INTO pack_coding_pr_unowned_state (id, activated_at) VALUES (1, ?)'
   ).run(activatedAt);

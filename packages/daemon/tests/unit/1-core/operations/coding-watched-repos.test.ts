@@ -1,3 +1,4 @@
+import { initializeCodingWatches } from '../../../../src/lib/neo/packs/coding/watched-repos.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -69,10 +70,13 @@ function setup(legacy = false) {
   pack.todos!.schema(db);
   const setting = () =>
     getNeoPackPreference(db, 'coding', { kind: 'global', key: '' }, 'watchedRepos')?.value;
-  const save = async (value: unknown, scope = { kind: 'global' as const, key: '' }) =>
+  const save = async (
+    value: unknown,
+    scope: { kind: 'global' | 'repo'; key: string } = { kind: 'global', key: '' }
+  ) =>
     createPackPreferenceOperations(db, () => [pack])[0].execute(
       { pack: 'coding', scope, key: 'watchedRepos', value },
-      { source: 'rpc', role: 'human' }
+      { source: 'rpc', principal: 'local' }
     );
   return { db, ledger, pack, reads, notices, setting, save };
 }
@@ -115,6 +119,96 @@ describe('Coding watched repositories', () => {
     ]) {
       expect(await f.save(value)).toMatchObject({ ok: false });
     }
+    expect(await f.save(['chosen/repo'], { kind: 'repo', key: 'chosen/repo' })).toMatchObject({
+      ok: false,
+    });
     expect(f.setting()).toEqual([]);
+  });
+  test('unwatching retains history but stops stale terminal, unowned and idle-owner notices', async () => {
+    const f = setup();
+    await f.save(['chosen/repo']);
+    const events = new CodingPrEventRepository(f.db);
+    const row = {
+      repo: 'chosen/repo',
+      number: 1,
+      title: 'Synthetic',
+      branch: 'work',
+      head: 'one',
+      state: 'unreviewed' as const,
+      closedAt: null,
+      createdAt: Date.now() + 1,
+      authorIsBot: false,
+    };
+    const now = Date.now() + 2;
+    f.ledger.replace(row.repo, [row], now);
+    const pending = events.pendingUnowned(now);
+    expect(pending?.text).toContain('chosen/repo#1');
+    f.db
+      .prepare('UPDATE pack_coding_pr_ledger SET owner = ?')
+      .run(JSON.stringify(opened(row.repo).ref));
+    f.ledger.replace(
+      row.repo,
+      [{ ...row, state: 'merged', closedAt: Date.now() + 3 }],
+      Date.now() + 3
+    );
+    expect(events.pendingTerminals()).toHaveLength(1);
+    await f.save([]);
+    await f.pack.sweep!(Date.now() + 4);
+    expect(f.reads).toEqual([]);
+    expect(f.notices).toEqual([]);
+    expect(f.ledger.list()).toEqual([]);
+    expect(f.ledger.snapshot(null, Date.now() + 4)).toEqual([]);
+    expect(f.db.prepare('SELECT repo FROM pack_coding_pr_ledger').all()).toEqual([
+      { repo: row.repo },
+    ]);
+    expect(f.db.prepare('SELECT pending_text FROM pack_coding_pr_unowned_state').get()).toEqual({
+      pending_text: pending!.text,
+    });
+  });
+  test('a watched alias follows its canonical repo without admitting unrelated repos', async () => {
+    const f = setup();
+    await f.save(['Chosen/Old']);
+    f.ledger.recordAlias('chosen/old', 'chosen/new');
+    await f.pack.observeSessions!([opened('chosen/new'), opened('foreign/repo')], 100);
+    expect(f.db.prepare('SELECT repos FROM pack_coding_session_facts').all()).toEqual([
+      { repos: '["chosen/new"]' },
+    ]);
+    await f.pack.sweep!(100);
+    expect(f.reads).toEqual(['chosen/old']);
+  });
+  test('a pending mixed batch keeps only still-watched repositories', async () => {
+    const f = setup();
+    await f.save(['chosen/repo', 'other/repo']);
+    const now = Date.now() + 10;
+    for (const repo of ['chosen/repo', 'other/repo'])
+      f.ledger.replace(
+        repo,
+        [
+          {
+            repo,
+            number: 1,
+            title: 'Synthetic',
+            branch: 'work',
+            head: 'one',
+            state: 'unreviewed',
+            closedAt: null,
+            createdAt: now - 1,
+            authorIsBot: false,
+          },
+        ],
+        now
+      );
+    const events = new CodingPrEventRepository(f.db);
+    const pending = events.pendingUnowned(now)!;
+    expect(pending.text).toContain('other/repo#1');
+    f.db.prepare('UPDATE pack_coding_pr_unowned_state SET pending_rows = NULL').run();
+    initializeCodingWatches(f.db, []);
+    expect(events.pendingUnowned(now)).toEqual(pending);
+    await f.save(['chosen/repo']);
+    const allowed = events.pendingUnowned(now)!;
+    expect(allowed.text).toContain('chosen/repo#1');
+    expect(allowed.text).not.toContain('other/repo');
+    events.unownedDelivered(allowed.key);
+    expect(events.pendingUnowned(now)).toBeNull();
   });
 });

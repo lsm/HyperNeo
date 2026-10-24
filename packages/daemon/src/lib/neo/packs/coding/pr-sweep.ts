@@ -1,3 +1,4 @@
+import { codingRepoWatched } from './watched-repos.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { planNudge } from '../../nudge.ts';
@@ -90,7 +91,9 @@ export class CodingPrSweepRepository {
             WHERE owner IS NOT NULL AND closed_at IS NULL`
         )
         .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string })[]
-    ).map((row) => ({ ...row, owner: JSON.parse(row.owner) as WorkRef }));
+    )
+      .filter((row) => codingRepoWatched(this.db, row.repo))
+      .map((row) => ({ ...row, owner: JSON.parse(row.owner) as WorkRef }));
   }
 
   markLater(row: CodingSweepRow, nudges: number, now: number): Promise<void> {

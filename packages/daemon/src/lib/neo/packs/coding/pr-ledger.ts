@@ -1,3 +1,4 @@
+import { codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
 import { posix } from 'node:path';
 import {
   CodingStageFactsRepository,
@@ -493,11 +494,33 @@ export class CodingPrLedgerRepository {
          linked_window = excluded.linked_window, dismissed = excluded.dismissed,
          active_at = excluded.active_at, seen_at = excluded.seen_at`
     );
-    const keys = (urls: readonly string[]) => urls.flatMap((url) => codingPrKey(url) ?? []);
-    for (const session of sessions)
+    const keys = (urls: readonly string[]) =>
+      urls.flatMap((url) => {
+        const key = codingPrKey(url);
+        const repo = key && /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(key)?.[1];
+        return key && repo && codingRepoWatched(this.db, repo) ? [key] : [];
+      });
+    for (const session of sessions) {
+      const remotes = session.remotes.flatMap((remote) => {
+        const repo = codingRemoteRepo(remote);
+        return repo && codingRepoWatched(this.db, repo) ? [repo] : [];
+      });
+      const ref = JSON.stringify(session.ref);
+      const previous = this.db
+        .prepare('SELECT repos FROM pack_coding_session_facts WHERE ref = ?')
+        .get(ref) as { repos: string } | undefined;
+      const knownRepos = JSON.parse(previous?.repos ?? '[]') as string[];
+      if (
+        !remotes.length &&
+        !keys(session.openedPrs).length &&
+        !keys((session.linkedPrs ?? []).map((pr) => pr.url)).length &&
+        codingWatchedRepos(this.db) !== null &&
+        !knownRepos.some((repo) => this.watches(repo))
+      )
+        continue;
       upsert.run(
-        JSON.stringify(session.ref),
-        JSON.stringify(session.remotes.flatMap((remote) => codingRemoteRepo(remote) ?? [])),
+        ref,
+        JSON.stringify(remotes),
         JSON.stringify(session.branches),
         session.linkedPrs
           ? JSON.stringify(
@@ -517,6 +540,7 @@ export class CodingPrLedgerRepository {
         session.lastActivityAt,
         now
       );
+    }
     this.assignOwners();
   }
 
@@ -562,6 +586,7 @@ export class CodingPrLedgerRepository {
       'UPDATE pack_coding_pr_ledger SET owner = ? WHERE repo = ? AND number = ?'
     );
     for (const row of rows) {
+      if (!this.watches(row.repo)) continue;
       const owner = planCodingPrOwner(row, claims, sessions);
       if (owner !== row.owner) update.run(owner, row.repo, row.number);
     }
@@ -583,9 +608,13 @@ export class CodingPrLedgerRepository {
     );
   }
 
+  watches(repo: string): boolean {
+    return codingRepoWatched(this.db, repo);
+  }
+
   stateOf(url: string): CodingPrState | null {
     const match = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i.exec(url);
-    if (!match) return null;
+    if (!match || !this.watches(match[1])) return null;
     const row = this.db
       .prepare('SELECT state FROM pack_coding_pr_ledger WHERE repo = ? AND number = ?')
       .get(match[1].toLowerCase(), Number(match[2])) as { state: CodingPrState } | null;
@@ -662,14 +691,18 @@ export class CodingPrLedgerRepository {
         JSON.stringify(repos ?? []),
         JSON.stringify(repos ?? [])
       ) as CodingLedgerSnapshotRow[];
-    return [...own, ...rows.map(codingLedgerSnapshotRow).filter((row) => !owned.has(row.pr))];
+    return [
+      ...own,
+      ...rows.map(codingLedgerSnapshotRow).filter((row) => !owned.has(row.pr)),
+    ].filter((row) => this.watches(row.pr.split('#')[0]));
   }
 
   prune(repos: readonly string[], now: number): void {
     this.db
       .prepare(
-        `DELETE FROM pack_coding_pr_ledger WHERE closed_at < ? OR read_at < ?
-           OR repo NOT IN (SELECT value FROM json_each(?))`
+        codingWatchedRepos(this.db) === null
+          ? `DELETE FROM pack_coding_pr_ledger WHERE closed_at < ? OR read_at < ? OR repo NOT IN (SELECT value FROM json_each(?))`
+          : `DELETE FROM pack_coding_pr_ledger WHERE (closed_at < ? OR read_at < ?) AND repo IN (SELECT value FROM json_each(?))`
       )
       .run(now - CODING_LEDGER_KEEP_MS, now - CODING_LEDGER_KEEP_MS, JSON.stringify(repos));
     this.db
@@ -681,13 +714,14 @@ export class CodingPrLedgerRepository {
   }
 
   list(): (CodingLedgerRow & { stateSince: number; readAt: number })[] {
-    return this.db
+    const rows = this.db
       .prepare(
         `SELECT repo, number, title, branch, head, state, closed_at AS closedAt,
                 state_since AS stateSince, read_at AS readAt
            FROM pack_coding_pr_ledger ORDER BY repo, number`
       )
       .all() as (CodingLedgerRow & { stateSince: number; readAt: number })[];
+    return rows.filter((row) => this.watches(row.repo));
   }
 }
 
@@ -731,10 +765,13 @@ export async function reconcileCodingPrLedger(
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
   const last = ledger.lastReads();
-  const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
+  const order = repos
+    .filter((repo) => ledger.watches(repo))
+    .sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
   const reached = new Set<string>();
   let retryAt: number | undefined;
   for (const repo of order) {
+    if (!ledger.watches(repo)) continue;
     const before = ledger.health.read(repo);
     if (before?.nextRetryAt && before.nextRetryAt > now) {
       retryAt = before.nextRetryAt;
@@ -742,6 +779,7 @@ export async function reconcileCodingPrLedger(
     }
     const observedAt = Date.now();
     const raw = await read(repo);
+    if (!ledger.watches(repo)) continue;
     const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
     const cycle = planLedgerHealth(raw, planned !== null, now);
     const health = await ledger.write('recordHealth', repo, cycle);

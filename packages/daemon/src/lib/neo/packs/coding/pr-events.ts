@@ -1,3 +1,4 @@
+import { codingRepoWatched } from './watched-repos.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -59,7 +60,9 @@ export class CodingPrEventRepository {
       WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL AND state IN ('merged', 'closed')
       ORDER BY state_since, repo, number`)
         .all() as { event: string }[]
-    ).map((row) => JSON.parse(row.event) as CodingPrTransition);
+    )
+      .map((row) => JSON.parse(row.event) as CodingPrTransition)
+      .filter((row) => codingRepoWatched(this.db, row.repo));
   }
 
   acceptTerminal(row: CodingPrTransition, owner: WorkRef): Promise<void> {
@@ -75,10 +78,23 @@ export class CodingPrEventRepository {
     return this.db.transaction(() => {
       const pending = this.db
         .prepare(
-          'SELECT pending_key AS key, pending_text AS text FROM pack_coding_pr_unowned_state WHERE id = 1'
+          'SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1'
         )
-        .get() as CodingUnownedNotice;
-      if (pending.key) return pending;
+        .get() as CodingUnownedNotice & { rows: string | null };
+      if (pending.key && pending.rows) {
+        const remaining = (JSON.parse(pending.rows) as CodingUnownedPr[]).filter((row) =>
+          codingRepoWatched(this.db, row.repo)
+        );
+        const notice = planCodingUnownedNotice(remaining);
+        if (notice) {
+          this.db
+            .prepare(
+              'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1'
+            )
+            .run(notice.key, notice.text, JSON.stringify(remaining));
+          return notice;
+        }
+      }
       const rows = this.db
         .prepare(
           `SELECT l.repo, l.number, l.title FROM pack_coding_pr_ledger l
@@ -90,17 +106,18 @@ export class CodingPrEventRepository {
           ORDER BY l.repo, l.number`
         )
         .all(now) as CodingUnownedPr[];
-      const notice = planCodingUnownedNotice(rows);
+      const watchedRows = rows.filter((row) => codingRepoWatched(this.db, row.repo));
+      const notice = planCodingUnownedNotice(watchedRows);
       if (!notice) return null;
       const insert = this.db.prepare(
         'INSERT INTO pack_coding_pr_unowned (key, listed_at) VALUES (?, ?)'
       );
-      for (const row of rows) insert.run(codingUnownedPrKey(row), now);
+      for (const row of watchedRows) insert.run(codingUnownedPrKey(row), now);
       this.db
         .prepare(
-          'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ? WHERE id = 1'
+          'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1'
         )
-        .run(notice.key, notice.text);
+        .run(notice.key, notice.text, JSON.stringify(watchedRows));
       return notice;
     })();
   }
@@ -121,7 +138,10 @@ export class CodingPrEventRepository {
       )
       .get(row.repo, row.number) as { owner: string | null } | null;
     return {
-      owner: found?.owner ? (JSON.parse(found.owner) as WorkRef) : null,
+      owner:
+        codingRepoWatched(this.db, row.repo) && found?.owner
+          ? (JSON.parse(found.owner) as WorkRef)
+          : null,
     };
   }
 }

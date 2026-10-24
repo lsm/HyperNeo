@@ -1,3 +1,4 @@
+import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   CodingPrSweepRepository,
@@ -13,6 +14,7 @@ const owner = { adapter: 'claude-desktop', id: 'worker-1' };
 
 function setup() {
   const db = new Database(':memory:');
+  createNeoPackPreferencesTable(db);
   createCodingPackTables(db);
   const insert = (number: number, state: string, ownerRef: unknown = owner) =>
     db

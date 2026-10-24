@@ -68,6 +68,7 @@ export interface NeoPackPreferenceDeclaration {
     | { kind: 'boolean' }
     | { kind: 'number'; min?: number; max?: number }
     | { kind: 'globs' }
+    | { kind: 'repositories' }
     | { kind: 'text' }
     | { kind: 'login' };
   default: unknown;

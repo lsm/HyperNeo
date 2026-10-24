@@ -12,7 +12,8 @@ A declined question returns `question_closed` when retried with the same request
 a new request id must reach the human as an open question.
 Neo proposes two synthetic settings; the daemon generates the exact question
 text, and `neo.snapshot` must expose that question. Before consent the settings
-remain empty. Agent answering is refused; the human button's real
+remain unanswered; the separately initialized empty Coding watch list is excluded
+from these review-policy assertions. Agent answering is refused; the human button's real
 `neo.question.answer` path must atomically apply the stored values. Across daemon
 restart, `neo.question.get` reports human consent, provenance stays human, and
 agent attempts to replace values or reuse a request id with a different proposal

@@ -1,3 +1,4 @@
+import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { fileURLToPath } from 'node:url';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { describe, expect, test, spyOn } from 'bun:test';
@@ -24,6 +25,7 @@ function fixture() {
     return { cwd, branch: 'feature' };
   };
   const db = new Database(join(root, 'facts.db'));
+  createNeoPackPreferencesTable(db);
   createCodingPackTables(db);
   let calls = 0;
   const requests: string[][] = [];
@@ -417,5 +419,24 @@ test('the actual daemon watcher shares branch coverage and reuses it after reope
     expect(observed.snapshot.ok).toBe(true);
   } finally {
     rmSync(run, { recursive: true, force: true });
+  }
+});
+
+test('an unlisted checkout makes no GitHub request until the human watches its repository', async () => {
+  const f = fixture();
+  try {
+    f.db
+      .prepare(
+        "INSERT INTO neo_pack_preferences VALUES ('coding', 'global', '', 'watchedRepos', '[]', 'human', 1)"
+      )
+      .run();
+    const checkout = f.checkout('unlisted');
+    expect(await f.reader(f.db)(checkout)).toEqual([]);
+    expect(f.calls()).toBe(0);
+    f.db.prepare('UPDATE neo_pack_preferences SET value_json = \'["synthetic/ledger"]\'').run();
+    expect(await f.reader(f.db)(checkout)).toEqual([url]);
+    expect(f.calls()).toBe(1);
+  } finally {
+    f.cleanup();
   }
 });
