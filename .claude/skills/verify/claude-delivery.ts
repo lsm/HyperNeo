@@ -64,11 +64,38 @@ try {
     ws!.addEventListener('message', receive);
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
-  const started = await rpc<Result<WorkStarted>>('work.start', { adapter: 'claude-desktop', place: { machine: hostname(), folder: join(run, 'workspace'), name: 'Synthetic delivery project' }, title: 'TEST Desktop delivery worker', message: 'Initial delivery marker' });
-  assert(started.ok, JSON.stringify(started));
-  const ref = started.value.ref;
   const caller = 'synthetic-delivery-origin';
   await app.db.createSession({ id: caller, title: caller, workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  const initialFrames: Array<{ uuid: string }> = [];
+  const initialSocket = join(run, '9001.sock');
+  const initialPeer = createServer(socket => {
+    let buffer = '';
+    socket.setEncoding('utf8');
+    socket.on('data', chunk => {
+      buffer += chunk;
+      if (!buffer.endsWith('\n')) return;
+      const frame = JSON.parse(buffer); initialFrames.push(frame);
+      const record = JSON.parse(readFileSync(join(scope, `local_${frame.session_id}.json`), 'utf8'));
+      const transcript = join(run, 'home/.claude/projects', record.cwd.replace(/[/.]/g, '-'), `${frame.session_id}.jsonl`);
+      appendFileSync(transcript, JSON.stringify({ type: 'user', uuid: frame.uuid, timestamp: new Date().toISOString(), message: frame.message }) + '\n');
+      appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: 'Initial direct completion' }], stop_reason: 'end_turn' } }) + '\n');
+    });
+  });
+  await new Promise<void>(resolve => initialPeer.listen(initialSocket, resolve));
+  chmodSync(initialSocket, 0o600);
+  let started: Result<WorkStarted>;
+  try {
+    started = await rpc<Result<WorkStarted>>('work.start', { adapter: 'claude-desktop', from: `session:${caller}`, place: { machine: hostname(), folder: join(run, 'workspace'), name: 'Synthetic delivery project' }, title: 'TEST Desktop delivery worker', message: 'Initial delivery marker' });
+    assert(started.ok, JSON.stringify(started));
+    assert.equal(initialFrames.length, 1, 'work.start must use the initial direct inbox');
+    assert.equal(started.value.receipt?.inputId, initialFrames[0].uuid);
+    assert(!events().some(e => e.kind === 'target-relay'), 'Initial task must not spawn a relay');
+    evidence.push({ initialDirectFrames: initialFrames });
+  } finally {
+    await new Promise<void>(resolve => initialPeer.close(() => resolve()));
+  }
+  assert(started.ok);
+  const ref = started.value.ref;
   const recordPath = join(scope, `${ref.id}.json`);
   const record = JSON.parse(readFileSync(recordPath, 'utf8'));
   const statePath = join(run, 'evidence/native-sessions.json');

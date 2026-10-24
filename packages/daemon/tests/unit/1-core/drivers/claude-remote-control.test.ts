@@ -622,7 +622,8 @@ describe('B1 native task delivery', () => {
         order.push('rc-requested');
         return { ok: true, value: { delivered: true } };
       },
-      async (target, message) => {
+      async (target, message, _deps, deliveryContext) => {
+        expect(deliveryContext).toEqual(context);
         expect(target.sessionId).toBe('local_target');
         expect(message).toBe('Exact actual task');
         order.push('native-message');
