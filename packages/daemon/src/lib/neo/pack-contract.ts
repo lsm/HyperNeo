@@ -46,7 +46,7 @@ export interface NeoTodoPack {
   schema(db: Database): void;
   check(todo: NeoTodo): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
-  openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
+  openedPrs?(todo: NeoTodo, urls: readonly string[]): Promise<void>;
   repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
   waiting?(todo: NeoTodo): boolean;
   doneWhen?(check: NeoTodoCheck): string | null;
@@ -80,7 +80,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
-  observeSessions?(sessions: readonly NeoSessionFacts[], now: number): void;
+  observeSessions?(sessions: readonly NeoSessionFacts[], now: number): Promise<void>;
   snapshotRows?(
     repos: readonly string[] | null,
     now: number,

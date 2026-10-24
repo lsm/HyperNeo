@@ -203,7 +203,7 @@ describe('coding todo PR ownership through add and edit', () => {
           draft(claim === 'named' ? [url(2)] : []),
           1
         );
-        if (claim === 'ledger') coding.todos.openedPrs!(original, [url(2)]);
+        if (claim === 'ledger') await coding.todos.openedPrs!(original, [url(2)]);
         const result = await call('neo.todo.add', {
           askId: 'ask',
           title: 'Pin PR link',
@@ -228,7 +228,7 @@ describe('coding todo PR ownership through add and edit', () => {
     const { db, store, call, runner, states, coding } = setup();
     try {
       const original = store.addTodo('original', 'ask', draft(), 1);
-      coding.todos.openedPrs!(original, [url(2)]);
+      await coding.todos.openedPrs!(original, [url(2)]);
       expect(
         await call('neo.todo.edit', { todoId: original.id, addUrls: [url(1), url(2), url(2)] })
       ).toMatchObject({
@@ -258,7 +258,7 @@ describe('coding todo PR ownership through add and edit', () => {
           { ...draft(claim === 'named' ? [url(2)] : []), title: 'Existing owner' },
           1
         );
-        if (claim === 'ledger') coding.todos.openedPrs!(owner, [url(2)]);
+        if (claim === 'ledger') await coding.todos.openedPrs!(owner, [url(2)]);
         const target = store.addTodo('target', 'ask', draft([url(1)]), 2);
         expect(await call('neo.todo.edit', { todoId: target.id, addUrls: [url(2)] })).toMatchObject(
           { ok: false, reason: expect.stringContaining('owner') }
@@ -275,7 +275,7 @@ describe('coding todo PR ownership through add and edit', () => {
       const { db, store, call, coding } = setup();
       try {
         const old = store.addTodo('old', 'ask', draft([url(2)]), 1);
-        coding.todos.openedPrs!(old, [url(2)]);
+        await coding.todos.openedPrs!(old, [url(2)]);
         store.updateTodo(old, { state }, 2);
         expect(
           await call('neo.todo.add', { askId: 'ask', ...draft([url(2)]), instruction: null })

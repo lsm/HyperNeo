@@ -2,7 +2,7 @@
 
 Read SKILL.md's shared isolation setup. This helper owns a real test daemon,
 fresh SQLite database/home, fake GitHub GraphQL executable and synthetic Codex
-app-server socket. No provider, model, real GitHub access, GUI or port 8399.
+Desktop IPC socket. No provider, model, real GitHub access, GUI or port 8399.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-coding-issues-XXXXXX)
@@ -41,5 +41,7 @@ stored. See `ledgerClaimDelivery` alongside `rawPrEvent` in observed evidence.
 Copy this helper unchanged into a detached pre-fix worktree and run `before`
 there to record the failing COMPLETED/no-advance result.
 Keep `evidence/observed.json` and `evidence/gh.log` outside the worktree. The helper
-stops its daemon, socket peer and WebSocket in finally. After merge/close remove
+serves the current length-prefixed Desktop IPC protocol in its temporary HOME.
+Synthetic ps/open commands prevent any real Desktop launch; unknown methods
+refuse. It stops its daemon, socket peer and WebSocket in finally. After merge/close remove
 the worktree and read the deployed build using the owner RPC (`hyperneo build`).
