@@ -579,6 +579,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ask = store.getAsk(todo.askId);
     if (
       todo.state !== 'doing' ||
+      sessions.get(todo.id)?.verb === 'adopt' ||
       !todo.instruction ||
       !ref ||
       ask?.status !== 'open' ||

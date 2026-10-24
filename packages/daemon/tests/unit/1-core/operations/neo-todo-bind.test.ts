@@ -64,31 +64,41 @@ function setup() {
 }
 
 describe('bind an already running worker without dispatch', () => {
-  test('ask-open binds immediately with no start flag, worker set and doing, with zero sends', async () => {
-    const { db, sessions, calls, invoke } = setup();
-    try {
-      const result = await invoke('neo.ask.open', {
-        title: 'Synthetic work',
-        request: 'Track work already in progress',
-        todos: [
-          { title: 'Running work', doneWhen: 'Result verified', target: { verb: 'bind', ref } },
-        ],
-      });
-      expect(result.ok).toBe(true);
-      expect(result.todos[0].state).toBe('doing');
-      expect(sessions.readRef(result.todos[0].id)).toEqual(ref);
-      expect(calls).toEqual([]);
-    } finally {
-      db.close();
+  test.each([{}, { instruction: 'Work is already running', start: true }])(
+    'ask-open binds immediately without dispatch even with options %j',
+    async (options) => {
+      const { db, sessions, calls, invoke } = setup();
+      try {
+        const result = await invoke('neo.ask.open', {
+          title: 'Synthetic work',
+          request: 'Track work already in progress',
+          todos: [
+            { title: 'Running work', doneWhen: 'Result verified', target: { verb: 'bind', ref } },
+          ],
+        });
+        expect(result.ok).toBe(true);
+        expect(result.todos[0].state).toBe('doing');
+        expect(sessions.readRef(result.todos[0].id)).toEqual(ref);
+        expect(calls).toEqual([]);
+      } finally {
+        db.close();
+      }
     }
-  });
+  );
   test('a failed backfill can be rebound in place, clearing failure and stale delivery without sending', async () => {
     const { db, store, sessions, calls, invoke, runner } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Synthetic work',
         request: 'Track work',
-        todos: [{ title: 'Failed backfill', doneWhen: 'Result verified' }],
+        todos: [
+          {
+            title: 'Failed backfill',
+            doneWhen: 'Result verified',
+            instruction: 'Original task already running',
+            target: { verb: 'send', ref },
+          },
+        ],
       });
       const todo = opened.todos[0];
       store.updateTodo(
