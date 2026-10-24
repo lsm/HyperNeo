@@ -34,6 +34,13 @@ target.preparationParameters.verifySkill "create", and merge it under the
 repository's merge rule. Put the real work in later todos.
 
 Include coding.provenance in the existing first-use pack preference question.
+Use one preference shape for Write, Review and Verify: `write.harness/model/effort`,
+`review.harness/model/effort` and `verify.harness/model/effort` in the coding pack.
+All prefer a configuration; empty means default. Before starting a coding Write
+todo, call `neo.coding.write.plan` with the repo and available target configurations
+(default first), use its target in the existing todo start, and report its fallback
+explanations. Use the existing pack preference question to propose changes; never
+save unanswered defaults. Review preferences do not apply to configured bots.
 Read the saved repository preference with pack.preferences.get; an unanswered
 provenance preference falls back to on without saving a value or marking it answered.
 Keep provenance an explicit pack preference. A no answer to an Apply settings
