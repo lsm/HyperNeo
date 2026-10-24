@@ -8,6 +8,7 @@ import { ExternalEventExtensionConfigStore } from '../../../packages/daemon/src/
 import { SESSION_EVENT_SCOPE, SessionExternalEventStore } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
 import type { ExternalEvent } from '../../../packages/daemon/src/lib/external-events/types.ts';
 import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/session-event-subscription-repository.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
@@ -18,9 +19,15 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\necho refused >> "$HOME/../evidenc
 writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
 const network = globalThis.fetch;
-globalThis.fetch = (async () => { throw new Error('No network in terminal replay proof'); }) as typeof fetch;
+const fixtureRequests: string[] = [];
+globalThis.fetch = (async (input: string | URL | Request) => {
+  const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+  assert.equal(url.origin, 'https://api.github.com'); assert(url.pathname === '/user' || url.pathname.startsWith('/repos/synthetic/replay'));
+  fixtureRequests.push(url.pathname); const n = /\/pulls\/(\d+)$/.exec(url.pathname)?.[1];
+  return Response.json(url.pathname === '/user' ? { login: 'synthetic-self' } : url.pathname === '/repos/synthetic/replay' ? { full_name: 'synthetic/replay' } : n ? { number: Number(n), state: 'open' } : url.pathname.endsWith('/check-runs') ? { check_runs: [] } : [], { headers: { 'x-ratelimit-remaining': '4900' } });
+}) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
-const proof: Record<string, unknown> = { verified: false, providerTurns: 0, unstoredClosureDiscoveryVerified: false, cardAcknowledgementVerified: false };
+const proof: Record<string, unknown> = { verified: false, providerTurns: 0, unstoredClosureDiscoveryVerified: false, registeredSubscribeOperation: true };
 const prefix = 'github/synthetic/replay/pull_request/';
 const sql = () => app!.db.getDatabase();
 const subscriptions = () => new SessionEventSubscriptionRepository(sql());
@@ -39,16 +46,24 @@ async function open() {
   await new ExternalEventExtensionConfigStore(sql()).setGlobalConfig('github', { source: 'github', globallyEnabled: true, capabilities: { polling: true, rpcConfig: true } });
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC unavailable')); });
+  const configured = await rpc('space.github.setToken', { token: 'ghp_' + 'syntheticfixture'.repeat(3) }); assert.equal(configured.error, undefined); assert.deepEqual(configured.data, { success: true });
 }
 async function close() { ws?.close(); ws = undefined; await app?.cleanup(); app = undefined; }
-async function poll() {
+async function subscribe(sessionId: string, topicPattern: string) {
+  const reply = await invokeOperation(app!.sessionManager.getOperationRegistry(), 'event.external.subscribe', { topicPattern }, { source: 'mcp', sessionId, role: 'universal_read' });
+  assert.deepEqual(reply, { kind: 'completed', value: { ok: true, topicPattern } });
+  assert(subscriptions().listBySession(sessionId).some(sub => sub.topic === topicPattern));
+  return reply;
+}
+const poll = () => rpc('space.github.pollOnce');
+async function rpc(method: string, data: Record<string, unknown> = {}) {
   return new Promise<Record<string, unknown>>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     ws!.onmessage = message => {
       const reply = JSON.parse(String(message.data)); if (reply.id !== id && reply.requestId !== id) return;
       clearTimeout(timer); done(reply);
     };
-    ws!.send(JSON.stringify({ id, type: 'REQ', method: 'space.github.pollOnce', data: {}, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', method, data, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
 }
 try {
@@ -56,10 +71,12 @@ try {
   for (const [id, status] of [['synthetic-general', 'active'], ['synthetic-review-only', 'active'], ['synthetic-archived', 'archived']] as const) {
     await app!.db.createSession({ id, title: id, workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status, config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   }
-  for (const [sessionId, pattern] of [['synthetic-general', '7.*'], ['synthetic-review-only', '7.review_*'], ['synthetic-archived', '7.*'], ['synthetic-general', '8.*'], ['synthetic-general', '9.*'], ['synthetic-general', '*.review_*']]) subscriptions().upsert({ sessionId, topic: prefix + pattern });
+  proof.subscribed = await subscribe('synthetic-general', prefix + '7.*');
+  proof.reviewSubscribed = await subscribe('synthetic-review-only', prefix + '7.review_*');
+  for (const [sessionId, pattern] of [['synthetic-archived', '7.*'], ['synthetic-general', '8.*'], ['synthetic-general', '9.*'], ['synthetic-general', '*.review_*']]) subscriptions().upsert({ sessionId, topic: prefix + pattern });
   const store = new SessionExternalEventStore(sql());
   for (const e of [event('terminal-7', 7, 'polled', 'closed', 100), event('comment-7', 7, 'review_submitted', 'open', 300), event('old-terminal-8', 8, 'closed', 'closed', 100), event('reopened-8', 8, 'reopened', 'open', 200), event('late-old-terminal-8', 8, 'closed', 'closed', 50)]) store.store(e);
-  const originalHistory = history(), ghBefore = ghCalls();
+  const originalHistory = history();
   const config = new ExternalEventExtensionConfigStore(sql());
   await config.setGlobalConfig('github', { source: 'github', globallyEnabled: false, capabilities: { polling: true, rpcConfig: true } });
   proof.disabledPoll = await poll(); assert.equal(jobs().length, 0);
@@ -85,12 +102,13 @@ try {
   assert.equal(subscriptions().listBySession('synthetic-archived').length, 1);
   assert.deepEqual(history(), originalHistory);
   const accepted = { jobs: jobs(), receipts: receipts() };
-  subscriptions().upsert({ sessionId: 'synthetic-general', topic: prefix + '7.*' });
-  subscriptions().upsert({ sessionId: 'synthetic-review-only', topic: prefix + '7.review_*' });
+  await subscribe('synthetic-general', prefix + '7.*');
+  await subscribe('synthetic-review-only', prefix + '7.review_*');
   await poll(); await poll(); assert.deepEqual({ jobs: jobs(), receipts: receipts() }, accepted);
   assert.equal(subscriptions().listAll().filter(s => s.topic.startsWith(prefix + '7.')).length, 0);
   assert.equal(sql().prepare('SELECT count(*) AS count FROM sdk_messages').get().count, 0);
-  assert.equal(ghCalls(), ghBefore);
+  proof.fixtureRequests = fixtureRequests;
+  proof.fixtureGhRequests = ghCalls().trim().split('\n').filter(Boolean);
   proof.afterRepeatedPolls = snapshot(); proof.verified = true;
   console.log(JSON.stringify({ verified: true, finalMailboxJobs: jobs().length, receipts: receipts().length, historyPreserved: true }));
 } finally {

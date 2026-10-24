@@ -61,8 +61,6 @@ export function registerExternalEventOperations(
         context.deps.db.getDatabase()
       ),
       watchSessionRepo: context.deps.watchSessionRepo,
-      isSessionTopicCovered: (sessionId, topic) =>
-        context.deps.isSessionTopicCovered?.(sessionId, topic) ?? false,
       refreshSessionSubscription: (spaceId, subscriptionId) =>
         context.spaceRuntimeService.refreshSessionSubscription(spaceId, subscriptionId),
       listRunSubscriptions: (workflowRunId, spaceId, nodeId) =>

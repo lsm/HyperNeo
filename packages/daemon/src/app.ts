@@ -45,7 +45,6 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
-import { isSessionTopicCovered } from './lib/external-events/topic-trie.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
 import { createWebSocketHandlers } from './routes/setup-websocket.ts';
@@ -875,15 +874,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       (event) => db.gateway.run(ingestSessionEvent, event)
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    const sessionTopicSources: (() => readonly { topic: string; session?: string | null }[])[] = [];
-    const followedSessionTopics = () =>
-      sessionTopicSources.flatMap((source) => source().map((row) => row.topic));
-    const coveredSessionTopic = (sessionId: string, topic: string) =>
-      isSessionTopicCovered(
-        sessionTopicSources.flatMap((source) => source()),
-        sessionId,
-        topic
-      );
     const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
       db.getDatabase()
     );
@@ -909,7 +899,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
       },
       removeSubscription: (sessionId, topic) => sessionEventSubscriptions.delete(sessionId, topic),
-      isTopicCovered: coveredSessionTopic,
     };
     internalEventBus.subscribe(
       'externalEvent.published',
@@ -1004,17 +993,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         reactiveDb,
         autoReconcileWebhooks: true,
         sessionRepoReferenced: (owner, repo) =>
-          sessionEventSubscriptions.referencesRepo(owner, repo) ||
-          followedSessionTopics().some((topic) =>
-            topic.toLowerCase().startsWith(`github/${owner}/${repo}/`.toLowerCase())
-          ),
+          sessionEventSubscriptions.referencesRepo(owner, repo),
         subscribedPullRequests: (watched) =>
           pullRequestNumbersOfTopics(
             watched.spaceId === SESSION_EVENT_SCOPE
-              ? [
-                  ...sessionEventSubscriptions.listAll().map((subscription) => subscription.topic),
-                  ...followedSessionTopics(),
-                ]
+              ? sessionEventSubscriptions.listAll().map((subscription) => subscription.topic)
               : [
                   ...spaceSessionEventSubscriptions
                     .listBySpace(watched.spaceId)
@@ -1104,8 +1087,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       deviceOf: (clientId) => transport.deviceOf(clientId),
       watchSessionRepo: async (owner, repo) =>
         (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
-      followSessionTopics: (source) => sessionTopicSources.push(source),
-      isSessionTopicCovered: coveredSessionTopic,
       messageHub,
       sessionManager,
       authManager,
