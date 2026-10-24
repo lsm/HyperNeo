@@ -6,7 +6,7 @@ import { WorkDeliveryInputRepository } from '../../../../src/storage/repositorie
 import { runMigration431 } from '../../../../src/storage/schema/m431-work-delivery-inputs.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
-test('delivery intents retain original targets and deadlines after reopen and idempotent migration', () => {
+test('delivery intents retain original targets and deadlines after reopen and idempotent migration', async () => {
   const root = mkdtempSync(join(tmpdir(), 'delivery-inputs-'));
   const path = join(root, 'synthetic.db');
   const target = {
@@ -19,8 +19,8 @@ test('delivery intents retain original targets and deadlines after reopen and id
     try {
       runMigration431(db);
       const inputs = new WorkDeliveryInputRepository(db);
-      id = inputs.accept('todo', 'neo', target, 'Original instruction', 1000);
-      inputs.recordOutcome(
+      id = await inputs.accept('todo', 'neo', target, 'Original instruction', 1000);
+      await inputs.recordOutcome(
         id,
         {
           ref: target.ref,
@@ -29,8 +29,10 @@ test('delivery intents retain original targets and deadlines after reopen and id
         },
         2000
       );
-      expect(() => inputs.recordOutcome(id, { failure: 'late stale result' }, 3000)).toThrow();
-      inputs.accept('todo', 'neo', target, 'Different instruction', 2000);
+      await expect(
+        inputs.recordOutcome(id, { failure: 'late stale result' }, 3000)
+      ).rejects.toThrow('already acknowledged');
+      await inputs.accept('todo', 'neo', target, 'Different instruction', 2000);
       runMigration431(db);
     } finally {
       db.close();

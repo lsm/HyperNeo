@@ -29,6 +29,10 @@ import {
   recordAgentChild,
 } from '../../../../src/storage/repositories/agent-child-process-repository';
 import { recordNeoSessionMessage } from '../../../../src/storage/repositories/neo-session-message-repository';
+import {
+  acceptWorkDeliveryInput,
+  recordWorkDeliveryOutcome,
+} from '../../../../src/storage/repositories/work-delivery-input-repository';
 import { recordOperationRefusal } from '../../../../src/storage/repositories/operation-refusal-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -368,6 +372,8 @@ describe('DbGateway', () => {
     expect(DB_OPS.get(recordAgentChild.name)).toBe(recordAgentChild);
     expect(DB_OPS.get(forgetAgentChildren.name)).toBe(forgetAgentChildren);
     expect(DB_OPS.get(recordNeoSessionMessage.name)).toBe(recordNeoSessionMessage);
+    expect(DB_OPS.get(acceptWorkDeliveryInput.name)).toBe(acceptWorkDeliveryInput);
+    expect(DB_OPS.get(recordWorkDeliveryOutcome.name)).toBe(recordWorkDeliveryOutcome);
   });
 
   test('a Claude inbox route is upserted through the gateway', async () => {
