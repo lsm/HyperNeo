@@ -13,7 +13,6 @@ import {
   runToExit,
   requireClaudeRecord,
   requireOpenClaudeRecord,
-  relayNativeDesktopMessage,
   sendClaudeMessage,
   waitUntilLive,
   withRemoteControl,
@@ -202,14 +201,21 @@ async function openHelper(
   }
   const live = await waitUntilLive(record.cliSessionId, deps);
   if (!live) {
-    if (found && title === 'desktop-wake') return openHelper([], [], deps, title);
-    return { reason: reject('not_delivered', `Claude Code Desktop did not open ${title}.`) };
+    return {
+      reason: reject(
+        'not_delivered',
+        `Claude Code Desktop did not open ${title}.` +
+          (title === 'desktop-wake'
+            ? ' Desktop may be at its process cap. The helper was retained for reuse; no replacement was created.'
+            : '')
+      ),
+    };
   }
   return readyHelper(record, live);
 }
 
 export const runClaudeDesktopWake = (superpipe({})('claude-desktop-native-wake') as PipelineAPI)
-  .input(['target', 'message', 'deps'])
+  .input(['target', 'message', 'deps', 'context'])
   .pipe(
     (target: RemoteControlTarget) => ({ adapter: 'claude-desktop', id: target.sessionId }),
     'target',
@@ -226,30 +232,13 @@ export const runClaudeDesktopWake = (superpipe({})('claude-desktop-native-wake')
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
   .pipe(requireDesktopWakeOwner, ['record', 'liveSessions'], 'result:outcome')
-  .pipe(
-    (
-      records: readonly ClaudeDesktopRecord[],
-      live: readonly ClaudeLiveSession[],
-      deps: ClaudeDesktopAdapterDeps
-    ) => openRcToggle(records, live, deps, 'desktop-wake'),
-    ['records', 'liveSessions', 'deps'],
-    'result:outcome'
-  )
-  .pipe(
-    (
-      helper: { record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] },
-      record: RcToggle['record'],
-      message: string,
-      deps: ClaudeDesktopAdapterDeps
-    ) => relayNativeDesktopMessage(record, helper.record, helper.liveSessions, message, deps),
-    ['outcome', 'record', 'message', 'deps'],
-    'outcome'
-  )
+  .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
   .pipe(withRemoteControl, ['outcome', 'record', 'deps'], 'outcome')
   .endAsync('outcome') as (
   target: RemoteControlTarget,
   message: string,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
 ) => Promise<Result<WorkDelivery>>;
 
 export function sendRcToggleRequest(
@@ -297,7 +286,7 @@ export function withClaudeRemoteControl(
       const started = await start(startRequest, context);
       if (started.ok) {
         const target = { sessionId: started.value.ref.id, title: started.value.title };
-        const delivery = await wake(target, startRequest.message, deps);
+        const delivery = await wake(target, startRequest.message, deps, context);
         if (!delivery.ok)
           return {
             ...delivery,
@@ -340,7 +329,9 @@ export function withClaudeRemoteControl(
       }
       return started;
     },
-    send: (ref, message) => wake({ sessionId: ref.id, title: ref.id }, message, deps),
-    steer: (ref, message) => wake({ sessionId: ref.id, title: ref.id }, message, deps),
+    send: (ref, message, context) =>
+      wake({ sessionId: ref.id, title: ref.id }, message, deps, context),
+    steer: (ref, message, context) =>
+      wake({ sessionId: ref.id, title: ref.id }, message, deps, context),
   };
 }
