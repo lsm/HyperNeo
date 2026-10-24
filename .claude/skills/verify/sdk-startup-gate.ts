@@ -13,6 +13,7 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HYPERNEO_USE_DEV_PROXY, '1');
+assert.equal(process.env.HYPERNEO_SDK_STARTUP_MAX_HOLD_MS, '10000');
 for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY']) assert(!process.env[key], key);
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'bin'), { recursive: true });
@@ -22,7 +23,7 @@ const gateLogs: unknown[] = [];
 const unsubscribe = subscribeToStructuredLogs(event => {
   if (event.message.includes('SDK startup gate:')) gateLogs.push(event);
 });
-const evidence: Record<string, unknown> = { gateLogs, workers: [] };
+const evidence: Record<string, unknown> = { gateLogs, workers: [], maxHoldMs: 10000 };
 const mock = await createMockApiServer({ port: 8000 });
 await mock.start();
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');

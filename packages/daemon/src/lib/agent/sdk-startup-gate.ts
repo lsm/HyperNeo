@@ -1,7 +1,7 @@
 import { Logger } from '../logger.ts';
 
 const logger = new Logger('sdk-startup-gate');
-export const DEFAULT_SDK_STARTUP_MAX_HOLD_MS = 30_000;
+export const DEFAULT_SDK_STARTUP_MAX_HOLD_MS = 60_000;
 
 export const DEFAULT_SDK_STARTUP_MAX_CONCURRENT = 3;
 
@@ -10,6 +10,13 @@ export function getSdkStartupMaxConcurrent(env: NodeJS.ProcessEnv = process.env)
   if (!raw) return DEFAULT_SDK_STARTUP_MAX_CONCURRENT;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SDK_STARTUP_MAX_CONCURRENT;
+}
+
+export function getSdkStartupMaxHoldMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.HYPERNEO_SDK_STARTUP_MAX_HOLD_MS;
+  if (!raw) return DEFAULT_SDK_STARTUP_MAX_HOLD_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SDK_STARTUP_MAX_HOLD_MS;
 }
 
 function createGateAbortError(): Error {
@@ -43,7 +50,7 @@ export class SdkStartupConcurrencyGate {
   private waiters: GateWaiter[] = [];
   private holders = new Map<symbol, { sessionId: string; admittedAt: number; phase: string }>();
 
-  constructor(private readonly maxHoldMs = DEFAULT_SDK_STARTUP_MAX_HOLD_MS) {}
+  constructor(private readonly maxHoldMs = getSdkStartupMaxHoldMs()) {}
 
   private describeHolders(): string {
     return JSON.stringify(
@@ -117,7 +124,7 @@ export class SdkStartupConcurrencyGate {
     this.holders.set(key, holder);
     logger.warn(
       `SDK startup gate: admitted session=${sessionId} waitedMs=${waitedMs} ` +
-        `holders=${this.describeHolders()}`
+        `maxHoldMs=${this.maxHoldMs} holders=${this.describeHolders()}`
     );
     const timer = setTimeout(() => {
       logger.warn(

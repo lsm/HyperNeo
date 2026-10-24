@@ -1089,7 +1089,7 @@ export class QueryRunner {
             `Model: ${queryOptions.model}, ${workspaceDesc}` +
             (isRootWorkspace ? ' — running on root workspace (not a worktree)' : '') +
             ` The SDK subprocess did not emit its first message within the startup window; ` +
-            `concurrent cold-start load is bounded by the startup gate.` +
+            `Startup permits expire independently of query recovery; slow startups may overlap after lease expiry.` +
             ` (Hint: set HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS to increase timeout, currently ${inactivityBackstopMs}ms)`
         );
         logger.error(
@@ -2397,7 +2397,7 @@ export class QueryRunner {
       return (
         `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
         `The SDK subprocess did not emit its first message within the startup window ` +
-        `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
+        `(after one automatic retry); Startup permits expire independently of query recovery; slow startups may overlap after lease expiry. ` +
         `Try: resending your message, or increase the timeout with ` +
         `HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS (current: ${startupTimeoutMs}ms).`
       );
