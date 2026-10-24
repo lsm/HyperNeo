@@ -14,7 +14,7 @@ export interface InjectionDeliveryRowDeps {
     message: SDKUserMessage,
     sendStatus: 'enqueued' | 'deferred',
     origin?: MessageOrigin
-  ): string;
+  ): Promise<string>;
   reopenDeliveryByUuid(sessionId: string, uuid: string): string | null;
   markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null;
 }
@@ -57,7 +57,7 @@ export async function settleDeliveryRowStatus(
 ): Promise<string> {
   const dbId = args.rowExists
     ? args.messageId
-    : deps.saveUserMessage(args.sessionId, args.message, args.status, args.origin);
+    : await deps.saveUserMessage(args.sessionId, args.message, args.status, args.origin);
   await deps.publishStatusChanged(args.sessionId, dbId, args.status);
   return dbId;
 }

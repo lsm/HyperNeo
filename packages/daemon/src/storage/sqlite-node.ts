@@ -5,6 +5,7 @@ import {
 } from './sqlite-query-normalization.ts';
 import {
   observeExecExecution,
+  createObservedTransaction,
   observeIterateExecution,
   observeStatementExecution,
   SQLiteQueryObserver,
@@ -148,6 +149,7 @@ export class Database extends DatabaseSync {
     fn: (...args: TArgs) => TReturn,
     mode: 'deferred' | 'immediate' | 'exclusive' = 'deferred'
   ): (...args: TArgs) => TReturn {
+    let body = fn;
     const beginSql = mode === 'deferred' ? 'BEGIN' : `BEGIN ${mode.toUpperCase()}`;
     const run = (...args: TArgs): TReturn => {
       const nested = this.txDepth > 0;
@@ -159,7 +161,7 @@ export class Database extends DatabaseSync {
       }
       this.txDepth++;
       try {
-        const result = fn(...args);
+        const result = body(...args);
         this.txDepth--;
         if (nested) {
           this.execUnobserved(`RELEASE SAVEPOINT ${savepoint}`);
@@ -178,12 +180,19 @@ export class Database extends DatabaseSync {
         throw err;
       }
     };
-    return (...args: TArgs): TReturn => {
-      const observer = this.queryObserver;
-      return observer
-        ? observeExecExecution(observer, 'transaction', () => run(...args), 'transaction')
-        : run(...args);
-    };
+    const observer = this.queryObserver;
+    return observer
+      ? createObservedTransaction(
+          observer,
+          mode,
+          () => this.txDepth > 0,
+          (observed) => {
+            body = observed;
+            return run;
+          },
+          fn
+        )
+      : run;
   }
 
   // @ts-expect-error — return type widened to the generic compat wrapper

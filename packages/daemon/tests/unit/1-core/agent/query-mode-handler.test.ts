@@ -59,7 +59,9 @@ describe('QueryModeHandler', () => {
     sendStatus: 'deferred' | 'enqueued',
     extra?: { isSynthetic?: boolean; inputKind?: string }
   ): string {
-    return db.saveUserMessage(SESSION_ID, userRow(uuid, text, extra), sendStatus);
+    return db
+      .getSDKMessageRepo()
+      .saveUserMessage(SESSION_ID, userRow(uuid, text, extra), sendStatus);
   }
 
   function rawDb() {

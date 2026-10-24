@@ -1,4 +1,5 @@
 import { emitStructuredLogEvent } from '../lib/logger.ts';
+import { isSqliteBusyError, rememberBusyContext } from './busy-retry.ts';
 import {
   createSQLiteQueryDescriptor,
   type SQLiteQueryDescriptor,
@@ -29,6 +30,10 @@ export interface SQLiteQueryExecution {
   outcome: 'ok' | 'error';
   rowsReturned?: number;
   rowsChanged?: number;
+  busy?: boolean;
+  transaction?: Record<string, unknown>;
+  executionStartedAt?: number;
+  executionFinishedAt?: number;
 }
 
 export interface SQLiteQuerySummaryEntry {
@@ -137,6 +142,8 @@ export class SQLiteQueryObserver {
   private readonly now: () => number;
   private readonly setTimer: (callback: () => void, intervalMs: number) => unknown;
   private readonly clearTimer: (handle: unknown) => void;
+  private readonly connectionId = crypto.randomUUID();
+  private transactionSequence = 0;
   private readonly groups = new Map<string, QueryGroupAggregate>();
   private executionCount = 0;
   private slowExecutionCount = 0;
@@ -175,6 +182,10 @@ export class SQLiteQueryObserver {
       );
       (this.timerHandle as { unref?: () => void } | null)?.unref?.();
     }
+  }
+
+  nextTransactionId(): string {
+    return `${this.connectionId}:${++this.transactionSequence}`;
   }
 
   isRecordingEnabled(): boolean {
@@ -333,6 +344,11 @@ export class SQLiteQueryObserver {
       durationMs: roundMs(durationMs),
       thresholdMs: this.options.slowThresholdMs,
       outcome: execution.outcome,
+      ...(execution.busy === undefined ? {} : { busy: execution.busy }),
+      connectionId: this.connectionId,
+      executionStartedAt: execution.executionStartedAt ?? Date.now() - durationMs,
+      executionFinishedAt: execution.executionFinishedAt ?? Date.now(),
+      ...(execution.transaction ? { transaction: execution.transaction } : {}),
     };
     if (execution.rowsReturned !== undefined) metadata.rowsReturned = execution.rowsReturned;
     if (execution.rowsChanged !== undefined) metadata.rowsChanged = execution.rowsChanged;
@@ -382,11 +398,14 @@ export function observeStatementExecution<T>(
     });
     return result;
   } catch (error) {
+    if (isSqliteBusyError(error))
+      rememberBusyContext(error, { phase: operation, fingerprint: descriptor.fingerprint });
     observer.recordExecution({
       descriptor,
       operation,
       durationMs: performance.now() - start,
       outcome: 'error',
+      busy: isSqliteBusyError(error),
     });
     throw error;
   }
@@ -532,12 +551,107 @@ export function observeExecExecution<T>(
     });
     return result;
   } catch (error) {
+    if (isSqliteBusyError(error))
+      rememberBusyContext(error, { phase: operation, fingerprint: descriptor.fingerprint });
     observer.recordExecution({
       descriptor,
       operation,
       durationMs: performance.now() - start,
       outcome: 'error',
+      busy: isSqliteBusyError(error),
     });
     throw error;
   }
+}
+
+export function createObservedTransaction<A extends unknown[], R>(
+  observer: SQLiteQueryObserver,
+  mode: string,
+  nested: () => boolean,
+  create: (body: (...args: A) => R) => (...args: A) => R,
+  body: (...args: A) => R
+): (...args: A) => R {
+  type Span = {
+    phase: string;
+    at: number;
+    wall: number;
+    failed: boolean;
+    phases: Record<string, unknown>[];
+  };
+  const stack: Span[] = [];
+  const finishPhase = (span: Span, outcome: string) => {
+    const now = performance.now(),
+      wall = Date.now();
+    span.phases.push({
+      phase: span.phase,
+      outcome,
+      startedAt: span.wall,
+      finishedAt: wall,
+      durationMs: roundMs(now - span.at),
+    });
+    span.at = now;
+    span.wall = wall;
+  };
+  const run = create(function (this: unknown, ...args) {
+    const span = stack.at(-1)!;
+    finishPhase(span, 'acquired');
+    span.phase = 'body';
+    try {
+      return body.apply(this, args);
+    } catch (error) {
+      span.failed = true;
+      throw error;
+    } finally {
+      finishPhase(span, span.failed ? 'error' : 'ok');
+      span.phase = span.failed ? 'rollback' : 'commit';
+    }
+  });
+  return (...args) => {
+    const started = performance.now(),
+      executionStartedAt = Date.now();
+    const span: Span = {
+      phase: 'begin',
+      at: started,
+      wall: executionStartedAt,
+      failed: false,
+      phases: [],
+    };
+    const transaction = {
+      id: observer.nextTransactionId(),
+      mode,
+      boundary: nested() ? 'savepoint' : 'transaction',
+      phases: span.phases,
+    };
+    stack.push(span);
+    let outcome: 'ok' | 'error' = 'ok';
+    try {
+      return run(...args);
+    } catch (error) {
+      outcome = 'error';
+      Object.assign(transaction, {
+        busy: isSqliteBusyError(error),
+        failurePhase: span.failed ? 'body' : span.phase,
+      });
+      if (isSqliteBusyError(error))
+        rememberBusyContext(error, {
+          transactionId: transaction.id,
+          phase: span.failed ? 'body' : span.phase,
+          mode,
+          boundary: transaction.boundary,
+        });
+      throw error;
+    } finally {
+      finishPhase(span, outcome);
+      stack.pop();
+      observer.recordExecution({
+        descriptor: createSQLiteQueryDescriptor('transaction'),
+        operation: 'transaction',
+        durationMs: performance.now() - started,
+        outcome,
+        transaction,
+        executionStartedAt,
+        executionFinishedAt: Date.now(),
+      });
+    }
+  };
 }

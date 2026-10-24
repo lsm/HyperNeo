@@ -187,7 +187,7 @@ import {
   seedDefaultMcpEntries,
 } from './lib/mcp/index.ts';
 import { FileIndex } from './lib/file-index.ts';
-import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
+import { Logger, installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
 import { EvolutionLogEvidenceService } from './lib/evolution/log-evidence-service.ts';
@@ -201,6 +201,8 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
+
+const mailboxLog = new Logger('mailbox');
 
 interface ReconcilePersistedDiscoveryDeps {
   credentialManager: ProviderCredentialManager;
@@ -477,7 +479,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await db.initialize(reactiveDb);
     if (process.env.NODE_ENV !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
-    const interruptedTurns = db.markRestartInterruptedTurns();
+    const interruptedTurns = await db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
     const earlyLogEvidenceService = new EvolutionLogEvidenceService({
@@ -906,7 +908,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
     const restartRecoveryDeps: RestartRecoveryDeps = {
-      readEvidence: (sessionId) => db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId),
+      readEvidence: async (sessionId) => {
+        await db.waitForSdkMessageColumns(sessionId);
+        return db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId);
+      },
       hasActiveDelivery: (sessionId, uuid) =>
         db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
       resend: (sessionId, uuid, enqueueDelivery) => {
@@ -1108,12 +1113,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
     const cooldownResumeTimers = db.listRestartCooldownResumes().map(({ sessionId, resumeAt }) => {
       const timer = setTimeout(
-        () => {
-          if (!db.takeRestartCooldownResume(sessionId)) return;
-          void recoverRestartCutTurns([sessionId], restartRecoveryDeps).catch((error) =>
-            logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
-          );
-        },
+        () =>
+          void db
+            .takeRestartCooldownResume(sessionId)
+            .then((taken) =>
+              taken ? recoverRestartCutTurns([sessionId], restartRecoveryDeps) : []
+            )
+            .catch((error) =>
+              logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
+            ),
         Math.max(0, resumeAt - Date.now())
       );
       timer.unref?.();
@@ -1191,6 +1199,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               name: 'HyperNeo Daemon',
               version: BUILD_METADATA.version,
               status: 'running',
+              dataMigration: db.getDataMigrationStatus(),
               protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
               endpoints: {
                 webSocket: '/ws',
@@ -1246,11 +1255,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     startupTimer.start('post-bind jobs + background services');
+    void db.startSdkMessageColumnsBackfill(() => {
+      void stateManager.broadcastSystemChange();
+    });
     const removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     const openMessageSearchMergeGate = (): void => {
       db.startMessageSearchMerges();
-      db.startSdkMessageBodyCopy();
+      void db.startSdkMessageColumnsBackfill().then((complete) => {
+        if (complete) db.startSdkMessageBodyCopy();
+      });
     };
     void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
@@ -1285,7 +1299,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-      logError,
+      logError: (message) => mailboxLog.error(message),
     });
 
     messageDeliveryProcessor.register(
@@ -1593,6 +1607,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return;
       }
       isCleanedUp = true;
+      db.stopSdkMessageColumnsBackfill();
       startupLogCaptureCleanup = null;
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
 

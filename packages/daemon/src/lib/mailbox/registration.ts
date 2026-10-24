@@ -77,7 +77,7 @@ function createFailureDeps(deps: MailboxRegistrationDeps): MailboxFailureDeps {
 function registerExpiration(deps: MailboxRegistrationDeps, failure: MailboxFailureDeps): void {
   deps.mailboxExpireProcessor.register(
     MAILBOX_EXPIRE_FIRE,
-    createMailboxExpireHandler(deps.jobQueue, (job) => materializeMailboxFailure(job, failure))
+    createMailboxExpireHandler(deps.jobQueue, (job) => void materializeMailboxFailure(job, failure))
   );
 }
 

@@ -71,7 +71,7 @@ describe('RewindHandler', () => {
     } as unknown as DaemonHub;
 
     deleteMessagesAfterSpy = mock(() => 5);
-    deleteMessagesAtAndAfterSpy = mock(() => 5);
+    deleteMessagesAtAndAfterSpy = mock(async () => 5);
     updateSessionSpy = mock(() => {});
     setPendingResumeSessionAtSpy = mock(() => {});
     clearPendingResumeSessionAtSpy = mock(() => {});

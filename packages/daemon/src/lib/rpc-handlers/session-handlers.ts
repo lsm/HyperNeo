@@ -193,9 +193,13 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
     const { sessionId } = data as ListRuntimeMcpServersRequest;
-    const agentSession = await sessionManager.getSessionAsync(sessionId, {
-      startQuery: false,
-    });
+    const agentSession = await sessionManager.getSessionAsync(
+      sessionId,
+      {
+        startQuery: false,
+      },
+      false
+    );
     if (!agentSession) {
       throw new Error(`Session not found: ${sessionId}`);
     }
@@ -851,7 +855,7 @@ export function setupSessionHandlers(
     };
 
     const agentSession = restartQuery
-      ? await sessionManager.getSessionAsync(targetSessionId, { startQuery: false })
+      ? await sessionManager.getSessionAsync(targetSessionId, { startQuery: false }, false)
       : await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
@@ -890,9 +894,13 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.retryNowAfterRateLimit', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId, {
-      startQuery: false,
-    });
+    const agentSession = await sessionManager.getSessionAsync(
+      targetSessionId,
+      {
+        startQuery: false,
+      },
+      false
+    );
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1139,9 +1147,13 @@ export function setupSessionHandlers(
         }
       | undefined;
     try {
-      const current = await sessionManager.getSessionAsync(targetSessionId, {
-        startQuery: false,
-      });
+      const current = await sessionManager.getSessionAsync(
+        targetSessionId,
+        {
+          startQuery: false,
+        },
+        false
+      );
       if (!current) {
         throw new Error(`Session not found: ${targetSessionId}`);
       }
@@ -1190,7 +1202,7 @@ export function setupSessionHandlers(
         resolved: false,
         error: errorText,
       };
-      db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
+      await db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
       messageHub.event(
         'state.sdkMessages.delta',
         { added: [failedMessage], timestamp: Date.now() },
@@ -1199,7 +1211,7 @@ export function setupSessionHandlers(
       throw new Error(errorText);
     }
 
-    db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
+    await db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
 
     messageHub.event(
       'state.sdkMessages.delta',

@@ -151,7 +151,7 @@ function harness(): Harness {
           }
         : null;
     },
-    commit: (snapshot, patch) => h.commit(snapshot, patch),
+    commit: async (snapshot, patch) => h.commit(snapshot, patch),
     isPreparing: () => false,
     hasPendingWork: () => false,
     notify: async () => {},

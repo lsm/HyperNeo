@@ -14,6 +14,7 @@ import {
   type OperationDefinition,
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 
 const SPACE_ID = 'space-1';
 const READ_ROLES = ['long_term_agent', 'workflow_worker', 'neo'];
@@ -132,6 +133,8 @@ function harness(): Harness {
     getDatabase: () => db,
     getLiveSession: (sessionId) => state.live.get(sessionId) ?? null,
     getSession: (sessionId) => state.sessions.get(sessionId) ?? null,
+    updateSession: async (sessionId, updates) =>
+      new SessionRepository(db).updateSession(sessionId, updates),
     sessionSpaceId: (session) =>
       (session.context as { spaceId?: string } | undefined)?.spaceId ?? undefined,
     audit: (entry) => {

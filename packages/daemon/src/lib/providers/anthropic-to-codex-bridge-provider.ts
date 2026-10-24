@@ -12,7 +12,6 @@ import type {
   ListRemoteModelsOptions,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
-import { THINKING_LEVEL_TOKENS } from '@hyperneo/shared';
 import {
   type OpenAIResponsesBridgeAuth,
   type OpenAIResponsesBridgeServer,
@@ -34,6 +33,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
+import { sessionThinkingForLevel } from './shared/session-thinking.ts';
 import * as crypto from 'crypto';
 
 const logger = new Logger('anthropic-to-codex-bridge-provider');
@@ -869,16 +869,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const bridgeServer = this.bridgeServers.get(bridgeKey);
     if (!bridgeServer?.setSessionThinkingConfig) return;
 
-    const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
-    if (tokens === undefined) {
-      bridgeServer.setSessionThinkingConfig(sessionId, undefined);
-      return;
-    }
-
-    bridgeServer.setSessionThinkingConfig(sessionId, {
-      type: 'enabled',
-      budget_tokens: tokens,
-    });
+    bridgeServer.setSessionThinkingConfig(sessionId, sessionThinkingForLevel(thinkingLevel));
   }
 
   stopAllBridgeServers(): void {

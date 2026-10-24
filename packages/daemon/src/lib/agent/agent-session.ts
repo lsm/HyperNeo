@@ -227,6 +227,7 @@ import {
   type QueryOptionsBuilderContext,
 } from './query-options-builder.ts';
 import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
+import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
@@ -1094,12 +1095,13 @@ export class AgentSession
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
     const result = await withSessionLock(this.session.id, async () => {
+      const messages = this.db.getSDKMessageRepo();
       const remove = () =>
         mode === 'remove'
           ? expectedStatus
-            ? this.db.deletePendingUserMessage(this.session.id, messageDbId, expectedStatus)
-            : this.db.deletePendingUserMessage(this.session.id, messageDbId)
-          : this.db.deferEnqueuedUserMessage(this.session.id, messageDbId);
+            ? messages.deletePendingUserMessage(this.session.id, messageDbId, expectedStatus)
+            : messages.deletePendingUserMessage(this.session.id, messageDbId)
+          : messages.deferEnqueuedUserMessage(this.session.id, messageDbId);
       const result = commitRemoval
         ? this.db.getDatabase().transaction(() => {
             const removed = remove();
@@ -1634,9 +1636,9 @@ export class AgentSession
     getProviderRegistry()
       .get(this.session.config.provider ?? '')
       ?.setSessionThinkingConfig?.(this.session.id, level);
-    await this.sdkRuntimeConfig.applyThinking(
-      liveThinkingUpdate(this.optionsBuilder.resolveThinkingOptions(), level)
-    );
+    const update = liveThinkingUpdate(this.optionsBuilder.resolveThinkingOptions(), level);
+    setKeyBridgeThinkingOff(this.session.id, update.disableThinking === true);
+    await this.sdkRuntimeConfig.applyThinking(update);
   }
 
   async setPermissionMode(mode: string): Promise<{ success: boolean; error?: string }> {
@@ -2861,7 +2863,7 @@ export class AgentSession
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
         if (this.messageQueue.hasYielded?.(messageUuid)) {
           await withSessionLock(this.session.id, async () => {
-            this.markDeliveryConsumed(admission.consumedUuids);
+            await this.markDeliveryConsumed(admission.consumedUuids);
             await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
             signalDeliveryConsumed(this.session.id, messageUuid);
           });
@@ -2878,7 +2880,7 @@ export class AgentSession
     }
 
     await withSessionLock(this.session.id, async () => {
-      this.markDeliveryConsumed(admission.consumedUuids);
+      await this.markDeliveryConsumed(admission.consumedUuids);
       await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
       for (const uuid of admission.consumedUuids) {
         signalDeliveryConsumed(this.session.id, uuid);
@@ -2994,14 +2996,14 @@ export class AgentSession
     );
   }
 
-  private markDeliveryConsumed(uuids: string[]): void {
+  private async markDeliveryConsumed(uuids: string[]): Promise<void> {
     const flippedIds = this.db
       .getSDKMessageRepo()
       .markDeliveryConsumedByUuids(this.session.id, uuids);
     if (flippedIds.length > 0) {
       const now = Date.now();
       for (const dbId of flippedIds) {
-        this.db.updateMessageTimestamp(dbId, now);
+        await this.db.updateMessageTimestamp(dbId, now);
       }
       void this.internalEventBus
         .publish('messages.statusChanged', {

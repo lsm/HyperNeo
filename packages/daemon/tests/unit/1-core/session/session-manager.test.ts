@@ -34,6 +34,8 @@ describe('SessionManager', () => {
     eventHandlers = new Map();
 
     mockDb = {
+      getDataMigrationStatus: mock(() => ({ state: 'complete' })),
+      waitForSdkMessageColumns: mock(async () => {}),
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),
@@ -258,6 +260,37 @@ describe('SessionManager', () => {
   });
 
   describe('getSessionAsync', () => {
+    it('background restoration waits while public admission reports history preparation', async () => {
+      (mockDb.getDataMigrationStatus as ReturnType<typeof mock>).mockReturnValue({
+        state: 'running',
+      });
+      let release = () => {};
+      const ready = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (mockDb.waitForSdkMessageColumns as ReturnType<typeof mock>).mockImplementation(
+        (_id: string, wait = true) =>
+          wait ? ready : Promise.reject(new Error('Message history is being prepared'))
+      );
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(null);
+      let settled = false;
+      const background = sessionManager.getSessionAsync('pending-history').then((value) => {
+        settled = true;
+        return value;
+      });
+      try {
+        await expect(sessionManager.getSessionAsync('pending-history', {}, false)).rejects.toThrow(
+          'being prepared'
+        );
+        expect(settled).toBe(false);
+        release();
+        expect(await background).toBeNull();
+      } finally {
+        release();
+        await background;
+      }
+    });
+
     it('should return null for non-existent session', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(null);
 

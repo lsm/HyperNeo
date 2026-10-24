@@ -68,7 +68,9 @@ describe('session.runtimeSettings.update native boundary', () => {
     const restart = vi.fn(async () => {});
     const applyThinkingLevel = vi.fn(async () => {});
     const blindWrite = vi.fn();
-    const cas = vi.fn(repo.casSessionRuntimeSettings.bind(repo));
+    const cas = vi.fn(async (...args: Parameters<typeof repo.casSessionRuntimeSettings>) =>
+      repo.casSessionRuntimeSettings(...args)
+    );
     const capture = vi.fn(repo.captureSessionRuntimeSettings.bind(repo));
     const publish = vi.fn(async () => {});
     const ctx = {

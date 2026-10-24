@@ -745,10 +745,9 @@ export class SpaceRuntimeService {
     if (agent.sessionId !== sessionId) {
       repo.update(agent.id, { sessionId });
     }
-    const currentMetadata = session.getSessionData().metadata;
-    this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
+    await session.updateMetadata({
       metadata: {
-        ...currentMetadata,
+        ...session.getSessionData().metadata,
         promptProvenance: {
           source: agent.templateKey ?? 'long_horizon_agent',
           hash: agent.id,

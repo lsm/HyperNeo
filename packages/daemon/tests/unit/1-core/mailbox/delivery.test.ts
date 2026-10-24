@@ -1154,11 +1154,11 @@ describe('createMailboxDeliveryHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(blocked.publishDeferredStatus).toHaveBeenCalledTimes(1);
 
-        const cancelled = materializeMailboxFailuresForSession(SESSION_ID, {
+        const cancelled = await materializeMailboxFailuresForSession(SESSION_ID, {
           db: {
             getJobQueueRepo: () => mailbox.jobQueue,
             getSDKMessageRepo: () => mailbox.sdkMessageRepo,
-            saveUserMessage: () => null,
+            saveUserMessage: async () => null,
           } as never,
           internalEventBus: { publish: async () => ({ delivered: 1 }) } as never,
         });

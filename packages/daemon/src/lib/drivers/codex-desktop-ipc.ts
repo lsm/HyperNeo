@@ -24,9 +24,17 @@ export interface CodexDesktopIpc {
 
 export async function withCodexDesktopIpc<T>(
   socketPath: string,
-  use: (client: CodexDesktopIpc) => Promise<T>
+  use: (client: CodexDesktopIpc) => Promise<T>,
+  deadline?: number
 ): Promise<T> {
   const socket = createConnection(socketPath);
+  const deadlineTimer =
+    deadline === undefined
+      ? undefined
+      : setTimeout(
+          () => socket.destroy(new Error('Codex Desktop handoff timed out.')),
+          Math.max(0, deadline - Date.now())
+        );
   let buffer = Buffer.alloc(0);
   let clientId = 'initializing-client';
   let nextId = 0;
@@ -80,6 +88,8 @@ export async function withCodexDesktopIpc<T>(
     version: number,
     targetClientId?: string
   ): Promise<DesktopResponse> => {
+    if (deadline !== undefined && Date.now() >= deadline)
+      throw new Error('Codex Desktop handoff timed out.');
     if (socket.destroyed) throw new Error('Codex Desktop closed the handoff connection.');
     const requestId = String(++nextId);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -88,7 +98,7 @@ export async function withCodexDesktopIpc<T>(
         pending.set(requestId, { resolve, reject });
         timer = setTimeout(
           () => reject(new Error(`Codex Desktop ${method} timed out.`)),
-          TIMEOUT_MS
+          deadline === undefined ? TIMEOUT_MS : Math.max(0, deadline - Date.now())
         );
         write({
           type: 'request',
@@ -113,6 +123,7 @@ export async function withCodexDesktopIpc<T>(
     clientId = initialized.result.clientId;
     return await use({ call });
   } finally {
+    clearTimeout(deadlineTimer);
     socket.destroy();
   }
 }

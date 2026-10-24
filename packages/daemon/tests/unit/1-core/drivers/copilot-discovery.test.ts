@@ -117,7 +117,9 @@ describe('Copilot discovery boundary', () => {
       const text: string[] = [];
       let accepted = 0;
       for await (const event of client.sendPrompt([{ type: 'text', text: 'wait' }], {
-        onAccepted: () => accepted++,
+        onAccepted: () => {
+          accepted++;
+        },
       })) {
         if (
           event.update.sessionUpdate === 'agent_message_chunk' &&

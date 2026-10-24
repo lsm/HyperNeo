@@ -84,7 +84,7 @@ export class MessageQueue {
 
   private clearEpoch: number = 0;
 
-  onMessageYielded?: (messageId: string, sentAt: number) => void;
+  onMessageYielded?: (messageId: string, sentAt: number) => void | Promise<void>;
 
   onMessageEnqueued?: (messageId: string, queuedAt: number) => void;
 
@@ -729,7 +729,7 @@ export class MessageQueue {
           !queuedMessage.internal &&
           this.onMessageYielded
         ) {
-          this.onMessageYielded(queuedMessage.id, Date.now());
+          await this.onMessageYielded(queuedMessage.id, Date.now());
         }
       } catch (error) {
         this.claimed.delete(queuedMessage);

@@ -8,7 +8,7 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
-import { startCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
+import { startCodexDesktopTurn, steerCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 
 const [action, portText, runText] = process.argv.slice(2);
@@ -24,7 +24,11 @@ const bin = join(run, 'bin');
 assert.equal(process.env.PATH?.split(':')[0], bin, 'Put the synthetic launcher on PATH before starting Bun');
 mkdirSync(bin, { recursive: true });
 const openLog = join(run, 'evidence/desktop-open.jsonl');
-writeFileSync(join(bin, 'open'), `#!/usr/bin/env bun\nimport { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ args: process.argv.slice(2), pid: process.pid })+String.fromCharCode(10));\nprocess.exit(process.argv.at(-1) === 'codex://threads/new-handoff-control' ? 0 : 1);\n`, { mode: 0o700 });
+const runningFlag = join(run, 'desktop-running');
+const refuseOpen = join(run, 'refuse-open');
+writeFileSync(runningFlag, 'running');
+writeFileSync(join(bin, 'ps'), `#!/usr/bin/env bun\nimport { existsSync } from 'node:fs';\nif(existsSync(${JSON.stringify(runningFlag)}))console.log('/Applications/ChatGPT.app/Contents/MacOS/ChatGPT');\n`, {mode:0o700});
+writeFileSync(join(bin, 'open'), `#!/usr/bin/env bun\nimport { appendFileSync, existsSync } from 'node:fs';\nappendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ args: process.argv.slice(2), pid: process.pid })+String.fromCharCode(10));\nprocess.exit(existsSync(${JSON.stringify(refuseOpen)}) ? 1 : 0);\n`, { mode: 0o700 });
 assert.equal(Bun.which('open'), join(bin, 'open'), 'Never run the host Desktop launcher in this journey');
 const home = join(run, 'home/.codex');
 mkdirSync(join(home, 'ipc'), { recursive: true });
@@ -39,7 +43,8 @@ CREATE TABLE project_roots (project_id TEXT, path TEXT);
 INSERT INTO threads VALUES ('synthetic', 'Synthetic', '', '', '/tmp/synthetic', 'desktop', 0, 1, '/missing-synthetic.jsonl');`);
 db.prepare('UPDATE threads SET rollout_path = ?').run(rollout);
 db.close();
-let owner = 'refused';
+let owner = 'missing';
+let ownerReadyAt = 0;
 let active = true;
 let loaded = true;
 let resumeError = '';
@@ -62,8 +67,11 @@ const desktop = createServer((socket) => {
       const request = JSON.parse(buffer.subarray(4, size + 4).toString());
       buffer = buffer.subarray(size + 4);
       calls.push({ desktop: request.method, version: request.version, params: request.params });
+      if(owner==='delayed' && Date.now()>=ownerReadyAt)owner='owned';
+      if(request.method==='thread-owner-discovery' && owner==='missing' && !existsSync(refuseOpen)
+        && existsSync(openLog) && readFileSync(openLog,'utf8').includes('codex://threads/synthetic')) owner='owned';
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
-        : request.method === 'thread-owner-discovery' ? (owner === 'owned' || request.params?.conversationId === 'new-handoff-control') ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
+        : request.method === 'thread-owner-discovery' ? (owner === 'owned' || request.params?.conversationId === 'new-handoff-control') ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: (owner === 'missing' || owner === 'delayed') ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
         : refuse ? { resultType: 'error', error: 'NoActiveTurn' } : { resultType: 'success', result: { result: { turnId: 'desktop-active' } } };
       const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
@@ -91,8 +99,11 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
   const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
     : request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
     : request.method === 'turn/start' ? { turn: { id: 'server-started', status: 'inProgress', items: [] } }
-    : request.method === 'turn/steer' ? { turnId: 'server-active' } : { queuedSubmission: { id: 'synthetic-queue' } };
+    : request.method === 'turn/steer' ? { turnId: 'server-active' } : request.method==='thread/unsubscribe' ? {status:'unsubscribed'} : { queuedSubmission: { id: 'synthetic-queue' } };
   socket.send(JSON.stringify({ id: request.id, ...(resumeError && request.method === 'thread/resume' ? { error: { code: -32600, message: resumeError } } : !loaded && request.method === 'turn/start' ? { error: { code: -32600, message: 'thread not found: synthetic' } } : serverStartError && request.method === 'turn/start' ? { error: { message: 'start unavailable' } } : uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
+  if(request.method==='turn/start' && loaded && !serverStartError) setTimeout(()=>{
+    if(socket.readyState===1)socket.send(JSON.stringify({method:'turn/completed',params:{threadId:'synthetic',turn:{id:'server-started',status:'completed'}}}));
+  },10);
 }));
 await new Promise<void>((done) => http.listen(join(home, 'app-server-control/app-server-control.sock'), done));
 let ws: WebSocket | undefined;
@@ -117,10 +128,62 @@ try {
     const request = call as { desktop?: string; params?: { conversationId?: string } };
     return request.desktop === 'thread-follower-start-turn' && request.params?.conversationId === 'new-handoff-control';
   }), 'New-thread control must open and hand off its first turn');
+  const ownerlessBefore=calls.length;
+  const ownerless=await send();
+  assert.equal(ownerless.value.steeredIntoTurnId,'desktop-active');
+  assert(!calls.slice(ownerlessBefore).some(call=>(call as {server?:string}).server==='thread/resume'));
+  const desktopQueueBefore=calls.length;
+  const desktopQueued=await send('queue');
+  assert.equal(desktopQueued.value.queuedSubmissionId,'synthetic-queue');
+  assert(calls.slice(desktopQueueBefore).some(call=>(call as {server?:string}).server==='thread/queue/add'));
+  assert(!calls.slice(desktopQueueBefore).some(call=>['thread/resume','turn/start'].includes((call as {server?:string}).server??'')));
+  owner='refused';
+  const versionBefore=calls.length;
+  assert.equal((await send()).reason,'not_delivered');
+  assert(!calls.slice(versionBefore).some(call=>(call as {server?:string}).server));
+  owner='missing'; writeFileSync(refuseOpen,'refuse');
+  const refusedBefore=calls.length;
+  assert.equal((await send()).reason,'not_delivered');
+  assert(!calls.slice(refusedBefore).some(call=>(call as {server?:string}).server));
+  unlinkSync(refuseOpen);
+  owner='delayed'; ownerReadyAt=Date.now()+11_000;
+  const delayedBefore=calls.length, delayedStarted=performance.now();
+  let callerTimer: ReturnType<typeof setTimeout> | undefined;
+  let delayedResult;
+  try {
+    delayedResult = await Promise.race([send(), new Promise<never>((_, reject) => { callerTimer=setTimeout(()=>reject(new Error('Default 10s RPC caller timed out')),10_000); })]);
+  } finally { clearTimeout(callerTimer); }
+  assert.equal(delayedResult.reason,'not_delivered');
+  const delayedElapsedMs=performance.now()-delayedStarted;
+  assert(delayedElapsedMs<9_000,'Eight-second admission settles before the default caller timeout');
+  timings.push({ delayedOwnerAdmissionMs: delayedElapsedMs, delayedOwnerReadyAfterMs: 11_000, noLateDispatch: true });
+  await new Promise(done=>setTimeout(done,Math.max(0,ownerReadyAt-Date.now()+100)));
+  assert(!calls.slice(delayedBefore).some(call=>['thread-follower-steer-turn','thread-follower-start-turn'].includes((call as {desktop?:string}).desktop??'') || (call as {server?:string}).server),'A late owner must not receive a turn after refusal');
+  owner='missing';
   const desktopPath = join(home, 'ipc/ipc.sock');
   const stalePath = join(home, 'ipc/stale.sock');
   renameSync(desktopPath, stalePath);
   await new Promise<void>(done => desktop.close(() => done()));
+  for(const socketState of ['missing','stale']){
+    if(socketState==='stale')renameSync(stalePath,desktopPath);
+    const before=calls.length;
+    const logsBefore=logs.length;
+    assert.equal((await send()).reason,'not_delivered');
+    assert(logs.slice(logsBefore).some(event=>event.message.includes('work.send desktop transport failed')),'Missing/stale Desktop IPC must retain its refusal diagnostic');
+    assert(!calls.slice(before).some(call=>(call as {server?:string}).server));
+    if(socketState==='stale')renameSync(desktopPath,stalePath);
+  }
+  for (const probeFailure of [false, true]) {
+    const before = logs.length;
+    const refused = await steerCodexDesktopTurn(undefined, () => { throw new Error('Admission must not spawn'); }, 'direct-synthetic', 'synthetic marker', 'direct-message', 'auto', async () => {
+      if (probeFailure) throw new Error('Synthetic probe failure');
+      return true;
+    });
+    assert('reason' in refused && !refused.reason.ok && refused.reason.reason === 'not_delivered');
+    const reason = probeFailure ? 'desktop_running_probe_failed' : 'desktop_socket_missing';
+    assert(logs.slice(before).some(event => event.message.includes('work.send route') && event.message.includes(reason)), 'Direct admission refusal retains a reasoned route log');
+  }
+  unlinkSync(runningFlag);
   for (const socketState of ['missing', 'stale']) {
     if (socketState === 'stale') renameSync(stalePath, desktopPath);
     const began = performance.now();
@@ -132,7 +195,6 @@ try {
     timings.push({ socketState, existingDeliveryMs: elapsedMs });
   }
   unlinkSync(desktopPath);
-  await new Promise<void>(done => desktop.listen(desktopPath, done));
   const first = await send();
   if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
@@ -166,6 +228,8 @@ try {
       const request = call as { server?: string; params?: { threadId?: string; input?: { text: string }[] } };
       return request.server === 'turn/start' && request.params?.threadId === 'synthetic' && request.params.input?.[0].text.includes('synthetic marker');
     }));
+    for(let n=0;n<100 && !calls.some(call=>(call as {server?:string}).server==='thread/unsubscribe');n++)await new Promise(resolve=>setTimeout(resolve,10));
+    assert(calls.some(call=>(call as {server?:string}).server==='thread/unsubscribe'),'No-Desktop turn must unsubscribe after completion');
     loaded = false; resumeError = 'rollout unavailable';
     const resumeBefore = calls.length;
     const resumeFailed = await send();
@@ -205,6 +269,8 @@ try {
     assert.equal((await send()).reason, 'not_delivered');
     assert(!calls.slice(unknown).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
     owner = 'owned'; uncertain = false;
+    writeFileSync(runningFlag,'running');
+    await new Promise<void>(done => desktop.listen(desktopPath, done));
     assert.equal((await send('steer')).value.steeredIntoTurnId, 'desktop-active');
     refuse = true;
     const rejected = await send('steer');
@@ -221,16 +287,12 @@ try {
     assert.equal(impossible.reason, 'not_delivered');
     assert.match(impossible.detail, /start unavailable/);
     assert(!calls.slice(ownedBefore).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
-    for (let n = 0; n < 50; n++) {
-      if (existsSync(openLog) && readFileSync(openLog, 'utf8').trim().split('\n').length >= 5) break;
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
-    assert(existsSync(openLog), 'Ownerless existing delivery must request a best-effort Desktop open');
+    assert(existsSync(openLog), 'Desktop handoffs must request the supported open');
     const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.deepEqual(opens[0].args, ['-g', 'codex://threads/new-handoff-control']);
-    assert.equal(opens.length, 5, 'Record missing-socket, stale-socket and both ownerless opens separately from the new-thread control');
+    assert.equal(opens.length, 4, 'New-thread control, ownerless, refused and deadline handoffs each open once');
     assert(opens.slice(1).every(open => JSON.stringify(open.args) === JSON.stringify(['-g', 'codex://threads/synthetic'])));
-    timings.push({ bestEffortDesktopOpen: opens, nativeOwnerRemainedAbsent: true, launcherExit: 1 });
+    timings.push({ desktopOpens: opens, noDesktopFallbackOnly: true });
     assert(logs.length > 0, 'retained routing diagnostics required');
   }
   console.log(`${action} PASS: ${run}/evidence/observed.json`);

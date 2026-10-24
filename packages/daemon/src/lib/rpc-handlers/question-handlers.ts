@@ -33,7 +33,7 @@ export function setupQuestionHandlers(
     const runtimeSession = getRuntimeSession?.(sessionId);
     if (runtimeSession) return runtimeSession;
 
-    return sessionManager.getSessionAsync(sessionId);
+    return sessionManager.getSessionAsync(sessionId, {}, false);
   }
 
   function assertWorkflowProvisioned(agentSession: AgentSession, sessionId: string): void {

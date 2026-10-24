@@ -264,10 +264,28 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       const kept = db.prepare("SELECT id,payload FROM job_queue WHERE id LIKE ?").all("deno-cleanup-%");
       if (count !== 2 || kept.length !== 1 || kept[0].id !== "deno-cleanup-keep" || JSON.parse(kept[0].payload).body !== "complete retained job") Deno.exit(1);
       console.log("[deno-smoke] job cleanup preserves cutoffs and retained payloads");
-      db.prepare("INSERT INTO job_queue(id,queue,status,payload,run_at,created_at) VALUES(?,?,?,?,?,?)").run("deno-claim", "synthetic-claim", "pending", "{\"body\":\"complete claim payload\"}", now, now);
-      const claimed = await gateway.call(jobQueueWrites, "dequeue", "synthetic-claim", 5);
-      const again = await gateway.call(jobQueueWrites, "dequeue", "synthetic-claim", 5);
-      if (claimed.length !== 1 || again.length !== 0 || !claimed[0].claimToken || claimed[0].payload.body !== "complete claim payload") Deno.exit(1);
+      db.exec("PRAGMA busy_timeout=5000");
+      const holder = new Worker("data:application/javascript," + encodeURIComponent(`
+        import { DatabaseSync } from "node:sqlite";
+        onmessage = ({data}) => {
+          const db = new DatabaseSync(data);
+          db.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
+          postMessage("acquired");
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+          db.exec("COMMIT"); db.close();
+        };
+      `), {type:"module"});
+      try {
+        await new Promise((resolve, reject) => {
+          holder.onmessage = () => resolve(null);
+          holder.onerror = reject;
+          holder.postMessage(Deno.env.get("SMOKE_DB_PATH"));
+        });
+        db.prepare("INSERT INTO job_queue(id,queue,status,payload,run_at,created_at) VALUES(?,?,?,?,?,?)").run("deno-claim", "synthetic-claim", "pending", "{\"body\":\"complete claim payload\"}", now, now);
+        const claimed = await gateway.call(jobQueueWrites, "dequeue", "synthetic-claim", 5);
+        const again = await gateway.call(jobQueueWrites, "dequeue", "synthetic-claim", 5);
+        if (claimed.length !== 1 || again.length !== 0 || !claimed[0].claimToken || claimed[0].payload.body !== "complete claim payload") Deno.exit(1);
+      } finally { holder.terminate(); }
       console.log("[deno-smoke] gateway claim is fenced and not duplicated");
     } finally { db.close(); }
     console.log("[deno-smoke] session event ingest commit/dedupe ok");

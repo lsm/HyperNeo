@@ -124,10 +124,10 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
   test('saveUserMessage resolves once and reuses the cache too', async () => {
     await reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
 
-    reactiveDb.db.saveUserMessage('s-task', userMessage('hello', 'u1'), 'consumed');
+    await reactiveDb.db.saveUserMessage('s-task', userMessage('hello', 'u1'), 'consumed');
     expect(taskResolutions).toBe(1);
 
-    reactiveDb.db.saveUserMessage('s-task', userMessage('again', 'u2'), 'consumed');
+    await reactiveDb.db.saveUserMessage('s-task', userMessage('again', 'u2'), 'consumed');
     expect(taskResolutions).toBe(1);
   });
 
@@ -284,9 +284,9 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
       return countingPrepare(sql, ...rest);
     }) as typeof bunDb.prepare;
 
-    expect(() =>
+    await expect(
       reactiveDb.db.updateSession('s-task', { context: { taskId: 'task-2' } })
-    ).toThrow();
+    ).rejects.toThrow('simulated session write failure');
 
     bunDb.prepare = countingPrepare;
     await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
@@ -414,7 +414,7 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
     await reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
     events.length = 0;
 
-    reactiveDb.db.saveUserMessage('s-comp', userMessage('hello', 'u-px'), 'consumed');
+    await reactiveDb.db.saveUserMessage('s-comp', userMessage('hello', 'u-px'), 'consumed');
 
     const sdkEvents = events.filter((event) => event.tables.includes('sdk_messages'));
     expect(sdkEvents).toHaveLength(1);
@@ -427,7 +427,7 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
     await reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
     events.length = 0;
 
-    reactiveDb.db.saveUserMessage('s-comp', userMessage('queued', 'u-pxd'), 'deferred');
+    await reactiveDb.db.saveUserMessage('s-comp', userMessage('queued', 'u-pxd'), 'deferred');
 
     expect(events.map((event) => event.tables)).toEqual([['sdk_messages']]);
     expect(reactiveDb.getTableVersion('sdk_messages')).toBe(1);
@@ -447,9 +447,9 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
       return countingPrepare(sql, ...rest);
     }) as typeof bunDb.prepare;
 
-    expect(() =>
+    await expect(
       reactiveDb.db.saveUserMessage('s-comp', userMessage('doomed', 'u-pxf'), 'consumed')
-    ).toThrow('simulated insert failure');
+    ).rejects.toThrow('simulated insert failure');
 
     bunDb.prepare = countingPrepare;
     repo.saveUserMessage('s-comp', userMessage('recovered', 'u-pxr'), 'consumed');

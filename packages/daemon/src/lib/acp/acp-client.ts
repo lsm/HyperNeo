@@ -284,7 +284,10 @@ export class AcpClient {
 
   async *sendPrompt(
     prompt: AcpContentBlock[],
-    callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    callbacks?: {
+      onSubmitted?: () => void | Promise<void>;
+      onAccepted?: () => void | Promise<void>;
+    }
   ): AsyncGenerator<AcpSessionUpdateNotification> {
     if (!this.sessionId) {
       throw new Error('No active session. Call createSession() first.');
@@ -298,7 +301,7 @@ export class AcpClient {
     let accepted = false;
     const accept = () => {
       if (accepted) return;
-      callbacks?.onAccepted?.();
+      void Promise.resolve(callbacks?.onAccepted?.()).catch(() => {});
       accepted = true;
     };
 
