@@ -33,6 +33,7 @@ import {
   jobQueueReads,
   jobQueueWrites,
 } from '../repositories/job-queue-repository.ts';
+import { submitSessionEvent } from '../repositories/session-event-submission.ts';
 import { recordClaudeInboxRoute } from '../repositories/claude-inbox-route-repository.ts';
 import { replaceNeoSessionSeen } from '../repositories/neo-session-seen-repository.ts';
 import {
@@ -61,7 +62,6 @@ import { createStandaloneTask } from '../tasks/create-task.ts';
 import { editStandaloneTaskWithDependencies } from '../tasks/set-task-dependencies.ts';
 import { transitionStandaloneTask } from '../tasks/transition-task.ts';
 import { deleteWorkFeedBatch } from '../work-feed.ts';
-import { submitSessionEvent } from '../repositories/session-event-submission.ts';
 import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
@@ -80,6 +80,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     touchDevice,
     recordUnpaired,
     jobQueueWrites,
+    submitSessionEvent,
     jobQueueReads,
     externalEventSweeps,
     messageSearchIndexWrites,
@@ -113,6 +114,5 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
     jobEnqueueWrites,
-    submitSessionEvent,
   ].map((op) => [op.name, op])
 );
