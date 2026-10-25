@@ -1,4 +1,5 @@
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
+import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
   codingAncestryReads,
   codingAncestryWrites,
@@ -82,6 +83,8 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    codingMergeReads,
+    codingMergeWrites,
     codingAncestryReads,
     codingAncestryWrites,
     codingQueryReads,

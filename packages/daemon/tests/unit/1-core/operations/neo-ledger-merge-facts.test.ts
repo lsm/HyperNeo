@@ -18,7 +18,7 @@ function setup(path = ':memory:') {
 }
 
 describe('ledger merge facts', () => {
-  test('missing is unknown; a covered empty merge commit is known, not a completed merge', () => {
+  test('missing is unknown; a covered empty merge commit is known, not a completed merge', async () => {
     const { db, facts } = setup();
     try {
       expect(facts.read(repo, 7, 100, 10)).toMatchObject({
@@ -29,7 +29,15 @@ describe('ledger merge facts', () => {
         merge: { status: 'unknown', reason: 'missing' },
       });
       expect(
-        facts.record(repo, 7, { value: { state: 'OPEN', mergeCommit: null }, source }, 100, 0)
+        (
+          await facts.observeCurrent(
+            repo,
+            7,
+            { value: { state: 'OPEN', mergeCommit: null }, source },
+            100,
+            0
+          )
+        ).accepted
       ).toBe(true);
       expect(facts.read(repo, 7, 105, 10)).toMatchObject({
         merge: {
@@ -50,29 +58,33 @@ describe('ledger merge facts', () => {
     }
   });
 
-  test('successful unchanged refreshes advance observation, not fact revision', () => {
+  test('successful unchanged refreshes advance observation, not fact revision', async () => {
     const { db, facts } = setup();
     try {
-      facts.record(repo, 7, { value: merged, source }, 100, 0);
+      (await facts.observeCurrent(repo, 7, { value: merged, source }, 100, 0)).accepted;
       const first = facts.read(repo, 7, 100, 10);
-      facts.record(
-        repo,
-        7,
-        { value: { mergeCommit: merged.mergeCommit, state: merged.state }, source },
-        200,
-        first.observationRevision
-      );
+      (
+        await facts.observeCurrent(
+          repo,
+          7,
+          { value: { mergeCommit: merged.mergeCommit, state: merged.state }, source },
+          200,
+          first.observationRevision
+        )
+      ).accepted;
       const repeat = facts.read(repo, 7, 205, 10);
       expect(repeat.factRevision).toBe(first.factRevision);
       expect(repeat.observationRevision).toBeGreaterThan(first.observationRevision);
       expect(repeat.merge).toMatchObject({ status: 'known', observedAt: 200, value: merged });
-      facts.record(
-        repo,
-        7,
-        { value: { state: 'CLOSED', mergeCommit: null }, source },
-        210,
-        repeat.observationRevision
-      );
+      (
+        await facts.observeCurrent(
+          repo,
+          7,
+          { value: { state: 'CLOSED', mergeCommit: null }, source },
+          210,
+          repeat.observationRevision
+        )
+      ).accepted;
       expect(facts.read(repo, 7, 210, 10).factRevision).toBeGreaterThan(first.factRevision);
     } finally {
       db.close();
@@ -80,12 +92,12 @@ describe('ledger merge facts', () => {
   });
 
   for (const reason of ['failed', 'partial', 'rate_limited', 'not_authorized'] as const)
-    test(`latest ${reason} reads unknown while prior successful bytes remain`, () => {
+    test(`latest ${reason} reads unknown while prior successful bytes remain`, async () => {
       const { db, facts } = setup();
       try {
-        facts.record(repo, 7, { value: merged, source }, 100, 0);
+        (await facts.observeCurrent(repo, 7, { value: merged, source }, 100, 0)).accepted;
         const first = facts.read(repo, 7, 100, 100);
-        facts.record(repo, 7, { reason }, 110, first.observationRevision);
+        (await facts.observeCurrent(repo, 7, { reason }, 110, first.observationRevision)).accepted;
         const after = facts.read(repo, 7, 111, 100);
         expect(after.factRevision).toBe(first.factRevision);
         expect(after.merge).toEqual({
@@ -99,7 +111,15 @@ describe('ledger merge facts', () => {
           .get(repo, 7) as { value_json: string };
         expect(JSON.parse(stored.value_json)).toEqual(merged);
         expect(
-          facts.record(repo, 7, { value: merged, source }, 120, after.observationRevision)
+          (
+            await facts.observeCurrent(
+              repo,
+              7,
+              { value: merged, source },
+              120,
+              after.observationRevision
+            )
+          ).accepted
         ).toBe(true);
         expect(facts.read(repo, 7, 120, 10)).toMatchObject({
           factRevision: first.factRevision,
@@ -110,16 +130,20 @@ describe('ledger merge facts', () => {
       }
     });
 
-  test('an initial refused acquisition stays unknown until a successful retry', () => {
+  test('an initial refused acquisition stays unknown until a successful retry', async () => {
     const { db, facts } = setup();
     try {
-      expect(facts.record(repo, 7, { reason: 'failed' }, 100, 0)).toBe(true);
+      expect((await facts.observeCurrent(repo, 7, { reason: 'failed' }, 100, 0)).accepted).toBe(
+        true
+      );
       expect(facts.read(repo, 7, 100, 10)).toMatchObject({
         factRevision: 0,
         observationRevision: 1,
         merge: { status: 'unknown', reason: 'failed', attemptedAt: 100 },
       });
-      expect(facts.record(repo, 7, { value: merged, source }, 110, 1)).toBe(true);
+      expect(
+        (await facts.observeCurrent(repo, 7, { value: merged, source }, 110, 1)).accepted
+      ).toBe(true);
       expect(facts.read(repo, 7, 110, 10)).toMatchObject({
         factRevision: 1,
         merge: { status: 'known', value: merged },
@@ -129,29 +153,47 @@ describe('ledger merge facts', () => {
     }
   });
 
-  test('a late acquisition cannot replace a newer result, including after reopen', () => {
+  test('a late acquisition cannot replace a newer result, including after reopen', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ledger-merge-facts-'));
     let current = setup(join(dir, 'facts.db'));
     try {
       const old = current.facts.read(repo, 7, 100, 10);
       expect(
-        current.facts.record(repo, 7, { value: merged, source }, 110, old.observationRevision)
+        (
+          await current.facts.observeCurrent(
+            repo,
+            7,
+            { value: merged, source },
+            110,
+            old.observationRevision
+          )
+        ).accepted
       ).toBe(true);
       const fresh = current.facts.read(repo, 7, 110, 10);
       current.db.close();
       current = setup(join(dir, 'facts.db'));
       expect(
-        current.facts.record(
-          repo,
-          7,
-          { value: { state: 'OPEN', mergeCommit: null }, source },
-          120,
-          old.observationRevision
-        )
+        (
+          await current.facts.observeCurrent(
+            repo,
+            7,
+            { value: { state: 'OPEN', mergeCommit: null }, source },
+            120,
+            old.observationRevision
+          )
+        ).accepted
       ).toBe(false);
       expect(current.facts.read(repo, 7, 110, 10)).toEqual(fresh);
       expect(
-        current.facts.record(repo, 7, { reason: 'failed' }, 130, old.observationRevision)
+        (
+          await current.facts.observeCurrent(
+            repo,
+            7,
+            { reason: 'failed' },
+            130,
+            old.observationRevision
+          )
+        ).accepted
       ).toBe(false);
       expect(current.facts.read(repo, 7, 110, 10)).toEqual(fresh);
     } finally {
@@ -160,16 +202,20 @@ describe('ledger merge facts', () => {
     }
   });
 
-  test('canonical aliases share revisions and different PRs do not', () => {
+  test('canonical aliases share revisions and different PRs do not', async () => {
     const { db, ledger, facts } = setup();
     try {
       ledger.recordAlias('synthetic/old', repo);
-      expect(facts.record('Synthetic/Old', 7, { value: merged, source }, 100, 0)).toBe(true);
+      expect(
+        (await facts.observeCurrent('Synthetic/Old', 7, { value: merged, source }, 100, 0)).accepted
+      ).toBe(true);
       expect(facts.read(repo.toUpperCase(), 7, 100, 10)).toEqual(
         facts.read('synthetic/old', 7, 100, 10)
       );
       expect(facts.read(repo, 8, 100, 10).merge).toMatchObject({ reason: 'missing' });
-      expect(facts.record(repo, 7, { value: merged, source }, 101, 0)).toBe(false);
+      expect(
+        (await facts.observeCurrent(repo, 7, { value: merged, source }, 101, 0)).accepted
+      ).toBe(false);
     } finally {
       db.close();
     }

@@ -52,7 +52,7 @@ try{
   db.prepare('INSERT INTO pack_coding_repo_aliases(alias,canonical) VALUES(?,?)').run('old/repo',repo);
   const facts=new CodingPrLedgerRepository(db).mergeFacts;
   for(const [number,commit] of [[7,merge],[8,cold],[9,'b'.repeat(40)],[10,'d'.repeat(40)],[11,failedBase]] as const)
-    assert(facts.record(repo,number,{value:{state:'MERGED',mergeCommit:commit},source:'synthetic'},Date.now(),0));
+    assert((await facts.observeCurrent(repo,number,{value:{state:'MERGED',mergeCommit:commit},source:'synthetic'},Date.now(),0)).accepted);
   db.prepare('INSERT INTO pack_coding_ancestry_facts VALUES(?,?,?,?,?,?,?,?,?)').run(repo,merge,head,'ahead',1,1,Date.now(),Date.now(),null);
   control('known');const known=await read([url(7)]);evidence.known=known;
   assert.deepEqual(known.daemons[0].contains,[merge],'Default deploy reader must use the known ledger ancestry when GitHub refuses');

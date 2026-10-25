@@ -326,3 +326,24 @@ test('competing delivery acknowledgements cannot replace an already accepted rec
     rmSync(run, { recursive: true, force: true });
   }
 });
+
+test('recompute releases a held todo only after the latest answer was accepted by its assigned worker', async () => {
+  const f = await fixture();
+  try {
+    f.store.answerQuestion(f.question, ['Staging'], 'button', 3);
+    f.store.updateTodo(f.store.getTodo('todo')!, { state: 'doing' }, 4);
+    expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    const [route] = f.store.questionAnswers.pending();
+    f.store.questionAnswers.accept(route.id, 'accepted-receipt', 5);
+    await f.store.recompute(
+      f.store.getTodo('todo')!,
+      {},
+      6,
+      { state: 'no_opinion' },
+      async () => {}
+    );
+    expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+  } finally {
+    f.db.close();
+  }
+});

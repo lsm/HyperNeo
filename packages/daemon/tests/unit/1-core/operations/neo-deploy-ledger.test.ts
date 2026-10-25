@@ -70,13 +70,15 @@ describe('merge reader identity and revision contract', () => {
         ['owner/repo', 'a'],
         ['ghe.example/owner/repo', 'b'],
       ])
-        facts.record(
-          repo,
-          7,
-          { value: { state: 'MERGED', mergeCommit: commit.repeat(40) }, source: 'synthetic' },
-          100,
-          0
-        );
+        (
+          await facts.observeCurrent(
+            repo,
+            7,
+            { value: { state: 'MERGED', mergeCommit: commit.repeat(40) }, source: 'synthetic' },
+            100,
+            0
+          )
+        ).accepted;
       const read = createCodingMergeReader(
         () => db,
         (() => {
@@ -122,13 +124,15 @@ describe('merge reader identity and revision contract', () => {
       await held;
       const facts = new CodingMergeFactsRepository(db);
       expect(
-        facts.record(
-          'owner/repo',
-          7,
-          { value: { state: 'CLOSED', mergeCommit: null }, source: 'newer' },
-          100,
-          0
-        )
+        (
+          await facts.observeCurrent(
+            'owner/repo',
+            7,
+            { value: { state: 'CLOSED', mergeCommit: null }, source: 'newer' },
+            100,
+            0
+          )
+        ).accepted
       ).toBe(true);
       finish(0);
       expect(await result).toBe(null);

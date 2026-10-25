@@ -72,7 +72,7 @@ test('a merged canonical alias is covered without another lookup', async () => {
       'old/repo',
       'synthetic/ledger'
     );
-    facts.record(
+    await facts.observeCurrent(
       'synthetic/ledger',
       7,
       { value: { state: 'MERGED', mergeCommit: 'a'.repeat(40) }, source: 'github-pr-detail' },
@@ -95,7 +95,7 @@ test('a merged canonical alias is covered without another lookup', async () => {
 test('an OPEN observation is refreshed even within the same clock tick', async () => {
   const { db, facts } = fixture();
   try {
-    facts.record(
+    await facts.observeCurrent(
       'synthetic/ledger',
       7,
       { value: { state: 'OPEN', mergeCommit: null }, source: 'github-pr-detail' },
@@ -130,14 +130,14 @@ test('an OPEN observation is refreshed even within the same clock tick', async (
 test('a failed latest observation cannot reuse an earlier merged fact', async () => {
   const { db, facts } = fixture();
   try {
-    facts.record(
+    await facts.observeCurrent(
       'synthetic/ledger',
       7,
       { value: { state: 'MERGED', mergeCommit: 'a'.repeat(40) }, source: 'github-pr-detail' },
       100,
       0
     );
-    facts.record('synthetic/ledger', 7, { reason: 'failed' }, 101, 1);
+    await facts.observeCurrent('synthetic/ledger', 7, { reason: 'failed' }, 101, 1);
     const spawn: SpawnFn = () => ({
       exited: Promise.resolve(1),
       stdout: new Response('').body!,

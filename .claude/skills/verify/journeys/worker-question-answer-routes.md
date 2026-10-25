@@ -24,10 +24,11 @@ the same while answerDelivery points to the replacement worker. Record that
 read in `evidence/rebind.json`; the answer admission below targets that worker.
 An already accepted route must preserve its worker and receipt on later binds.
 
-Answer the card through the real `neo.question.answer` RPC. The same read must
+Stage an answer through the internal storage writer to isolate this storage
+journey from automatic delivery. The same RPC read must
 show the human's immutable answer, button provenance and a pending delivery.
 The todo must retain its needs-human hold: this build slice stores the answer;
-automatic delivery and hold release are the next PR of #8732.
+automatic delivery and hold release are covered by worker-question-answer-delivery.md.
 
 Exercise the existing delivery primitive explicitly: send the answer using
 `message.send` with the stored route ID as idempotencyKey. Five identical retries
