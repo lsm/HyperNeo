@@ -24,7 +24,9 @@ changes the legacy row, but the global canonical default stays off. With wiring:
   absent/empty templates, timestamps and notification silence. Require
   unchangedImportClearPreserved=true. An actual local reset still treats an absent
   canonical global key as off; never infer an enable from legacy flags. Require
-  canonicalMissingKeyRemainsOff=true. Import reconciliation remains owned by 3d.
+  canonicalMissingKeyRemainsOff=true. A known global on still resets an empty
+  local template to on: knownGlobalClearInherited=true. Only absence in both
+  templates permits the no-write path. Import reconciliation remains owned by 3d.
 - Save two registry toggles concurrently: both succeed without losing either
   canonical choice. Internal worker serialization owns the atomic transition.
 - Fail a later Space write with a synthetic SQL trigger: earlier registry and

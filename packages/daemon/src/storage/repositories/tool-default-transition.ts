@@ -150,6 +150,7 @@ function commit(
           (edit) =>
             edit.selected !== null ||
             prepared.local.changes.length > 0 ||
+            inherited.choices[edit.key] !== undefined ||
             prepared.defaults.get(target.key.id)?.choices[edit.key] !== undefined
         )
         .filter(
