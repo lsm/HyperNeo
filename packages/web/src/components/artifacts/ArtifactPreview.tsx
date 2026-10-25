@@ -72,26 +72,30 @@ export function PreviewHeader({
   children,
   titleId = 'artifact-preview-title',
 }: {
-  title: string;
+  title?: string;
   facts?: string;
-  onBack: () => void;
+  onBack?: () => void;
   children?: ComponentChildren;
   titleId?: string;
 }) {
   return (
     <header class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3">
-      <button
-        type="button"
-        aria-label={t('artifact.back')}
-        onClick={onBack}
-        class="rounded-md px-2 py-1 text-fg-soft hover:bg-surface-raised hover:text-fg"
-      >
-        ←
-      </button>
+      {onBack && (
+        <button
+          type="button"
+          aria-label={t('artifact.back')}
+          onClick={onBack}
+          class="rounded-md px-2 py-1 text-fg-soft hover:bg-surface-raised hover:text-fg"
+        >
+          ←
+        </button>
+      )}
       <div class="min-w-0 flex-1 basis-56">
-        <h1 id={titleId} class="truncate text-sm font-medium" title={title}>
-          {title}
-        </h1>
+        {title && (
+          <h1 id={titleId} class="truncate text-sm font-medium" title={title}>
+            {title}
+          </h1>
+        )}
         {facts && <p class="truncate text-xs text-fg-muted">{facts}</p>}
       </div>
       {children}
@@ -105,12 +109,14 @@ export function ArtifactPreview({
   markdownClass,
   titleId,
   onMetadata,
+  presentation = 'full',
 }: {
   artifactId: string;
   onBack: () => void;
   markdownClass?: string;
   titleId?: string;
   onMetadata?: (metadata: ArtifactFileMetadata) => void;
+  presentation?: 'full' | 'result' | 'tabbed';
 }) {
   const connection = connectionState.value;
   const connected = connection === 'connected';
@@ -118,6 +124,8 @@ export function ArtifactPreview({
   const [shown, setShown] = useState<Shown>({ state: 'loading' });
   const [view, setView] = useState<'preview' | 'source'>('preview');
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const full = presentation === 'full';
+  const mode = full ? view : 'preview';
 
   useEffect(() => {
     setPendingUrl(null);
@@ -173,21 +181,25 @@ export function ArtifactPreview({
     >
       <PreviewHeader
         titleId={titleId}
-        title={metadata?.artifact.title ?? t('artifact.untitled')}
+        title={
+          presentation === 'tabbed'
+            ? undefined
+            : (metadata?.artifact.title ?? t('artifact.untitled'))
+        }
         facts={
           metadata
             ? `${KIND_LABELS[metadata.artifact.kind]} · ${formatBytes(metadata.artifact.byteLength)} · ${revisionLabel(metadata)}`
             : undefined
         }
-        onBack={onBack}
+        onBack={full ? onBack : undefined}
       >
-        {((shown.state === 'ready' && !shown.image) || shown.state === 'html_source') && (
+        {full && ((shown.state === 'ready' && !shown.image) || shown.state === 'html_source') && (
           <div class="flex gap-1">
             {toggle('preview', t('artifact.preview'))}
             {toggle('source', t('artifact.source'))}
           </div>
         )}
-        {metadata && (
+        {full && metadata && (
           <ArtifactDownload
             key={artifactId}
             metadata={metadata}
@@ -200,23 +212,25 @@ export function ArtifactPreview({
         onClick={activateLink}
         onKeyDown={activateLink}
       >
-        {shown.state === 'html_source' && view === 'source' ? (
+        {shown.state === 'html_source' && mode === 'source' ? (
           <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
         ) : shown.state !== 'ready' ? (
           <p class="text-sm text-fg-muted" role="status">
             {shown.state === 'limit' && metadata?.artifact.kind === 'image'
               ? t('artifact.imageLimit')
-              : artifactStateMessage(shown.state)}
+              : !full && shown.state === 'html_source'
+                ? t('artifact.htmlPreviewUnavailable')
+                : artifactStateMessage(shown.state)}
           </p>
         ) : shown.html ? (
-          view === 'preview' ? (
+          mode === 'preview' ? (
             <ArtifactHtmlDocument html={shown.html} />
           ) : (
             <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
           )
         ) : shown.image ? (
           <ArtifactImage blob={shown.image} title={shown.metadata.artifact.title} />
-        ) : view === 'preview' && shown.metadata.artifact.kind === 'markdown' ? (
+        ) : mode === 'preview' && shown.metadata.artifact.kind === 'markdown' ? (
           <MarkdownRenderer content={shown.text} artifactLinks class={markdownClass} />
         ) : (
           <>
@@ -229,13 +243,13 @@ export function ArtifactPreview({
               type="button"
               class="mb-3 rounded-md bg-surface-raised px-3 py-1 text-sm"
               onClick={() =>
-                copyToClipboard(view === 'source' ? (shown.sourceText ?? shown.text) : shown.text)
+                copyToClipboard(mode === 'source' ? (shown.sourceText ?? shown.text) : shown.text)
               }
             >
               {t('artifact.copyVisible')}
             </button>
             <pre class="whitespace-pre-wrap break-words font-mono text-sm select-text">
-              {view === 'source' ? (shown.sourceText ?? shown.text) : shown.text}
+              {mode === 'source' ? (shown.sourceText ?? shown.text) : shown.text}
             </pre>
           </>
         )}

@@ -121,7 +121,7 @@ export function ArtifactPreviewPanel({
           workActive
             ? artifactWorkTabId
             : tabbed && selectedId
-              ? artifactTabIds(selectedId).title
+              ? artifactTabIds(selectedId).tab
               : 'artifact-preview-title'
         }
         aria-owns={workActive ? work?.id : undefined}
@@ -237,7 +237,7 @@ export function ArtifactPreviewPanel({
                 artifactId={file.artifactId}
                 onBack={backArtifactPreview}
                 markdownClass={markdownClass}
-                titleId={artifactTabIds(file.artifactId).title}
+                presentation="tabbed"
                 onMetadata={rememberMetadata}
               />
             </div>
@@ -246,6 +246,7 @@ export function ArtifactPreviewPanel({
           <ArtifactPreview
             key={stack.length}
             artifactId={top.artifactId}
+            presentation={fileTabs ? 'result' : 'full'}
             onBack={backArtifactPreview}
             markdownClass={markdownClass}
           />

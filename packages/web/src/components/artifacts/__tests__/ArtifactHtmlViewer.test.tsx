@@ -61,6 +61,46 @@ describe('locked-down HTML artifact viewer', () => {
     expect(request.mock.calls.some(([, call]) => call.name === 'artifact.file.read')).toBe(false);
   });
 
+  it('shows a result-only document with metadata and no source or download transfer', async () => {
+    const { container } = render(
+      <ArtifactPreview artifactId="html" onBack={() => {}} presentation="tabbed" />
+    );
+    await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());
+    expect(container.querySelector('iframe')!.getAttribute('srcdoc')).toBe(prepared.document);
+    expect(screen.getByText(`HTML · ${source.length} B · snapshot aaaaaaaa`)).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: metadata.artifact.title })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Source', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download complete file' })).toBeNull();
+    expect(request.mock.calls.map(([, call]) => call.name)).toEqual([
+      'artifact.file.get',
+      'artifact.file.html',
+    ]);
+    act(() => {
+      connectionState.value = 'disconnected';
+    });
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(screen.getByText('The daemon that owns this file is not reachable.')).toBeTruthy();
+  });
+
+  it('keeps a sanitizer refusal as a status without reading original source in result mode', async () => {
+    request.mockImplementation(async (_method, call) =>
+      call.name === 'artifact.file.get'
+        ? { accepted: true, metadata }
+        : { accepted: false, reason: 'size_limit' }
+    );
+    const { container } = render(
+      <ArtifactPreview artifactId="html" onBack={() => {}} presentation="result" />
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: metadata.artifact.title })).toBeTruthy()
+    );
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('status').textContent).toBe('This HTML document cannot be previewed.');
+    expect(container.querySelector('iframe, pre')).toBeNull();
+    expect(screen.getByRole('heading', { name: metadata.artifact.title })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Source', exact: true })).toBeNull();
+  });
+
   it('reads original HTML only on Source and renders it as escaped text', async () => {
     const { container } = render(<ArtifactPreview artifactId="html" onBack={() => {}} />);
     await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());
