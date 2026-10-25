@@ -18,12 +18,6 @@ const INTERVAL = 15 * 60_000;
 export class NeoWakeQueueRepository {
   constructor(private readonly db: Database) {}
 
-  isNeo(sessionId: string): boolean {
-    return !!this.db
-      .prepare("SELECT 1 FROM neo_session_bindings WHERE session_id=? AND kind='neo'")
-      .get(sessionId);
-  }
-
   hold(entry: MailboxEntry): void {
     const previous = new JobQueueRepository(this.db).getLatestByPayload(LANE, {
       'to.sessionId': entry.to.kind === 'session' ? entry.to.sessionId : '',
@@ -51,7 +45,8 @@ export class NeoWakeQueueRepository {
     sessionId: string,
     content: MailboxMessageContent,
     before: string | undefined,
-    deliveryUuid: string
+    deliveryUuid: string,
+    pendingOnly = false
   ): MailboxMessageContent {
     for (const job of new JobQueueRepository(this.db).listActiveByPayload('mailbox', {
       'to.sessionId': sessionId,
@@ -59,6 +54,7 @@ export class NeoWakeQueueRepository {
       const entry = job.payload as unknown as MailboxEntry;
       if (
         (!before || entry.id < before) &&
+        (!pendingOnly || job.status === 'pending') &&
         entry.origin !== 'chat' &&
         !entry.message.workerReportKind &&
         !entry.message.neoWakeEvent
@@ -96,7 +92,7 @@ export class NeoWakeQueueRepository {
   }
 
   prepare(entry: MailboxEntry, jobId: string, wake: boolean): MailboxEntry | null {
-    if (entry.to.kind !== 'session' || !this.isNeo(entry.to.sessionId)) return entry;
+    if (entry.to.kind !== 'session') return entry;
     return this.db.transaction(() => {
       if (!wake) {
         this.hold({ ...entry, messageUuid: entry.messageUuid ?? entry.id });
@@ -147,7 +143,8 @@ export class NeoWakeQueueRepository {
               sessionId,
               'Queued worker report batch.',
               undefined,
-              messageUuid
+              messageUuid,
+              true
             ),
           },
         });

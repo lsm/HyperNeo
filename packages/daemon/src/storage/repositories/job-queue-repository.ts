@@ -516,7 +516,7 @@ export class JobQueueRepository {
           .prepare(
             `SELECT id, payload
                  FROM job_queue
-                WHERE queue = 'mailbox'
+                WHERE queue IN ('mailbox', 'neo_notes')
                   AND json_extract(payload, '$.to.sessionId') = ?
                   AND status IN ('pending', 'processing')
                   ${modeFilter}`
@@ -525,7 +525,7 @@ export class JobQueueRepository {
         this.db
           .prepare(
             `DELETE FROM job_queue
-                WHERE queue = 'mailbox'
+                WHERE queue IN ('mailbox', 'neo_notes')
                   AND json_extract(payload, '$.to.sessionId') = ?
                   AND status IN ('pending', 'processing')
                   ${modeFilter}`
