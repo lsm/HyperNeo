@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -237,33 +237,50 @@ describe('hyperneo adapter send and status', () => {
     ).toEqual({ ok: false, reason: 'not_delivered', detail: 'mailbox unavailable' });
   });
 
-  test('creates the native session in the prepared directory without another worktree choice', async () => {
-    const driver = adapter(async (_request, location) => {
-      expect(location.destination.startsWith(projectBase + '/')).toBe(true);
-      return {
-        ok: true,
-        value: {
-          directory: '/fresh/remote-base',
-          release: async () => {
-            throw new Error('Live resource released');
+  test('creates the native session without scanning unrelated protected temp directories', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-'));
+    const directory = join(root, 'prepared');
+    const unrelated = mkdtempSync(join(tmpdir(), 'hyperneo-unrelated-'));
+    chmodSync(unrelated, 0);
+    mkdirSync(join(directory, '.git/info'), { recursive: true });
+    let released = false;
+    try {
+      const driver = adapter(async (_request, location) => {
+        expect(location.destination.startsWith(projectBase + '/')).toBe(true);
+        return {
+          ok: true,
+          value: {
+            directory,
+            release: async () => {
+              released = true;
+            },
           },
-        },
-      };
-    });
-    expect(
-      await driver.start!(
-        {
-          place: { machine: 'imac', folder: source, name: 'repo' },
-          title: 't',
-          message: 'm',
-          preparation: { pack: 'coding', parameters: {} },
-        },
-        { from: 'user', caller: { source: 'rpc' } }
-      )
-    ).toMatchObject({ ok: true });
-    expect(events).toEqual(['create /fresh/remote-base', 'announce new']);
-    expect(existsSync(projectBase)).toBe(false);
-    expect(handed).toHaveLength(1);
+        };
+      });
+      expect(
+        await driver.start!(
+          {
+            place: { machine: 'imac', folder: source, name: 'repo' },
+            title: 't',
+            message: 'm',
+            preparation: { pack: 'coding', parameters: {} },
+          },
+          { from: 'user', caller: { source: 'rpc' } }
+        )
+      ).toMatchObject({ ok: true });
+      expect(events).toEqual([`create ${directory}`, 'announce new']);
+      expect(
+        JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8')).sandbox
+          .enabled
+      ).toBe(true);
+      expect(existsSync(projectBase)).toBe(false);
+      expect(handed).toHaveLength(1);
+      expect(released).toBe(false);
+    } finally {
+      chmodSync(unrelated, 0o700);
+      rmSync(unrelated, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('failed preparation creates no native session or handoff', async () => {

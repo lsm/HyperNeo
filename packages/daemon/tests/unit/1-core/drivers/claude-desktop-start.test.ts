@@ -1,6 +1,7 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  existsSync,
   appendFileSync,
   mkdirSync,
   mkdtempSync,
@@ -458,71 +459,177 @@ describe('claude-desktop start', () => {
     }
   );
 
-  test('prepared Desktop workers keep native path denies outside main across later siblings', async () => {
-    const main = join(dir, 'source');
-    mkdirSync(main);
-    const start = async (title: string) => {
-      let destination = '';
-      const result = await adapter({
-        prepareExecution: async (_preparation, location) => {
-          destination = location.destination;
-          mkdirSync(join(destination, '.git/info'), { recursive: true });
-          return { ok: true, value: { directory: destination, release: async () => {} } };
-        },
-      }).start!(
-        {
-          ...request,
-          title,
-          place: { ...place, folder: main },
-          preparation: { pack: 'coding', parameters: {} },
-        },
-        user
-      );
-      expect(result.ok).toBe(true);
-      return destination;
-    };
-    const first = await start('First worker');
-    expect(first).toBe(join(dir, 'data/claude-worktrees/source/u1'));
-    const settingsPath = join(first, '.claude/settings.local.json');
-    const initial = readFileSync(settingsPath, 'utf8');
-    expect(JSON.parse(initial).permissions).toMatchObject({
-      allow: [`Edit(/${first}/**)`],
-      deny: expect.arrayContaining([`Edit(/${main}/**)`]),
-      disableBypassPermissionsMode: 'disable',
-    });
-    const sibling = join(dir, 'data/claude-worktrees/source/second');
-    mkdirSync(join(sibling, '.git/info'), { recursive: true });
-    const secondDriver = adapter({
-      prepareExecution: async () => ({
-        ok: true,
-        value: { directory: sibling, release: async () => {} },
-      }),
-    });
-    expect(
-      (
-        await secondDriver.start!(
+  test.each(['missing', 'unusable'])(
+    'sibling starts preserve existing policies without recreating %s runtime roots',
+    async (runtimeState) => {
+      const main = join(dir, 'source');
+      mkdirSync(main);
+      const start = async (title: string) => {
+        let destination = '';
+        const result = await adapter({
+          prepareExecution: async (_preparation, location) => {
+            destination = location.destination;
+            mkdirSync(join(destination, '.git/info'), { recursive: true });
+            return { ok: true, value: { directory: destination, release: async () => {} } };
+          },
+        }).start!(
           {
             ...request,
+            title,
             place: { ...place, folder: main },
             preparation: { pack: 'coding', parameters: {} },
           },
           user
-        )
-      ).ok
-    ).toBe(true);
-    const readPolicy = (root: string) =>
-      JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
-    expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
-    expect(readPolicy(sibling).permissions.deny).toContain(`Edit(/${first}/**)`);
-    expect(readPolicy(first).permissions.deny).not.toContain(`Edit(/${first}/**)`);
+        );
+        expect(result.ok).toBe(true);
+        return destination;
+      };
+      const first = await start('First worker');
+      expect(first).toBe(join(dir, 'data/claude-worktrees/source/u1'));
+      const settingsPath = join(first, '.claude/settings.local.json');
+      const initial = readFileSync(settingsPath, 'utf8');
+      expect(JSON.parse(initial).sandbox).toMatchObject({
+        enabled: true,
+        failIfUnavailable: true,
+        allowUnsandboxedCommands: false,
+        excludedCommands: [],
+        filesystem: { allowWrite: expect.arrayContaining([first, join(first, '.git')]) },
+      });
+      expect(JSON.parse(initial).permissions).toMatchObject({
+        allow: [`Edit(/${first}/**)`],
+        deny: expect.arrayContaining([`Edit(/${main}/**)`]),
+        disableBypassPermissionsMode: 'disable',
+      });
+      const sibling = join(dir, 'data/claude-worktrees/source/second');
+      mkdirSync(join(sibling, '.git/info'), { recursive: true });
+      const retained = JSON.parse(initial);
+      retained.env.SYNTHETIC_WORKER_HINT = 'keep';
+      retained.sandbox.network.allowedDomains = ['synthetic.invalid'];
+      writeFileSync(settingsPath, JSON.stringify(retained));
+      const firstRuntime = retained.env.TMPDIR;
+      rmSync(join(firstRuntime, '..'), { recursive: true, force: true });
+      if (runtimeState === 'unusable') writeFileSync(join(firstRuntime, '..'), 'unrelated runtime');
+      const secondDriver = adapter({
+        prepareExecution: async () => ({
+          ok: true,
+          value: { directory: sibling, release: async () => {} },
+        }),
+      });
+      expect(
+        (
+          await secondDriver.start!(
+            {
+              ...request,
+              place: { ...place, folder: main },
+              preparation: { pack: 'coding', parameters: {} },
+            },
+            user
+          )
+        ).ok
+      ).toBe(true);
+      const readPolicy = (root: string) =>
+        JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
+      expect(existsSync(firstRuntime)).toBe(false);
+      expect(readPolicy(first).env).toEqual(retained.env);
+      expect(readPolicy(first).sandbox).toEqual(retained.sandbox);
+      rmSync(join(firstRuntime, '..'), { recursive: true, force: true });
+      expect(readPolicy(first).env.TMPDIR).not.toBe(readPolicy(sibling).env.TMPDIR);
+      expect(readPolicy(first).env.XDG_CACHE_HOME).not.toBe(readPolicy(sibling).env.XDG_CACHE_HOME);
+      expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+      expect(readPolicy(sibling).permissions.deny).toContain(`Edit(/${first}/**)`);
+      expect(readPolicy(first).permissions.deny).not.toContain(`Edit(/${first}/**)`);
+      expect(
+        spawned
+          .filter((args) => args.includes('--desktop'))
+          .every(
+            (args) =>
+              args.slice(0, 7).join(' ') === 'script -q /dev/null claude --desktop --resume u1' &&
+              args.includes('--settings')
+          )
+      ).toBe(true);
+      const reloaded = adapter();
+      expect((await reloaded.status!({ adapter: 'claude-desktop', id: 'local_u1' })).ok).toBe(true);
+      expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+    }
+  );
+
+  test.each(['legacy', 'missing', 'corrupt'])(
+    'resume repairs %s prepared-worker settings before launch',
+    async (state) => {
+      const directory = join(dir, 'prepared');
+      const driver = adapter({
+        prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
+      });
+      expect(
+        (await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user))
+          .ok
+      ).toBe(true);
+      const path = join(directory, '.claude/settings.local.json');
+      const original = JSON.parse(readFileSync(path, 'utf8'));
+      if (state === 'missing') rmSync(path);
+      else
+        writeFileSync(
+          path,
+          state === 'legacy' ? JSON.stringify({ permissions: original.permissions }) : '{broken'
+        );
+      expect(
+        (
+          await driver.send!(
+            { adapter: 'claude-desktop', id: 'local_u1' },
+            'Synthetic legacy resume',
+            user
+          )
+        ).ok
+      ).toBe(true);
+      const repaired = JSON.parse(readFileSync(path, 'utf8'));
+      expect(repaired.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
+      expect(repaired.env.TMPDIR).toBe(original.env.TMPDIR);
+      expect(spawned.at(-1)).toContain(path);
+    }
+  );
+
+  test.each(['missing', 'corrupt'])(
+    'a %s sibling policy does not block a new prepared start',
+    async (state) => {
+      const first = join(dir, 'prepared');
+      const second = join(dir, 'sibling');
+      mkdirSync(join(second, '.git/info'), { recursive: true });
+      const start = async (directory: string) =>
+        adapter({
+          prepareExecution: async () => ({
+            ok: true,
+            value: { directory, release: async () => {} },
+          }),
+        }).start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user);
+      expect((await start(first)).ok).toBe(true);
+      const path = join(first, '.claude/settings.local.json');
+      if (state === 'missing') rmSync(path);
+      else writeFileSync(path, '{broken');
+      expect((await start(second)).ok).toBe(true);
+      const repaired = JSON.parse(readFileSync(path, 'utf8'));
+      expect(repaired.sandbox.enabled).toBe(true);
+      expect(repaired.env.TMPDIR).toBeTruthy();
+    }
+  );
+
+  test('resuming a prepared worker recreates purged runtime directories and passes its policy', async () => {
+    const directory = join(dir, 'prepared');
+    const driver = adapter({
+      prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
+    });
     expect(
-      spawned
-        .filter((args) => args.includes('--desktop'))
-        .every((args) => args.join(' ') === 'script -q /dev/null claude --desktop --resume u1')
+      (await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user))
+        .ok
     ).toBe(true);
-    const reloaded = adapter();
-    expect((await reloaded.status!({ adapter: 'claude-desktop', id: 'local_u1' })).ok).toBe(true);
-    expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+    const settings = join(directory, '.claude/settings.local.json');
+    const runtime = JSON.parse(readFileSync(settings, 'utf8')).env.TMPDIR;
+    rmSync(join(runtime, '..'), { recursive: true, force: true });
+    expect(
+      (await driver.send!({ adapter: 'claude-desktop', id: 'local_u1' }, 'Synthetic resume', user))
+        .ok
+    ).toBe(true);
+    expect(existsSync(runtime)).toBe(true);
+    expect(spawned.at(-1)).toContain(settings);
   });
 
   test('worker repository contents cannot grant Neo write access into a prepared clone', async () => {

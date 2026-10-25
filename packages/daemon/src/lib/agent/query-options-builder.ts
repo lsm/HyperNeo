@@ -1,3 +1,4 @@
+import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';
 import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   CanUseTool,
@@ -382,6 +383,7 @@ export class QueryOptionsBuilder {
   }): Promise<Options> {
     const session = overrides?.session ?? this.ctx.session;
     const config = this.admittedConfig(session);
+    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd());
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
@@ -467,6 +469,7 @@ export class QueryOptionsBuilder {
       ? undefined
       : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
     if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
+    if (handoffDirectory) workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
@@ -525,7 +528,7 @@ export class QueryOptionsBuilder {
             ...neoReadSandbox(),
             filesystem: readAccess.filesystem,
           }
-        : (config.sandbox as Options['sandbox']),
+        : (workerSandbox?.sandbox ?? (config.sandbox as Options['sandbox'])),
 
       mcpServers: mergedMcpServers as Options['mcpServers'],
       strictMcpConfig: true,
@@ -542,6 +545,7 @@ export class QueryOptionsBuilder {
         ...mergedEnv,
         ...compactEnv,
         HYPERNEO_HANDOFF_DIR: handoffDirectory,
+        ...workerSandbox?.env,
         ...readAccess?.env,
       },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),

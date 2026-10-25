@@ -1,3 +1,9 @@
+import { handoffDraftDirectory } from '../../../../src/lib/handoffs/outbox';
+import { installClaudeNativeWrites } from '../../../../src/lib/drivers/claude-native-writes';
+import {
+  workerSandboxPaths,
+  releaseWorkerSandbox,
+} from '../../../../src/lib/drivers/worker-sandbox';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { vi } from 'vitest';
 import type { Session } from '@hyperneo/shared';
@@ -115,6 +121,27 @@ describe('QueryOptionsBuilder', () => {
   afterEach(() => {});
 
   describe('build', () => {
+    it('prepared workers retain sandbox enforcement and recreate purged temp roots', async () => {
+      const root = join(handoffDataDir, 'prepared');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
+      mockSession.workspacePath = root;
+      mockSession.config.sandbox = { enabled: false };
+      await releaseWorkerSandbox(root);
+      const options = await builder.build();
+      expect(options.sandbox).toMatchObject({
+        enabled: true,
+        allowUnsandboxedCommands: false,
+        excludedCommands: [],
+      });
+      const draft = handoffDraftDirectory(handoffDataDir, mockSession.id);
+      expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(draft);
+      expect(options.sandbox?.filesystem?.allowWrite).toContain(draft);
+      expect(options.env?.TMPDIR).toBe(workerSandboxPaths(root).TMPDIR);
+      expect(statSync(options.env!.TMPDIR!).isDirectory()).toBe(true);
+      await releaseWorkerSandbox(root);
+    });
+
     it('should build basic query options', async () => {
       const options = await builder.build();
 

@@ -1,3 +1,5 @@
+import { installClaudeNativeWrites } from './claude-native-writes.ts';
+import { releaseWorkerSandbox } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
@@ -594,13 +596,14 @@ export async function createHyperneoSession(
   if (prepared && !prepared.ok) return { reason: prepared };
   let sessionId: string | undefined;
   try {
+    if (prepared) await installClaudeNativeWrites(prepared.value.directory, [folder]);
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,
       request.model,
       request.provider,
       request.effort,
-      request.inPlace,
+      prepared ? true : request.inPlace,
       identity
     );
   } catch (error) {
@@ -608,7 +611,10 @@ export async function createHyperneoSession(
       return { reason: reject('unsupported_model', error.message) };
     throw error;
   } finally {
-    if (!sessionId) await prepared?.value.release();
+    if (!sessionId && prepared) {
+      await prepared.value.release();
+      await releaseWorkerSandbox(prepared.value.directory);
+    }
   }
   if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
     await deps.sessions.chooseWorktree(sessionId);

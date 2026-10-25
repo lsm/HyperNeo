@@ -1,3 +1,9 @@
+import {
+  codexWorkerSandbox,
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+  resumeWorkerSandbox,
+} from './worker-sandbox.ts';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { Logger } from '../logger.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -886,6 +892,7 @@ async function tryDesktopCodexSend(
   deps: CodexDesktopAdapterDeps,
   mode: 'auto' | 'steer'
 ): Promise<CodexSendGate<'app-server'>> {
+  await resumeWorkerSandbox(detail.thread.folder);
   return steerCodexDesktopTurn(
     deps.desktopSocketPath,
     deps.spawn,
@@ -1139,19 +1146,25 @@ export async function startCodexThread(
         if (!prepared.ok) return prepared;
         workFolder = prepared.value;
       }
+      const sandbox = request.preparation ? codexWorkerSandbox(workFolder.cwd) : null;
+      if (sandbox) await prepareWorkerSandbox(workFolder.cwd);
       const projectFolder = request.inPlace
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
+      const config = {
+        ...sandbox?.config,
+        ...(configuration.value.effort
+          ? { model_reasoning_effort: configuration.value.effort }
+          : {}),
+      };
       const started = await server.call('thread/start', {
         projectId,
         cwd: workFolder.cwd,
         approvalPolicy: 'never',
-        sandbox: 'danger-full-access',
+        sandbox: sandbox?.sandbox ?? 'danger-full-access',
+        ...(sandbox || configuration.value.effort ? { config } : {}),
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
-        ...(configuration.value.effort
-          ? { config: { model_reasoning_effort: configuration.value.effort } }
-          : {}),
       });
       threadId = startedThreadId(started);
       if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
@@ -1172,7 +1185,7 @@ export async function startCodexThread(
       await deps.startDesktopTurn(threadId, {
         threadId,
         approvalPolicy: 'never',
-        sandboxPolicy: { type: 'dangerFullAccess' },
+        sandboxPolicy: sandbox?.sandboxPolicy ?? { type: 'dangerFullAccess' },
         input: [{ type: 'text', text: message, text_elements: [] }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
@@ -1206,7 +1219,10 @@ export async function startCodexThread(
         `${error instanceof Error ? error.message : String(error)}${made}`
       );
     } finally {
-      if (!threadId) await workFolder?.release();
+      if (!threadId) {
+        await workFolder?.release();
+        if (request.preparation) await releaseWorkerSandbox(workFolder?.cwd);
+      }
     }
   });
 }
