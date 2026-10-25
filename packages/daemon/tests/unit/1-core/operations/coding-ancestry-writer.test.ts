@@ -2,7 +2,11 @@ import { expect, spyOn, test } from 'bun:test';
 import { CodingAncestryFactsRepository } from '../../../../src/lib/neo/packs/coding/ancestry-facts.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import {
+  gatewayFor,
+  bindGateway,
+  DbGateway,
+} from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { codingAncestryReads } from '../../../../src/lib/neo/packs/coding/ancestry-facts-db.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/index.ts';
 
@@ -187,5 +191,29 @@ test('ancestry snapshot retries coalesce normalized demands without repeating co
   } finally {
     fault.mockRestore();
     f.db.close();
+  }
+});
+
+test('explicit ancestry observations write only through the bound gateway connection', async () => {
+  const main = new Database(':memory:'),
+    writer = new Database(':memory:');
+  createCodingPackTables(main);
+  createCodingPackTables(writer);
+  main.exec('PRAGMA query_only=ON');
+  const gateway = new DbGateway(':memory:', writer);
+  bindGateway(main, gateway);
+  try {
+    const facts = new CodingAncestryFactsRepository(main);
+    await facts.record(subject, { status: 'behind' }, 100, 0);
+    expect(
+      writer.prepare('SELECT status, observation_revision FROM pack_coding_ancestry_facts').get()
+    ).toEqual({ status: 'behind', observation_revision: 1 });
+    expect(main.prepare('SELECT count(*) AS n FROM pack_coding_ancestry_facts').get()).toEqual({
+      n: 0,
+    });
+  } finally {
+    await gateway.close();
+    main.close();
+    writer.close();
   }
 });
