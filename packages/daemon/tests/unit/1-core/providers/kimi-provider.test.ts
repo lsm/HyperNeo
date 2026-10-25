@@ -115,6 +115,59 @@ describe('KimiProvider', () => {
       expect(models).toEqual([]);
     });
 
+    it('gates static K3.1 entries to the global region unless discovery attests them', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
+
+      const chinaModels = await provider.getModels();
+      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro-highspeed');
+
+      provider.setDefaultRegion('global');
+      const globalModels = await provider.getModels();
+      expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
+      expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro-highspeed');
+    });
+
+    it('shows K3.1 in the china region when the endpoint model list attests it', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const fetchImpl = mock(async (input: unknown) => {
+        if (String(input).endsWith('/v1/models')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                { id: 'kimi-k3.1-pro', object: 'model' },
+                { id: 'kimi-k3.1-pro-highspeed', object: 'model' },
+              ],
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      }) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      const models = await provider.getModels();
+
+      const pro = models.find((m) => m.id === 'kimi-k3.1-pro');
+      const highspeed = models.find((m) => m.id === 'kimi-k3.1-pro-highspeed');
+      expect(pro?.contextWindow).toBe(1_048_576);
+      expect(pro?.thinkingModes).toBe('granular');
+      expect(highspeed?.contextWindow).toBe(1_048_576);
+      expect(highspeed?.thinkingModes).toBe('granular');
+    });
+
+    it('gates cached curated K3.1 entries by region', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
+      provider.setCuratedModels([{ id: 'kimi-k3.1-pro' }, { id: 'kimi-for-coding' }]);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+
+      provider.setDefaultRegion('global');
+      expect(provider.getCachedModels()?.map((m) => m.id)).toContain('kimi-k3.1-pro');
+    });
+
     it('synthesizes curated discovered IDs into the visible model list', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();
@@ -820,6 +873,42 @@ describe('KimiProvider', () => {
       expect(provider.getModelThinkingMode('kimi-k30')).toBeUndefined();
     });
 
+    it('classifies dotted K3.1 IDs as 1M K3-family models with granular thinking', () => {
+      expect(KimiProvider.isKimiK3Model('kimi-k3.1-pro')).toBe(true);
+      expect(KimiProvider.isKimiK3Model('kimi-k3.1-pro-highspeed')).toBe(true);
+      expect(KimiProvider.isKimiK3Model('kimi-k3.1')).toBe(true);
+      expect(KimiProvider.isKimiK3Model('k3.1')).toBe(true);
+      expect(KimiProvider.isKimiK3Model('kimi-k3.10')).toBe(false);
+      expect(KimiProvider.isKimiK3OneMModel('kimi-k3.1-pro')).toBe(true);
+      expect(KimiProvider.isKimiK3OneMModel('kimi-k3.1-pro-highspeed')).toBe(true);
+      expect(provider.getModelThinkingMode('kimi-k3.1-pro')).toBe('granular');
+      expect(provider.getModelThinkingMode('kimi-k3.1-pro-highspeed')).toBe('granular');
+      expect(KimiProvider.resolveContextWindow('kimi-k3.1-pro')).toBe(1_048_576);
+      expect(KimiProvider.resolveContextWindow('kimi-k3.1-pro-highspeed')).toBe(1_048_576);
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k3.1-pro')).toBeUndefined();
+    });
+
+    it('routes K3.1 aliases to the canonical upstream IDs in both regions', () => {
+      expect(provider.ownsModel('kimi-k3.1-pro')).toBe(true);
+      expect(provider.ownsModel('kimi-k3.1-pro-highspeed')).toBe(true);
+      expect(provider.translateModelIdForSdk('k3.1')).toBe('kimi-k3.1-pro');
+      expect(provider.translateModelIdForSdk('kimi-k3.1')).toBe('kimi-k3.1-pro');
+      expect(provider.translateModelIdForSdk('k3.1-pro')).toBe('kimi-k3.1-pro');
+      expect(provider.translateModelIdForSdk('kimi-k3.1-pro')).toBe('kimi-k3.1-pro');
+      expect(provider.translateModelIdForSdk('k3.1-pro-highspeed')).toBe('kimi-k3.1-pro-highspeed');
+
+      const china = provider.buildSdkConfig('kimi-k3.1-pro');
+      expect(china.envVars.ANTHROPIC_MODEL).toBe('kimi-k3.1-pro');
+      expect(china.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+
+      const globalConfig = provider.buildSdkConfig('kimi-k3.1-pro', { region: 'global' });
+      expect(globalConfig.envVars.ANTHROPIC_MODEL).toBe('kimi-k3.1-pro');
+
+      const highspeed = provider.buildSdkConfig('k3.1-pro-highspeed');
+      expect(highspeed.envVars.ANTHROPIC_MODEL).toBe('kimi-k3.1-pro-highspeed');
+      expect(highspeed.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
     it('keeps boundary-crossing moonshot IDs and suffixed known IDs on themselves', () => {
       expect(provider.buildSdkConfig('moonshot-k30').envVars.ANTHROPIC_MODEL).toBe('moonshot-k30');
       expect(provider.translateModelIdForSdk('moonshot-k30')).toBe('moonshot-k30');
@@ -1462,6 +1551,22 @@ describe('KimiProvider', () => {
     it('registers the global k3-256k SDK id so the context bar matches it', () => {
       const k3_256k = KimiProvider.MODELS.find((m) => m.id === 'k3-256k')!;
       expect(k3_256k.sdkModelIds).toContain('kimi-k3-256k');
+    });
+
+    it('includes Kimi K3.1 Pro and Highspeed with 1M context and granular thinking', () => {
+      const pro = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3.1-pro');
+      const highspeed = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3.1-pro-highspeed');
+      expect(pro?.name).toBe('Kimi K3.1 Pro');
+      expect(pro?.alias).toBe('k3.1');
+      expect(pro?.contextWindow).toBe(1_048_576);
+      expect(pro?.thinkingModes).toBe('granular');
+      expect(pro?.providerAliases).toContain('k3.1');
+      expect(pro?.providerAliases).toContain('kimi-k3.1');
+      expect(pro?.providerAliases).toContain('k3.1-pro');
+      expect(pro?.releaseDate).toBe('2026-10-24');
+      expect(highspeed?.name).toBe('Kimi K3.1 Pro Highspeed');
+      expect(highspeed?.contextWindow).toBe(1_048_576);
+      expect(highspeed?.thinkingModes).toBe('granular');
     });
 
     it('resolves moonshot alias prefixes by longest match so 256K aliases do not collapse to the 1M entry', () => {
