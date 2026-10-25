@@ -697,7 +697,7 @@
 
 @media (min-width: 720px) {
   .neo-shell.neo-preview-focus {
-    --artifact-preview-width: 56%;
+    --artifact-preview-width: var(--neo-preview-width, 56%);
     display: grid;
     grid-template: minmax(0, 1fr) / minmax(0, calc(100% - var(--artifact-preview-width))) minmax(
         0,
@@ -764,7 +764,7 @@
 }
 @media (min-width: 1440px) {
   .neo-shell.neo-preview-focus {
-    --artifact-preview-width: 44%;
+    --artifact-preview-width: var(--neo-preview-width, 44%);
   }
   .neo-shell.neo-preview-focus:not(.neo-preview-work) {
     grid-template-columns: minmax(0, calc((100% - var(--artifact-preview-width)) * 0.58)) minmax(
@@ -806,4 +806,31 @@
     border-radius: 0 0 24px 24px;
     background: var(--surface);
   }
+}
+.neo-preview-resizer {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  right: calc(var(--artifact-preview-width) - 12px);
+  width: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.neo-preview-resizer::after {
+  content: "";
+  width: 3px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  opacity: 0.4;
+}
+.neo-preview-resizer:is(:hover, :focus-visible)::after {
+  background: var(--accent);
+  opacity: 1;
 }
