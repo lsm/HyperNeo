@@ -11,7 +11,7 @@ test('Neo snapshot facts, check lists and done-page facts come from a reader sna
   const dir = mkdtempSync(join(tmpdir(), 'neo-read-worker-'));
   const path = join(dir, 'synthetic.db');
   const db = new Database(path);
-  const gateway = new DbGateway(path, null);
+  const gateway = new DbGateway(path, db);
   try {
     db.exec('PRAGMA journal_mode=WAL');
     runMigrations(db, () => {});

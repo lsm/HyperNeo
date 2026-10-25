@@ -1,3 +1,6 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { neoDerivedId } from '../../lib/neo/derived-id.ts';
@@ -175,6 +178,50 @@ export interface NeoCardReplyContext {
 }
 
 export class NeoAskTodoRepository {
+  read<K extends (typeof neoTodoReads.methods)[number]>(
+    method: K,
+    ...args: Parameters<NeoAskTodoRepository[K]>
+  ): Promise<ReturnType<NeoAskTodoRepository[K]>> {
+    return gatewayFor(this.db).call(neoTodoReads, method, ...(args as never)) as Promise<
+      ReturnType<NeoAskTodoRepository[K]>
+    >;
+  }
+
+  snapshot(projectId: string | null | undefined, limit: number) {
+    const asks = this.listAsks(projectId, limit);
+    const ids = asks.map((ask) => ask.id);
+    const todos = this.listTodosForAsks(ids);
+    return {
+      asks,
+      unlisted: this.countAsks(projectId) - asks.length,
+      facts: {
+        todos,
+        questions: this.listQuestionsForAsks(ids),
+        links: new NeoTodoSessionRepository(this.db).readLinksForTodos(
+          todos.map((todo) => todo.id)
+        ),
+      },
+    };
+  }
+
+  doneTodoFacts(askId: string) {
+    const todos = this.listTodos(askId);
+    return {
+      ask: this.getAsk(askId),
+      todos,
+      links: new NeoTodoSessionRepository(this.db).readLinksForTodos(todos.map((todo) => todo.id)),
+    };
+  }
+
+  followedRefs() {
+    const sessions = new NeoTodoSessionRepository(this.db);
+    return this.listCheckable().flatMap((todo) => sessions.readRef(todo.id) ?? []);
+  }
+
+  todoLinks(ids: readonly string[]) {
+    return new NeoTodoSessionRepository(this.db).readLinksForTodos(ids);
+  }
+
   constructor(
     private readonly db: Database,
     private readonly changed: () => void = () => {},
@@ -843,3 +890,24 @@ export class NeoAskTodoRepository {
     this.changed();
   }
 }
+
+export const neoTodoReads = defineRepositoryOp(
+  'neo.todoReads',
+  'read',
+  class extends NeoAskTodoRepository {
+    constructor(db: Database) {
+      super(db);
+    }
+  },
+  [
+    'snapshot',
+    'doneTodoFacts',
+    'listCheckable',
+    'listOpenAsks',
+    'listTodosForAsks',
+    'followedRefs',
+    'listStalledAsks',
+    'listGoalAsks',
+    'todoLinks',
+  ]
+);

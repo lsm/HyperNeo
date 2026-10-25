@@ -166,7 +166,7 @@ describe('neo.session.track', () => {
     const [todo] = service.todos.listTodos(ask.id);
     expect(todo).toMatchObject({ state: 'doing', instruction: null, startedAt: tapped });
     expect(service.todoSessions.readRef(todo.id)).toEqual(ref);
-    expect(service.followedCardRefs(tapped)).toEqual([ref]);
+    expect(await service.followedCardRefs(tapped)).toEqual([ref]);
     status = { status: 'done', lastActivityAt: tapped - 1 };
     await service.todoRunner.refresh(() => {});
     expect(service.todos.getTodo(todo.id)?.state).toBe('doing');

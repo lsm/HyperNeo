@@ -34,7 +34,7 @@ export type NeoSessionWatcherDeps = {
   log: Logger;
   seen: Pick<NeoSessionSeenRepository, 'list' | 'replace'>;
   registry: () => OperationRegistry;
-  followedCardRefs: (now: number) => WorkRef[];
+  followedCardRefs: (now: number) => WorkRef[] | Promise<WorkRef[]>;
   mutedSessions: () => readonly string[] | undefined;
   sessionBranchPrs: (ref: WorkRef) => Promise<string[]>;
   readRemotes: (folder: string) => Promise<string[]>;
@@ -85,7 +85,7 @@ export class NeoSessionWatcher {
         return {
           sessions: listNeoWatchedSessions(
             value?.places ?? [],
-            this.deps.followedCardRefs(now),
+            await this.deps.followedCardRefs(now),
             now,
             this.deps.mutedSessions()
           ),

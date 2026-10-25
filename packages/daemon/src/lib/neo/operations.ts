@@ -381,10 +381,13 @@ export function createNeoOperations(service: NeoService) {
     const all = service.repo.listProjects();
     const projects = all.filter((item) => !scope || item.id === scope);
     const repositories = service.repo.repositories();
-    const asks = service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10);
-    const unlisted = service.todos.countAsks(scope) - asks.length;
+    const { asks, unlisted, facts } = await service.todos.read(
+      'snapshot',
+      scope,
+      caller.source === 'rpc' ? 50 : 10
+    );
     const { todoAsks, pinned } = neoSnapshotAskEntries(
-      projectNeoAskEntries(asks, service.todos, service.todoSessions, service.installedPacks()),
+      projectNeoAskEntries(asks, facts, service.installedPacks()),
       detailed ? 20 : undefined
     );
     const identities = new Map<string, ReturnType<typeof service.readWorker>>();
@@ -522,8 +525,8 @@ export function createNeoOperations(service: NeoService) {
       'result:track'
     )
     .pipe(
-      (notice: NeoSessionNotice, now: number) =>
-        requireNeoTrackableSession(notice, service.followedCardRefs(now)),
+      async (notice: NeoSessionNotice, now: number) =>
+        requireNeoTrackableSession(notice, await service.followedCardRefs(now)),
       ['track', 'now'],
       'result:track'
     )

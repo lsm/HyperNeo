@@ -410,7 +410,10 @@ export class NeoService {
   }
 
   async todoWorkers<T extends NeoTodo>(todos: readonly T[]): Promise<T[]> {
-    const links = this.todoSessions.readLinksForTodos(todos.map((todo) => todo.id));
+    const links = await this.todos.read(
+      'todoLinks',
+      todos.map((todo) => todo.id)
+    );
     const reads = new Map<string, ReturnType<typeof this.readWorker>>();
     return Promise.all(
       todos.map(async (todo) => {
@@ -529,7 +532,7 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
-    publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
+    await publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
   }
 
@@ -550,10 +553,6 @@ export class NeoService {
         this.watching = null;
       });
     await this.watching;
-  }
-
-  private packEvidenceWorkIds(): string[] {
-    return this.todos.listCheckable().map((todo) => todo.id);
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
@@ -589,8 +588,8 @@ export class NeoService {
     return { ok: true };
   }
 
-  followedCardRefs(_now: number): WorkRef[] {
-    return this.packEvidenceWorkIds().flatMap((id) => this.todoSessions.readRef(id) ?? []);
+  followedCardRefs(_now: number): Promise<WorkRef[]> {
+    return this.todos.read('followedRefs');
   }
 
   packs(): NeoPack[] {
