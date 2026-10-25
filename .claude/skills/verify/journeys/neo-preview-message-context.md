@@ -57,11 +57,13 @@ the existing artifact reader authorizes it again. Work/file switching must keep
 the viewer and avoid rereading file bytes even when binding metadata is fetched.
 No unattended GUI/browser or real-device claim is made.
 
-Mount-time Preview/draft load ordering and failure are tracked in #8675 with
-refresh/reconnect recovery. Metadata arriving before an empty saved draft may
-leave auto-binding inactive; Use current Preview still binds explicitly. Recovery
-must publish scoped reactive readiness and preserve original/unbound context,
-newer edits and explicit rebinds rather than treating a failed load as empty.
+Mount-time Preview/draft readiness is scoped and reactive. Component/hook checks
+cover metadata-before-draft ordering, an empty successful load, failed read and
+reconnect, cancelled scopes, older request failure, and explicit removal/rebind or
+new typing before completion. Only successful readiness may auto-bind an untouched
+empty draft; a failed read is not empty. Reconnect reuses the existing adoption
+refresh. Durable unsent context and immutable request recovery remain #8706/#8707
+under #8675; readiness alone does not claim complete refresh recovery.
 
 Also run the compiled-worker-startup journey when changing these schema import
 boundaries. Source-mode RPC can pass while a schema-to-runtime dependency cycle

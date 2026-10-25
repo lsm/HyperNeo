@@ -5,6 +5,7 @@ import { connectionState } from '../lib/state';
 
 export interface UseInputDraftResult {
   content: string;
+  loadState: 'loading' | 'ready' | 'failed';
   setContent: (content: string) => void;
   isSavedDraft: (targetSessionId: string, content: string) => boolean;
   readSavedDraft: (targetSessionId: string) => string | undefined;
@@ -19,6 +20,10 @@ export function useInputDraft(
   flushOnUnmount = false
 ): UseInputDraftResult {
   const contentSignal = useSignal('');
+  const loaded = useSignal<{ scope: string; state: UseInputDraftResult['loadState'] }>({
+    scope: sessionId,
+    state: 'loading',
+  });
   const flushSessionIdRef = useRef(sessionId);
   flushSessionIdRef.current = sessionId;
   const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,12 +54,22 @@ export function useInputDraft(
       onResult?: (ok: boolean, applied?: boolean, draft?: string, voicePending?: string) => void,
       applyGuard?: () => boolean
     ): void => {
+      const requestSeq = ++loadRequestSeqRef.current;
+      const publish = (state: UseInputDraftResult['loadState']) => {
+        if (
+          !isCancelled() &&
+          currentSessionIdRef.current === targetSessionId &&
+          loadRequestSeqRef.current === requestSeq
+        )
+          loaded.value = { scope: targetSessionId, state };
+      };
+      publish('loading');
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
+        publish('failed');
         onResult?.(false);
         return;
       }
-      const requestSeq = ++loadRequestSeqRef.current;
       hub
         .request<{
           session?: { metadata?: { inputDraft?: string; inputDraftVoicePending?: string } };
@@ -74,6 +89,7 @@ export function useInputDraft(
               lastNonEmptyContentRef.current = { sessionId: targetSessionId, content: draft };
             }
           }
+          publish('ready');
           onResult?.(
             true,
             applied,
@@ -83,10 +99,11 @@ export function useInputDraft(
         })
         .catch(() => {
           if (isCancelled()) return;
+          publish('failed');
           onResult?.(false);
         });
     },
-    [contentSignal]
+    [contentSignal, loaded]
   );
 
   const issueAdoptionRefresh = useCallback(
@@ -187,8 +204,9 @@ export function useInputDraft(
     loadDraft(
       sessionId,
       () => cancelled,
-      (_ok, applied, draft, voicePending) => {
+      (ok, applied, draft, voicePending) => {
         if (cancelled) return;
+        if (!ok) deferredVoiceAdoptRef.current = sessionId;
         const pendingTrimmed = (voicePending ?? '').trim();
         if (!applied) {
           if (pendingTrimmed !== '') {
@@ -504,6 +522,9 @@ export function useInputDraft(
       get content() {
         return contentSignal.value;
       },
+      get loadState() {
+        return loaded.value.scope === sessionId ? loaded.value.state : 'loading';
+      },
       setContent,
       readSavedDraft: (targetSessionId) => lastSavedDraftsRef.current.get(targetSessionId),
       isSavedDraft: (targetSessionId, content) =>
@@ -513,6 +534,6 @@ export function useInputDraft(
       clearSubmitted,
       holdDraftAdoption,
     }),
-    [contentSignal, setContent, clear, clearSubmitted, holdDraftAdoption]
+    [contentSignal, loaded, sessionId, setContent, clear, clearSubmitted, holdDraftAdoption]
   );
 }

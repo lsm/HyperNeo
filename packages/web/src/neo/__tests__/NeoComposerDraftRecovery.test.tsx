@@ -214,6 +214,76 @@ function binding(name: string, hash: string) {
 }
 
 describe('Neo live preview binding', () => {
+  it('recovery: binds only after the delayed empty draft load settles', async () => {
+    let release!: (value: unknown) => void;
+    slowLoad = new Promise((resolve) => {
+      release = resolve;
+    });
+    previewRoute();
+    openPreview('report-a');
+    mount();
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    await act(async () => {
+      release({ session: { metadata: { inputDraft: '' } } });
+    });
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+  });
+  it.each([false, true])(
+    'retries failed recovery without rebinding newer typing: %s',
+    async (typed) => {
+      let reject!: (error: Error) => void;
+      slowLoad = new Promise((_resolve, fail) => {
+        reject = fail;
+      });
+      previewRoute();
+      mount();
+      openPreview('report-a');
+      await screen.findByRole('button', { name: 'Use current Preview' });
+      await act(async () => {
+        reject(new Error('Synthetic draft read failure'));
+      });
+      expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+      if (typed) type('Newer unbound text');
+      slowLoad = null;
+      await act(async () => {
+        connectionState.value = 'disconnected';
+      });
+      await act(async () => {
+        connectionState.value = 'connected';
+      });
+      if (typed) {
+        await act(async () => {});
+        expect(value()).toBe('Newer unbound text');
+        expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+      } else await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    }
+  );
+  it.each(['remove', 'rebind'] as const)(
+    'retains explicit %s while empty draft load is pending',
+    async (choice) => {
+      let release!: (value: unknown) => void;
+      slowLoad = new Promise((resolve) => {
+        release = resolve;
+      });
+      previewRoute();
+      mount();
+      openPreview('report-a');
+      fireEvent.click(await screen.findByRole('button', { name: 'Use current Preview' }));
+      openPreview('report-b');
+      await screen.findByRole('button', { name: 'Use current Preview' });
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: choice === 'remove' ? 'Remove Preview context' : 'Use current Preview',
+        })
+      );
+      await act(async () => {
+        release({ session: { metadata: { inputDraft: '' } } });
+      });
+      expect(!!binding('report-b', 'bbbbbbbb')).toBe(choice === 'rebind');
+      expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    }
+  );
   it('keeps an authored draft on its snapshot until explicitly rebound or removed', async () => {
     previewRoute();
     const view = mount();

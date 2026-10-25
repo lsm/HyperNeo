@@ -196,16 +196,13 @@ export function NeoLive() {
     attachments.reading > 0;
   const pinPreview = (reference = previewContext) =>
     setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+  const draftLoadState = inputDraft.loadState;
   useLayoutEffect(() => {
     if (!neo.sessionId || restoredPreview?.pinned) return;
     if (framedDraft) pinPreview();
-    else if (
-      previewCandidate &&
-      inputDraft.readSavedDraft(neo.sessionId) !== undefined &&
-      previewCandidate !== previewContext
-    )
+    else if (previewCandidate && draftLoadState === 'ready' && previewCandidate !== previewContext)
       setRestoredPreview({ scope: neo.sessionId, reference: previewCandidate });
-  }, [neo.sessionId, framedDraft, previewCandidate, restoredPreview]);
+  }, [neo.sessionId, framedDraft, previewCandidate, restoredPreview, draftLoadState]);
   const expandable = focusPreview && previewTarget?.kind !== 'reference';
   const expanded = expandable && previewExpanded;
   const previewMin = roomy ? 32 : 40;
