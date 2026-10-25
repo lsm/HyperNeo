@@ -56,3 +56,15 @@ persist exactly one history row through the DB writer and produce zero Neo
 turns. The main connection is restored in finally. Retain readonly-quiet.json;
 the prior head fails with a read-only database error. Also run the
 sdk-message-gateway-routing unit suite, including its typed writer inventory.
+
+## Hoisted dependency layout
+
+Run `bash .claude/skills/verify/neo-quiet-wake-hoisted.sh "$RUN"` with a fresh,
+absolute run directory. This wrapper temporarily exposes zod at the worktree's
+root node_modules and moves its nested daemon entry aside, restores both on
+EXIT, and executes the same isolated-daemon proof. It owns only these worktree
+dependency entries. Shared environment and isolation rules remain in SKILL.md.
+Retain layout.txt, proof.log and observed.json. The prior helper fails at module
+load in this layout. The helper must also pass under the normal isolated linker,
+where zod is present only beside the daemon sources, by using the daemon's
+registered work.status schema instead of importing a package installation path.
