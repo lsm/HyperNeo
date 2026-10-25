@@ -42,6 +42,14 @@ cd packages/web && bun run build && cd ../..
   shows `HyperNeo Test Server` and `Database: <run>/data/daemon.db`.
 - The daemon logs nothing in test mode. Set `VERIFY_LOG_LEVEL=error` (or `info`,
   `debug`) on `launch.sh` to see its errors in `daemon.log`.
+- Keep launch and proof in the same owning shell with a `stop.sh` EXIT trap;
+  exiting a tool shell can terminate its children before the next tool call.
+
+Headless browser helpers accept `VERIFY_BROWSER` for an installed Chromium
+executable and `NODE_PATH` for existing Playwright dependencies. A cached browser
+directory may be incomplete: if launch reports missing framework files, retain
+the error and report browser proof as pending. An aborted launch is not a pass;
+do not change browser permissions or system settings to work around it.
 
 Give it a model, once per run (stored in the run's DB only):
 

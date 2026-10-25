@@ -6,6 +6,7 @@ import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { messageTime } from '../NeoMessage.tsx';
 import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
+import * as clipboard from '../../lib/utils.ts';
 
 beforeEach(() => {
   locale.value = 'zh-Hans';
@@ -90,6 +91,29 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
+  it('copies a quote after expanding and reopening a collapsed card', async () => {
+    locale.value = 'en';
+    const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+    const data = entry({});
+    data.ask.outcome = '> Ready **to send**.\n>\n> Thank you.';
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    try {
+      expect(app.queryByRole('button', { name: 'Copy quote' })).toBeNull();
+      fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+      await waitFor(() => expect(app.getByRole('button', { name: 'Copy quote' })).toBeTruthy());
+      fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
+      await waitFor(() => expect(copy).toHaveBeenLastCalledWith('Ready to send.\n\nThank you.'));
+      fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+      expect(app.queryByRole('button', { name: 'Copy quote' })).toBeNull();
+      fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+      await waitFor(() =>
+        expect(app.getAllByRole('button', { name: 'Copy quote' })).toHaveLength(1)
+      );
+    } finally {
+      copy.mockRestore();
+    }
+  });
+
   it.each(['open', 'done', 'dropped'] as const)('offers ask Reply for a %s card', (status) => {
     locale.value = 'en';
     const data = entry({});

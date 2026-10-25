@@ -350,6 +350,35 @@
   background: var(--neo-quote-background);
   border-radius: 0 8px 8px 0;
   padding: 8px 12px;
+  position: relative;
+  padding-right: 72px;
+}
+
+.neo-quote-copy {
+  position: absolute;
+  top: 0;
+  right: 4px;
+}
+
+.neo-quote-copy-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  min-height: 44px;
+  font-style: normal;
+}
+
+.neo-quote-copy-button [aria-live] {
+  min-height: 12px;
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.neo-quote-copy-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
 }
 
 .neo-markdown th {

@@ -9,6 +9,7 @@ import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
 import { LruCache } from '../../lib/lru-cache.ts';
 import { decideArtifactImage, decideArtifactLink } from '../../lib/artifact-link-policy.ts';
 import { markPreviewReferences } from './markdown-references.ts';
+import { attachQuoteCopyButtons } from './markdown-quote-copy.tsx';
 
 interface MarkdownRendererProps {
   content: string;
@@ -552,7 +553,10 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleReference);
     container.addEventListener('keydown', handleReference);
 
-    const copyMounts = attachCodeBlockCopyButtons(containerRef.current);
+    const copyMounts = [
+      ...attachQuoteCopyButtons(container),
+      ...attachCodeBlockCopyButtons(container),
+    ];
 
     let mermaidCancelled = false;
     const mermaidMounts: Array<HTMLElement> = [];
