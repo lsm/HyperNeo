@@ -58,7 +58,7 @@ function setup(
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   const toldKeys: (string | undefined)[] = [];
-  let prOpen = false;
+  let prOpen: boolean | Promise<boolean> = false;
   const checkedTodos: string[] = [];
   let status: unknown = null;
   let sendResult: unknown;
@@ -80,6 +80,7 @@ function setup(
       waiting: () => prOpen,
     },
   } satisfies NeoPack;
+  const packs: NeoPack[] = [pack];
   const runner = createNeoTodoRunner({
     store,
     sessions,
@@ -95,7 +96,7 @@ function setup(
         return completed(sendResult ?? { ok: true, value: { delivered: true, receipt } });
       return completed(status);
     },
-    packs: () => [pack],
+    packs: () => packs,
     tell: async (_ask, _todo, note, key) => {
       beforeTell?.();
       told.push(note);
@@ -127,11 +128,12 @@ function setup(
     told,
     toldKeys,
     checkedTodos,
+    packs,
     add,
     setStatus: (value: unknown) => {
       status = value;
     },
-    setPrOpen: (value: boolean) => {
+    setPrOpen: (value: boolean | Promise<boolean>) => {
       prOpen = value;
     },
     setSend: (value: unknown) => {
@@ -1572,6 +1574,59 @@ describe('stopped worker ladder', () => {
       expect(h.told).toHaveLength(count);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
     } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('an asynchronous false waiting result permits the worker reminder ladder', async () => {
+    const h = await stopped(null);
+    try {
+      h.setPrOpen(Promise.resolve(false));
+      for (const minutes of [20, 40, 60]) await h.at(minutes);
+      expect(h.warnings).toEqual([]);
+      expect(h.sends()).toHaveLength(2);
+      expect(h.told.filter((note) => note.includes('reminder window elapsed'))).toHaveLength(1);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a waiting decision is awaited and short-circuits later pack hooks', async () => {
+    const h = await stopped(null);
+    let release!: (waiting: boolean) => void;
+    const waiting = new Promise<boolean>((done) => {
+      release = done;
+    });
+    const later: string[] = [];
+    h.packs.push({
+      ...h.packs[0],
+      id: 'later',
+      todos: {
+        ...h.packs[0].todos!,
+        waiting: () => {
+          later.push('called');
+          return false;
+        },
+      },
+    });
+    try {
+      h.setPrOpen(waiting);
+      let settled = false;
+      const pending = h.at(20).then(() => {
+        settled = true;
+      });
+      await new Promise((done) => setImmediate(done));
+      const beforeReply = { settled, sends: h.sends().length, later: [...later] };
+      release(true);
+      await pending;
+      expect(beforeReply).toEqual({ settled: false, sends: 0, later: [] });
+      expect(later).toEqual([]);
+      expect(h.sends()).toEqual([]);
+      expect(h.warnings).toEqual([]);
+    } finally {
+      release(true);
       h.clock.mockRestore();
       h.db.close();
     }
