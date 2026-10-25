@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
@@ -53,25 +54,31 @@ try {
   const defaultReply = await add('default');
   const homePath = projects.getProject('project:synthetic-life')?.homePath;
   const defaultStart = starts.find(start => start.title === 'default');
+  projects.saveProject({ id: 'project:another-life', title: 'Another life project', summary: '', context: '' }, 0);
+  open('second-project', 'Organize another non-coding task', 'project:another-life');
+  const secondReply = await add('second-project');
+  const secondStart = starts.find(start => start.title === 'second-project');
   const invented = join(run, 'home/life-admin');
   open('invented', 'Organize my life admin');
   const inventedReply = await add('invented', { place: { machine: hostname(), folder: invented, name: 'Invented folder' }, createFolder: true });
   const named = join(run, 'home/user-named');
+  const messageId = crypto.randomUUID();
+  assert(new NeoConversationAskRepository(db).append({ conversationId: projects.conversationId(), requestId: messageId, askOrigin: { sessionId: sender, messageId }, content: `Please create the session in ${named}` }).accepted);
   open('named', `Please create the session in ${named}`);
   const namedReply = await add('named', { place: { machine: hostname(), folder: named, name: 'User named folder' }, createFolder: true });
   const workspace = join(run, 'workspace/inside');
   open('workspace', 'Organize my life admin');
   const workspaceReply = await add('workspace', { place: { machine: hostname(), folder: workspace, name: 'Inside workspace' }, createFolder: true });
   const checks = {
-    projectDefault: defaultReply.ok === true && !!homePath && defaultStart?.folder === join(run, 'data/Neo', homePath) && existsSync(defaultStart.folder),
+    sharedDefault: defaultReply.ok === true && homePath === null && defaultStart?.folder === join(run, 'workspace/home') && existsSync(defaultStart.folder) && secondReply.ok === true && secondStart?.folder === defaultStart.folder,
     inventedRefused: !existsSync(invented) && !starts.some(start => start.title === 'invented') && /user.named|user.*path|path.*user/i.test(String(store.getTodo(inventedReply.todo?.id)?.reason ?? inventedReply.reason)),
     namedAllowed: namedReply.ok === true && existsSync(named) && starts.some(start => start.folder === named),
-    workspaceAllowed: workspaceReply.ok === true && existsSync(workspace) && starts.some(start => start.folder === workspace),
+    differentWorkspaceRefused: !existsSync(workspace) && !starts.some(start => start.folder === workspace) && workspaceReply.todo?.state === 'failed',
   };
   evidence.push({ homePath, starts, checks });
   console.log(JSON.stringify(checks));
   assert(Object.values(checks).every(Boolean), 'Project placement regression: see evidence/project-start-home.json');
-  console.log(`PASS: actual daemon Neo MCP -> todo runner -> work.start -> HyperNeo adapter; project home persisted; invented folder refused; user-named and workspace folders created. Worker creation is synthetic; no model or GUI. ${run}/evidence/project-start-home.json`);
+  console.log(`PASS: actual daemon Neo MCP -> todo runner -> work.start -> HyperNeo adapter; one non-coding home shared across projects; invented and different workspace folders refused; user-named folder created; coordinator home unchanged. Worker creation is synthetic; no model or GUI. ${run}/evidence/project-start-home.json`);
 } finally {
   globalThis.fetch = network;
   writeFileSync(join(run, 'evidence/project-start-home.json'), JSON.stringify(evidence, null, 2));
