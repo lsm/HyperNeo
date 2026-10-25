@@ -421,16 +421,9 @@ export class KimiProvider implements Provider {
       : [...KimiProvider.MODELS];
   }
 
-  private static gateK31ModelsForRegion(
-    models: ModelInfo[],
-    region: KimiRegion,
-    discoveredIds?: ReadonlySet<string>
-  ): ModelInfo[] {
+  private static gateK31ModelsForRegion(models: ModelInfo[], region: KimiRegion): ModelInfo[] {
     if (region === 'global') return models;
-    return models.filter(
-      (model) =>
-        !KimiProvider.K31_MODEL_IDS.has(model.id) || (discoveredIds?.has(model.id) ?? false)
-    );
+    return models.filter((model) => !KimiProvider.K31_MODEL_IDS.has(model.id));
   }
 
   private resolveEffectiveRegion(): KimiRegion {
@@ -465,19 +458,13 @@ export class KimiProvider implements Provider {
       budget_tokens: 16_000,
     });
     let models: ModelInfo[];
-    let discoveredIds: ReadonlySet<string> | undefined;
     try {
       const discovered = await this.listRemoteModels({ discoveryOnly: true });
-      discoveredIds = new Set(discovered.map((model) => model.id));
       models = mergeDiscoveredModels(KimiProvider.baseModelsForRegion(region), discovered);
     } catch {
       models = KimiProvider.baseModelsForRegion(region);
     }
-    return KimiProvider.gateK31ModelsForRegion(
-      this.mergeCuratedModels(models),
-      region,
-      discoveredIds
-    );
+    return KimiProvider.gateK31ModelsForRegion(this.mergeCuratedModels(models), region);
   }
 
   setCuratedModels(models: CuratedModel[] | undefined): void {
@@ -541,7 +528,7 @@ export class KimiProvider implements Provider {
     const fingerprint = this.discoveryFingerprint();
     if (!options.force && cacheable) {
       const cached = this.discoveryCache.get(fingerprint);
-      if (cached) return cached;
+      if (cached) return this.finishDiscoveredModels(cached, options);
     }
     const baseUrl = this.resolveModelListBaseUrl(options.baseUrl);
     const models = await fetchRemoteModelList({
@@ -556,11 +543,17 @@ export class KimiProvider implements Provider {
     if (cacheable) {
       this.discoveryCache.set(fingerprint, discovered);
     }
+    return this.finishDiscoveredModels(discovered, options);
+  }
+
+  private finishDiscoveredModels(
+    discovered: ModelInfo[],
+    options: ListRemoteModelsOptions
+  ): ModelInfo[] {
     if (options.discoveryOnly) return discovered;
     return KimiProvider.gateK31ModelsForRegion(
       this.mergeCuratedModels(discovered),
-      this.resolveEffectiveRegion(),
-      new Set(discovered.map((model) => model.id))
+      this.resolveEffectiveRegion()
     );
   }
 
@@ -676,7 +669,7 @@ export class KimiProvider implements Provider {
       id === 'kimi-k3.1-pro-highspeed' ||
       id === 'moonshot-k3.1-pro-highspeed'
     ) {
-      return 'kimi-k3.1-pro-highspeed' + (oneM ? '[1m]' : '');
+      return 'kimi-k3.1-pro-highspeed';
     }
     if (
       id === 'k3.1' ||
@@ -686,7 +679,7 @@ export class KimiProvider implements Provider {
       id === 'moonshot-k3.1' ||
       id === 'moonshot-k3.1-pro'
     ) {
-      return 'kimi-k3.1-pro' + (oneM ? '[1m]' : '');
+      return 'kimi-k3.1-pro';
     }
     if (
       id === 'k3-256k' ||

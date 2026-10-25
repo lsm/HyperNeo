@@ -115,7 +115,7 @@ describe('KimiProvider', () => {
       expect(models).toEqual([]);
     });
 
-    it('gates static K3.1 entries to the global region unless discovery attests them', async () => {
+    it('gates static K3.1 entries to the global region', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();
 
