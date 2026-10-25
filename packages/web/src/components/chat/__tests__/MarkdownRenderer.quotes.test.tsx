@@ -2,9 +2,29 @@ import { fireEvent, render, waitFor, cleanup } from '@testing-library/preact';
 import { afterEach, expect, it, vi } from 'vitest';
 import MarkdownRenderer from '../MarkdownRenderer.tsx';
 import { copyToClipboard } from '../../../lib/utils.ts';
+import { locale } from '../../../lib/i18n/index.ts';
 
 vi.mock('../../../lib/utils.ts', () => ({ copyToClipboard: vi.fn() }));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  locale.value = 'en';
+});
+
+it('localizes the quote control and feedback without changing the copied text', async () => {
+  vi.mocked(copyToClipboard).mockResolvedValue(true);
+  locale.value = 'zh-Hans';
+  const app = render(<MarkdownRenderer class="neo-markdown" content={'> Original **text**.'} />);
+  await waitFor(() => expect(app.getByRole('button', { name: '复制引用' })).toBeTruthy());
+  fireEvent.click(app.getByRole('button', { name: '复制引用' }));
+  await waitFor(() => expect(copyToClipboard).toHaveBeenLastCalledWith('Original text.'));
+  await waitFor(() => expect(app.getByText('已复制')).toBeTruthy());
+  expect(app.getByRole('button', { name: '复制引用' }).getAttribute('title')).toBe('已复制');
+  locale.value = 'en';
+  await waitFor(() => expect(app.getByRole('button', { name: 'Copy quote' })).toBeTruthy());
+  expect(app.getByText('Copied')).toBeTruthy();
+  fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
+  await waitFor(() => expect(copyToClipboard).toHaveBeenLastCalledWith('Original text.'));
+});
 
 it('copies highlighted code with its line breaks, blank lines, and indentation intact', async () => {
   vi.mocked(copyToClipboard).mockResolvedValue(true);
