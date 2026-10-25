@@ -106,6 +106,29 @@ try {
   assert(!duplicate.queryObject);
   assert.equal((await hub.request<{state:string}>('session.getToolInventory',{sessionId})).state,'not_running');
   assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['navigate']);
+  for(const method of ['tools.save','session.update']) {
+    const {skill:doomed}=await hub.request<{skill:{id:string}}>('skill.create',{params:{name:`deleted-${method}`,displayName:'Deleted fixture',description:'Synthetic',sourceType:'builtin',config:{type:'builtin',commandName:'deleted-fixture'},enabled:false,validationStatus:'valid'}});
+    assert.deepEqual(await hub.request('tools.save',{sessionId,tools:{disabledSkills:[instruction.id,doomed.id]}}),{success:true});
+    assert.deepEqual(await hub.request('skill.delete',{id:doomed.id}),{success:true});
+    const settings={disabledSkills:[instruction.id]};
+    const params=method==='tools.save'?{sessionId,tools:settings}:{sessionId,config:{autoScroll:true,tools:settings}};
+    assert.deepEqual(await hub.request(method,params),{success:true});
+    session=await reload();
+    assert.deepEqual(session.config.tools,settings);
+    assert.equal(session.config.toolSelection!.choices[`skill:${doomed.id}`]?.selected,false);
+    assert.deepEqual(duplicate.getSessionData().config.tools,settings);
+    if(method==='session.update')assert.equal(session.config.autoScroll,true);
+  }
+  const {server:removedServer}=await hub.request<{server:{id:string}}>('mcp.registry.create',{name:'deleted-server',sourceType:'stdio',command:'not-executed',enabled:false});
+  const {skill:orphan}=await hub.request<{skill:{id:string}}>('skill.create',{params:{name:'orphan-wrapper',displayName:'Orphan wrapper',description:'Synthetic',sourceType:'mcp_server',config:{type:'mcp_server',appMcpServerId:removedServer.id},enabled:false,validationStatus:'valid'}});
+  assert.deepEqual(await hub.request('tools.save',{sessionId,tools:{disabledSkills:[instruction.id,orphan.id]}}),{success:true});
+  assert.deepEqual(await hub.request('mcp.registry.delete',{id:removedServer.id}),{success:true});
+  assert.deepEqual(await hub.request('tools.save',{sessionId,tools:{disabledSkills:[instruction.id]}}),{success:true});
+  session=await reload();
+  assert.deepEqual(session.config.tools?.disabledSkills,[instruction.id]);
+  assert.equal(session.config.toolSelection!.choices[`mcp:${removedServer.id}`]?.selected,false);
+  assert.deepEqual(session.config.toolSelection!.choices[`mcp:${server.id}`]?.aliases,['frozen-fixture']);
+  evidence.deletedDefinitionSaves=true;
   evidence.selection=session.config.toolSelection;
   evidence.tools=session.config.tools;
   evidence.sessionId=sessionId;
