@@ -1,14 +1,8 @@
 import { createHash } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { publishTextHandoff } from '../handoffs/publish-text.ts';
 import { getDataDir } from '../data-dir.ts';
 import { canonicalJson } from '../agent/prompt-comparison.ts';
-import {
-  HandoffReference,
-  handoffDraftDirectory,
-  publishHandoff,
-  readHandoff,
-} from '../handoffs/outbox.ts';
+import { HandoffReference, readHandoff } from '../handoffs/outbox.ts';
 import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
 import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -405,18 +399,7 @@ async function prepareHandoff(
     if (Buffer.byteLength(text) > 4096) {
       if (!caller.sessionId)
         throw new Error('session_required: publish large reports with handoff.publish');
-      const sha = digest(text);
-      const name = `message-${generateUUID()}.txt`;
-      const path = join(handoffDraftDirectory(dataDir, caller.sessionId), name);
-      await writeFile(path, text, { flag: 'wx', mode: 0o600 });
-      const published = await publishHandoff(dataDir, caller.sessionId, name);
-      if (published.kind !== 'published') throw new Error(published.kind);
-      if (
-        published.reference.sha256 !== sha ||
-        published.reference.byteLength !== Buffer.byteLength(text)
-      )
-        throw new Error('tampered');
-      files.unshift(published.reference);
+      files.unshift(await publishTextHandoff(dataDir, caller.sessionId, text));
       text = 'Complete report attached. Read the hash-checked reference with handoff.read.';
     }
     return {
