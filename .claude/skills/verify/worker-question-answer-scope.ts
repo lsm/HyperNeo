@@ -64,7 +64,7 @@ try {
   registry.get = (name) => {
     const definition = get(name);
     return name !== 'message.send' || !definition ? definition : { ...definition, execute: async (input, caller) => {
-      if (!String((input as { to?: string }).to).includes('synthetic-remote')) return definition.execute(input, caller);
+      if (!String((input as { sessionId?: string }).sessionId).includes('synthetic-remote')) return definition.execute(input, caller);
       started(); await barrier; return { kind: 'rejected', reason: 'Synthetic unavailable peer' };
     } };
   };

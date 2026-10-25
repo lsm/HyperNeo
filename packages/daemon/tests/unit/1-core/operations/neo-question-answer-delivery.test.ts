@@ -1,3 +1,12 @@
+import type { Session } from '@hyperneo/shared';
+import type { Database as DaemonDatabase } from '../../../../src/storage/database.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { expect, test } from 'bun:test';
 import {
   createNeoWorkerQuestionWriter,
@@ -264,6 +273,64 @@ test('a button answer never waits for an unrelated unavailable HyperNeo session'
   } finally {
     release();
     await running;
+    f.db.close();
+  }
+});
+
+test('a quoted chat answer selects only its question for inline delivery', async () => {
+  const f = await fixture();
+  try {
+    const rootId = `neo:${crypto.randomUUID()}`;
+    f.db.prepare('UPDATE neo_asks SET session_id = ? WHERE id = ?').run(rootId, 'ask');
+    const sessions = new SessionRepository(f.db);
+    sessions.createSession({
+      id: rootId,
+      title: 'Synthetic Neo',
+      workspacePath: '/synthetic',
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      status: 'active',
+      config: {},
+      metadata: {},
+    } as Session);
+    const repo = new NeoRepository(f.db);
+    repo.reserveBinding({ sessionId: rootId, projectId: null, kind: 'neo' });
+    const sdk = new SDKMessageRepository(f.db);
+    const jobs = new JobQueueRepository(f.db);
+    const facade = {
+      getDatabase: () => f.db,
+      getSDKMessageRepo: () => sdk,
+      getJobQueueRepo: () => jobs,
+      getSession: (id: string) => sessions.getSession(id),
+      getGlobalSettings: () => ({}),
+    } as unknown as DaemonDatabase;
+    const notified: string[] = [];
+    const operation = createNeoIntakeOperation(
+      facade,
+      repo,
+      (_session, questionId) => {
+        if (questionId) notified.push(questionId);
+      },
+      f.store
+    );
+    const result = await invokeOperation(
+      createOperationRegistry([operation]),
+      'neo.message.send',
+      {
+        sessionId: rootId,
+        requestId: crypto.randomUUID(),
+        content: 'Use staging',
+        replyTo: { kind: 'question', id: f.question.id },
+      },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+    expect(notified).toEqual([f.question.id]);
+    expect(f.store.getQuestion(f.question.id)).toMatchObject({
+      answer: 'Use staging',
+      answeredBy: 'chat',
+    });
+  } finally {
     f.db.close();
   }
 });
