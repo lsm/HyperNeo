@@ -78,6 +78,7 @@ async function deliveryFixture(adapter = 'hyperneo') {
   const inputs: string[] = [];
   const notes = new Map<string, string>();
   let failed = false;
+  let failureReason = 'not_open';
   let uncertain = false;
   let crash = false;
   const invoke: NeoTodoRunnerDeps['invoke'] = async (
@@ -103,7 +104,7 @@ async function deliveryFixture(adapter = 'hyperneo') {
         value:
           name === 'message.send'
             ? { kind: 'rejected', reason: 'synthetic unavailable' }
-            : { ok: false, reason: 'not_open', detail: 'synthetic unavailable' },
+            : { ok: false, reason: failureReason, detail: 'synthetic unavailable' },
       };
     inputs.push(String(input.text ?? input.message));
     if (crash) throw new Error('synthetic lost response');
@@ -136,6 +137,9 @@ async function deliveryFixture(adapter = 'hyperneo') {
     inputs,
     notes,
     flush,
+    failureReason(value: string) {
+      failureReason = value;
+    },
     fail(value: boolean) {
       failed = value;
     },
@@ -240,6 +244,85 @@ test('an accepted old answer cannot release a later worker question or a rebound
     f.store.updateTodo(f.store.getTodo('todo')!, { state: 'doing' }, 12);
     expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
   } finally {
+    f.db.close();
+  }
+});
+
+test('a definitely refused not_delivered answer can be retried', async () => {
+  const f = await deliveryFixture('codex-desktop');
+  try {
+    f.failureReason('not_delivered');
+    f.fail(true);
+    await f.flush()();
+    expect(f.inputs).toHaveLength(0);
+    expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    f.fail(false);
+    await f.flush()();
+    expect(f.inputs).toHaveLength(1);
+    expect(f.store.getTodo('todo')?.state).toBe('doing');
+  } finally {
+    f.db.close();
+  }
+});
+
+test('a scoped answer is delivered without waiting for an unrelated unavailable worker', async () => {
+  const f = await fixture();
+  const peer = { ...f.source, adapter: 'codex-desktop', id: 'unavailable-peer' };
+  const sessions = new NeoTodoSessionRepository(f.db);
+  const other = f.store.addTodo(
+    'other',
+    'ask',
+    { title: 'Other', doneWhen: 'Done', instruction: null, check: null, named: null },
+    2
+  );
+  sessions.bind(other.id, peer, 3);
+  f.store.updateTodo(other, { state: 'doing', startedAt: 3 }, 3);
+  const reported = await f.write(peer, { ...f.report, todoId: other.id });
+  if (!reported.ok) throw new Error(reported.reason);
+  f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+  f.store.answerQuestion(reported.question, ['Staging'], 'button', 4);
+  let announceTarget!: () => void;
+  let announceStale!: () => void;
+  let release!: () => void;
+  const target = new Promise<void>((resolve) => {
+    announceTarget = resolve;
+  });
+  const stale = new Promise<void>((resolve) => {
+    announceStale = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const flush = createNeoQuestionAnswerDelivery(
+    f.store,
+    sessions,
+    async (_caller, name) => {
+      if (name === 'work.send') {
+        announceStale();
+        await blocked;
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_open', detail: 'Unavailable' },
+        };
+      }
+      announceTarget();
+      return {
+        kind: 'completed',
+        value: { kind: 'accepted', messageId: 'target-input', mailboxId: 'target-mailbox' },
+      };
+    },
+    async () => {},
+    async (todo) => f.store.recompute(todo, {}, 5, { state: 'no_opinion' }, async () => {}),
+    () => {}
+  );
+  const running = (flush as (questionId?: string) => Promise<void>)(f.question.id);
+  try {
+    expect(await Promise.race([target.then(() => 'target'), stale.then(() => 'stale')])).toBe(
+      'target'
+    );
+  } finally {
+    release();
+    await running;
     f.db.close();
   }
 });
