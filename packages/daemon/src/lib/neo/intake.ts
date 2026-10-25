@@ -1,9 +1,6 @@
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
-import {
-  NeoPreviewContextSchema,
-  NeoPreviewReferenceSchema,
-  admitNeoPreviewContext,
-} from './preview-context.ts';
+import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
+import { admitNeoPreviewContext } from './preview-context.ts';
 import { neoLocalTimeLine } from './local-time.ts';
 import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';

@@ -1,4 +1,4 @@
-import { NeoPreviewReferenceSchema } from './preview-context.ts';
+import { NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 import type { NeoConversationAskInput } from '@hyperneo/shared/types/neo-conversation-ask';
 import { z } from 'zod';
 import { toMailboxMessage } from '../mailbox/entry.ts';

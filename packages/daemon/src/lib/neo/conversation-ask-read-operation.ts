@@ -1,5 +1,6 @@
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { NeoPreviewReferenceSchema, presentNeoPreviewAsk } from './preview-context.ts';
+import { NeoPreviewReferenceSchema } from './preview-context-schema.ts';
+import { presentNeoPreviewAsk } from './preview-context.ts';
 import type {
   NeoConversationAsk,
   NeoConversationAskPageItem,

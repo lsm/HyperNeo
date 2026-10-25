@@ -27,3 +27,8 @@ Keep the evidence before deleting the fresh run directory. The focused operation
 suite also checks strict input rejection and immutable retry conflicts. Run web
 tests and build for shared-type compatibility. Composer binding and rendered
 clickable references belong to the subsequent frontend slice; no GUI claim is made.
+
+Also run the compiled-worker-startup journey when changing these schema import
+boundaries. Source-mode RPC can pass while a schema-to-runtime dependency cycle
+causes Bun to emit invalid compiled initializers. Require the actual compiled
+binary to start and answer `system.build`, using the pinned release runtime.

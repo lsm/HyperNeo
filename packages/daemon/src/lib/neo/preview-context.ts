@@ -6,19 +6,8 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { z } from 'zod';
 import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
-import {
-  ArtifactFileMetadataSchema,
-  ArtifactReadInputSchema,
-} from '../artifacts/file-contracts.ts';
+import { ArtifactFileMetadataSchema } from '../artifacts/file-contracts.ts';
 
-export const NeoPreviewContextSchema = z.strictObject({
-  artifactId: ArtifactReadInputSchema.shape.artifactId,
-  snapshot: z.string().regex(/^[a-f0-9]{64}$/),
-});
-export const NeoPreviewReferenceSchema = NeoPreviewContextSchema.extend({
-  displayName: z.string().min(1).max(200),
-  state: z.enum(['available', 'unavailable']),
-}).strict();
 const Metadata = z.object({ accepted: z.literal(true), metadata: ArtifactFileMetadataSchema });
 
 async function readReference(
