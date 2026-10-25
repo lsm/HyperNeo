@@ -32,7 +32,7 @@ Pass requires:
 
 Read evidence/session-tool-writer.json: pass=true, matching selection/rpcReadback,
 all coordinator/clear/race/rollback/notification/restart flags true, and false
-activeConsumerWired/sdkApplyVerified/queryStarted flags. All resources close in
+sdkConsumerWired/sdkApplyVerified/queryStarted flags, with coordinatorInvokedDirectly=true. All resources close in
 finally; the held commit is released even if the concurrent RPC fixture fails.
 
 The coordinator captures session/catalog/override/default facts in the gateway worker's read-only

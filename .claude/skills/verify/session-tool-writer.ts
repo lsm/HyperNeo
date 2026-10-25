@@ -28,7 +28,7 @@ await mcp.connect(a);
 await client.connect(b);
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
 let transport:InstanceType<typeof WebSocketClientTransport>|undefined;
-const evidence:Record<string,unknown>={activeConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
+const evidence:Record<string,unknown>={coordinatorInvokedDirectly:true,sdkConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
 try {
   app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
   assert.notEqual(app.server.port,8399);
@@ -140,7 +140,7 @@ try {
   assert(entries.some(entry=>entry.server.id===evidence.serverId && !entry.enabled && entry.source==='session'));
   evidence.restartRetainedCanonicalAndLegacy=true;
   evidence.pass=true;
-  console.log('PASS coordinator Build: skills/override saves, inherited clear, real-worker race and SQL rollback, cold RPC readback/restart; RPC/cache/SDK consumers remain unwired');
+  console.log('PASS coordinator Build: skills/override saves, inherited clear, real-worker race and SQL rollback, cold RPC readback/restart; direct coordinator proof; SDK consumer remains unwired');
 } finally {
   await connection.close();
   await restarted.cleanup();
