@@ -6,6 +6,38 @@ import { copyToClipboard } from '../../../lib/utils.ts';
 vi.mock('../../../lib/utils.ts', () => ({ copyToClipboard: vi.fn() }));
 afterEach(cleanup);
 
+it('copies highlighted code with its line breaks, blank lines, and indentation intact', async () => {
+  vi.mocked(copyToClipboard).mockResolvedValue(true);
+  const code = '    def f():\n        return 1\n\n\n    def g():\n        return 2';
+  const app = render(
+    <MarkdownRenderer
+      class="neo-markdown"
+      content={`> \`\`\`python\n${code
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n')}\n> \`\`\``}
+    />
+  );
+  await waitFor(() => expect(app.container.querySelector('.hljs-keyword')).toBeTruthy());
+  fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
+  await waitFor(() => expect(copyToClipboard).toHaveBeenLastCalledWith(code));
+});
+
+it('copies a rendered math formula once as readable source', async () => {
+  vi.mocked(copyToClipboard).mockResolvedValue(true);
+  const app = render(
+    <MarkdownRenderer
+      class="neo-markdown"
+      content={'> Formula:\n>\n> $$x^2 + y^2 = z^2$$\n>\n> End.'}
+    />
+  );
+  await waitFor(() => expect(app.container.querySelector('.katex')).toBeTruthy());
+  fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
+  await waitFor(() =>
+    expect(copyToClipboard).toHaveBeenLastCalledWith('Formula:\n\nx^2 + y^2 = z^2\n\nEnd.')
+  );
+});
+
 it('keeps line breaks, lists, entities, and code without copying other controls', async () => {
   vi.mocked(copyToClipboard).mockResolvedValue(true);
   const app = render(
