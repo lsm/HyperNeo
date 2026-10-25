@@ -63,8 +63,7 @@ describe('worker batches before human intake', () => {
     hold('Worker note B');
     const human = '  Keep my words inline, exactly.\n第二行。  ';
     const { prompt, ledger } = accept(human);
-    const messages = db.getSDKMessageRepo().getSDKMessages(sessionId, 100).messages;
-    expect(messages).toHaveLength(2);
+    expect(db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId })).toHaveLength(2);
     expect(db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, requestId)).toEqual([prompt]);
     const queue = db.getJobQueueRepo();
     const [batchJob] = queue.dequeueSessionFifo('message_delivery', 1);
@@ -77,8 +76,13 @@ describe('worker batches before human intake', () => {
     expect(JSON.stringify(batch.content)).toContain('Worker note A');
     expect(JSON.stringify(batch.content)).toContain('Worker note B');
     expect(JSON.stringify(batch.content)).not.toContain(human);
+    db.getSDKMessageRepo().markDeliveryConsumedByUuid(sessionId, String(batchJob.payload.messageUuid));
     queue.complete(batchJob.id, {}, batchJob.claimToken);
-    expect(queue.dequeueSessionFifo('message_delivery', 1)[0].payload.messageUuid).toBe(requestId);
+    const humanJob = queue.dequeueSessionFifo('message_delivery', 1)[0];
+    expect(humanJob.payload.messageUuid).toBe(requestId);
+    db.getSDKMessageRepo().markDeliveryConsumedByUuid(sessionId, requestId);
+    queue.complete(humanJob.id, {}, humanJob.claimToken);
+    expect(db.getSDKMessageRepo().getSDKMessages(sessionId, 100).messages).toHaveLength(2);
     expect(new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10)).toEqual([
       expect.objectContaining({ text: expect.stringContaining('Worker note A') }),
     ]);
