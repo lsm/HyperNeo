@@ -44,7 +44,8 @@ afterEach(() => {
 function mount(
   context?: NeoPreviewReference | null,
   captured = true,
-  editBeforePassiveEffects = false
+  editBeforePassiveEffects = false,
+  capturedText = 'Captured reply'
 ) {
   let refuse = false;
   const storage = new Proxy(window.sessionStorage, {
@@ -58,14 +59,13 @@ function mount(
     },
   });
   const buffer = createNeoDraftReloadBuffer(() => storage);
-  if (captured)
-    expect(buffer.remember(scope, 'Captured reply', 'Saved baseline', context)).toBe(true);
+  if (captured) expect(buffer.remember(scope, capturedText, 'Saved baseline', context)).toBe(true);
   let visible = '';
   let version = 0;
   const write = vi.fn((text: string, _context?: NeoPreviewReference | null) => {
     visible = text;
   });
-  function Harness({ sessionId }: { sessionId: string | null }) {
+  function Harness({ sessionId }: { sessionId: string | null; epoch: number }) {
     const ready = useNeoDraftReloadRecovery(
       sessionId,
       buffer,
@@ -78,7 +78,7 @@ function mount(
     }, []);
     return <output data-testid="ready">{String(ready)}</output>;
   }
-  const view = render(<Harness sessionId={scope} />);
+  const view = render(<Harness sessionId={scope} epoch={version} />);
   return {
     ...view,
     write,
@@ -92,8 +92,9 @@ function mount(
     edit: () => {
       version += 1;
     },
-    select: (sessionId: string | null) => view.rerender(<Harness sessionId={sessionId} />),
-    rerender: () => view.rerender(<Harness sessionId={scope} />),
+    select: (sessionId: string | null) =>
+      view.rerender(<Harness sessionId={sessionId} epoch={version} />),
+    rerender: () => view.rerender(<Harness sessionId={scope} epoch={version} />),
   };
 }
 const ready = () => screen.getByTestId('ready').textContent;
@@ -264,6 +265,110 @@ describe('useNeoDraftReloadRecovery', () => {
       expect(view.write).toHaveBeenCalledExactlyOnceWith('Captured reply', reference);
     }
   );
+  it.each(['rpc', 'metadata'])(
+    'settles the newest local capture after pending %s without restoring old text',
+    async (phase) => {
+      const gate = deferred();
+      let saved = 'Saved baseline';
+      let recoveryCount = 0;
+      seams.request.mockImplementation(async (_method, request) => {
+        if (request.name === 'artifact.file.get')
+          return phase === 'metadata' ? gate.promise : metadata();
+        const { input } = request;
+        recoveryCount += 1;
+        if (recoveryCount === 1 && phase === 'rpc') await gate.promise;
+        if (input.base !== saved && input.text !== saved)
+          return { ok: false, reason: 'superseded' };
+        saved = input.text;
+        return { ok: true };
+      });
+      const view = mount(reference);
+      await waitFor(() => expect(recoveryCalls()).toHaveLength(1));
+      if (phase === 'metadata') await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+      view.edit();
+      view.setVisible('');
+      expect(view.buffer.remember(scope, '', 'Saved baseline', null)).toBe(true);
+      const newest = view.buffer.read(scope);
+      view.rerender();
+      if (phase === 'rpc') expect(recoveryCalls()).toHaveLength(1);
+      await act(async () => gate.resolve(metadata()));
+      await waitFor(() => expect(ready()).toBe('true'));
+      expect(saved).toBe('');
+      expect(recoveryCalls()).toHaveLength(2);
+      expect(recoveryCalls()[1][1].input).toEqual({
+        sessionId: scope,
+        text: '',
+        base: 'Captured reply',
+        previewContext: null,
+      });
+      expect(view.write).not.toHaveBeenCalled();
+      expect(view.buffer.read(scope)).toEqual(newest);
+    }
+  );
+
+  it('uses the normalized server base after recovering whitespace around the original edit', async () => {
+    const gate = deferred();
+    let saved = 'Saved baseline';
+    seams.request.mockImplementation(async (_method, request) => {
+      if (request.input.text.includes('Captured reply')) await gate.promise;
+      if (request.input.base !== saved) return { ok: false, reason: 'superseded' };
+      saved = request.input.text.trim();
+      return { ok: true };
+    });
+    const view = mount(null, true, false, '  Captured reply  ');
+    await waitFor(() => expect(recoveryCalls()).toHaveLength(1));
+    view.edit();
+    view.setVisible('');
+    view.buffer.remember(scope, '', 'Saved baseline', null);
+    view.rerender();
+    await act(async () => gate.resolve({ ok: true }));
+    await waitFor(() => expect(ready()).toBe('true'));
+    expect(saved).toBe('');
+    expect(recoveryCalls()[1][1].input.base).toBe('Captured reply');
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('keeps the confirmed server base across multiple queued replacement captures', async () => {
+    const gate = deferred();
+    let saved = 'Saved baseline';
+    seams.request.mockImplementation(async (_method, request) => {
+      if (request.input.text === 'Captured reply') await gate.promise;
+      if (request.input.base !== saved) return { ok: false, reason: 'superseded' };
+      saved = request.input.text;
+      return { ok: true };
+    });
+    const view = mount(reference);
+    await waitFor(() => expect(recoveryCalls()).toHaveLength(1));
+    for (const text of ['First local replacement', 'Newest local replacement']) {
+      view.edit();
+      view.setVisible(text);
+      view.buffer.remember(scope, text, 'Saved baseline', null);
+      view.rerender();
+    }
+    const newest = view.buffer.read(scope);
+    await act(async () => gate.resolve({ ok: true }));
+    await waitFor(() => expect(ready()).toBe('true'));
+    expect(saved).toBe('Newest local replacement');
+    expect(recoveryCalls()).toHaveLength(2);
+    expect(recoveryCalls()[1][1].input.base).toBe('Captured reply');
+    expect(view.buffer.read(scope)).toEqual(newest);
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('does not start another recovery for ordinary edits after initial recovery settled', async () => {
+    const view = mount(reference);
+    await waitFor(() => expect(ready()).toBe('true'));
+    view.write.mockClear();
+    view.edit();
+    view.setVisible('Later edit');
+    view.buffer.remember(scope, 'Later edit', undefined, null);
+    view.rerender();
+    await act(async () => {});
+    expect(ready()).toBe('true');
+    expect(recoveryCalls()).toHaveLength(1);
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
   it('stays ready for new captures after mounting without recovery', async () => {
     const view = mount(undefined, false);
     await waitFor(() => expect(ready()).toBe('true'));
@@ -276,7 +381,7 @@ describe('useNeoDraftReloadRecovery', () => {
     const gate = deferred();
     seams.request.mockReturnValue(gate.promise);
     const view = mount(null, true, true);
-    await waitFor(() => expect(recoveryCalls()).toHaveLength(1));
+    expect(recoveryCalls()).toHaveLength(0);
     await act(async () => gate.resolve({ ok: true }));
     expect(view.write).not.toHaveBeenCalled();
     expect(ready()).toBe('false');
