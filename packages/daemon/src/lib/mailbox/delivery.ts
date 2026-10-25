@@ -20,6 +20,7 @@ export interface MailboxDeliveryDeps {
   publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
   scheduleDeferredReplay?(sessionId: string): void | Promise<void>;
   defersFor?(sessionId: string, entry: MailboxEntry): boolean;
+  prepareEntry?(entry: MailboxEntry, jobId: string): Promise<MailboxEntry | null>;
 }
 
 function readAdmissionRowid(db: BunDatabase, jobId: string): number | undefined {
@@ -42,7 +43,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     }
     const to = parsed.to;
     const target = to.sessionId;
-    const entry = {
+    let entry = {
       ...parsed,
       to,
       deliveryMode:
@@ -55,6 +56,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     }
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
+    }
+    if (deps.prepareEntry) {
+      const prepared = await deps.prepareEntry(entry, job.id);
+      if (!prepared) return { outcome: 'queued_neo_note' };
+      entry = { ...entry, message: prepared.message };
     }
     const admission = deps.captureAdmission?.(entry);
     const canDeliver = () => {
