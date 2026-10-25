@@ -113,9 +113,11 @@ try {
   const human = await hub.request<{ok: boolean}>('operation.invoke', { name: 'neo.message.send', input: { sessionId: root, requestId: crypto.randomUUID(), content: 'Human asks now.' } });
   assert(human.ok);
   const humanDeadline = Date.now() + 45000;
-  while (modelTurns < 3 && Date.now() < humanDeadline) await Bun.sleep(100);
-  assert.equal(modelTurns, 3);
-  const humanRequest = JSON.stringify(coordinatorBodies[2]);
+  while (modelTurns < 4 && Date.now() < humanDeadline) await Bun.sleep(100);
+  assert.equal(modelTurns, 4);
+  const workerRequest = JSON.stringify(coordinatorBodies[2]);
+  assert(workerRequest.includes('human-queued-a') && !workerRequest.includes('Human asks now.'));
+  const humanRequest = JSON.stringify(coordinatorBodies[3]);
   assert(humanRequest.includes('human-queued-a') && humanRequest.includes('human-queued-b') && humanRequest.includes('Human asks now.'));
   await Bun.sleep(1000);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ burst, orderedNotesInFirstRequest: 20, blocked: 1, question: 1, humanWithPendingBatch: 1, finalTurns: modelTurns }));

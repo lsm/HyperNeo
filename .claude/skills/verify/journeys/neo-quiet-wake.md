@@ -16,7 +16,8 @@ as consumed SDK history, without a mailbox job or model request. A second
 synthetic turn is linked to a focused discussion; the daemon's own status report
 is likewise recorded without a turn. After each, wait 1.5 seconds and assert zero
 model requests. Submit a human message over the real neo.message.send RPC;
-observe exactly one model request and one persisted SDK result. Evidence lives
+observe a forwarded batch request before the separate human request, with two
+persisted SDK results. Evidence lives
 in evidence/observed.json and proof.log in the fresh run directory.
 
 This proves the daemon/SDK path, not GUI rendering, real Codex automation
@@ -28,10 +29,10 @@ todo-runner, question-answer, human intake and PR-event unit contracts as well.
 For an old-code reproduction, run the same helper with `--reproduce` as its
 second argument against the pre-fix production files. It retains
 `evidence/reproduction.json` and fails when the heartbeat starts a Neo model
-turn. The fixed code's normal run must retain the 0/0/1 result above. Model
+turn. The fixed code's normal run must retain the 0/0/2 result above. Model
 request evidence distinguishes the coordinator's operations tool from the
-separate title-generation request; only one coordinator request and one SDK
-result count as the human's turn.
+separate title-generation request. One request/result belongs to the worker
+batch and the next to the unchanged human input.
 
 
 ## Quiet retry during urgent delivery
@@ -41,8 +42,8 @@ urgent report, retries that exact ID with a status-only kind both while delivery
 is pending and after its mailbox job is queued, and records overlaps.json.
 Each must have zero premature history rows and exactly one mailbox job. After
 resuming that owned processor, each urgent report must produce exactly one Neo
-turn and one history row. The original quiet/quiet/human result remains 0/0/1;
-these two additional urgent reports bring the final SDK result count to three.
+turn and one history row. The original quiet/quiet/human result remains 0/0/2;
+these two additional urgent reports bring the final SDK result count to four.
 The note-delivery unit tests cover both quiet kinds, plus ten concurrent quiet
 retries yielding only one stored row and zero jobs. Against the prior reviewed
 head, the same helper fails the overlap assertion and retains overlaps.json.

@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
+const run = resolve(process.argv[2]);
+const { url } = JSON.parse(readFileSync(join(run, 'evidence/web.json'), 'utf8'));
+const target = new URL(url);
+assert.equal(target.hostname, '127.0.0.1');
+assert.notEqual(target.port, '8399');
+const { chromium } = await import(process.env.VERIFY_PLAYWRIGHT_MODULE || 'playwright');
+let browser;
+try {
+  browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_CHROMIUM ? { executablePath: process.env.VERIFY_CHROMIUM } : {}) });
+  const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, locale: 'en-US' });
+  await context.route('**/*', (route) => new URL(route.request().url()).origin === target.origin ? route.continue() : route.abort());
+  const page = await context.newPage();
+  await page.goto(url);
+  await page.getByText('Human small: keep these exact words inline.', { exact: false }).waitFor();
+  const rows = page.locator('[data-public-entry]');
+  const workerRows = rows.filter({ hasText: 'System-forwarded worker messages' });
+  await workerRows.nth(1).waitFor();
+  assert.equal(await workerRows.count(), 2);
+  const order = await rows.allTextContents();
+  assert(order.findIndex((text) => text.includes('small worker note 00')) < order.findIndex((text) => text.includes('Human small:')));
+  for (let index = 0; index < 2; index++) {
+    const row = workerRows.nth(index);
+    await row.getByRole('button').first().click();
+    assert(await row.locator('p').isVisible());
+  }
+  await page.screenshot({ path: join(run, 'evidence/headless-expanded.png'), fullPage: true });
+  const text = await page.locator('body').innerText();
+  writeFileSync(join(run, 'evidence/headless-page.txt'), text);
+  await page.reload();
+  await page.locator('[data-public-entry]').filter({ hasText: 'System-forwarded worker messages' }).nth(1).waitFor();
+  await page.screenshot({ path: join(run, 'evidence/headless-reloaded.png'), fullPage: true });
+  writeFileSync(join(run, 'evidence/headless.json'), JSON.stringify({ headless: true, batchRows: 2, beforeHuman: true, expandedWorkerText: true, survivesReload: true }));
+  console.log('PASS headless worker batch UI');
+} catch (error) {
+  writeFileSync(join(run, 'evidence/headless-unverified.json'), JSON.stringify({ browser: 'unverified', error: String(error) }));
+  throw error;
+} finally {
+  await browser?.close();
+  writeFileSync(join(run, 'finish-ui'), 'finished');
+}
