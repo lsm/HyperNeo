@@ -169,7 +169,7 @@ describe('Daemon app mailbox registration', () => {
         .getDatabase()
         .prepare("INSERT INTO neo_session_bindings(session_id,kind) VALUES (?,'neo')")
         .run(id);
-    spyOn(app!.sessionManager, 'getCachedSession').mockReturnValue(lookupSession());
+    spyOn(app!.sessionManager, 'getSessionAsync').mockResolvedValue(lookupSession());
     return id;
   }
 
