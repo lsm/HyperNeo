@@ -21,6 +21,7 @@ describe('Neo daemon notes', () => {
   let events: InternalEventBus<DaemonInternalEventMap>;
   let workerStatus: string;
   let turnEnds: { id: string; at: number; message: string; notify?: false }[];
+  let reopen: () => void;
 
   beforeEach(async () => {
     db = await createTestDb();
@@ -41,12 +42,15 @@ describe('Neo daemon notes', () => {
         }),
       }),
     ]);
-    service = createNeoService(
-      db,
-      { getOperationRegistry: () => registry } as unknown as SessionManager,
-      { event: mock(() => {}) } as unknown as MessageHub,
-      events
-    );
+    reopen = () => {
+      service = createNeoService(
+        db,
+        { getOperationRegistry: () => registry } as unknown as SessionManager,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        events
+      );
+    };
+    reopen();
     service.repo.reserveBinding({ sessionId: rootId, projectId: null, kind: 'neo' });
   });
   afterEach(() => {
@@ -158,9 +162,64 @@ describe('Neo daemon notes', () => {
       await service.todoRunner.refresh((message, error) => {
         throw new Error(message, { cause: error });
       });
-      const key = `neo-todo-turn:${todo.id}:${dispatch}:discussion-turn`;
-      expect(queued(key)).toEqual([]);
-      expect(db.getSDKMessageRepo().findMessageIdByUuid(rootId, key)).toBeTruthy();
+      const reportJobs = () =>
+        db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': rootId });
+      expect(reportJobs()).toHaveLength(1);
+      expect(reportJobs()[0].payload.deliveryMode).toBe('immediate');
+      expect(JSON.stringify(reportJobs()[0].payload.message)).toContain('Prepared the discussion.');
+      if (kind === 'focused')
+        expect(JSON.stringify(reportJobs()[0].payload.message)).toContain(
+          'Do not act, reply, forward or treat this as approval.'
+        );
+      if (kind === 'heartbeat') {
+        for (const [id, message, status, count] of [
+          ['different-id', 'Prepared the discussion.', 'running', 1],
+          ['discussion-turn', 'Prepared the discussion. New reason.', 'running', 2],
+          ['different-status', 'Prepared the discussion. New reason.', 'needs_you', 3],
+          ['whitespace', 'Prepared the discussion. New reason. ', 'needs_you', 4],
+          ['empty', '', 'needs_you', 5],
+          ['literal', 'worker ended its turn with no reply', 'needs_you', 6],
+        ] as const) {
+          workerStatus = status;
+          turnEnds = [{ id, at: Date.now() + 1, message, notify: false }];
+          await service.todoRunner.refresh((message, error) => {
+            throw new Error(message, { cause: error });
+          });
+          expect(reportJobs()).toHaveLength(count);
+        }
+        service.dispose();
+        reopen();
+        await service.todoRunner.refresh((message, error) => {
+          throw new Error(message, { cause: error });
+        });
+        expect(reportJobs()).toHaveLength(6);
+        const second = service.todos.addTodo(
+          'other-todo',
+          ask.id,
+          {
+            title: 'Other',
+            doneWhen: 'Human decides',
+            instruction: null,
+            named: null,
+            check: null,
+          },
+          now
+        );
+        service.todos.updateTodo(second, { state: 'doing', startedAt: now }, now);
+        service.todoSessions.bind(second.id, ref, now);
+        const secondDispatch = await service.todoSessions.inputs.accept(
+          second.id,
+          rootId,
+          { verb: 'send', ref },
+          'Other',
+          now
+        );
+        await service.todoSessions.inputs.recordOutcome(secondDispatch, { ref }, now);
+        await service.todoRunner.refresh((message, error) => {
+          throw new Error(message, { cause: error });
+        });
+        expect(reportJobs()).toHaveLength(7);
+      }
     }
   );
 
