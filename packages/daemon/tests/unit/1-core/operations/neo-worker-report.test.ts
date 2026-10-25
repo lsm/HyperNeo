@@ -3,7 +3,10 @@ import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import { createTestDb } from '../../../helpers/database.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
+import {
+  createSendMessageOperation,
+  type SessionSent,
+} from '../../../../src/lib/messaging/message-send.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -66,6 +69,7 @@ async function setup() {
   );
   service.todoSessions.bind(todo.id, ref, 2);
   service.todos.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
+  const observed: SessionSent[] = [];
   const operation = () =>
     createSendMessageOperation(
       db.getJobQueueRepo(),
@@ -73,7 +77,9 @@ async function setup() {
       undefined,
       undefined,
       undefined,
-      undefined,
+      async (sent) => {
+        observed.push(sent);
+      },
       (id) => id === 'neo',
       (...args) => service.handleWorkerQuestion(...args)
     );
@@ -82,7 +88,7 @@ async function setup() {
       source: 'mcp',
       sessionId: sender,
     });
-  return { db, service, send };
+  return { db, service, send, observed };
 }
 
 const input = {
@@ -96,6 +102,50 @@ const input = {
     language: 'en',
   },
 };
+
+test('handled card reports still notify the sent observer with the original report', async () => {
+  const { db, service, send, observed } = await setup();
+  try {
+    expect(await send(input)).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(observed).toEqual([
+      expect.objectContaining({ fromSession: 'worker', toSession: 'neo', text: input.text }),
+    ]);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('distinct image-only envelope reports retain their media and receive different incident receipts', async () => {
+  const { db, service, send } = await setup();
+  try {
+    const image = (data: string) => ({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data },
+    });
+    const report = (data: string) => ({
+      sessionId: 'neo',
+      kind: 'blocked',
+      message: { type: 'user', message: { content: [image(data)] }, parent_tool_use_id: null },
+    });
+    const first = await send(report('aGVsbG8='));
+    const second = await send(report('d29ybGQ='));
+    expect(first).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(second).not.toEqual(first);
+    const jobs = db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
+    expect(jobs).toHaveLength(2);
+    expect(jobs[0].payload.message).toMatchObject({
+      message: { content: expect.arrayContaining([image('aGVsbG8=')]) },
+    });
+    expect(jobs[1].payload.message).toMatchObject({
+      message: { content: expect.arrayContaining([image('d29ybGQ=')]) },
+    });
+    expect(await send(report('aGVsbG8='))).toEqual(first);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
 
 test('quiet worker blockers immediately create a held card with one durable wake across repeats and operation reconstruction', async () => {
   const { db, service, send } = await setup();

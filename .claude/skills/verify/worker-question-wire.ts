@@ -102,6 +102,8 @@ try {
   assert.equal(store.getTodo(todo.id)?.blockedBy, 'needs-human');
   assert.equal(question.document, input.text);
   assert.equal(question.sourceSession?.id, ref.id);
+  const timeline = app.db.getDatabase().prepare('SELECT text FROM neo_session_messages WHERE message_id = ?').get(first.messageId) as { text: string } | null;
+  if (process.argv[3] !== 'media') assert.equal(timeline?.text, input.text, 'handled sends must retain their conversation record');
   for (let i = 0; i < 8; i++) assert.deepEqual(await workerSend({ ...input, text: `Repeat ${i}` }), first);
   const wakes = () => app.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': root });
   assert.equal(wakes().length, 1);
@@ -116,6 +118,28 @@ try {
   assert.deepEqual(await workerSend({ ...input, kind: 'question' }), first);
   assert.equal(wakes().length, 0, 'consuming a wake must not allow repeats to create another');
   let expectedTurns = 1;
+  if (process.argv[3] === 'media') {
+    const imageA = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=' } };
+    const imageB = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAH0lEQVR4nGN41mNDFcQwatCoQaMGjRo0atCoQQNvEADxaMeuOCcmmgAAAABJRU5ErkJggg==' } };
+    const report = (image: unknown) => ({ sessionId: root, kind: 'blocked', message: { type: 'user', message: { content: [image] }, parent_tool_use_id: null } });
+    const firstImage = await workerSend(report(imageA));
+    const secondImage = await workerSend(report(imageB));
+    assert.notDeepEqual(firstImage, secondImage, 'distinct media reports must not share an empty-text incident');
+    assert.equal(wakes().length, 2);
+    for (const [receipt, image] of [[firstImage, imageA], [secondImage, imageB]] as const) {
+      const payload = app.db.getJobQueueRepo().getJob(receipt.mailboxId)!.payload as { message: { message: { content: unknown[] } } };
+      assert(payload.message.message.content.some((block) => JSON.stringify(block) === JSON.stringify(image)));
+    }
+    assert.deepEqual(await workerSend(report(imageA)), firstImage);
+    app.jobProcessor.start();
+    const mediaDeadline = Date.now() + 45000;
+    while ((modelTurns < 3 || wakes().length) && Date.now() < mediaDeadline) await Bun.sleep(100);
+    assert.equal(modelTurns, 3);
+    await Bun.sleep(1000);
+    await app.jobProcessor.stop();
+    assert.equal(timeline?.text, input.text, 'card report remains in the conversation timeline');
+    expectedTurns = 3;
+  }
   if (process.argv[3] === 'triage') {
     const legacy = { to: root, from: input.from, kind: 'blocked', text: 'Original ambiguous blocker\n'.repeat(300) };
     const triage = await workerSend(legacy);
