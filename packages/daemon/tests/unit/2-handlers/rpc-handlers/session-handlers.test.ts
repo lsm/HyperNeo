@@ -1885,10 +1885,22 @@ describe('Session RPC Handlers — session.update host process controls', () => 
   });
 
   it('still lets an updatable config field through to the SDK options', async () => {
+    const toolSelection = {
+      version: 1 as const,
+      choices: { 'mcp:browser': { selected: false, aliases: ['browser-alias'] } },
+    };
+    liveSession.config.toolSelection = toolSelection;
     const handler = messageHubData.handlers.get('session.update');
 
     await handler!(
-      { sessionId: 's1', config: { sdkToolsPreset: ['Read', 'Glob'], maxTurns: 7 } },
+      {
+        sessionId: 's1',
+        config: {
+          sdkToolsPreset: ['Read', 'Glob'],
+          maxTurns: 7,
+          toolSelection: structuredClone(toolSelection),
+        },
+      },
       {}
     );
 
@@ -1899,6 +1911,7 @@ describe('Session RPC Handlers — session.update host process controls', () => 
     const options = await buildQueryOptions();
     expect(options.tools).toEqual(['Read', 'Glob']);
     expect(options.maxTurns).toBe(7);
+    expect(liveSession.config.toolSelection).toEqual(toolSelection);
   });
 });
 

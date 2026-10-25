@@ -59,6 +59,11 @@ for (const boot of [1, 2]) {
     evidence[`boot${boot}`] = { snapshots, globalDefault: defaults?.choices[`mcp:${serverId}`], spaceDefault: spaceDefaults?.choices[`mcp:${serverId}`] };
     if (boot === 1) {
       prior = snapshots;
+      await hub.request('session.update', { sessionId: ids[0], config: { ...sessions[0].config, autoScroll: false } });
+      const echoed = (await hub.request<{session: Session}>('session.get', {sessionId: ids[0]})).session;
+      assert.equal(echoed.config.autoScroll, false);
+      assert.deepEqual(echoed.config.toolSelection, snapshots[0]);
+      evidence.unchangedSelectionEchoAllowed = true;
       await assert.rejects(hub.request('session.update', { sessionId: ids[0], config: { toolSelection: { version: 1, choices: {} } } }), /does not accept config field\(s\): toolSelection/);
       evidence.ordinarySettingsCannotReplaceSelection = true;
       const updatedSpace = await hub.request<{ config: { toolSelectionDefaults?: unknown }; maxConcurrentTasks: number }>('space.update', { id: spaceId, config: { maxConcurrentTasks: 5 } });

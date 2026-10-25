@@ -120,7 +120,8 @@ export function admitCreateSessionConfig(
 }
 
 export function admitUpdateSessionConfig(
-  requested: Partial<SessionConfig> | undefined
+  requested: Partial<SessionConfig> | undefined,
+  _currentSelection?: SessionConfig['toolSelection']
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
 
