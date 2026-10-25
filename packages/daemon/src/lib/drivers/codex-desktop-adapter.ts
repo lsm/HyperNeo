@@ -1,3 +1,8 @@
+import {
+  codexWorkerSandbox,
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+} from './worker-sandbox.ts';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { Logger } from '../logger.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -1128,23 +1133,38 @@ export async function startCodexThread(
           destination: join(deps.worktreesDir, deps.newId().slice(0, 8), basename(folder)),
         });
         if (!prepared.ok) return prepared;
-        workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
+        workFolder = {
+          cwd: prepared.value.directory,
+          release: async () => {
+            await prepared.value.release();
+            await releaseWorkerSandbox(prepared.value.directory);
+          },
+        };
       } else {
         const prepared = await prepareCodexWorkFolder(folder, deps);
         if (!prepared.ok) return prepared;
         workFolder = prepared.value;
       }
+      const sandbox = request.preparation ? codexWorkerSandbox(workFolder.cwd) : null;
+      if (sandbox) await prepareWorkerSandbox(workFolder.cwd);
       const projectFolder = (await deps.gitCheckout(folder))?.repo ?? folder;
       const projectId = await deps.prepareDesktopProject(projectFolder);
       const started = await server.call('thread/start', {
         projectId,
         cwd: workFolder.cwd,
         approvalPolicy: 'never',
-        sandbox: 'danger-full-access',
-        ...(configuration.value.model ? { model: configuration.value.model } : {}),
-        ...(configuration.value.effort
-          ? { config: { model_reasoning_effort: configuration.value.effort } }
+        sandbox: sandbox?.sandbox ?? 'danger-full-access',
+        ...(sandbox || configuration.value.effort
+          ? {
+              config: {
+                ...sandbox?.config,
+                ...(configuration.value.effort
+                  ? { model_reasoning_effort: configuration.value.effort }
+                  : {}),
+              },
+            }
           : {}),
+        ...(configuration.value.model ? { model: configuration.value.model } : {}),
       });
       threadId = startedThreadId(started);
       if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
@@ -1165,7 +1185,7 @@ export async function startCodexThread(
       await deps.startDesktopTurn(threadId, {
         threadId,
         approvalPolicy: 'never',
-        sandboxPolicy: { type: 'dangerFullAccess' },
+        sandboxPolicy: sandbox?.sandboxPolicy ?? { type: 'dangerFullAccess' },
         input: [{ type: 'text', text: message, text_elements: [] }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),

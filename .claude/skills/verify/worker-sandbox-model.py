@@ -9,6 +9,9 @@ outside.mkdir(exist_ok=True)
 probe = worker / 'probe.sh'
 probe.write_text(f'''#!/bin/sh
 printf inside > inside-{engine}.txt
+printf metadata > .git/hyperneo-probe-{engine}
+printf cache > "$XDG_CACHE_HOME/probe-{engine}"
+printf "%s" "$TMPDIR" > observed-temp-{engine}.txt
 printf outside > '{outside}/escaped.txt'
 printf 'outside-status=%s\\n' "$?"
 printf temp > "$TMPDIR/probe-{engine}"
@@ -51,12 +54,12 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 home = run / (engine + '-home')
 home.mkdir(exist_ok=True)
 env = {'HOME': str(home), 'PATH': '/usr/bin:/bin:/usr/sbin', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
-settings = json.loads((worker / '.claude/settings.local.json').read_text())
+settings = json.loads((worker / '.claude/settings.local.json').read_text()) if engine == 'claude' else {}
 if engine == 'claude':
     env.update(settings.get('env', {}))
     env.update({'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{server.server_port}', 'ANTHROPIC_API_KEY': 'sk-synthetic-loopback-only'})
     settings['permissions']['allow'].append('Bash')
-    args = [os.environ['VERIFY_CLAUDE'], '--bare', '-p', '--output-format', 'stream-json', '--verbose', '--model', 'claude-sonnet-4-20250514', '--permission-mode', 'dontAsk', '--tools', 'Bash', '--settings', json.dumps(settings), '--setting-sources', '', 'Run the synthetic probe.']
+    args = [os.environ['VERIFY_CLAUDE'], '-p', '--output-format', 'stream-json', '--verbose', '--model', 'claude-sonnet-4-20250514', '--permission-mode', 'dontAsk', '--tools', 'Bash', '--settings', json.dumps(settings), '--setting-sources', '', 'Run the synthetic probe.']
 else:
     launch = json.loads((run / 'evidence/codex-launch.json').read_text())
     config = launch['config']
@@ -65,17 +68,22 @@ else:
     args = [os.environ['VERIFY_CODEX'], '--no-daemon', '-a', 'never', '-c', 'model_provider="synthetic"', '-c', 'model_providers.synthetic.name="Synthetic"', '-c', f'model_providers.synthetic.base_url="http://127.0.0.1:{server.server_port}/v1"', '-c', 'model_providers.synthetic.wire_api="responses"', '-c', 'model_providers.synthetic.requires_openai_auth=false', '-c', 'features.shell_snapshot=false']
     for key, value in config.items():
         if isinstance(value, dict):
-            for subkey, subvalue in value.items(): args += ['-c', key + '.' + subkey + '=' + json.dumps(subvalue)]
+            for subkey, subvalue in value.items():
+                if isinstance(subvalue, dict):
+                    for leaf, scalar in subvalue.items(): args += ['-c', key + '.' + subkey + '.' + leaf + '=' + json.dumps(scalar)]
+                else: args += ['-c', key + '.' + subkey + '=' + json.dumps(subvalue)]
         else: args += ['-c', key + '=' + json.dumps(value)]
     args += ['exec', '-s', launch['sandbox'], '-C', str(worker), '--json', '-m', 'synthetic', 'Run the synthetic probe.']
 try:
     result = subprocess.run(args, cwd=worker, env=env, capture_output=True, text=True, timeout=90)
     (run / f'evidence/{engine}-stdout.jsonl').write_text(result.stdout)
     (run / f'evidence/{engine}-stderr.log').write_text(result.stderr)
-    observed = {'engine': engine, 'exit': result.returncode, 'requests': len(requests), 'insideAllowed': (worker / f'inside-{engine}.txt').exists(), 'outsideRefused': not (outside / 'escaped.txt').exists(), 'tempAllowed': bool(env.get('TMPDIR')) and (Path(env['TMPDIR']) / f'probe-{engine}').exists()}
+    observed = {'engine': engine, 'exit': result.returncode, 'requests': len(requests), 'insideAllowed': (worker / f'inside-{engine}.txt').exists(), 'gitAllowed': (worker / f'.git/hyperneo-probe-{engine}').exists(), 'cacheAllowed': bool(env.get('XDG_CACHE_HOME')) and (Path(env['XDG_CACHE_HOME']) / f'probe-{engine}').exists(), 'outsideRefused': not (outside / 'escaped.txt').exists(), 'tempPath': (worker / f'observed-temp-{engine}.txt').read_text() if (worker / f'observed-temp-{engine}.txt').exists() else '', 'tempAllowed': bool(env.get('TMPDIR')) and (worker / f'observed-temp-{engine}.txt').exists() and Path((worker / f'observed-temp-{engine}.txt').read_text()).is_relative_to(Path(env['TMPDIR'])) and (Path((worker / f'observed-temp-{engine}.txt').read_text()) / f'probe-{engine}').exists()}
     (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
     print(json.dumps(observed))
     assert observed['insideAllowed'], result.stderr
+    assert observed['gitAllowed'], 'Private Git metadata write failed'
+    assert observed['cacheAllowed'], 'Private cache write failed'
     assert observed['outsideRefused'], 'BUG: prepared worker wrote outside its roots'
     assert observed['tempAllowed'], 'Private worker temp write failed'
     assert 'outside-status=1' in result.stdout or 'outside-status=2' in result.stdout, result.stdout

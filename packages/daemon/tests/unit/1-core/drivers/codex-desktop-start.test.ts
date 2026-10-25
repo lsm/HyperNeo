@@ -168,6 +168,11 @@ describe('codex-desktop start receipt', () => {
 });
 
 describe('codex-desktop start', () => {
+  let dir = '';
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = '';
+  });
   test('tells a new Codex worker how to trim only its own merged or closed PR links', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -198,6 +203,7 @@ describe('codex-desktop start', () => {
   });
 
   test('starts in the prepared location instead of another HEAD worktree and keeps its resource', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
     const prepared: unknown[] = [];
     let released = false;
     const { instance, calls, spawned } = adapter(
@@ -211,7 +217,7 @@ describe('codex-desktop start', () => {
           return {
             ok: true,
             value: {
-              directory: '/fresh/remote-base',
+              directory: dir,
               release: async () => {
                 released = true;
               },
@@ -228,12 +234,29 @@ describe('codex-desktop start', () => {
         location: { directory: '/focus/dolmen', destination: '/codex/worktrees/abcd1234/dolmen' },
       },
     ]);
-    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/fresh/remote-base' }]);
+    expect(calls[0]).toMatchObject([
+      'thread/start',
+      {
+        cwd: dir,
+        sandbox: 'workspace-write',
+        config: {
+          sandbox_workspace_write: {
+            writable_roots: expect.arrayContaining([dir, join(dir, '.git')]),
+            exclude_slash_tmp: true,
+            exclude_tmpdir_env_var: true,
+          },
+        },
+      },
+    ]);
+    expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
+      sandboxPolicy: { type: 'workspaceWrite', excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+    });
     expect(spawned).toEqual([]);
     expect(released).toBe(false);
   });
 
   test('failed preparation creates no thread and a failed thread start releases the prepared directory', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
     let released = false;
     for (const failedPreparation of [true, false]) {
       const { instance, calls, spawned } = adapter(
@@ -250,7 +273,7 @@ describe('codex-desktop start', () => {
               : {
                   ok: true,
                   value: {
-                    directory: '/fresh',
+                    directory: dir,
                     release: async () => {
                       released = true;
                     },

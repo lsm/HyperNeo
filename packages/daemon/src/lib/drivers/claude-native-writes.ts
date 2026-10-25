@@ -1,6 +1,7 @@
 import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { prepareWorkerSandbox, workerSandboxPaths } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
@@ -11,6 +12,19 @@ let pending: Promise<void> = Promise.resolve();
 
 function policy(root: string, roots: string[], siblings: string[]) {
   return JSON.stringify({
+    env: workerSandboxPaths(root),
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      excludedCommands: [],
+      filesystem: {
+        allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
+        denyWrite: [...roots, ...siblings.filter((sibling) => sibling !== root)],
+      },
+      network: { allowUnixSockets: [], allowAllUnixSockets: false },
+    },
     permissions: {
       allow: [editRule(root, true)],
       deny: [
@@ -40,6 +54,7 @@ async function install(root: string, roots: string[]) {
       if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     }
   }
+  await prepareWorkerSandbox(root);
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');

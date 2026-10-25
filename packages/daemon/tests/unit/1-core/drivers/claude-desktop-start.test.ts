@@ -485,6 +485,13 @@ describe('claude-desktop start', () => {
     expect(first).toBe(join(dir, 'data/claude-worktrees/source/u1'));
     const settingsPath = join(first, '.claude/settings.local.json');
     const initial = readFileSync(settingsPath, 'utf8');
+    expect(JSON.parse(initial).sandbox).toMatchObject({
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      excludedCommands: [],
+      filesystem: { allowWrite: expect.arrayContaining([first, join(first, '.git')]) },
+    });
     expect(JSON.parse(initial).permissions).toMatchObject({
       allow: [`Edit(/${first}/**)`],
       deny: expect.arrayContaining([`Edit(/${main}/**)`]),
@@ -512,6 +519,9 @@ describe('claude-desktop start', () => {
     ).toBe(true);
     const readPolicy = (root: string) =>
       JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
+    expect(readPolicy(first).env.TMPDIR).not.toBe(readPolicy(sibling).env.TMPDIR);
+    expect(readPolicy(first).env.XDG_CACHE_HOME).not.toBe(readPolicy(sibling).env.XDG_CACHE_HOME);
+    expect(readPolicy(first).sandbox.filesystem.denyWrite).toContain(sibling);
     expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
     expect(readPolicy(sibling).permissions.deny).toContain(`Edit(/${first}/**)`);
     expect(readPolicy(first).permissions.deny).not.toContain(`Edit(/${first}/**)`);

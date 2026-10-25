@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCodexDesktopAdapter } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
@@ -78,6 +79,37 @@ try {
   const proof = spawnSync('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, worker], { encoding: 'utf8', timeout: 120000 });
   evidence.push({ stdout: proof.stdout, stderr: proof.stderr, status: proof.status });
   assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+  const codexWorker = join(run, 'codex-worker');
+  git(run, 'clone', '--no-hardlinks', remote, codexWorker);
+  const codex = createCodexDesktopAdapter({
+    statePath: join(run, 'codex-state.sqlite'), worktreesDir: join(run, 'codex-worktrees'),
+    machine: hostname(), now: Date.now, homeDir: join(run, 'home'), newId: () => 'synthetic-codex',
+    folderExists: existsSync, makeFolder: (folder) => { mkdirSync(folder, { recursive: true }); },
+    gitCheckout: async () => ({ repo: source, linked: false }),
+    prepareExecution: async () => ({ ok: true, value: { directory: codexWorker, release: async () => {} } }),
+    spawn: () => { throw new Error('Unexpected process'); },
+    appServer: async () => { throw new Error('Unexpected shared server'); },
+    prepareDesktopProject: async () => 'synthetic-project',
+    bootstrapServer: async () => ({
+      call: async (method, params) => {
+        if (method === 'thread/start') {
+          writeFileSync(join(run, 'evidence/codex-launch.json'), JSON.stringify(params, null, 2));
+          return { thread: { id: 'synthetic-codex' } };
+        }
+        return {};
+      }, close: () => {},
+    }),
+    startDesktopTurn: async (_id, params) => {
+      writeFileSync(join(run, 'evidence/codex-turn.json'), JSON.stringify(params, null, 2));
+      const result = spawnSync('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, codexWorker, 'codex'], { encoding: 'utf8', timeout: 120000 });
+      evidence.push({ engine: 'codex', stdout: result.stdout, stderr: result.stderr, status: result.status });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+    },
+  });
+  const codexResult = await codex.start!(request, { from: 'synthetic', caller: { source: 'rpc' } });
+  assert(codexResult.ok, JSON.stringify(codexResult));
+  console.log(`PASS installed Claude and Codex outside refusal + inside/temp writes: ${run}/evidence`);
+
 
 } finally {
   ws?.close();

@@ -1,3 +1,4 @@
+import { releaseWorkerSandbox } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
@@ -1554,6 +1555,7 @@ export async function startClaudeSession(
       await installClaudeNativeWrites(prepared.value.directory, [folder, checkout?.repo ?? folder]);
     } catch (error) {
       await prepared.value.release();
+      await releaseWorkerSandbox(prepared.value.directory);
       return reject(
         'preparation_failed',
         `Could not install native write policy: ${String(error)}`
@@ -1607,6 +1609,7 @@ export async function startClaudeSession(
         : reject('not_delivered', 'the message did not appear in the session transcript');
   if (!started.ok) {
     await prepared?.value.release();
+    if (prepared) await releaseWorkerSandbox(prepared.value.directory);
     return started;
   }
   const record: ClaudeDesktopRecord = {

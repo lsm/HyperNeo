@@ -161,3 +161,13 @@ its run directory. It must preflight its own non-8399 port, retain the daemon lo
 and RPC evidence, and own an EXIT trap that stops and waits for that exact child.
 No HTTP model mock or provider registration is needed. The worker-identity helper
 implements this setup; it never touches another process's occupied mock port.
+
+## Native worker sandbox proofs
+
+Native CLI sandbox journeys use scrubbed child-process environments and disposable
+homes too. They may supply a literal synthetic API key only to the native Claude
+child connected to the helper's loopback scripted model; never to the daemon or
+an external endpoint. Use absolute `VERIFY_CLAUDE` / `VERIFY_CODEX` executable
+paths so the daemon's synthetic CLI peers cannot replace the real OS probe.
+These helpers preserve CLI tool results and report simulated Desktop transport
+separately from actual OS enforcement. Never disable the sandbox for these proofs.

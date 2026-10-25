@@ -83,3 +83,14 @@ tokens, never grant Alpaca/trading keys. No credential contents were read for th
 ## 4. Deferred
 
 “Use without seeing” (broker and per-service adapters) waits for containers/OAP isolation.
+
+## Implementation slices
+
+Slice 2 (#8203) prepares coding work in private Git clones. Slice 3 (#8627)
+adds OS write enforcement to prepared workers: Codex `workspace-write` at thread
+creation and the opening turn, Claude's Bash sandbox without unsandboxed retry,
+and private short temp/cache roots. Existing Claude native-file path rules remain.
+Codex 0.160.1 `workspaceWrite` has no per-path read-deny configuration; it does
+not enforce the secret-read boundary in section 3. Secret-read isolation is a
+separate later slice, #8630. Neither slice 3 nor Claude Bash sandboxing claims
+OS containment of native file tools or arbitrary MCP/helper processes.
