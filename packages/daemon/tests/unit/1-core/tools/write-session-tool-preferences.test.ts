@@ -155,3 +155,111 @@ describe('session tool preference writer', () => {
     expect(notices).toEqual([]);
   });
 });
+
+describe('stored preference source integrity', () => {
+  it('never recomputes a present but null canonical selection', async () => {
+    db.prepare("UPDATE sessions SET config=json_set(config,'$.toolSelection',NULL) WHERE id=?").run(
+      ID
+    );
+    const before = current();
+    expect(await write(ID, { kind: 'mcp', serverId: 'browser', enabled: true })).toEqual({
+      ok: false,
+      reason: 'selection_version_unsupported',
+    });
+    expect(current()).toEqual(before);
+    expect(data.mcpEnablement.getOverride('session', ID, 'browser')).toBeNull();
+    expect(notices).toEqual([]);
+  });
+  it('does not guess inherited defaults when their stored JSON is corrupt', async () => {
+    expect((await write(ID, { kind: 'mcp', serverId: 'browser', enabled: true })).ok).toBe(true);
+    const before = current();
+    notices = [];
+    db.prepare("UPDATE global_settings SET settings='{' WHERE id=1").run();
+    await expect(write(ID, { kind: 'mcp', serverId: 'browser', enabled: null })).rejects.toThrow();
+    expect(current()).toEqual(before);
+    expect(data.mcpEnablement.getOverride('session', ID, 'browser')?.enabled).toBe(true);
+    expect(notices).toEqual([]);
+  });
+  it('uses matching Space defaults and refuses a concurrent default edit', async () => {
+    db.prepare(
+      "INSERT INTO spaces (id,name,slug,workspace_path,status,config,created_at,updated_at) VALUES ('space','Fixture','fixture','/synthetic','active',?,1,1)"
+    ).run(
+      JSON.stringify({
+        toolSelectionDefaults: {
+          ...frozen,
+          choices: { 'mcp:browser': { selected: true, aliases: ['space-default'] } },
+        },
+      })
+    );
+    repo.updateSession(ID, { context: { spaceId: 'space' } });
+    expect((await write(ID, { kind: 'mcp', serverId: 'browser', enabled: true })).ok).toBe(true);
+    expect((await write(ID, { kind: 'mcp', serverId: 'browser', enabled: null })).ok).toBe(true);
+    expect(current().toolSelection?.choices['mcp:browser']).toEqual({
+      selected: true,
+      aliases: ['frozen-alias'],
+    });
+    expect((await write(ID, { kind: 'mcp', serverId: 'browser', enabled: true })).ok).toBe(true);
+    const before = current();
+    notices = [];
+    data.casSessionToolPreferences = async (...args) => {
+      db.prepare(
+        "UPDATE spaces SET config=json_set(config,'$.toolSelectionDefaults.choices.\"mcp:browser\".selected',json('false')) WHERE id='space'"
+      ).run();
+      return repo.casSessionToolPreferences(...args);
+    };
+    expect(await write(ID, { kind: 'mcp', serverId: 'browser', enabled: null })).toEqual({
+      ok: false,
+      reason: 'superseded',
+    });
+    expect(current()).toEqual(before);
+    expect(data.mcpEnablement.getOverride('session', ID, 'browser')?.enabled).toBe(true);
+    expect(notices).toEqual([]);
+  });
+});
+
+describe('inherited template presence', () => {
+  it('does not recompute present-null, false or zero inherited templates', async () => {
+    expect((await write(ID, { kind: 'mcp', serverId: 'browser', enabled: true })).ok).toBe(true);
+    const before = current();
+    notices = [];
+    for (const value of [null, false, 0]) {
+      db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+        JSON.stringify({ toolSelectionDefaults: value })
+      );
+      await expect(write(ID, { kind: 'mcp', serverId: 'browser', enabled: null })).rejects.toThrow(
+        'selection_version_unsupported'
+      );
+      expect(current()).toEqual(before);
+      expect(data.mcpEnablement.getOverride('session', ID, 'browser')?.enabled).toBe(true);
+    }
+    expect(notices).toEqual([]);
+  });
+  it('refuses future inherited versions without a write', async () => {
+    db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+      JSON.stringify({ toolSelectionDefaults: { ...frozen, version: 2 } })
+    );
+    const before = current();
+    expect(await write(ID, { kind: 'mcp', serverId: 'browser', enabled: null })).toEqual({
+      ok: false,
+      reason: 'selection_version_unsupported',
+    });
+    expect(current()).toEqual(before);
+    expect(notices).toEqual([]);
+  });
+  it('uses global defaults when a new matching Space has no canonical template yet', async () => {
+    db.prepare(
+      "INSERT INTO spaces (id,name,slug,workspace_path,status,config,created_at,updated_at) VALUES ('space','Fixture','fixture','/synthetic','active',NULL,1,1)"
+    ).run();
+    repo.updateSession(ID, { context: { spaceId: 'space' } });
+    db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+      JSON.stringify({
+        toolSelectionDefaults: { ...frozen, choices: { 'mcp:browser': { selected: true } } },
+      })
+    );
+    expect((await write(ID, { kind: 'mcp', serverId: 'browser', enabled: null })).ok).toBe(true);
+    expect(current().toolSelection?.choices['mcp:browser']).toEqual({
+      selected: true,
+      aliases: ['frozen-alias'],
+    });
+  });
+});
