@@ -529,6 +529,229 @@ describe('NeoLive reload draft restore', () => {
     }
   );
 
+  it.each(['refused', 'forget failed'] as const)(
+    'resumes later draft adoption after sending during pending recovery: %s',
+    async (outcome) => {
+      remember('Original reload capture', null, root, reference);
+      let release!: (value: unknown) => void;
+      recover.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve;
+        })
+      );
+      const view = mount();
+      await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+      type('New submitted text');
+      if (outcome === 'refused')
+        view.model.value.send.mockResolvedValueOnce({ ok: false, reason: 'Synthetic refusal' });
+      else {
+        const storage = window.sessionStorage;
+        vi.spyOn(window, 'sessionStorage', 'get').mockReturnValue(
+          new Proxy(storage, {
+            get(target, name) {
+              if (name === 'removeItem')
+                return () => {
+                  throw new Error('Storage unavailable');
+                };
+              const value = Reflect.get(target, name);
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          })
+        );
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      await act(async () => release({ ok: true }));
+      expect(read()?.text).toBe('New submitted text');
+      persisted.set(root, 'Later dictation after the send');
+      for (const [name, callback] of seams.event.mock.calls) {
+        if (name === 'session.voiceLanded')
+          await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+      }
+      await waitFor(() => expect(value()).toBe('Later dictation after the send'));
+    }
+  );
+
+  it.each([
+    ['', 'storage failure'],
+    ['With submitted text', 'storage failure'],
+    ['', 'superseded'],
+    ['With submitted text', 'superseded'],
+  ])('releases attachment-send recovery for %j after %s', async (submitted, outcome) => {
+    remember('Original reload capture', null, root, reference);
+    let release!: (value: unknown) => void;
+    recover.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type(submitted);
+    act(() => {
+      expect(restoreNeoImages(root, [{ data: 'cGhvdG8=', media_type: 'image/png' }])).toBe(true);
+    });
+    const capture = read();
+    if (outcome === 'storage failure') {
+      const storage = window.sessionStorage;
+      vi.spyOn(window, 'sessionStorage', 'get').mockReturnValue(
+        new Proxy(storage, {
+          get(target, name) {
+            if (name === 'setItem')
+              return () => {
+                throw new Error('Synthetic storage failure');
+              };
+            const value = Reflect.get(target, name);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        })
+      );
+    }
+    view.model.value.send.mockResolvedValueOnce({ ok: false, reason: 'Synthetic refusal' });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0].images).toEqual([
+      { data: 'cGhvdG8=', media_type: 'image/png' },
+    ]);
+    await act(async () =>
+      release(outcome === 'superseded' ? { ok: false, reason: 'superseded' } : { ok: true })
+    );
+    if (outcome === 'storage failure') expect(read()).toEqual(capture);
+    persisted.set(root, 'Dictation after an attachment send');
+    for (const [name, callback] of seams.event.mock.calls) {
+      if (name === 'session.voiceLanded')
+        await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+    }
+    await waitFor(() => expect(value()).toBe('Dictation after an attachment send'));
+    expect(view.model.value.send).toHaveBeenCalledOnce();
+  });
+
+  it('preserves new attachments and text entered during an attachment-send handoff', async () => {
+    remember('Original reload capture', null, root, reference);
+    let release!: (value: unknown) => void;
+    recover.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    let finishClear!: (value: unknown) => void;
+    const clear = new Promise((resolve) => {
+      finishClear = resolve;
+    });
+    const request = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') await clear;
+      return request(method, input);
+    });
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type('Submitted with the first photo');
+    act(() => {
+      restoreNeoImages(root, [{ data: 'Zmlyc3Q=', media_type: 'image/png' }]);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    await act(async () => release({ ok: true }));
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    act(() => {
+      restoreNeoImages(root, [{ data: 'c2Vjb25k', media_type: 'image/png' }]);
+    });
+    type('New text with the second photo');
+    const latest = read();
+    await act(async () => finishClear({}));
+    expect(value()).toBe('New text with the second photo');
+    expect(read()).toEqual(latest);
+    expect(useNeoAttachments(root).files).toMatchObject([
+      { kind: 'image', image: { data: 'c2Vjb25k' } },
+    ]);
+    expect(view.model.value.send).toHaveBeenCalledOnce();
+    expect(view.model.value.send.mock.calls[0][0].images).toEqual([
+      { data: 'Zmlyc3Q=', media_type: 'image/png' },
+    ]);
+    expect(screen.queryByText(/To Neo.*Original report/)).toBeNull();
+  });
+
+  it('resumes adoption after returning from another edited session before send cleanup finishes', async () => {
+    remember('Original reload capture', null, root, reference);
+    metadataGate = new Promise(() => {});
+    let finishClear!: (value: unknown) => void;
+    const clear = new Promise((resolve) => {
+      finishClear = resolve;
+    });
+    const request = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') {
+        await clear;
+        return request(method, input);
+      }
+      return request(method, input);
+    });
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type('Submitted before visiting another session');
+    view.model.value.send.mockResolvedValueOnce({ ok: false, reason: 'Synthetic refusal' });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    act(() => {
+      view.store.activeSessionId.value = holder;
+      view.model.value = { ...view.model.value, sessionId: holder };
+    });
+    type('Only the other session was edited');
+    type('');
+    act(() => {
+      view.store.activeSessionId.value = root;
+      view.model.value = { ...view.model.value, sessionId: root };
+    });
+    await act(async () => finishClear({}));
+    persisted.set(root, 'Dictation after returning');
+    for (const [name, callback] of seams.event.mock.calls) {
+      if (name === 'session.voiceLanded')
+        await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+    }
+    await waitFor(() => expect(value()).toBe('Dictation after returning'));
+    expect(read()?.text).toBe('Submitted before visiting another session');
+  });
+
+  it('does not show an old send handoff failure in a different session', async () => {
+    remember('Original reload capture', null, root, reference);
+    let release!: (value: unknown) => void;
+    recover.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    const request = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') throw new Error('Old session handoff failed');
+      return request(method, input);
+    });
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type('Submitted before scope change');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    act(() => {
+      view.store.activeSessionId.value = holder;
+      view.model.value = { ...view.model.value, sessionId: holder };
+    });
+    view.model.value.setError.mockClear();
+    await act(async () => release({ ok: true }));
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    expect(view.model.value.setError).not.toHaveBeenCalled();
+  });
+
   it('does not capture the dropped Preview after a fully empty reset', async () => {
     const first = mount();
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'report-a' }));

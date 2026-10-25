@@ -96,3 +96,20 @@ a full stored reference to artifactId/snapshot, preserves explicit null and lega
 omission, and excludes displayName/state/capture id from the strict recovery
 request. Component checks cover available/unavailable/null/legacy captures. This
 transport projection does not implement later composer association restoration.
+
+
+Send handoff checks also require `sendHandoffConditionalClear`,
+`sendHandoffPreservesVoice` and `sendHandoffPreservesNewerDraft`. The real RPC
+proof conditionally clears the previously recovered draft, preserves independent
+staged dictation and refuses a stale clear over newer manual text. Resource-hook
+and real-composer tests cover send refusal/storage cleanup failure, delayed
+metadata, ordered recovery RPC completion, same-text rebinds during cleanup,
+failed durable captures, reconnect and scope changes. Returning during pending
+cleanup after editing another session must release adoption, while a failed
+local edit remains guarded across the same round trip. Attachment-only and
+text-with-attachment sends must release adoption after a superseded recovery or
+failed browser write; the send's own attachment removal is not a human edit.
+New text and attachments added during that handoff must survive its completion.
+The original browser
+capture remains until acceptance or explicit discard. Pending immutable request
+identity persistence remains in #8707; handoff alone does not complete it.
