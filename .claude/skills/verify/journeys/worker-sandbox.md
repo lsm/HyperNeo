@@ -159,3 +159,23 @@ archives to preserve their unarchived state when release still fails. Desktop
 retries must also release leftovers from previously archived sessions. The SDK
 stops its agent, releases its runtime, marks the archived barrier, then cancels
 durable deliveries; it must retain the barrier before delivery teardown.
+
+## Immutable runtime flags and archived SDK retries (review 9514)
+
+On macOS the SDK Bash probe also sets user-immutable flags on a nonempty private
+temp directory and its file. It must report a zero flag-setting status, then the
+actual archive RPC must succeed with `immutableRuntimeReleased: true` in
+`runtime-cleanup.json`. Darwin release clears user immutable/append-only flags
+when they block directory permission repair or removal. Its system `chflags`
+invocations never follow symlinks; the focused regression leaves a symlink target
+outside the runtime immutable and intact. Unrecoverable cleanup errors still leave
+an unarchived session retryable. Removal retries for busy handles apply on Windows;
+POSIX flag recovery does not wait through recursive ENOTEMPTY retries.
+
+The helper next seeds synthetic runtime leftovers for that archived SDK worker
+and evicts its already stopped cached session, modeling a retry after restart.
+Actual `neo.session.archive` must answer `archived: false` and remove both roots;
+`archive-retry.json` records that result. Admission refusals must leave the roots
+intact. `VERIFY_IMMUTABLE_RUNTIME=0` disables only the macOS flag step when isolating
+this retry regression; the normal run proves both together. Test-first commit
+`16bb6305c9` reproduces both failures, including real SDK Bash and RPC evidence.

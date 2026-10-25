@@ -1,3 +1,4 @@
+import { spawnProcess } from '../runtime-spawn/index.ts';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -16,6 +17,15 @@ export function workerSandboxPaths(root: string) {
   };
 }
 
+async function clearRuntimeFlags(path: string, recursive = false) {
+  const process = spawnProcess(
+    ['/usr/bin/chflags', recursive ? '-RP' : '-h', 'nouchg,nouappnd', path],
+    { env: {}, stdout: 'ignore', stderr: 'ignore' }
+  );
+  if ((await process.exited) !== 0)
+    throw new Error('Cannot clear worker runtime user flags; clear them before retrying archive.');
+}
+
 async function unlockRuntimeDirectories(path: string): Promise<void> {
   let entry;
   try {
@@ -25,7 +35,14 @@ async function unlockRuntimeDirectories(path: string): Promise<void> {
     throw error;
   }
   if (!entry.isDirectory()) return;
-  await chmod(path, 0o700);
+  try {
+    await chmod(path, 0o700);
+  } catch (error) {
+    if (process.platform !== 'darwin' || (error as NodeJS.ErrnoException).code !== 'EPERM')
+      throw error;
+    await clearRuntimeFlags(path);
+    await chmod(path, 0o700);
+  }
   for (const name of await readdir(path)) await unlockRuntimeDirectories(join(path, name));
 }
 
@@ -33,7 +50,19 @@ export async function releaseWorkerSandbox(root: string | null | undefined) {
   if (!root) return;
   const runtime = join(workerSandboxPaths(root).TMPDIR, '..');
   await unlockRuntimeDirectories(runtime);
-  await rm(runtime, { recursive: true, force: true, maxRetries: 3 });
+  const remove = () =>
+    rm(runtime, { recursive: true, force: true, maxRetries: process.platform === 'win32' ? 3 : 0 });
+  try {
+    await remove();
+  } catch (error) {
+    if (
+      process.platform !== 'darwin' ||
+      !['EPERM', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')
+    )
+      throw error;
+    await clearRuntimeFlags(runtime, true);
+    await remove();
+  }
 }
 
 export async function prepareWorkerSandbox(root: string) {
