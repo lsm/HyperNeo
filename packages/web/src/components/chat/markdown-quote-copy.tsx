@@ -19,7 +19,10 @@ function quoteText(node: Node): string {
   }
   const text = Array.from(node.childNodes, quoteText).join('');
   if (node.tagName === 'LI') return `${text.replace(/^\n+|\n+$/g, '')}\n`;
-  if (/^(P|BLOCKQUOTE|UL|OL|TABLE|H[1-6])$/.test(node.tagName)) {
+  if (
+    /^(P|BLOCKQUOTE|UL|OL|TABLE|H[1-6])$/.test(node.tagName) ||
+    node.classList.contains('katex-display')
+  ) {
     return `${text.replace(/^\n+|\n+$/g, '')}\n\n`;
   }
   return text;
