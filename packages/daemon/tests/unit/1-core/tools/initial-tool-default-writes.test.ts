@@ -92,6 +92,15 @@ describe('initial canonical tool default writes', () => {
     const session = make('veto', { tools: { disabledSkills: ['notes', 'wrapper'] } });
     await db.createSession(session);
     expect(session.config.toolSelection).toEqual(selection(false));
+    expect(
+      JSON.parse(
+        (
+          db.getDatabase().prepare('SELECT settings FROM global_settings WHERE id=1').get() as {
+            settings: string;
+          }
+        ).settings
+      ).toolSelectionDefaults
+    ).toEqual(selection());
     db.getDatabase()
       .prepare('UPDATE global_settings SET settings=? WHERE id=1')
       .run(JSON.stringify({ toolSelectionDefaults: selection(false) }));

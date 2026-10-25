@@ -239,8 +239,8 @@ export class Database {
     const selection = await this.gateway.call(
       sessionWrites,
       'createSessionWithToolDefaults',
-      postable(session),
-      options
+      structuredClone(postable(session)),
+      options ? structuredClone(options) : undefined
     );
     session.config.toolSelection = selection;
     this.reactiveDb?.forgetSessionTask(session.id);
