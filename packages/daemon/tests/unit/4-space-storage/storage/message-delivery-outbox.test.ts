@@ -104,6 +104,30 @@ describe('transactional outbox (ensurePrompt)', () => {
   });
   afterEach(() => db.close());
 
+  it.each(['done', 'blocked', 'question', 'failed'])(
+    'retries an identical %s report when stored history lacks routing metadata',
+    (kind) => {
+      const args = {
+        db,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        delivery: { origin: 'chat' as const },
+      };
+      const first = ensurePrompt({ ...args, message: userMessage('report-retry') });
+      const replay = ensurePrompt({
+        ...args,
+        message: Object.assign(userMessage('report-retry'), { workerReportKind: kind }),
+      });
+      expect(replay.dbMessageId).toBe(first.dbMessageId);
+      expect(replay.created).toBe(false);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_messages').get()).toEqual({ n: 1 });
+      expect(
+        db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue='message_delivery'").get()
+      ).toEqual({ n: 1 });
+    }
+  );
+
   it('synchronous activation commits the row and job without publishing', () => {
     const { dbMessageId } = ensurePrompt({
       db,

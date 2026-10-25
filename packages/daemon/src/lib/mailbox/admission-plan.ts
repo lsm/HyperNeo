@@ -3,7 +3,7 @@ import type { ReferenceMetadata } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
-import { mailboxMessageIsSynthetic, type MailboxEntry } from './entry.ts';
+import { mailboxMessageIsSynthetic, type MailboxEntry, type MailboxMessage } from './entry.ts';
 import { decodeUlidTimestamp } from './ulid.ts';
 
 export type SessionMailboxEntry = MailboxEntry & {
@@ -14,6 +14,7 @@ type AdmissionMessage = SDKUserMessage & {
   uuid: NonNullable<SDKUserMessage['uuid']>;
   referenceMetadata?: ReferenceMetadata;
   taskKickoff?: boolean;
+  workerReportKind?: MailboxMessage['workerReportKind'];
 };
 
 export interface MailboxAdmissionPlan {

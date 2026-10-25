@@ -9,7 +9,7 @@
     its instructions through the native Claude inbox transport.
 
     End state: `$RUN/observed.json` records the worker's actual incoming frames.
-    The first instruction includes `hyperneo send <the actual root Neo id>
+    The first instruction includes `hyperneo send <the actual root Neo id> --kind <kind>
     "<text>"`; an instruction already containing that line has one copy; a
     human-origin send has none. The script then runs the real CLI with a
     the synthetic Claude peer's sender identity and checks read-only that its blocker
@@ -22,6 +22,6 @@
 
     The received brief must limit reporting to PR opened/merged/closed, blocked,
     a question, done or failed, with no acknowledgments or progress pings. The
-    helper asserts that policy on the actual inbox frame and sends a blocker
+    helper asserts that policy on the actual inbox frame and sends a structured blocked report
     through the CLI. This proves prompt delivery, not model compliance or queue
-    filtering (the latter is tracked separately in #8647).
+    filtering (the latter is tracked separately in #8647). It also asserts workerReportKind=blocked survives into the persisted transcript. No model turn is claimed by this transport-only journey.

@@ -12,6 +12,7 @@ export function createRemoteSendForwarder(
       const reply = await registry.invoke(target.daemonId, 'message.send', {
         sessionId: target.sessionId,
         message: input.message,
+        ...(input.kind ? { kind: input.kind } : {}),
         ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
         ...(input.deliveryMode === undefined ? {} : { deliveryMode: input.deliveryMode }),
         from: qualifyRemoteOrigin(origin, daemonName),

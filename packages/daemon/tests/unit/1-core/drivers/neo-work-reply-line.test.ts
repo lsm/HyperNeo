@@ -15,7 +15,7 @@ import {
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'neo:own-root' };
 const place = { machine: 'laptop', folder: '/synthetic/repo', name: 'repo' };
 const line = (id: string) =>
-  `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${id} "<text>" (not SendMessage). Keep working after you send.`;
+  `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${id} --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.`;
 
 function harness(adapter: string) {
   const received: string[] = [];
