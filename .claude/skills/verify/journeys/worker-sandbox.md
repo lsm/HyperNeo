@@ -51,3 +51,29 @@ Read denial, credential/environment isolation, arbitrary MCP/native-tool contain
 and Desktop UI behavior are not proven here. Codex `workspaceWrite` exposes no
 per-path read deny; secret-read isolation is tracked separately in #8630.
 Copy evidence to a persistent location before deleting the synthetic run/worktree.
+
+## Policy self-protection, report publication and lifecycle cleanup
+
+The Bash probes also attempt to unlink `.git/hyperneo-native-writes.json`,
+`.git/hyperneo-worker-sandbox` and `.claude/settings.local.json`. Both Claude
+routes must report OS denials, preserve the gate markers and retain equivalent
+policy JSON. The SDK settings manager may reformat JSON before the model runs;
+formatting is not a policy change. The probe waits for the completed tool result
+before checking preservation. Codex's sandbox policy is persisted in its thread,
+not gated on the runtime-recreation marker.
+
+The SDK Bash turn writes `sandbox-report.txt` in its actual
+`HYPERNEO_HANDOFF_DIR`; the next scripted SDK MCP call invokes `handoff.publish`.
+`handoff-published.json` must contain a real `published` reference for the synthetic
+report. This proves the exported draft path matches the daemon reader and is
+writable without granting the surrounding data directory.
+
+Finally, the real isolated `session.archive` RPC must remove the SDK worker's
+private temp/cache dirs and retain its clone. `runtime-cleanup.json` records that
+result. Focused adapter tests verify the same release for both Desktop archives;
+SDK lifecycle tests cover archive and delete, including uncached sessions.
+
+Failing reproductions for review run 9434 were committed first in `04bebfb404`:
+real Bash deleted its policy, report env pointed at the wrong directory, and
+archive/delete retained runtime roots. No production clone-placement change is
+part of this fix; the policy always takes its root from the prepared directory.

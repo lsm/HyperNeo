@@ -125,6 +125,9 @@ try {
   const sdk = await rpc('work.start', { ...request, adapter: 'hyperneo', title: 'SDK sandbox' }) as Result<WorkStarted>;
   assert(sdk.ok, JSON.stringify(sdk));
   const sdkWorker = app.db.getSession(sdk.value.ref.id)!.workspacePath!;
+  const protectedFiles = ['.git/hyperneo-native-writes.json', '.git/hyperneo-worker-sandbox', '.claude/settings.local.json'].map(path => join(sdkWorker, path));
+  const policyValue = (path: string) => path.endsWith('.json') ? JSON.stringify(JSON.parse(readFileSync(path, 'utf8'))) : readFileSync(path, 'utf8');
+  const policyBytes = protectedFiles.map(policyValue);
   assert(sdkWorker !== source);
   sdkModel = spawn('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, sdkWorker, 'sdk'], { stdio: 'ignore' });
   const wait = async (predicate: () => boolean) => {
@@ -138,6 +141,7 @@ try {
   sdkBaseUrl = `http://127.0.0.1:${readFileSync(join(run, 'evidence/sdk-port'), 'utf8')}`;
   app.jobProcessor.start();
   await wait(() => existsSync(join(sdkWorker, 'network-sdk.txt')) && readFileSync(join(sdkWorker, 'network-sdk.txt'), 'utf8') === 'synthetic-network-ok');
+  await wait(() => existsSync(join(run, 'evidence/sdk-requests.json')) && /Operation not permitted|Permission denied/.test(readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8')) && readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8').includes('outside-status=1'));
   const sdkSettings = JSON.parse(readFileSync(join(sdkWorker, '.claude/settings.local.json'), 'utf8'));
   const sdkTemp = readFileSync(join(sdkWorker, 'observed-temp-sdk.txt'), 'utf8');
   const observed = {
@@ -147,13 +151,29 @@ try {
     tempAllowed: sdkTemp.startsWith(sdkSettings.env.TMPDIR + '/') && existsSync(join(sdkTemp, 'probe-sdk')),
     cacheAllowed: existsSync(join(sdkSettings.env.XDG_CACHE_HOME, 'probe-sdk')),
     networkAllowed: true,
+    policyIntact: protectedFiles.every((path, index) => existsSync(path) && policyValue(path) === policyBytes[index]),
   };
   writeFileSync(join(run, 'evidence/sdk-observed.json'), JSON.stringify(observed, null, 2));
   assert(Object.values(observed).every(Boolean), JSON.stringify(observed));
-  await wait(() => existsSync(join(run, 'evidence/sdk-requests.json')) && /Operation not permitted|Permission denied/.test(readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8')) && readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8').includes('outside-status=1'));
+  let published: unknown;
+  await wait(() => {
+    try {
+      const requests = JSON.parse(readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8'));
+      const results = requests.flatMap((request: { messages?: { content?: unknown }[] }) => request.messages ?? []).flatMap((message: { content?: unknown }) => Array.isArray(message.content) ? message.content : []);
+      published = results.find((result: { type?: string; content?: unknown }) => result.type === 'tool_result' && JSON.stringify(result.content).includes('published'));
+      return !!published;
+    } catch { return false; }
+  });
+  writeFileSync(join(run, 'evidence/handoff-published.json'), JSON.stringify(published, null, 2));
   writeFileSync(join(run, 'sdk-finish'), 'done');
   await new Promise<void>(resolve => sdkModel!.once('exit', () => resolve()));
   sdkModel = undefined;
+  const archived = await rpc('rpc:session.archive', { sessionId: sdk.value.ref.id, confirmed: true });
+  assert.equal(app.db.getSession(sdk.value.ref.id)?.status, 'archived');
+  assert(!existsSync(sdkSettings.env.TMPDIR), 'Archive must release private temp root');
+  assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'Archive must release private cache root');
+  assert(existsSync(sdkWorker), 'Archive must preserve the private clone');
+  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, tempReleased: true, cacheReleased: true, cloneRetained: true }, null, 2));
   console.log(`PASS Codex Desktop, Claude Desktop and real HyperNeo SDK outside refusal + inside/Git/temp/cache/network: ${run}/evidence`);
 
 

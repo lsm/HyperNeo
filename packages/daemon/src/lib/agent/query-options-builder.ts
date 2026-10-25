@@ -468,7 +468,10 @@ export class QueryOptionsBuilder {
     const handoffDirectory = neo
       ? undefined
       : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
-    if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
+    if (handoffDirectory) {
+      additionalDirectories?.push(handoffDirectory);
+      workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
+    }
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
@@ -543,7 +546,7 @@ export class QueryOptionsBuilder {
       env: {
         ...mergedEnv,
         ...compactEnv,
-        HYPERNEO_HANDOFF_DIR: workerSandbox?.env.TMPDIR ?? handoffDirectory,
+        HYPERNEO_HANDOFF_DIR: handoffDirectory,
         ...workerSandbox?.env,
         ...readAccess?.env,
       },

@@ -21,7 +21,13 @@ function policy(root: string, roots: string[], siblings: string[]) {
       excludedCommands: [],
       filesystem: {
         allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
-        denyWrite: [...roots, ...siblings.filter((sibling) => sibling !== root)],
+        denyWrite: [
+          ...roots,
+          ...siblings.filter((sibling) => sibling !== root),
+          markerPath(root),
+          settingsPath(root),
+          join(root, '.git/hyperneo-worker-sandbox'),
+        ],
       },
       network: { allowedDomains: ['*'], allowUnixSockets: [], allowAllUnixSockets: false },
     },

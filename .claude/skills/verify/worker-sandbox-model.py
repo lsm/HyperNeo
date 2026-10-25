@@ -19,6 +19,8 @@ printf 'temp-status=%s\\n' "$?"
 ''')
 protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine != 'codex' else []
 policy_before = {path: path.read_bytes() for path in protected}
+if engine == 'sdk':
+    with probe.open('a') as script: script.write('printf synthetic-report > "$HYPERNEO_HANDOFF_DIR/sandbox-report.txt"\n')
 with probe.open('a') as script:
     for path in protected: script.write(f"rm '{path}'\n")
 requests = []
@@ -35,11 +37,16 @@ class Handler(BaseHTTPRequestHandler):
         if engine == 'sdk': (run / 'evidence/sdk-requests.json').write_text(json.dumps(requests, indent=2))
         usage = {'input_tokens': 10, 'output_tokens': 10}
         if engine in ['claude', 'sdk']:
-            tool = any(t.get('name') == 'Bash' for t in body.get('tools', [])) and sum(any(t.get('name') == 'Bash' for t in r.get('tools', [])) for r in requests) == 1
+            main = any(t.get('name') == 'Bash' for t in body.get('tools', []))
+            turn = sum(any(t.get('name') == 'Bash' for t in r.get('tools', [])) for r in requests)
+            publish = engine == 'sdk' and main and turn == 2
+            tool = (main and turn == 1) or publish
+            tool_name = next((t['name'] for t in body.get('tools', []) if t.get('name', '').endswith('__invoke')), 'mcp__hyperneo-operations__invoke') if publish else 'Bash'
+            tool_input = {'name': 'handoff.publish', 'input': {'name': 'sandbox-report.txt'}} if publish else {'command': '/bin/sh ./probe.sh'}
             events = [
                 ('message_start', {'type': 'message_start', 'message': {'id': f'msg_{n}', 'type': 'message', 'role': 'assistant', 'model': 'claude-sonnet-4-20250514', 'content': [], 'stop_reason': None, 'stop_sequence': None, 'usage': usage}}),
-                ('content_block_start', {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use', 'id': f'call_{n}', 'name': 'Bash', 'input': {}} if tool else {'type': 'text', 'text': ''}}),
-                ('content_block_delta', {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta', 'partial_json': json.dumps({'command': '/bin/sh ./probe.sh'})} if tool else {'type': 'text_delta', 'text': 'Synthetic proof finished.'}}),
+                ('content_block_start', {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use', 'id': f'call_{n}', 'name': tool_name, 'input': {}} if tool else {'type': 'text', 'text': ''}}),
+                ('content_block_delta', {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta', 'partial_json': json.dumps(tool_input)} if tool else {'type': 'text_delta', 'text': 'Synthetic proof finished.'}}),
                 ('content_block_stop', {'type': 'content_block_stop', 'index': 0}),
                 ('message_delta', {'type': 'message_delta', 'delta': {'stop_reason': 'tool_use' if tool else 'end_turn', 'stop_sequence': None}, 'usage': usage}),
                 ('message_stop', {'type': 'message_stop'})]

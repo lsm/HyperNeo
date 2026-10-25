@@ -4,10 +4,7 @@ import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function workerSandboxPaths(root: string) {
-  const runtime = join(
-    '/tmp',
-    `hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`
-  );
+  const runtime = `/tmp/hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
   return {
     TMPDIR: join(runtime, 'tmp'),
     TMP: join(runtime, 'tmp'),
@@ -17,29 +14,20 @@ export function workerSandboxPaths(root: string) {
   };
 }
 
-export async function releaseWorkerSandbox(root: string) {
-  await rm(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
+export async function releaseWorkerSandbox(root: string | null | undefined) {
+  if (root) await rm(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
 }
 
 export async function prepareWorkerSandbox(root: string) {
   const env = workerSandboxPaths(root);
   const runtime = join(env.TMPDIR, '..');
-  await mkdir(runtime, { recursive: true, mode: 0o700 });
-  const entry = await lstat(runtime);
-  if (
-    !entry.isDirectory() ||
-    (entry.mode & 0o077) !== 0 ||
-    (process.getuid && entry.uid !== process.getuid())
-  )
-    throw new Error('Worker runtime must be an owned private directory');
-  await Promise.all(
-    [...new Set(Object.values(env))].map(async (path) => {
-      await mkdir(path, { recursive: true, mode: 0o700 });
-      const entry = await lstat(path);
-      if (!entry.isDirectory() || (entry.mode & 0o077) !== 0)
-        throw new Error('Worker runtime roots must be private directories');
-    })
-  );
+  for (const path of new Set([runtime, ...Object.values(env)])) {
+    await mkdir(path, { recursive: true, mode: 0o700 });
+    const entry = await lstat(path);
+    const owner = process.getuid?.() ?? entry.uid;
+    if (!entry.isDirectory() || (entry.mode & 0o077) !== 0 || entry.uid !== owner)
+      throw new Error('Worker runtime roots must be owned private directories');
+  }
   await writeFile(join(root, '.git/hyperneo-worker-sandbox'), 'restricted');
   return env;
 }

@@ -1140,13 +1140,7 @@ export async function startCodexThread(
           destination: join(deps.worktreesDir, deps.newId().slice(0, 8), basename(folder)),
         });
         if (!prepared.ok) return prepared;
-        workFolder = {
-          cwd: prepared.value.directory,
-          release: async () => {
-            await prepared.value.release();
-            await releaseWorkerSandbox(prepared.value.directory);
-          },
-        };
+        workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
       } else {
         const prepared = await prepareCodexWorkFolder(folder, deps, request.inPlace);
         if (!prepared.ok) return prepared;
@@ -1228,7 +1222,10 @@ export async function startCodexThread(
         `${error instanceof Error ? error.message : String(error)}${made}`
       );
     } finally {
-      if (!threadId) await workFolder?.release();
+      if (!threadId) {
+        await workFolder?.release();
+        if (request.preparation) await releaseWorkerSandbox(workFolder?.cwd);
+      }
     }
   });
 }
@@ -1346,6 +1343,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         const refused = admit();
         if (refused) return refused;
         await server.call('thread/archive', { threadId: ref.id });
+        await releaseWorkerSandbox(found.value.thread.folder);
         return { ok: true, value: { archived: true } };
       });
     },
