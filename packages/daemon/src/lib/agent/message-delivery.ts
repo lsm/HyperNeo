@@ -129,7 +129,7 @@ export function asMessageDeliveryPayload(
 
 export type DeliveryContent = string | MessageContent[];
 
-export type DeliveryLoadResult = { content: DeliveryContent; sendStatus: string };
+export type DeliveryLoadResult = { content: DeliveryContent; sendStatus: string; neoBatch?: true };
 
 export const MESSAGE_DELIVERY_PARK_MS = 5_000;
 

@@ -171,6 +171,7 @@ import {
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
 import { registerMailboxJobs } from './lib/mailbox/registration.ts';
+import { boundDeliveryContent } from './lib/handoffs/bound-delivery.ts';
 import { resolveMailboxSession } from './lib/mailbox/session-lookup.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
@@ -1355,6 +1356,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           taskAgentManager?.getRestoredRateLimitRetryAt(sessionId) ?? null,
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
+        prepareContent: (loaded, job) => boundDeliveryContent(db.getDatabase(), job, loaded),
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
         markDeliveryFailed: async (sessionId: string, messageUuid: string) =>
