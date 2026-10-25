@@ -20,6 +20,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
 import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoPreviewReference } from './NeoPreviewReference.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
 import { NeoClampedText } from './NeoClampedText.tsx';
 import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
@@ -541,6 +542,7 @@ function PublicEntry({
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
       >
+        <NeoPreviewReference reference={ask?.previewContext} />
         {ask?.replyTo && (
           <div data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}>
             <ReplyQuote replyTo={ask.replyTo} labels={replyLabels} onSeek={onSeek} />
@@ -809,6 +811,7 @@ export function PendingAsk({
       <div
         class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}
       >
+        <NeoPreviewReference reference={ask.previewContext} />
         {ask.quote && (
           <NeoQuoteBar
             author={ask.quote.author}

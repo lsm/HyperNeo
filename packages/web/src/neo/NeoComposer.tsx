@@ -47,9 +47,15 @@ export function NeoComposer({
   onStop,
   previewContext,
   onCancelPreview,
+  previewCandidate,
+  onRebindPreview,
+  onPreviewCapture,
 }: {
   previewContext?: NeoPreviewReference;
   onCancelPreview?: () => void;
+  previewCandidate?: NeoPreviewReference;
+  onRebindPreview?: () => void;
+  onPreviewCapture?: () => void;
   forSession?: boolean;
   onStop?: () => void;
   preference?: NeoPreference;
@@ -263,6 +269,18 @@ export function NeoComposer({
           </button>
         </div>
       )}
+      {!forSession &&
+        previewCandidate &&
+        (previewCandidate.artifactId !== boundPreview?.artifactId ||
+          previewCandidate.snapshot !== boundPreview?.snapshot) && (
+          <button
+            type="button"
+            class="mb-2 text-xs text-accent hover:underline"
+            onClick={onRebindPreview}
+          >
+            {t('composer.usePreview')}
+          </button>
+        )}
       {quote && (
         <div
           role="region"
@@ -406,6 +424,7 @@ export function NeoComposer({
           <NeoVoice
             door={forSession ? 'session' : undefined}
             previewContext={boundPreview}
+            onPreviewCapture={onPreviewCapture}
             sessionId={sessionId}
             connected={connected}
             draftText={draft}

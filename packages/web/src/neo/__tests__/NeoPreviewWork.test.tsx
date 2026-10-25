@@ -254,7 +254,7 @@ describe('Neo preview Work layout', () => {
     expect(work.hidden).toBe(width < 1440);
     expect(
       request.mock.calls.filter(
-        ([, { name, input }]) => name === 'artifact.file.get' && input.artifactId === 'a'
+        ([, { name, input }]) => name === 'artifact.file.read' && input.artifactId === 'a'
       )
     ).toHaveLength(1);
   });
@@ -354,7 +354,7 @@ describe('Neo preview Work layout', () => {
         expect(screen.getByRole('tab', { name: 'Your work · 1' })).toBeTruthy();
         expect(
           request.mock.calls.filter(
-            ([, { name, input }]) => name === 'artifact.file.get' && input.artifactId === 'a'
+            ([, { name, input }]) => name === 'artifact.file.read' && input.artifactId === 'a'
           )
         ).toHaveLength(1);
       } else

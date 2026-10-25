@@ -30,6 +30,7 @@ import { invokeOperation } from '../lib/operations.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
+import { useNeoPreviewCandidate } from './useNeoPreviewCandidate.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -93,7 +94,8 @@ export function NeoLive() {
   const quote = quoted?.scope === neo.sessionId ? quoted.quote : undefined;
   const [restoredPreview, setRestoredPreview] = useState<{
     scope: string;
-    reference: NeoPreviewReference;
+    reference?: NeoPreviewReference;
+    pinned?: boolean;
   } | null>(null);
   const previewContext =
     restoredPreview?.scope === neo.sessionId ? restoredPreview.reference : undefined;
@@ -181,6 +183,29 @@ export function NeoLive() {
     workReference === artifactPreviewStack.value.at(-1);
   const focusPreview = columns && !chat && previewDesktop && previewOpen && !referenceWork;
   const previewTarget = artifactPreviewStack.value.at(-1);
+  const previewCandidate = useNeoPreviewCandidate(
+    neo.sessionId,
+    !chat && !referenceWork && previewTarget?.kind === 'artifact'
+      ? previewTarget.artifactId
+      : undefined
+  );
+  const framedDraft =
+    !!(draft ?? inputDraft.content).trim() ||
+    !!quote ||
+    attachments.files.length > 0 ||
+    attachments.reading > 0;
+  const pinPreview = (reference = previewContext) =>
+    setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+  useLayoutEffect(() => {
+    if (!neo.sessionId || restoredPreview?.pinned) return;
+    if (framedDraft) pinPreview();
+    else if (
+      previewCandidate &&
+      inputDraft.readSavedDraft(neo.sessionId) !== undefined &&
+      previewCandidate !== previewContext
+    )
+      setRestoredPreview({ scope: neo.sessionId, reference: previewCandidate });
+  }, [neo.sessionId, framedDraft, previewCandidate, restoredPreview]);
   const expandable = focusPreview && previewTarget?.kind !== 'reference';
   const expanded = expandable && previewExpanded;
   const previewMin = roomy ? 32 : 40;
@@ -627,7 +652,11 @@ export function NeoLive() {
                 if (!restored) return;
                 setRestoredPreview(
                   restored.previewContext
-                    ? { scope: restored.sessionId, reference: restored.previewContext }
+                    ? {
+                        scope: restored.sessionId,
+                        reference: restored.previewContext,
+                        pinned: true,
+                      }
                     : null
                 );
                 acceptedCleanups.delete(requestId);
@@ -657,7 +686,9 @@ export function NeoLive() {
                 }
                 const text = publicAskText(ask.content);
                 setRestoredPreview(
-                  ask.previewContext ? { scope: sessionId, reference: ask.previewContext } : null
+                  ask.previewContext
+                    ? { scope: sessionId, reference: ask.previewContext, pinned: true }
+                    : null
                 );
                 writeDraft([liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'));
               }}
@@ -852,7 +883,10 @@ export function NeoLive() {
               }
               quote={quote}
               previewContext={previewContext}
-              onCancelPreview={() => setRestoredPreview(null)}
+              previewCandidate={previewCandidate}
+              onRebindPreview={() => pinPreview(previewCandidate)}
+              onPreviewCapture={() => pinPreview()}
+              onCancelPreview={() => setRestoredPreview({ scope: neo.sessionId!, pinned: true })}
               onCancelQuote={() => setQuoted(null)}
               key={neo.sessionId}
               store={neo.store}
@@ -861,6 +895,8 @@ export function NeoLive() {
               onPreferenceSaved={() => void neo.refresh()}
               draft={draft ?? ''}
               onDraft={(text) => {
+                if (text || quote || attachments.files.length || attachments.reading) pinPreview();
+                else setRestoredPreview(null);
                 if (
                   !reloadBuffer.remember(
                     neo.sessionId ?? '',

@@ -38,8 +38,10 @@ export function NeoVoice({
   onPhase,
   door,
   previewContext,
+  onPreviewCapture,
 }: {
   previewContext?: NeoPreviewReference;
+  onPreviewCapture?: () => void;
   door?: 'session';
   sessionId: string;
   connected: boolean;
@@ -108,6 +110,7 @@ export function NeoVoice({
 
   async function start() {
     recordingDraft.current = captureDraft();
+    onPreviewCapture?.();
     try {
       await recorder.start();
       const hub = connectionManager.getHubIfConnected();

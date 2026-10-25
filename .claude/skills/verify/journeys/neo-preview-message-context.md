@@ -47,8 +47,21 @@ sending until its settled intent can be durably stored.
 
 Keep the evidence before deleting the fresh run directory. The focused operation
 suite also checks strict input rejection and immutable retry conflicts. Run web
-tests and build for shared-type compatibility. Composer binding and rendered
-clickable references belong to the subsequent frontend slice; no GUI claim is made.
+tests and build for shared-type compatibility. Composer binding and clickable references are covered by real `NeoLive`,
+`NeoComposer`, `NeoVoice` and conversation component tests under happy-dom.
+Require draft/file switching, explicit rebind/removal, attachment-only framing,
+text clearing with retained attachments/in-flight reads/quotes, and fully empty reset,
+phone dismissal, microphone-start capture, delayed metadata/send completion and
+unavailable references. Available references reopen the canonical artifact ID;
+the existing artifact reader authorizes it again. Work/file switching must keep
+the viewer and avoid rereading file bytes even when binding metadata is fetched.
+No unattended GUI/browser or real-device claim is made.
+
+Mount-time Preview/draft load ordering and failure are tracked in #8675 with
+refresh/reconnect recovery. Metadata arriving before an empty saved draft may
+leave auto-binding inactive; Use current Preview still binds explicitly. Recovery
+must publish scoped reactive readiness and preserve original/unbound context,
+newer edits and explicit rebinds rather than treating a failed load as empty.
 
 Also run the compiled-worker-startup journey when changing these schema import
 boundaries. Source-mode RPC can pass while a schema-to-runtime dependency cycle
