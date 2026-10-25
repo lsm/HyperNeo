@@ -127,6 +127,35 @@ describe('session tool choice changes', () => {
     expect((await changeSessionToolChoice(input, deps)).ok).toBe(true);
     expect(config().toolSelection?.choices['mcp:browser']?.aliases).toEqual(['frozen-alias']);
   });
+  it('preserves a captured legacy veto when a different tool is changed', async () => {
+    repo.updateSession(ID, {
+      config: {
+        ...fixture().config,
+        toolSelection: undefined,
+        tools: { disabledSkills: ['new-wrapper-name'] },
+      },
+    });
+    catalog.registry = [{ ...catalog.registry[0], enabled: true }];
+    catalog.skills = [
+      { ...wrapper(), enabled: true },
+      {
+        ...wrapper('notes'),
+        sourceType: 'builtin',
+        config: { type: 'builtin', commandName: 'notes' },
+      },
+    ];
+    delete catalog.disabledSkillIds;
+    delete catalog.skillOverrides;
+    expect(
+      (await changeSessionToolChoice({ sessionId: ID, key: 'skill:notes', selected: true }, deps))
+        .ok
+    ).toBe(true);
+    expect(config().toolSelection?.choices['mcp:browser']).toEqual({
+      selected: false,
+      aliases: ['new-wrapper-name'],
+    });
+    expect(config().toolSelection?.choices['skill:notes']?.selected).toBe(true);
+  });
   it('keeps later catalog additions off unless that exact choice is requested', async () => {
     catalog.registry = [
       ...catalog.registry,
