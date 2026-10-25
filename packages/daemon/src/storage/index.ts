@@ -21,6 +21,7 @@ import { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 import {
   sessionConfigReplacer,
+  type SessionCreationOptions,
   SessionRepository,
   sessionWrites,
 } from './repositories/session-repository.ts';
@@ -234,11 +235,14 @@ export class Database {
     }
   }
 
-  async createSession(
-    session: Session,
-    options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
-  ): Promise<void> {
-    await this.gateway.call(sessionWrites, 'createSession', postable(session), options);
+  async createSession(session: Session, options?: SessionCreationOptions): Promise<void> {
+    const selection = await this.gateway.call(
+      sessionWrites,
+      'createSessionWithToolDefaults',
+      postable(session),
+      options
+    );
+    session.config.toolSelection = selection;
     this.reactiveDb?.forgetSessionTask(session.id);
   }
 

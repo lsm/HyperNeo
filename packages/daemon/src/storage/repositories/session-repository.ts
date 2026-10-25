@@ -1,6 +1,12 @@
 import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import { toSqlStringList } from '../sql-string-list.ts';
-import type { Session, SessionContext, SessionType } from '@hyperneo/shared';
+import type {
+  Session,
+  SessionContext,
+  SessionType,
+  SkillEnablementOverride,
+} from '@hyperneo/shared';
+import { initialSessionToolSelection } from './session-initial-tool-selection.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -43,6 +49,12 @@ export function sessionConfigReplacer(key: string, value: unknown): unknown {
   if (key === 'workerOperations') return undefined;
   if (typeof value === 'function') return undefined;
   return value;
+}
+
+export interface SessionCreationOptions {
+  enforceWorkspaceOwnership?: boolean;
+  ownershipPath?: string;
+  initialSkillOverrides?: SkillEnablementOverride[];
 }
 
 export class SessionRepository {
@@ -115,6 +127,15 @@ export class SessionRepository {
       )
       .get(spaceId, workspacePath, spaceId, workspacePath) as { '1': number } | undefined;
     return !!owner;
+  }
+
+  createSessionWithToolDefaults(session: Session, options?: SessionCreationOptions) {
+    const selection = initialSessionToolSelection(this.db, session, options?.initialSkillOverrides);
+    this.createSession(
+      { ...session, config: { ...session.config, toolSelection: selection } },
+      options
+    );
+    return selection;
   }
 
   createSession(
@@ -862,6 +883,7 @@ export class SessionRepository {
 
 export const sessionWrites = defineRepositoryOp('sessions.write', 'write', SessionRepository, [
   'createSession',
+  'createSessionWithToolDefaults',
   'guardedUpdateSession',
   'deleteSession',
   'detachFromParent',
