@@ -24,5 +24,12 @@ Rules for this work:
    irreversible.
 9. Report what you ran and what you saw, with the output or an artifact path, and
    label anything you did not verify.
+10. Write PR descriptions and issues for a person to read in 30 seconds.
+    - First, 2–3 sentences: what this is (bug fix, feature, cleanup) and why. For a bug, say what was wrong as a user sees it. Link the issue if there is one (keep `Closes #N`).
+    - Then how, in a few short bullets: the change, not the search that found it.
+    - Then `Verified:` in one or two lines: what you ran and what you saw.
+    - Nothing else: no file-by-file audits, test counts, lists of what you didn't touch, or merge instructions. Your full report (rule 9) goes to Neo, not into the PR.
+    - In a public repo: no local paths, machine names, session ids or private repo names.
+    An issue states the problem and what done looks like, in a few sentences.
 
 Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.
