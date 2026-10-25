@@ -66,6 +66,21 @@ function fixture() {
 }
 
 describe('ledger branch reader', () => {
+  test('refresh does not read branch admission through the main repository', async () => {
+    const f = fixture();
+    const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+    const main = spyOn(facts, 'read').mockImplementation(() => {
+      throw new Error('branch refresh read on main repository');
+    });
+    try {
+      const result = await facts.refresh('synthetic/ledger', 'feature', () => response([{ url }]));
+      expect(result.membership).toMatchObject({ status: 'known', urls: [url] });
+    } finally {
+      main.mockRestore();
+      f.cleanup();
+    }
+  });
+
   test('simultaneous requests for one branch share one upstream read', async () => {
     const f = fixture();
     try {
