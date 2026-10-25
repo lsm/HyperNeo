@@ -57,8 +57,13 @@ try {
   const readDefault=(id?:string)=>{const target=captureToolPreferenceRow(raw,id?{table:'spaces',id}:{table:'global_settings',id:1});return JSON.parse(String(target.row![id?'config':'settings'])).toolSelectionDefaults as SessionToolSelection;};
   const update={mutations:[{repository:'registry' as const,method:'update' as const,args:[server.id,{enabled:true}] as [string,{enabled:boolean}]}],edits:[{key:`mcp:${server.id}` as const,selected:true}]};
   const prepare=raw.prepare.bind(raw);
-  raw.prepare=((...args:Parameters<typeof raw.prepare>)=>{if(new Error().stack?.includes('/tool-default-transition.ts'))throw new Error('main-thread default transition SQL');return prepare(...args);}) as typeof raw.prepare;
-  try {assert.equal((await app.db.gateway.run(toolDefaultTransitions,update)).ok,true);} finally {raw.prepare=prepare;}
+  raw.prepare=((...args:Parameters<typeof raw.prepare>)=>{if(new Error().stack?.includes('/packages/daemon/src/storage/repositories/tool-default-transition.ts'))throw new Error('main-thread default transition SQL');return prepare(...args);}) as typeof raw.prepare;
+  try {
+    const {ChangeRecorder}=await import('../../../packages/daemon/src/storage/db-gateway/db-op.ts');
+    assert.throws(()=>toolDefaultTransitions.run(raw,update,new ChangeRecorder()),/main-thread default transition SQL/);
+    evidence.mainThreadProbeNegativeControl=true;
+    assert.equal((await app.db.gateway.run(toolDefaultTransitions,update)).ok,true);
+  } finally {raw.prepare=prepare;}
   assert.equal((await hub.request<{servers:{id:string;enabled:boolean}[]}>('mcp.registry.list',{})).servers.find(row=>row.id===server.id)!.enabled,true);
   assert.equal(readDefault().choices[`mcp:${server.id}`]!.selected,true);
   assert.equal(readDefault(fixtures[0].id).choices[`mcp:${server.id}`]!.selected,false);

@@ -21,8 +21,11 @@ Pass requires:
   entry with no choice edits. Its defaults remain absent and updatedAt stays
   unchanged; compare to its effective baseline rather than undefined storage.
   Record absentDefaultsRemainAbsent=true. Unit fixtures cover global absence too.
-- Reject any caller-thread SQL from the transition module while the file-backed
-  operation runs. It must still commit through the existing writer worker.
+- Reject caller-thread SQL from the daemon transition module (exclude the helper's
+  same-named file). Direct invocation against the synthetic main connection must
+  fail before writes: mainThreadProbeNegativeControl=true. The file-backed gateway
+  invocation must then commit through the existing writer worker. Unrelated
+  asynchronous startup SQL must remain allowed.
 - Clear the Space override through the worker. It inherits the canonical global
   default even though the old wrapper gate remains off.
 - Include a missing skill update after a registry mutation. The worker refuses
