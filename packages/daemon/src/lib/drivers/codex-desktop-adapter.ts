@@ -1038,7 +1038,7 @@ export function selectCodexStartFolder(
 ): Gate<string> {
   const admitted = workStartPreparation.admit(request.preparation, !!deps.prepareExecution);
   if ('reason' in admitted) return admitted;
-  return selectLocalStartFolder(request, deps, 'A Codex thread needs a folder to work in.');
+  return selectLocalStartFolder(request, deps, 'A Codex thread needs a folder to work in.', true);
 }
 
 export function startedThreadId(started: unknown): string | null {
@@ -1125,6 +1125,8 @@ export async function startCodexThread(
         server
       );
       if (!configuration.ok) return configuration;
+      const folderReady = request.prepareFolder?.();
+      if (folderReady && 'reason' in folderReady) return folderReady.reason;
       if (request.preparation) {
         const prepared = await deps.prepareExecution!(request.preparation, {
           directory: folder,

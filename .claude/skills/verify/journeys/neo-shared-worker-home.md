@@ -26,8 +26,17 @@ a folder named in immutable human intake is allowed. The actual worker mailbox
 input must contain the non-coding file guidance, including keeping useful files
 in its cwd and making a subfolder only for one matter with several files.
 The helper closes its daemon in finally and writes RPC replies, worker intake,
-selected folders and nine Boolean checks to `evidence/project-start-home.json`.
+selected folders and eleven Boolean checks to `evidence/project-start-home.json`.
 A missing or false check is not a pass.
+
+A human-named folder with an unavailable model must remain absent after refusal;
+a human-named nested folder with a missing parent must also be refused without
+creating its parent. Other new named folders retain the home-only/non-hidden
+creation guards; only the configured/default shared folder bootstraps recursively.
+Folder preparation occurs after native adapter configuration admission.
+Inspect actual `bun packages/cli/main.ts --help` and
+`bun packages/cli/daemon-entry.ts --help` under an isolated HOME: both must
+state the Neo user-folder override and HYPERNEO_WORKSPACE_PATH, with no suffix.
 
 For attended header verification, build the web package, then add
 `without-workspace --show-header` after a fresh run path. The helper prints

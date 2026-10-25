@@ -29,6 +29,7 @@ import {
   type Result,
   type WorkSummary,
   type WorkAdapter,
+  type StartRequest,
   type WorkRef,
   type WorkRejection,
 } from './types.ts';
@@ -58,7 +59,7 @@ export interface WorkVerbDeps {
   daemonName: string;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   recordStarted?: (ref: WorkRef) => void;
-  startPlace?: (input: StartDraft, caller: OperationCaller, create?: boolean) => Gate<StartInput>;
+  startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
 }
 
 export const WORK_MESSAGE_MAX = 20_000;
@@ -164,7 +165,10 @@ export const WorkAdaptersResultSchema = workResultSchema(
 );
 
 type StartDraft = z.infer<typeof StartWorkInputSchema>;
-type StartInput = StartDraft & { place: z.infer<typeof PlaceSchema>; inPlace?: boolean };
+type StartInput = StartDraft & { place: z.infer<typeof PlaceSchema> } & Pick<
+    StartRequest,
+    'inPlace' | 'prepareFolder'
+  >;
 type SendInput = z.infer<typeof SendWorkInputSchema>;
 type RefInput = z.infer<typeof WorkRefInputSchema>;
 type StatusInput = z.infer<typeof WorkStatusInputSchema>;
@@ -336,8 +340,6 @@ export async function startWork(
   deps: WorkVerbDeps
 ): Promise<StartResult> {
   if ('local' in route) {
-    const placed = deps.startPlace?.(input, caller, true);
-    if (placed && 'reason' in placed) return placed.reason;
     const result = await route.local(input, { from, caller });
     if (result.ok) deps.recordStarted?.(result.value.ref);
     return result;
@@ -671,7 +673,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
