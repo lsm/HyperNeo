@@ -11,6 +11,7 @@ const writers = new Set<string>(sdkMessageWrites.methods);
 const units: Record<string, string[] | true> = {
   'storage/repositories/sdk-message-repository.ts': true,
   'storage/repositories/sdk-message-transactions.ts': true,
+  'storage/repositories/rate-limit-cancel-write.ts': ['cancel'],
   'lib/agent/message-delivery-outbox.ts': ['commitRetryPrompt'],
   'lib/mailbox/cancellation.ts': ['persistSessionDeliveryTeardown'],
   'lib/mailbox/failure.ts': ['persistExistingMailboxFailure', 'persistMailboxFailure'],
