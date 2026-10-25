@@ -160,9 +160,9 @@ test.each(cases)(
       );
       expect(result).toEqual({ todo, startNext });
       expect(structuredClone(result)).toEqual(result);
-      expect(result.todo.state).toBe(input.expected);
+      expect(result.todo?.state).toBe(input.expected);
       expect(result.startNext).toBe(input.next);
-      expect(result.todo.report).toBe(before.report);
+      expect(result.todo?.report).toBe(before.report);
       expect(writer.store.getQuestion('stale-start')).toEqual(
         legacy.store.getQuestion('stale-start')
       );
@@ -198,3 +198,31 @@ test('a refused ask stamp rolls back pruning and todo changes before returning',
     await f.close();
   }
 });
+
+test.each(['unknown', 'deleted'] as const)(
+  '%s todo returns no committed work or next candidate and preserves other state',
+  async (kind) => {
+    const f = fixture();
+    try {
+      const id = kind === 'unknown' ? 'missing' : 'first';
+      if (kind === 'deleted') f.db.prepare('DELETE FROM neo_todos WHERE id=?').run(id);
+      const before = {
+        todos: f.store.listTodos('ask'),
+        questions: f.store.listQuestions('ask'),
+        ask: f.store.getAsk('ask'),
+      };
+      const result = await f.store.write('commitState', id, {}, 20, {
+        state: 'done',
+        evidence: 'Late completion',
+      });
+      expect(result).toEqual({ todo: null, startNext: null });
+      expect({
+        todos: f.store.listTodos('ask'),
+        questions: f.store.listQuestions('ask'),
+        ask: f.store.getAsk('ask'),
+      }).toEqual(before);
+    } finally {
+      await f.close();
+    }
+  }
+);

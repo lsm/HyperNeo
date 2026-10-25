@@ -9,7 +9,7 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
 const [mode, directory] = process.argv.slice(2);
-assert(['before', 'verify'].includes(mode));
+assert(['before', 'verify', 'missing-before'].includes(mode));
 const run = resolve(directory);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -84,6 +84,7 @@ try {
   mainQueries.length = 0;
   const committed = await apply(11);
   report.mainQueries = [...mainQueries];
+  assert(committed.todo, 'an existing todo returns its committed state');
   assert.equal(committed.todo.state, 'done');
   assert.equal(committed.startNext, 'next');
   assert.equal(todos.getTodo('next')!.state, 'todo', 'the build command does not dispatch');
@@ -95,6 +96,27 @@ try {
   assert.equal(card(report.committedSnapshot)?.todos.find((todo) => todo.id === 'next')?.state, 'todo');
   if (mode === 'before') assert(mainQueries.length > 0);
   else assert.equal(mainQueries.length, 0, 'only the newly built command leaves main here');
+  if (mode !== 'before') {
+    const missingCases = [];
+    for (const gone of ['unknown-state-id', 'deleted-state-id']) {
+      if (gone === 'deleted-state-id') {
+        todos.addTodo(gone, 'state-ask', { title: 'Deleted before admission', doneWhen: 'Observed', instruction: null, check: null, named: null }, 11);
+        prepare('DELETE FROM neo_todos WHERE id=?').run(gone);
+      }
+      const beforeMissing = { todos: todos.listTodos('state-ask'), questions: todos.listQuestions('state-ask'), ask: todos.getAsk('state-ask') };
+      let result: unknown = null, error: string | null = null;
+      try { result = await todos.write('commitState', gone, {}, 20, { state: 'done', evidence: 'Late completion' }); }
+      catch (caught) { error = String(caught); }
+      missingCases.push({ kind: gone, result, error });
+      if (mode === 'missing-before') assert(error?.includes('askId'), 'baseline missing IDs reject with the opaque dereference error');
+      else { assert.equal(error, null); assert.deepEqual(result, { todo: null, startNext: null }); }
+      assert.deepEqual({ todos: todos.listTodos('state-ask'), questions: todos.listQuestions('state-ask'), ask: todos.getAsk('state-ask') }, beforeMissing);
+    }
+    report.missingCases = missingCases;
+    report.missingSnapshot = await snapshot();
+    assert.equal(card(report.missingSnapshot)?.doneCount, 1);
+    assert.equal(card(report.missingSnapshot)?.todos.find((todo) => todo.id === 'next')?.state, 'todo');
+  }
   prepare("UPDATE neo_todos SET state='doing' WHERE id=?").run(id);
   maxLagMs = 0;
   lock = spawn('/usr/bin/python3', ['-c', "import sqlite3,sys,time\ndb=sqlite3.connect(sys.argv[1]); db.execute('BEGIN IMMEDIATE'); print('locked',flush=True); time.sleep(1.2); db.rollback(); db.close()", join(run, 'data/daemon.db')], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -106,7 +128,7 @@ try {
   const healthStart = performance.now();
   await rpc('system.health', {});
   const healthMs = performance.now() - healthStart;
-  assert.equal((await write).todo.id, id);
+  assert.equal((await write).todo?.id, id);
   const writeMs = performance.now() - start;
   await released;
   lock = undefined;
