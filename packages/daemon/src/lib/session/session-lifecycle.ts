@@ -63,6 +63,7 @@ export interface CreateSessionParams {
   detectGit?: false;
   title?: string;
   sessionId?: string;
+  executionProjectPath?: string;
   lobbyId?: string;
   spaceId?: string;
   createdBy?: 'human';
@@ -212,6 +213,9 @@ export class SessionLifecycle {
         settingSources: params.config?.settingSources ?? globalSettings.settingSources,
       },
       metadata: {
+        ...(params.executionProjectPath
+          ? { executionProjectPath: params.executionProjectPath }
+          : {}),
         messageCount: 0,
         totalTokens: 0,
         inputTokens: 0,

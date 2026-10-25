@@ -24,3 +24,5 @@ Rules for this work:
    irreversible.
 9. Report what you ran and what you saw, with the output or an artifact path, and
    label anything you did not verify.
+
+Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.

@@ -2,6 +2,7 @@ import type { Session, WorkspaceHistoryEntry } from '@hyperneo/shared';
 
 export function projectRootOf(session: Session): string | null {
   return (
+    session.metadata.executionProjectPath ??
     session.worktree?.mainRepoPath ??
     session.metadata.archivedWorktree?.mainRepoPath ??
     session.workspacePath ??
