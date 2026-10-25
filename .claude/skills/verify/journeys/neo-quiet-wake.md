@@ -1,63 +1,43 @@
-# Quiet reports are history without Neo turns
+# Quiet notices stay queued; first worker turn reports reach Neo
 
 Use the in-process RPC setup in SKILL.md with
-`PROOF=.claude/skills/verify/neo-quiet-wake.ts`. Preflight port 8000; this helper
-uses no port 8001. It starts a real isolated daemon on an ephemeral port and
-its own loopback Anthropic SSE model on 8000. The SDK sandbox is disabled only
-inside this synthetic transport proof; no OS sandbox enforcement is claimed.
-No provider key is inherited. A synthetic provider is registered through RPC,
-external registry MCP servers are disabled, and the helper installs a refusing
-GitHub stub. All owned resources close in finally.
+`PROOF=.claude/skills/verify/neo-quiet-wake.ts`. Preflight port 8000 only.
+The helper owns its isolated daemon, synthetic HOME/data, loopback model and
+refusing GitHub stub. External registry MCP servers and the SDK sandbox are
+disabled only for this synthetic transport proof; no OS enforcement is claimed.
 
-The synthetic Codex rollout has a task_complete final message consisting of
-exactly a heartbeat envelope. The actual Codex adapter reads it and exposes
-notify:false. The actual todo runner and NeoService record its unchanged report
-as consumed SDK history, without a mailbox job or model request. A second
-synthetic turn is linked to a focused discussion; the daemon's own status report
-is likewise recorded without a turn. After each, wait 1.5 seconds and assert zero
-model requests. Submit a human message over the real neo.message.send RPC;
-observe a forwarded batch request before the separate human request, with two
-persisted SDK results. Evidence lives
-in evidence/observed.json and proof.log in the fresh run directory.
+First put only the isolated main DB connection in read-only mode. Ten concurrent
+retries of each quiet notice kind must persist one history row through the DB
+writer and start no model request. Restore the main connection, then submit
+human input to drain the two queued notices as a separate worker batch before
+the unchanged human input. This establishes two model requests/results.
 
-This proves the daemon/SDK path, not GUI rendering, real Codex automation
-execution, real-model reasoning, or a production rollout. A synthetic work.status
-source supplies turn ends to the real runner; the Codex heartbeat itself is read
-from a synthetic rollout by readCodexTurn. Run the adapter verbs, note-delivery,
-todo-runner, question-answer, human intake and PR-event unit contracts as well.
+The actual Codex adapter then reads a synthetic task_complete heartbeat and
+exposes notify:false. The actual todo runner must nevertheless deliver this first
+turn report immediately: the third model request contains its unchanged text.
+A focused discussion report produces the fourth request, retaining the explicit
+instruction not to act, forward, reply or treat it as approval.
 
-For an old-code reproduction, run the same helper with `--reproduce` as its
-second argument against the pre-fix production files. It retains
-`evidence/reproduction.json` and fails when the heartbeat starts a Neo model
-turn. The fixed code's normal run must retain the 0/0/2 result above. Model
-request evidence distinguishes the coordinator's operations tool from the
-separate title-generation request. One request/result belongs to the worker
-batch and the next to the unchanged human input.
+An exact report repeat with a different transport turn ID/time produces no new
+request, including after recreating NeoService against the same SQLite DB.
+Changed text under a reused transport ID, changed worker status, and another
+todo's identical report must each produce one new request, reaching seven.
+The unit contracts also distinguish whitespace and empty text from the literal
+fallback sentence. Preserve observed.json and the model request JSON files.
 
+Finally pause only this daemon's job processor. Deliver two urgent notes and
+retry each with a quiet kind while pending or queued. Each must retain one
+mailbox job and no premature history row. Resume the owned processor; the two
+reports add exactly two requests and history rows, reaching nine results.
+Retain overlaps.json and readonly-quiet.json. Ordinary quiet notices remain
+queued; only structured worker turn reports use the immediate report path.
 
-## Quiet retry during urgent delivery
-
-The helper then pauses only its isolated daemon's job processor. It delivers an
-urgent report, retries that exact ID with a status-only kind both while delivery
-is pending and after its mailbox job is queued, and records overlaps.json.
-Each must have zero premature history rows and exactly one mailbox job. After
-resuming that owned processor, each urgent report must produce exactly one Neo
-turn and one history row. The original quiet/quiet/human result remains 0/0/2;
-these two additional urgent reports bring the final SDK result count to four.
-The note-delivery unit tests cover both quiet kinds, plus ten concurrent quiet
-retries yielding only one stored row and zero jobs. Against the prior reviewed
-head, the same helper fails the overlap assertion and retains overlaps.json.
-
-
-## Quiet history uses the DB writer
-
-Before delivering worker turn ends, the helper makes only the isolated daemon's
-main connection read-only, after observing the startup body-copy completion
-marker so that setup cannot interrupt its background migration. Ten concurrent retries of each quiet kind must still
-persist exactly one history row through the DB writer and produce zero Neo
-turns. The main connection is restored in finally. Retain readonly-quiet.json;
-the prior head fails with a read-only database error. Also run the
-sdk-message-gateway-routing unit suite, including its typed writer inventory.
+Run the helper unchanged against pre-fix code for a failing reproduction: after
+the two baseline requests, firstNotifyFalseReport observes two instead of three.
+This proves the real daemon/SDK path with synthetic worker status and model
+responses, not real worker automation, real-model reasoning or browser behavior.
+Also follow neo-worker-turn-reports.md and run the adapter, todo-runner,
+notification-mode, intake and structured-event contracts.
 
 ## Hoisted dependency layout
 

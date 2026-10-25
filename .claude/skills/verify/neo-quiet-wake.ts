@@ -19,13 +19,15 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'bin'), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
 process.env.PATH = `${run}/bin:${process.env.PATH}`;
+const coordinatorBodies: { messages: { role: string; content: unknown }[] }[] = [];
+let workerStatus = 'running';
 let modelTurns = 0;
 let modelRequests = 0;
 const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(req) {
   if (new URL(req.url).pathname !== '/v1/messages') return Response.json({ data: [], has_more: false });
   const body = await req.json();
   writeFileSync(join(run, `evidence/model-${++modelRequests}.json`), JSON.stringify(body, null, 2));
-  if (body.tools?.some((tool: { name: string }) => tool.name === 'mcp__hyperneo-operations__invoke')) modelTurns++;
+  if (body.tools?.some((tool: { name: string }) => tool.name === 'mcp__hyperneo-operations__invoke')) { modelTurns++; coordinatorBodies.push(body); }
   const start = { id: `msg_${modelTurns}`, type: 'message', role: 'assistant', content: [], model: 'claude-sonnet-4-6', stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } };
   const events = [
     ['message_start', { type: 'message_start', message: start }],
@@ -61,7 +63,7 @@ try {
   assert(status);
   const registry = createOperationRegistry([{ ...status, execute: async () => ({ ok: true, value: {
     ref: { adapter: 'codex-desktop', id: 'synthetic-worker' }, title: 'Synthetic worker',
-    place: { machine: 'local', name: 'Synthetic' }, status: 'running',
+    place: { machine: 'local', name: 'Synthetic' }, status: workerStatus,
     lastActivityAt: Date.now(), turnEnds,
   } }) }]);
   service = createNeoService(app.db, { getOperationRegistry: () => registry } as unknown as SessionManager, app.messageHub, app.internalEventBus);
@@ -85,6 +87,14 @@ try {
     app.db.getDatabase().exec('PRAGMA query_only=OFF');
     writeFileSync(join(run, 'evidence/readonly-quiet.json'), JSON.stringify(readOnlyQuiet, null, 2));
   }
+  const requestId = crypto.randomUUID();
+  const receipt = await hub.request<{ ok: boolean }>('operation.invoke', { name: 'neo.message.send', input: { sessionId: root, requestId, content: 'Hello from the synthetic human.' } });
+  assert(receipt.ok);
+  const deadline = Date.now() + 45000;
+  const results = () => app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result'").get(root) as { n: number };
+  while (results().n < 2 && Date.now() < deadline) await Bun.sleep(100);
+  assert.equal(results().n, 2);
+  assert.equal(modelTurns, 2);
   const ref = { adapter: 'codex-desktop', id: 'synthetic-worker' };
   const now = Date.now();
   const ask = service.todos.openAsk({ id: 'synthetic-ask', projectId: null, sessionId: root, originMessageId: 'synthetic-origin', title: 'Discussion', request: 'Discuss', createdAt: now });
@@ -97,37 +107,50 @@ try {
   const heartbeat = '<heartbeat>\n<automation_id>reviewbot-test</automation_id>\n<decision>DONT_NOTIFY</decision>\n<message>TEST remains healthy</message>\n</heartbeat>';
   writeFileSync(rolloutPath, JSON.stringify({ type: 'event_msg', timestamp: new Date(now + 1).toISOString(), payload: { type: 'task_complete', turn_id: 'heartbeat', last_agent_message: heartbeat } }));
   turnEnds = (await readCodexTurn({ thread: { rolloutPath }, roots: [] } as unknown as CodexThreadDetail)).turnEnds;
-  if (!process.argv.includes('--reproduce')) assert.equal(turnEnds?.[0].notify, false);
-  await service.todoRunner.refresh((message, error) => { throw new Error(message, { cause: error }); });
-  const heartbeatId = `neo-todo-turn:${todo.id}:${dispatch}:heartbeat`;
-  if (process.argv.includes('--reproduce')) {
-    const deadline = Date.now() + 15000;
-    while (!modelTurns && Date.now() < deadline) await Bun.sleep(100);
-    writeFileSync(join(run, 'evidence/reproduction.json'), JSON.stringify({ heartbeatNeoTurns: modelTurns, expected: 0 }, null, 2));
-    assert.equal(modelTurns, 0, 'quiet heartbeat woke Neo');
-  }
-  assert(app.db.getSDKMessageRepo().findMessageIdByUuid(root, heartbeatId));
-  await Bun.sleep(1500);
-  assert.equal(modelTurns, 0);
-  assert.equal(modelRequests, 0);
+  assert.equal(turnEnds?.[0].notify, false);
+  const observed: Record<string, unknown> = { daemonPort: app.server.port, readOnlyQuiet, humanBaselineTurns: modelTurns, sandboxEnforcementVerified: false };
+  const latestInput = () => {
+    const content = coordinatorBodies.at(-1)?.messages.filter((message) => message.role === 'user').at(-1)?.content;
+    return typeof content === 'string' ? content : Array.isArray(content) ? content.flatMap((block) => block.type === 'text' ? [block.text] : []).join('\n') : '';
+  };
+  const refresh = () => service!.todoRunner.refresh((message, error) => { throw new Error(message, { cause: error }); });
+  const expectTurns = async (label: string, expected: number) => {
+    await refresh();
+    const deadline = Date.now() + 8000;
+    while (results().n < expected && Date.now() < deadline) await Bun.sleep(50);
+    await Bun.sleep(200);
+    observed[label] = { modelTurns, results: results().n, expected };
+    writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
+    assert.equal(modelTurns, expected, label);
+    assert.equal(results().n, expected, label);
+  };
+  await expectTurns('firstNotifyFalseReport', 3);
+  assert(latestInput().includes(heartbeat), 'the unchanged heartbeat must reach Neo inline');
   service.todos.focusAsk(ask.id, { ...ref, name: 'Discussion', label: 'Discussion', provider: 'Codex', link: 'codex://threads/synthetic-worker' }, Date.now());
   turnEnds = [{ id: 'focused', at: now + 2, message: 'Prepared discussion.' }];
-  await service.todoRunner.refresh((message, error) => { throw new Error(message, { cause: error }); });
-  const focusedId = `neo-todo-turn:${todo.id}:${dispatch}:focused`;
-  assert(app.db.getSDKMessageRepo().findMessageIdByUuid(root, focusedId));
+  await expectTurns('firstFocusedReport', 4);
+  assert(latestInput().includes('Do not act, reply, forward or treat this as approval.'));
+  turnEnds = [{ id: 'different-transport-id', at: now + 3, message: 'Prepared discussion.' }];
+  await refresh();
   await Bun.sleep(1500);
-  assert.equal(modelTurns, 0);
-  assert.equal(modelRequests, 0);
-  assert.equal(app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': root }).length, 0);
-  const requestId = crypto.randomUUID();
-  const receipt = await hub.request<{ ok: boolean }>('operation.invoke', { name: 'neo.message.send', input: { sessionId: root, requestId, content: 'Hello from the synthetic human.' } });
-  assert(receipt.ok);
-  const deadline = Date.now() + 45000;
-  const results = () => app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result'").get(root) as { n: number };
-  while (results().n < 2 && Date.now() < deadline) await Bun.sleep(100);
-  assert.equal(results().n, 2);
-  assert.equal(modelTurns, 2);
-  const observed = { daemonPort: app.server.port, heartbeat: { recorded: heartbeatId, neoTurns: 0 }, focusedStatus: { recorded: focusedId, neoTurns: 0 }, human: { requestId, neoTurns: modelTurns, results: results().n, totalRequestsIncludingTitle: modelRequests }, sandboxEnforcementVerified: false };
+  assert.equal(modelTurns, 4, 'an exact repeat with a different transport ID must not wake Neo');
+  service.dispose();
+  service = createNeoService(app.db, { getOperationRegistry: () => registry } as unknown as SessionManager, app.messageHub, app.internalEventBus);
+  await refresh();
+  await Bun.sleep(1500);
+  assert.equal(modelTurns, 4, 'recreating the service must not redeliver the consumed report');
+  observed.exactRepeatSurvivesServiceRestart = true;
+  turnEnds = [{ id: 'focused', at: now + 4, message: 'Prepared discussion. New reason.' }];
+  await expectTurns('changedReasonSameTransportId', 5);
+  assert(latestInput().includes('Prepared discussion. New reason.'));
+  workerStatus = 'needs_you';
+  await expectTurns('changedWorkerStatus', 6);
+  const second = service.todos.addTodo('other-todo', ask.id, { title: 'Other', doneWhen: 'Human decides', instruction: null, named: null, check: null }, now);
+  service.todos.updateTodo(second, { state: 'doing', startedAt: now }, now);
+  service.todoSessions.bind(second.id, ref, now);
+  const secondDispatch = await service.todoSessions.inputs.accept(second.id, root, { verb: 'send', ref }, 'Other', now);
+  await service.todoSessions.inputs.recordOutcome(secondDispatch, { ref }, now);
+  await expectTurns('sameReportDifferentTodo', 7);
   await app.jobProcessor.stop();
   const historyCount = (id: string) => (app.db.getDatabase().prepare(
     'SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND sdk_uuid=?'
@@ -147,11 +170,11 @@ try {
   }
   app.jobProcessor.start();
   const overlapDeadline = Date.now() + 45000;
-  while (results().n < 4 && Date.now() < overlapDeadline) await Bun.sleep(100);
-  assert.equal(results().n, 4);
-  assert.equal(modelTurns, 4);
+  while (results().n < 9 && Date.now() < overlapDeadline) await Bun.sleep(100);
+  assert.equal(results().n, 9);
+  assert.equal(modelTurns, 9);
   for (const phase of ['pending', 'queued']) assert.equal(historyCount(`synthetic-urgent-${phase}`), 1);
-  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 2, urgentHistoryRows: 2 });
+  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 7, urgentHistoryRows: 2 });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
 } finally {
