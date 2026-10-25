@@ -32,6 +32,12 @@ import {
   sessionRuntimeSettingsSnapshotFromRow,
 } from './session-runtime-settings-write.ts';
 
+import {
+  commitToolPreferenceRows,
+  type SessionMcpPreferenceEdit,
+  type ToolPreferenceSnapshot,
+} from './tool-preference-commit.ts';
+
 export function sessionConfigReplacer(key: string, value: unknown): unknown {
   if (key === 'mcpServers') return undefined;
   if (key === 'workerOperations') return undefined;
@@ -536,6 +542,47 @@ export class SessionRepository {
     return result.changes > 0 ? 'won' : 'superseded';
   }
 
+  casSessionToolPreferences(
+    snapshot: SessionRuntimeSettingsSnapshot,
+    patch: RuntimeSettingsPatch,
+    guards: readonly ToolPreferenceSnapshot[],
+    override?: SessionMcpPreferenceEdit
+  ): 'won' | 'superseded' {
+    if (
+      override &&
+      (override.before.key.scope_type !== 'session' || override.before.key.scope_id !== snapshot.id)
+    )
+      throw new Error('Tool override must belong to the captured session');
+    const outcome = commitToolPreferenceRows(
+      this.db,
+      [...guards, ...(override ? [override.before] : [])],
+      () => {
+        if (this.casSessionRuntimeSettings(snapshot, patch) !== 'won') return false;
+        if (override) {
+          const key = override.before.key;
+          if (override.enabled === null)
+            this.db
+              .prepare(
+                'DELETE FROM mcp_enablement WHERE server_id=? AND scope_type=? AND scope_id=?'
+              )
+              .run(key.server_id, key.scope_type, key.scope_id);
+          else
+            this.db
+              .prepare(
+                'INSERT INTO mcp_enablement (server_id,scope_type,scope_id,enabled) VALUES (?,?,?,?) ON CONFLICT(server_id,scope_type,scope_id) DO UPDATE SET enabled=excluded.enabled'
+              )
+              .run(key.server_id, key.scope_type, key.scope_id, override.enabled ? 1 : 0);
+        }
+        return true;
+      }
+    );
+    if (outcome === 'won') {
+      this.changes?.notifyChange('sessions', this.rowScope(snapshot.id));
+      if (override) this.changes?.notifyChange('mcp_enablement');
+    }
+    return outcome;
+  }
+
   private updateMessageSearchSessionTitle(sessionId: string, title: string): void {
     if (!this.tableExists('message_search_content')) return;
     this.db
@@ -821,4 +868,5 @@ export const sessionWrites = defineRepositoryOp('sessions.write', 'write', Sessi
   'takeRestartCooldownResume',
   'casSessionInputDraft',
   'casSessionRuntimeSettings',
+  'casSessionToolPreferences',
 ]);

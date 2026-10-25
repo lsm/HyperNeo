@@ -24,6 +24,10 @@ import {
   SessionRepository,
   sessionWrites,
 } from './repositories/session-repository.ts';
+import type {
+  SessionMcpPreferenceEdit,
+  ToolPreferenceSnapshot,
+} from './repositories/tool-preference-commit.ts';
 import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
 import type { SessionWriteOutcome } from './repositories/session-status-write.ts';
 import type {
@@ -327,6 +331,22 @@ export class Database {
     patch: RuntimeSettingsPatch
   ): Promise<'won' | 'superseded'> {
     return this.gateway.call(sessionWrites, 'casSessionRuntimeSettings', snapshot, patch);
+  }
+
+  async casSessionToolPreferences(
+    snapshot: SessionRuntimeSettingsSnapshot,
+    patch: RuntimeSettingsPatch,
+    guards: readonly ToolPreferenceSnapshot[],
+    override?: SessionMcpPreferenceEdit
+  ): Promise<'won' | 'superseded'> {
+    return this.gateway.call(
+      sessionWrites,
+      'casSessionToolPreferences',
+      snapshot,
+      patch,
+      guards,
+      override
+    );
   }
 
   async deleteSession(id: string): Promise<void> {
