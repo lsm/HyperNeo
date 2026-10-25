@@ -1,0 +1,1018 @@
+{
+  "mode": "verify",
+  "build": "7bb3531241dcfe70a630ec635d67d3c16ecc9a26",
+  "fanout": [
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    }
+  ],
+  "first": {
+    "repo": "synthetic/ledger",
+    "number": 7,
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "value_json": "{\"state\":\"MERGED\",\"mergeCommit\":\"cccccccccccccccccccccccccccccccccccccccc\"}",
+    "source": "github-pr-detail",
+    "observed_at": 1792970225658,
+    "attempted_at": 1792970225658,
+    "reason": null
+  },
+  "known": {
+    "accepted": true
+  },
+  "failed": {
+    "accepted": false,
+    "reason": "matching_merge_commit_required"
+  },
+  "partial": {
+    "accepted": false,
+    "reason": "matching_merge_commit_required"
+  },
+  "recovered": {
+    "accepted": true
+  },
+  "reopened": {
+    "accepted": true
+  },
+  "closed": {
+    "accepted": false,
+    "reason": "matching_merge_commit_required"
+  },
+  "taskKnown": {
+    "id": "633e6b2d-86eb-432a-8880-1a3996b6b3ed",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970227371,
+    "startedAt": null,
+    "completedAt": 1792970227376,
+    "archivedAt": null,
+    "updatedAt": 1792970227376,
+    "spaceId": "5f89466c-a826-4bb3-9d26-ec22beb1e082",
+    "taskNumber": 1,
+    "workflowRunId": "9ed82eda-b417-4545-9c5f-9009cf6c2fe6",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "taskOpen": {
+    "accepted": false,
+    "reason": "task_completion_unavailable",
+    "detail": "mark_complete merge gate: the run's PR is still OPEN (https://github.com/synthetic/ledger/pull/9). Merge it before calling mark_complete (gh pr merge), then retry."
+  },
+  "taskMerged": {
+    "id": "03d93364-181d-4ea2-957b-bb48c4ab93ab",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970227702,
+    "startedAt": null,
+    "completedAt": 1792970228026,
+    "archivedAt": null,
+    "updatedAt": 1792970228026,
+    "spaceId": "5f89466c-a826-4bb3-9d26-ec22beb1e082",
+    "taskNumber": 3,
+    "workflowRunId": "189e39a1-1539-4833-9c59-2f4b800a98f6",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "taskWasClosed": {
+    "id": "1f6858f9-3e1e-4a6d-9454-9595a5901eab",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970228028,
+    "startedAt": null,
+    "completedAt": 1792970228373,
+    "archivedAt": null,
+    "updatedAt": 1792970228373,
+    "spaceId": "5f89466c-a826-4bb3-9d26-ec22beb1e082",
+    "taskNumber": 4,
+    "workflowRunId": "99695ace-47eb-43ba-8bc7-d985154d5ef9",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "noCommit": [
+    {
+      "id": "aa7b9142-385e-4b4f-a496-59577434d95d",
+      "title": "Synthetic task",
+      "description": "",
+      "status": "done",
+      "priority": "normal",
+      "labels": [],
+      "dependsOn": [],
+      "result": "Task completed.",
+      "createdAt": 1792970228375,
+      "startedAt": null,
+      "completedAt": 1792970228697,
+      "archivedAt": null,
+      "updatedAt": 1792970228697,
+      "spaceId": "5f89466c-a826-4bb3-9d26-ec22beb1e082",
+      "taskNumber": 5,
+      "workflowRunId": "2805ed61-ce6e-4dc6-bd91-f837209f01ca",
+      "workspacePath": null,
+      "activeSession": null,
+      "blockReason": null,
+      "approvalSource": "agent",
+      "approvalReason": null,
+      "approvedAt": null,
+      "pendingCheckpointType": null,
+      "pendingCompletionGeneration": 0,
+      "pendingCompletionSubmittedByNodeId": null,
+      "pendingCompletionSubmittedAt": null,
+      "pendingCompletionReason": null,
+      "reportedStatus": null,
+      "reportedSummary": null,
+      "postApprovalSessionId": null,
+      "postApprovalStartedAt": null,
+      "postApprovalBlockedReason": null,
+      "postApprovalSourceNodeId": null,
+      "restrictions": null,
+      "terminalGeneration": 1
+    },
+    {
+      "id": "f82f6c32-eff4-4be4-8c8d-fac34cbed704",
+      "title": "Synthetic task",
+      "description": "",
+      "status": "done",
+      "priority": "normal",
+      "labels": [],
+      "dependsOn": [],
+      "result": "Task completed.",
+      "createdAt": 1792970228699,
+      "startedAt": null,
+      "completedAt": 1792970229035,
+      "archivedAt": null,
+      "updatedAt": 1792970229035,
+      "spaceId": "5f89466c-a826-4bb3-9d26-ec22beb1e082",
+      "taskNumber": 6,
+      "workflowRunId": "e5b01d10-4e42-49de-a2a2-0247f466bf27",
+      "workspacePath": null,
+      "activeSession": null,
+      "blockReason": null,
+      "approvalSource": "agent",
+      "approvalReason": null,
+      "approvedAt": null,
+      "pendingCheckpointType": null,
+      "pendingCompletionGeneration": 0,
+      "pendingCompletionSubmittedByNodeId": null,
+      "pendingCompletionSubmittedAt": null,
+      "pendingCompletionReason": null,
+      "reportedStatus": null,
+      "reportedSummary": null,
+      "postApprovalSessionId": null,
+      "postApprovalStartedAt": null,
+      "postApprovalBlockedReason": null,
+      "postApprovalSourceNodeId": null,
+      "restrictions": null,
+      "terminalGeneration": 1
+    }
+  ],
+  "task-failed": {
+    "accepted": false,
+    "reason": "task_completion_unavailable",
+    "detail": "mark_complete merge gate: could not verify the run's PR state for https://github.com/synthetic/ledger/pull/10 (GitHub PR state unavailable: failed). The task stays approved until the PR is confirmed merged."
+  },
+  "task-partial": {
+    "accepted": false,
+    "reason": "task_completion_unavailable",
+    "detail": "mark_complete merge gate: could not verify the run's PR state for https://github.com/synthetic/ledger/pull/11 (GitHub PR state unavailable: partial). The task stays approved until the PR is confirmed merged."
+  },
+  "taskRecovered": {
+    "id": "5f1329ea-930f-4c82-a4b3-a117e5a63a89",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970229687,
+    "startedAt": null,
+    "completedAt": 1792970230011,
+    "archivedAt": null,
+    "updatedAt": 1792970230011,
+    "spaceId": "5f89466c-a826-4bb3-9d26-ec22beb1e082",
+    "taskNumber": 9,
+    "workflowRunId": "4f9a6417-c4eb-429c-a99c-bb74c7c96a58",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "counts": {
+    "initial": 1,
+    "known": 0,
+    "failed": 1,
+    "partial": 1,
+    "recovered": 1,
+    "reopen": 0,
+    "closed": 1,
+    "known-negative": 0,
+    "task-known": 0,
+    "task-open": 1,
+    "task-merged": 2,
+    "no-commit": 2,
+    "task-failed": 1,
+    "task-partial": 1,
+    "task-recovered": 1
+  },
+  "fence": {
+    "before": 0,
+    "after": 1,
+    "merge": {
+      "status": "known",
+      "value": {
+        "state": "CLOSED",
+        "mergeCommit": null
+      },
+      "observedAt": 1792970230035,
+      "source": "synthetic-winner"
+    },
+    "loserAccepted": false
+  },
+  "health": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 6402,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "contention": {
+    "healthMs": 0.5722500000001673,
+    "writeMs": 1208.1413749999992,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true,
+  "mainSql": [],
+  "commands": [
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.observe",
+    "coding.merge.observe",
+    "coding.merge.snapshot",
+    "coding.merge.snapshot",
+    "coding.merge.observe",
+    "coding.merge.snapshot"
+  ],
+  "rpcMetrics": [
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 582.748
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 582.6642500000003
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 582.6511250000003
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 582.643208
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 582.6370829999998
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 32.908540999999786
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 335.4112919999998
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 340.5356670000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 343.53391599999986
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 98.30812500000002
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 339.7670000000003
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 20.351582999999664
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 22.271082999999635
+    },
+    {
+      "name": "system.health",
+      "durationMs": 0.5582500000000437
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 24.047375000000102
+    }
+  ],
+  "gatewayMetrics": [
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.9610830000001442,
+      "argsBytes": 68,
+      "replyBytes": 127
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.7832499999999527,
+      "argsBytes": 180,
+      "replyBytes": 271
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.27870900000016263,
+      "argsBytes": 68,
+      "replyBytes": 245
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.14820800000006784,
+      "argsBytes": 68,
+      "replyBytes": 180
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.33204099999966274,
+      "argsBytes": 86,
+      "replyBytes": 207
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.2596250000001419,
+      "argsBytes": 68,
+      "replyBytes": 181
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.3584160000000338,
+      "argsBytes": 87,
+      "replyBytes": 208
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.15158400000018446,
+      "argsBytes": 68,
+      "replyBytes": 182
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.25462500000003274,
+      "argsBytes": 180,
+      "replyBytes": 271
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.805667000000085,
+      "argsBytes": 68,
+      "replyBytes": 245
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.1696660000002339,
+      "argsBytes": 68,
+      "replyBytes": 127
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.8741250000002765,
+      "argsBytes": 142,
+      "replyBytes": 233
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.22070800000028612,
+      "argsBytes": 68,
+      "replyBytes": 207
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.23150000000032378,
+      "argsBytes": 68,
+      "replyBytes": 245
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.20470800000020972,
+      "argsBytes": 68,
+      "replyBytes": 127
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.06704100000024482,
+      "argsBytes": 68,
+      "replyBytes": 127
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.4677910000000338,
+      "argsBytes": 140,
+      "replyBytes": 231
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.19437499999912689,
+      "argsBytes": 68,
+      "replyBytes": 205
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.14254200000050332,
+      "argsBytes": 68,
+      "replyBytes": 205
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.5168330000005881,
+      "argsBytes": 180,
+      "replyBytes": 271
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.3034159999997428,
+      "argsBytes": 68,
+      "replyBytes": 207
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.162333000000217,
+      "argsBytes": 68,
+      "replyBytes": 207
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.36141700000007404,
+      "argsBytes": 180,
+      "replyBytes": 271
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.21170900000015536,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.14279200000055425,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.36691700000028504,
+      "argsBytes": 143,
+      "replyBytes": 234
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.25679200000013225,
+      "argsBytes": 69,
+      "replyBytes": 208
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.15274999999928696,
+      "argsBytes": 69,
+      "replyBytes": 208
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.3791670000000522,
+      "argsBytes": 143,
+      "replyBytes": 234
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.3071669999999358,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.15466699999979028,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.4873750000006112,
+      "argsBytes": 87,
+      "replyBytes": 181
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.3255410000001575,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.11625000000003638,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.4386670000003505,
+      "argsBytes": 88,
+      "replyBytes": 182
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.2593749999996362,
+      "argsBytes": 69,
+      "replyBytes": 156
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.12329200000021956,
+      "argsBytes": 69,
+      "replyBytes": 156
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.41208300000016607,
+      "argsBytes": 181,
+      "replyBytes": 272
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.26858400000037363,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.213249999999789,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.49666700000034325,
+      "argsBytes": 143,
+      "replyBytes": 234
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.2645840000004682,
+      "argsBytes": 181,
+      "replyBytes": 235
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 0.09087499999986903,
+      "argsBytes": 87,
+      "replyBytes": 235
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.25954099999944447,
+      "argsBytes": 69,
+      "replyBytes": 208
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.2653330000002825,
+      "argsBytes": 69,
+      "replyBytes": 128
+    },
+    {
+      "operation": "coding.merge.observe",
+      "durationMs": 884.5573339999992,
+      "argsBytes": 181,
+      "replyBytes": 272
+    },
+    {
+      "operation": "coding.merge.snapshot",
+      "durationMs": 0.21641699999963748,
+      "argsBytes": 69,
+      "replyBytes": 246
+    }
+  ],
+  "maxLagMs": 15.29800000000023,
+  "requests": [
+    {
+      "phase": "initial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "initial",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "known",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "closed",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "closed",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "known-negative",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "task-open",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-merged",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-merged",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "no-commit",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/12",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "no-commit",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/12",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-failed",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/10",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-partial",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/11",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-recovered",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/11",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/13",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/13",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/14",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/14",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    }
+  ]
+}

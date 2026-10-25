@@ -1,0 +1,35 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-merge-writer.test.ts:
+11 | test('merge acquisition and returned coverage leave the main repository', async () => {
+12 |   const db = new Database(':memory:');
+13 |   createCodingPackTables(db);
+14 |   const facts = new CodingMergeFactsRepository(db);
+15 |   const main = spyOn(facts, 'read').mockImplementation(() => {
+16 |     throw new Error('merge coverage read on main repository');
+                   ^
+error: merge coverage read on main repository
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-merge-writer.test.ts:16:15)
+      at refresh (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/merge-facts.ts:115:22)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-merge-writer.test.ts:32:31)
+(fail) merge acquisition and returned coverage leave the main repository [2.80ms]
+45 |   createCodingPackTables(writer);
+46 |   main.exec('PRAGMA query_only=ON');
+47 |   const gateway = new DbGateway(':memory:', writer);
+48 |   bindGateway(main, gateway);
+49 |   try {
+50 |     await new CodingMergeFactsRepository(main).record(
+                                                    ^
+SQLiteError: attempt to write a readonly database
+      errno: 8,
+ byteOffset: -1,
+       code: "SQLITE_READONLY"
+
+      at #runNoArgs (bun:sqlite:140:25)
+      at transaction (bun:sqlite:400:15)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-merge-writer.test.ts:50:48)
+(fail) explicit merge observations use the bound writer with read-only main [1.69ms]
+
+ 0 pass
+ 2 fail
+Ran 2 tests across 1 file. [28.00ms]

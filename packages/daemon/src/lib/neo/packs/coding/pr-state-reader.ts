@@ -24,14 +24,14 @@ function subject(url: string): { value: Subject } | { reason: Outcome } {
   };
 }
 
-function readState(
+async function readState(
   getDatabase: () => Database,
   target: Subject,
   spawn: SpawnFn,
   now: () => number
 ) {
   const facts = new CodingMergeFactsRepository(getDatabase());
-  const current = facts.read(target.repo, target.number, now(), NEO_WORK_PR_READ_MS);
+  const current = await facts.readCurrent(target.repo, target.number, now(), NEO_WORK_PR_READ_MS);
   return current.merge.status === 'known' &&
     current.merge.value.state === 'MERGED' &&
     current.merge.value.mergeCommit
