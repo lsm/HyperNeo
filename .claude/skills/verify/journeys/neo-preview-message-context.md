@@ -122,3 +122,13 @@ change the retained retry: one message and delivery keep the original target and
 exact Preview reference. Lifecycle tests also distinguish changed nested quote
 targets from equal-value retries. This checks capture isolation; durable pending
 request restoration remains a later #8707 rung.
+
+The bounded versioned snapshot codec additionally requires `intakeSnapshotContract`
+and `intakeSnapshotManualReplay`. Encode the actual pending intake projection
+after the synthetic lost receipt, decode it and manually replay that exact request
+through submitNeoDraft. Its original quote/Preview remains, created is false and
+there is still one SDK message/job. Codec-only tests require no network or storage
+effects; reject a corrupt batch as one typed refusal rather than an empty recovery.
+Prepared thumbnail bytes, exact original timestamps/states and absent legacy
+context roundtrip. This is the Build contract only; storage, map hydration and
+application recovery activation remain subsequent #8707 children.

@@ -326,10 +326,19 @@ try {
   quote.replyTo.id = 'different-message';
   await assert.rejects(quotedSend, /Synthetic lost intake receipt/);
   const quotedId = pendingAsks[0].requestId;
+  const encodedIntake = intake.snapshots.encode(pendingAsks);
+  assert.equal(typeof encodedIntake, 'string');
+  const decodedIntake = intake.snapshots.decode(encodedIntake);
+  assert(!('kind' in decodedIntake));
+  assert.equal(decodedIntake.entries[0].quote!.replyTo!.id, requestId);
+  assert.deepEqual(decodedIntake.entries[0].previewContext, reference);
   pendingAsks[0].quote!.replyTo!.id = 'changed-display-target';
   Object.assign(pendingAsks[0].previewContext!, { snapshot: 'b'.repeat(64) });
   const quotedRetry = await intake.retry(quotedId);
   assert(quotedRetry?.ok && !quotedRetry.created);
+  const snapshotReplay = await submitNeoDraft(decodedIntake.entries[0], async () => hub);
+  assert(snapshotReplay.ok && !snapshotReplay.created);
+  assert.deepEqual(snapshotReplay.previewContext, reference);
   const quotedRows = database()
     .getDatabase()
     .prepare('SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?')
@@ -440,6 +449,8 @@ try {
     legacyRecoveryDedup: true,
     intakeQuoteSnapshotRetry: true,
     intakeDisplaySnapshotIsolation: true,
+    intakeSnapshotContract: true,
+    intakeSnapshotManualReplay: true,
   });
 } finally {
   try {
