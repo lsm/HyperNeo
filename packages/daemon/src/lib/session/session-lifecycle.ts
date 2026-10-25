@@ -1,3 +1,4 @@
+import { releaseWorkerSandbox } from '../drivers/worker-sandbox.ts';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import type {
   MessageHub,
@@ -570,6 +571,20 @@ export class SessionLifecycle {
     const completedPhases: string[] = [];
     const archivedAt = new Date().toISOString();
 
+    if (agentSession) {
+      try {
+        await agentSession.cleanup();
+        completedPhases.push('agent-cleanup');
+      } catch (error) {
+        this.logger.error(
+          `[SessionLifecycle] archiveResources: AgentSession cleanup failed:`,
+          error
+        );
+      }
+    }
+
+    await releaseWorkerSandbox(sessionSdkPath(session));
+
     await this.update(sessionId, { status: 'archived', archivedAt });
     completedPhases.push('db-mark-archived');
 
@@ -594,18 +609,6 @@ export class SessionLifecycle {
       completedPhases.push('delivery-cancel');
     } catch (error) {
       this.logger.error(`[SessionLifecycle] archiveResources: delivery cancel failed:`, error);
-    }
-
-    if (agentSession) {
-      try {
-        await agentSession.cleanup();
-        completedPhases.push('agent-cleanup');
-      } catch (error) {
-        this.logger.error(
-          `[SessionLifecycle] archiveResources: AgentSession cleanup failed:`,
-          error
-        );
-      }
     }
 
     let archiveMetadata:
@@ -695,12 +698,27 @@ export class SessionLifecycle {
     const completedPhases: string[] = [];
 
     try {
-      if (session && session.status !== 'archived') {
-        await this.update(sessionId, {
-          status: 'archived',
-          archivedAt: new Date().toISOString(),
-        });
-        completedPhases.push('db-mark-archived');
+      if (agentSession) {
+        try {
+          await agentSession.cleanup();
+          completedPhases.push('agent-cleanup');
+        } catch (error) {
+          this.logger.error(
+            `[SessionLifecycle] deleteResources: AgentSession cleanup failed:`,
+            error
+          );
+        }
+      }
+
+      if (session) {
+        await releaseWorkerSandbox(sessionSdkPath(session));
+        if (session.status !== 'archived') {
+          await this.update(sessionId, {
+            status: 'archived',
+            archivedAt: new Date().toISOString(),
+          });
+          completedPhases.push('db-mark-archived');
+        }
       }
       try {
         const failedDbIds = await teardownSessionDeliveries(sessionId, {
@@ -723,18 +741,6 @@ export class SessionLifecycle {
         completedPhases.push('delivery-cancel');
       } catch (error) {
         this.logger.error(`[SessionLifecycle] deleteResources: delivery cancel failed:`, error);
-      }
-
-      if (agentSession) {
-        try {
-          await agentSession.cleanup();
-          completedPhases.push('agent-cleanup');
-        } catch (error) {
-          this.logger.error(
-            `[SessionLifecycle] deleteResources: AgentSession cleanup failed:`,
-            error
-          );
-        }
       }
 
       if (session) {

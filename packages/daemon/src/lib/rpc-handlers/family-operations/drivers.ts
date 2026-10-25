@@ -1,3 +1,5 @@
+import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
+import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
@@ -222,7 +224,10 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       const processing = sessionManager.getCachedSession(ref.id)?.getProcessingState().status;
       if (processing && !['idle', 'interrupted'].includes(processing))
         return reject('busy', 'The HyperNeo session still has a live turn.');
-      if (session.status === 'archived') return { ok: true, value: { archived: false } };
+      if (session.status === 'archived') {
+        await releaseWorkerSandbox(sessionSdkPath(session));
+        return { ok: true, value: { archived: false } };
+      }
       await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
       return { ok: true, value: { archived: true } };
     },

@@ -69,6 +69,11 @@ The SDK Bash turn writes `sandbox-report.txt` in its actual
 report. This proves the exported draft path matches the daemon reader and is
 writable without granting the surrounding data directory.
 
+Finally, the real isolated `session.archive` RPC must remove the SDK worker's
+private temp/cache dirs and retain its clone. `runtime-cleanup.json` records that
+result. Focused adapter tests verify the same release for both Desktop archives;
+SDK lifecycle tests cover archive and delete, including uncached sessions.
+
 Failing reproductions for review run 9434 were committed first in `04bebfb404`:
 real Bash deleted its policy, report env pointed at the wrong directory, and
 archive/delete retained runtime roots. No production clone-placement change is
@@ -126,3 +131,135 @@ first in `c8ed6ebffe` and fail on the reviewed head.
 Successful archive/delete runtime release is verified in the stacked lifecycle
 follow-up, not in #8632. Failure cleanup and own-session runtime recreation remain
 part of this core journey. The final stacked PR closes #8627 after both merge.
+
+## Stacked lifecycle follow-up
+
+The lifecycle branch adds successful temp/cache release to Desktop archives and
+SDK archive/delete. Its regression tests and actual RPC archive proof are committed
+before the fix. In this branch `runtime-cleanup.json` also requires a later actual
+SDK `work.start` sibling to leave the archived worker's runtime absent, preserving
+the core fix for review 9444. The later synthetic sibling is archived through RPC
+as well. Existing worker clones are retained; no placement logic changes here.
+
+## Locked runtime cleanup
+
+The real SDK Bash probe also creates a nonempty mode-000 directory in its own
+TMPDIR before archiving. `runtime-cleanup.json` must report
+`lockedNonemptyDirectoryReleased: true`, both roots absent, and the clone retained.
+On archive failure, `archive-error.json` records the RPC error, persisted status
+and whether the runtime remains; the helper restores the synthetic permission
+so the failed fixture remains recoverable. The failing reproduction is committed
+first in `41be9aa31f`.
+
+Release restores directory owner permissions before removal, without following
+symlinks, and retries transient removal errors. Focused POSIX tests cover nested
+locked directories and an outside symlink target whose permissions must stay
+unchanged. Failure-injection tests require SDK archive/delete and both Desktop
+archives to preserve their unarchived state when release still fails. Desktop
+retries must also release leftovers from previously archived sessions. The SDK
+stops its agent, releases its runtime, marks the archived barrier, then cancels
+durable deliveries; it must retain the barrier before delivery teardown.
+
+## Immutable runtime flags and archived SDK retries (review 9514)
+
+On macOS the SDK Bash probe also sets user-immutable flags on a nonempty private
+temp directory and its file. It must report a zero flag-setting status, then the
+actual archive RPC must succeed with `immutableRuntimeReleased: true` in
+`runtime-cleanup.json`. Darwin release clears user immutable/append-only flags
+when they block directory permission repair or removal. Its system `chflags`
+invocations never follow symlinks; the focused regression leaves a symlink target
+outside the runtime immutable and intact. Unrecoverable cleanup errors still leave
+an unarchived session retryable. Removal retries for busy handles apply on Windows;
+POSIX flag recovery does not wait through recursive ENOTEMPTY retries.
+
+The helper next seeds synthetic runtime leftovers for that archived SDK worker
+and evicts its already stopped cached session, modeling a retry after restart.
+Actual `neo.session.archive` must answer `archived: false` and remove both roots;
+`archive-retry.json` records that result. Admission refusals must leave the roots
+intact. `VERIFY_IMMUTABLE_RUNTIME=0` disables only the macOS flag step when isolating
+this retry regression; the normal run proves both together. Test-first commit
+`16bb6305c9` reproduces both failures, including real SDK Bash and RPC evidence.
+
+## Concurrent runtime removal (review 9523)
+
+The main helper first runs `worker-sandbox-removal.ts` against real synthetic
+runtime directories. Six waves race production release with an independent
+recursive removal of the private temp tree. `concurrent-runtime-removal.json`
+must show both actors succeeding, both roots absent, and the clone retained.
+It can also run standalone:
+
+```bash
+bun .claude/skills/verify/worker-sandbox-removal.ts "$RUN"
+```
+
+This is a filesystem concurrency proof; a concurrent archive/delete RPC
+race was not reproduced. The rest of the main journey still proves actual
+archive and archive-retry RPC results with the real worker policies.
+
+Deterministic filesystem regressions remove the whole runtime or one child
+immediately before chmod/readdir, plus removal before macOS flag recovery. A
+removed child must not prevent release of a surviving locked sibling. Missing
+paths count as already removed throughout traversal and flag recovery; other
+errors still propagate. Test-first commit `8fbb27f84b` contains the five failing
+regressions and the unmocked filesystem proof (six ENOENT failures before the fix).
+
+## Cleanup write boundary against symlink swaps (review 9532)
+
+Test-first commit `f9ff5b0255` reproduces the daemon changing an unlisted synthetic
+outside directory from 0755 to 0700 after a worker swaps a checked temp directory
+for a symlink. A path-only permission walk is therefore insufficient even when
+ordinary symlinks are skipped.
+
+Cleanup permission/flag repair and recursive removal now run in a child with OS
+writes limited to the private runtime. macOS uses Seatbelt; Linux uses bubblewrap
+with the host filesystem read-only and only that runtime bound writable. The
+runtime container is outside worker writable roots, so a worker can swap its
+contents but cannot replace the cleanup bind source. The daemon only removes the
+empty container afterward, without a recursive privileged walk. Missing cleanup
+enforcement fails closed. No unconfined permission-repair fallback is allowed.
+
+The main journey runs `worker-sandbox-cleanup.ts` before starting its daemon.
+It deliberately runs a flawed check/swap/chmod sequence inside the production
+cleanup write policy. `cleanup-write-boundary.json` must show an inside write
+allowed, both outside chmods refused with nonzero statuses, and outside modes
+unchanged. The stderr artifact must contain actual OS denials. This is a real
+cleanup-policy proof with deliberately substituted code, not a claim to have
+reproduced detached Desktop process timing. The normal daemon journey then
+proves actual cleanup with locked and immutable directories and archive retries.
+
+The permission-walk timing mocks are replaced by helper launch/removal and
+missing-enforcement tests; the unmocked concurrent removal proof remains. Read
+restriction is not claimed here; secret-read isolation remains #8630.
+
+## Cleanup failure diagnostics (review 9545)
+
+Run `worker-sandbox-diagnostic.ts` with the shared metadata-only isolated-daemon
+setup in `../SKILL.md`. It needs no model server or credentials. Its synthetic
+session has real prepared runtime roots; only the cleanup child command body is
+replaced with a fixed diagnostic and exit 23, keeping the OS write policy intact.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-cleanup-diagnostic-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn \
+  bun .claude/skills/verify/worker-sandbox-diagnostic.ts "$RUN"
+```
+
+`cleanup-diagnostic-rpc.json` must show the actual `session.archive` RPC error
+preserving the synthetic helper stderr and exit status, with session unarchived
+and both runtime roots retained. After restoring the real child command, retry
+must archive successfully and release both roots; its reply is retained separately.
+This is injected helper-failure diagnosis, not a claim to reproduce a missing
+bubblewrap installation on a native Linux host. Test-first commit `72efec8b96`
+records the old opaque RPC failure. Focused real-child tests additionally cover
+missing executables and output larger than a pipe buffer: diagnostics identify the
+executable and exit status, retain at most 4 KiB of stderr, and drain the rest.
+
+
+The Linux CI startup probe in `8b458741c6` exposed the preceding failures as
+`bwrap: setting up uid map: Permission denied`, before any application test ran.
+The disposable Ubuntu runner now permits that mapping before the probe. Both
+startup and the actual cleanup write-boundary tests must pass; installing the
+binary alone is insufficient. Native worker containment on Linux remains a
+separate unverified claim even when Linux cleanup-policy tests pass.

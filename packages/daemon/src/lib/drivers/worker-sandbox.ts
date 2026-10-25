@@ -1,7 +1,10 @@
+import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
+import { collectWithMaxBuffer } from '../utils/script-utils.ts';
+import { spawnProcess } from '../runtime-spawn/index.ts';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function workerSandboxPaths(root: string) {
@@ -17,7 +20,45 @@ export function workerSandboxPaths(root: string) {
 }
 
 export async function releaseWorkerSandbox(root: string | null | undefined) {
-  if (root) await rm(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
+  if (!root) return;
+  const runtime = join(workerSandboxPaths(root).TMPDIR, '..');
+  try {
+    const entry = await lstat(runtime);
+    if (!entry.isDirectory()) {
+      await unlink(runtime);
+      return;
+    }
+    if (process.platform === 'win32') {
+      await rm(runtime, { recursive: true, force: true, maxRetries: 3 });
+      return;
+    }
+    const command = await workerRuntimeCleanupCommand(runtime);
+    const child = spawnProcess(command, {
+      env: { PATH: '/usr/bin:/bin' },
+      stdout: 'ignore',
+      stderr: 'pipe',
+    });
+    const [code, diagnostic] = await Promise.all([
+      child.exited,
+      collectWithMaxBuffer(child.stderr, 4096),
+    ]);
+    if (code !== 0) {
+      await lstat(runtime);
+      throw new Error(
+        `Worker cleanup ${command[0]} exited ${code}: ${diagnostic.text.trim() || 'no stderr received'}. Runtime retained.`
+      );
+    }
+    await rmdir(runtime);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    try {
+      await lstat(runtime);
+    } catch (missing) {
+      if ((missing as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw missing;
+    }
+    throw error;
+  }
 }
 
 export async function prepareWorkerSandbox(root: string) {

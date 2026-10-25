@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   prepareWorkerSandbox,
-  releaseWorkerSandbox,
   workerSandboxPaths,
 } from '../../../../src/lib/drivers/worker-sandbox';
 
@@ -19,7 +18,7 @@ const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 const uid = Object.getOwnPropertyDescriptor(process, 'getuid')!;
 let root: string;
 afterEach(async () => {
-  await releaseWorkerSandbox(root);
+  rmSync(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
   Object.defineProperty(process, 'platform', platform);
   if (uid) Object.defineProperty(process, 'getuid', uid);
   else Reflect.deleteProperty(process, 'getuid');

@@ -171,3 +171,17 @@ an external endpoint. Use absolute `VERIFY_CLAUDE` / `VERIFY_CODEX` executable
 paths so the daemon's synthetic CLI peers cannot replace the real OS probe.
 These helpers preserve CLI tool results and report simulated Desktop transport
 separately from actual OS enforcement. Never disable the sandbox for these proofs.
+
+
+Worker runtime cleanup uses its own OS write boundary: `sandbox-exec` on macOS,
+and `/usr/bin/bwrap` (the bubblewrap package) on Linux. The daemon test jobs
+install bubblewrap because cleanup enforcement stays enabled even when a model
+transport fixture disables the SDK sandbox. Missing cleanup enforcement must
+fail closed with runtime retained and no new archived status. Windows does not
+apply POSIX permission repair; native Windows cleanup isolation is unverified.
+
+Ubuntu runners must also permit the user-namespace UID mapping used by bubblewrap.
+The workflow configures that permission on its disposable CI VMs and runs a
+bubblewrap startup probe before testing. Local Ubuntu verification requires a
+host policy allowing those namespaces; this journey changes no local host policy.
+The cleanup OS boundary stays enabled during these tests.

@@ -1,3 +1,8 @@
+import {
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+} from '../../../../src/lib/drivers/worker-sandbox';
+import { existsSync } from 'node:fs';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway';
 import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -170,6 +175,44 @@ describe('hyperneoSessionControl interrupt', () => {
 });
 
 describe('hyperneoSessionControl archive', () => {
+  test('an admitted archive retry releases an already archived SDK worker runtime', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'archived-runtime-'));
+    mkdirSync(join(root, '.git'));
+    const env = await prepareWorkerSandbox(root);
+    const controls = hyperneoSessionControl({
+      deps: {
+        db: { listChildSessions: () => [] },
+        sessionManager: {
+          getSessionFromDB: () => ({ id: 'owned', workspacePath: root, status: 'archived' }),
+          getCachedSession: () => undefined,
+          archiveSessionResources: async () => {
+            throw new Error('must not archive twice');
+          },
+        },
+      },
+    } as never);
+    try {
+      expect(
+        await controls.archive!({ adapter: 'hyperneo', id: 'owned' }, () => ({
+          ok: false,
+          reason: 'busy',
+          detail: 'new',
+        }))
+      ).toMatchObject({ ok: false });
+      expect(existsSync(env.TMPDIR)).toBe(true);
+      expect(await controls.archive!({ adapter: 'hyperneo', id: 'owned' }, () => null)).toEqual({
+        ok: true,
+        value: { archived: false },
+      });
+      expect(existsSync(env.TMPDIR)).toBe(false);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+      expect(existsSync(root)).toBe(true);
+    } finally {
+      await releaseWorkerSandbox(root);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
     'uses the preserving lifecycle only for an admitted idle session (%s)',
     async (state) => {

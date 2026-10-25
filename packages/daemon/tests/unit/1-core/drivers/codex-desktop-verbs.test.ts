@@ -1,3 +1,10 @@
+import { vi } from 'vitest';
+import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
+import {
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+} from '../../../../src/lib/drivers/worker-sandbox';
+import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -352,6 +359,12 @@ describe('codex-desktop adapter status and send', () => {
     async ({ status, rollout }) => {
       if (rollout !== 'present') rmSync(join(dir, 'finished.jsonl'));
       if (rollout === 'unreadable') mkdirSync(join(dir, 'finished.jsonl'));
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      const env = await prepareWorkerSandbox(root);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+      db.close();
       const calls: string[] = [];
       let closed = false;
       const driver = adapter(0, '', async () => ({
@@ -368,10 +381,56 @@ describe('codex-desktop adapter status and send', () => {
       }));
       const result = await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null);
       expect(result.ok).toBe(status === 'idle' || status === 'notLoaded');
+      expect(existsSync(env.TMPDIR)).toBe(!result.ok);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(!result.ok);
+      expect(existsSync(root)).toBe(true);
+      await releaseWorkerSandbox(root);
       expect(calls).toEqual(result.ok ? ['thread/read', 'thread/archive'] : ['thread/read']);
       expect(closed).toBe(true);
     }
   );
+
+  test('does not archive a Codex thread when runtime removal fails', async () => {
+    const calls: string[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        return { thread: { id: 'idle', status: { type: 'idle' } } };
+      },
+      close: () => {},
+    }));
+    const failure = vi
+      .spyOn(sandbox, 'releaseWorkerSandbox')
+      .mockRejectedValue(new Error('synthetic EBUSY'));
+    try {
+      await expect(driver.archive!({ adapter: driver.id, id: 'idle' }, () => null)).rejects.toThrow(
+        'synthetic EBUSY'
+      );
+      expect(calls).toEqual(['thread/read']);
+    } finally {
+      failure.mockRestore();
+    }
+  });
+
+  test('retries runtime release for an already archived Codex thread', async () => {
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const env = await prepareWorkerSandbox(root);
+    const db = new Database(statePath);
+    db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'old');
+    db.close();
+    try {
+      const driver = adapter();
+      expect(await driver.archive!({ adapter: driver.id, id: 'old' }, () => null)).toEqual({
+        ok: true,
+        value: { archived: false },
+      });
+      expect(existsSync(env.TMPDIR)).toBe(false);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+    } finally {
+      await releaseWorkerSandbox(root);
+    }
+  });
 
   test('a running rollout, late refusal and an already archived thread never call thread/archive', async () => {
     appendFileSync(join(dir, 'running.jsonl'), `\n${said('x'.repeat(5 * 1024 * 1024))}`);

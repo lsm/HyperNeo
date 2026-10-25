@@ -1753,6 +1753,7 @@ async function archiveClaudeSession(
     return reject('busy', 'The Claude session still has a live turn.');
   const refused = admit();
   if (refused) return refused;
+  await releaseWorkerSandbox(record.cwd);
   if (record.isArchived) return { ok: true, value: { archived: false } };
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   try {
