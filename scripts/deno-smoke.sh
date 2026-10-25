@@ -331,6 +331,36 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+  const src = Deno.env.get("SMOKE_SRC"), path = Deno.env.get("SMOKE_DB_PATH");
+  const { Database } = await import(src + "/storage/sqlite-compat.ts");
+  const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
+  const { neoTodoSessionWrites } = await import(src + "/storage/repositories/neo-todo-session-repository.ts");
+  const db = new Database(path), gateway = new DbGateway(path), id = "deno-progress-todo";
+  try {
+    db.prepare("INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES(?,?,?,?,1,1)").run("deno-progress-ask", "deno-root", "Synthetic progress", "Observe");
+    db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,created_at,updated_at) VALUES(?,?,0,?,?,1,1)").run(id, "deno-progress-ask", "Synthetic step", "Observed");
+    db.prepare("INSERT INTO neo_todo_sessions(todo_id,target,live_status,needs_you_since,started_at) VALUES(?,?,?,?,?)").run(id, "{}", "needs_you", 900, 1);
+    const progress = {landed:42,live:{status:"running",lastActivityAt:42},cardStatus:"running"};
+    if (!await gateway.call(neoTodoSessionWrites, "recordProgress", id, progress, 43)) Deno.exit(1);
+    const read = () => db.prepare("SELECT started_at AS startedAt,checked_at AS checkedAt,live_status AS live,needs_you_since AS needs,unchecked FROM neo_todo_sessions WHERE todo_id=?").get(id);
+    let row = read();
+    if (row.startedAt !== 42 || row.checkedAt !== 43 || row.live !== "running" || row.needs !== null || row.unchecked !== 0) Deno.exit(1);
+    db.prepare("UPDATE neo_todo_sessions SET started_at=?,live_status=?,needs_you_since=? WHERE todo_id=?").run(1, "needs_you", 900, id);
+    db.exec("CREATE TRIGGER reject_progress_check BEFORE UPDATE OF checked_at ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, \u0027synthetic progress refusal\u0027); END");
+    let refused = false;
+    try { await gateway.call(neoTodoSessionWrites, "recordProgress", id, {...progress,landed:99}, 100); }
+    catch (error) { refused = String(error).includes("synthetic progress refusal"); }
+    db.exec("DROP TRIGGER reject_progress_check");
+    row = read();
+    if (!refused || row.startedAt !== 1 || row.checkedAt !== 43 || row.live !== "needs_you" || row.needs !== 900) Deno.exit(1);
+    console.log("[deno-smoke] worker progress commits and rolls back all timestamps, status and incident state together");
+  } finally { db.close(); await gateway.close(); }
+'; then
+  dump_log
+  exit 1
+fi
+
 if ! SMOKE_DB_PATH="$DB_PATH" deno eval '
 	const { DatabaseSync } = await import("node:sqlite");
 	const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"), { readOnly: true });

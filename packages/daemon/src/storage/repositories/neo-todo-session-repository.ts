@@ -3,6 +3,7 @@ import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { DriverSent, NeoDriverTarget } from '../../lib/neo/driver-work.ts';
+import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
@@ -88,6 +89,23 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   constructor(db: Database) {
     super(db, 'neo_todo_sessions', 'todo_id');
     this.inputs = new WorkDeliveryInputRepository(db);
+  }
+
+  recordProgress(todoId: string, progress: NeoDriverProgress, now: number): boolean {
+    if (progress.landed !== null) this.recordStartedAt(todoId, progress.landed);
+    let changed = false;
+    if (progress.live && progress.cardStatus) {
+      if (progress.cardStatus !== 'needs_you' && this.readNeedsYouSince(todoId) !== null)
+        this.recordNeedsYouSince(todoId, null);
+      changed = this.recordLive(
+        todoId,
+        progress.cardStatus,
+        progress.live.link,
+        progress.live.remoteLink
+      );
+    }
+    this.recordCardCheck(todoId, { checkedAt: now, unchecked: progress.live === null });
+    return changed;
   }
 
   readNudge(todoId: string): { since: number; nudges: number } | null {
@@ -194,5 +212,5 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
   'write',
   NeoTodoSessionRepository,
-  ['recordLive', 'recordDispatch']
+  ['recordLive', 'recordDispatch', 'recordProgress']
 );

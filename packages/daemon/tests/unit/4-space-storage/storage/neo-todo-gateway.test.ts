@@ -76,6 +76,28 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
       link: '/session/synthetic',
       remoteLink: null,
     });
+    sessions.recordNeedsYouSince('t0', 900);
+    expect(
+      await sessions.write(
+        'recordProgress',
+        't0',
+        { landed: 7, live: { status: 'running', lastActivityAt: 7 }, cardStatus: 'running' },
+        8
+      )
+    ).toBe(true);
+    expect(sessions.readStartedAt('t0')).toBe(7);
+    expect(sessions.readNeedsYouSince('t0')).toBeNull();
+    expect(sessions.readCardCheck('t0')).toEqual({ checkedAt: 8, unchecked: false });
+    expect(
+      await sessions.write(
+        'recordProgress',
+        't0',
+        { landed: null, live: null, cardStatus: null },
+        9
+      )
+    ).toBe(false);
+    expect(sessions.readLiveStatus('t0')).toBe('running');
+    expect(sessions.readCardCheck('t0')).toEqual({ checkedAt: 9, unchecked: true });
   } finally {
     await gateway.close();
     db.close();
