@@ -33,6 +33,9 @@ cd packages/web && bun run build && cd ../..
 
 - Pick any free port except 8399. `launch.sh` refuses a busy port, and refuses
   if 8000 (the mock API) is taken.
+- If the host denies `taskpolicy` or `nice` priority changes, set
+  `VERIFY_NORMAL_PRIORITY=1`; isolation is unchanged. `VERIFY_REPO` selects
+  the source checkout for shared upgrade tooling only.
 - `$RUN` is a fresh directory (default: a new `mktemp -d`). It holds `data/`
   (DB), `home/`, `bin/gh`, the logs, the pid files and `evidence/`.
 - Ready signal: `ready: http://127.0.0.1:<port>  run dir: <run>`. The daemon log

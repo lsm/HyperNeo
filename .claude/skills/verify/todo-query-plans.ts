@@ -1,6 +1,6 @@
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
-import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { CODING_TODO_WINDOW_QUERY, CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
 export const todoQueries = {
   list: `SELECT id, ask_id, position, title, done_when FROM neo_todos
@@ -48,7 +48,7 @@ export function todoPlan(db: Database, sql: string, args: (string | number | nul
 if (import.meta.main) {
   const db = syntheticTodoDb();
   const bindings = { list: ['a0'], recovery: [], window: ['t48'], live: ['running', null, 't48', null] };
-  const report = Object.entries(todoQueries).map(([name, sql]) => {
+  const report = Object.entries({ ...todoQueries, window: CODING_TODO_WINDOW_QUERY }).map(([name, sql]) => {
     const args = bindings[name as keyof typeof bindings];
     const statement = db.prepare(sql);
     const samples = Array.from({ length: 100 }, () => {

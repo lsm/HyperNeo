@@ -2,7 +2,7 @@
 set -euo pipefail
 PORT=${1:?usage: launch.sh <port> [run-dir]}
 RUN=${2:-$(mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX")}
-REPO=$(cd "$(dirname "$0")/../../.." && pwd)
+REPO=${VERIFY_REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}
 [ "$PORT" = 8399 ] && { echo "refusing 8399: that is the real daemon's port"; exit 1; }
 for p in "$PORT" 8000; do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $p is busy"; exit 1; fi
@@ -17,6 +17,7 @@ cd "$REPO"
 echo $! > "$RUN/mock-api.pid"
 low=(nice -n 19)
 [ -x /usr/sbin/taskpolicy ] && low=(/usr/sbin/taskpolicy -b nice -n 19)
+[ "${VERIFY_NORMAL_PRIORITY:-0}" = 1 ] && low=(env)
 "${clean_env[@]}" HYPERNEO_DATA_DIR="$RUN/data" "${low[@]}" \
   bun run packages/cli/main.ts --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" \
   < /dev/null > "$RUN/daemon.log" 2>&1 &

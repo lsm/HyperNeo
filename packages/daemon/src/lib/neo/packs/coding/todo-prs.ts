@@ -25,6 +25,12 @@ export type CodingPrClaimRow = {
 };
 export type CodingTodoWindow = { start: number | null; end: number | null };
 
+export const CODING_TODO_WINDOW_QUERY = `SELECT t.started_at AS start, MIN(next.started_at) AS end
+  FROM neo_todos t LEFT JOIN neo_todo_sessions own ON own.todo_id = t.id
+  LEFT JOIN neo_todo_sessions other ON other.ref = own.ref AND other.todo_id != t.id
+  LEFT JOIN neo_todos next ON next.id = other.todo_id AND next.started_at > t.started_at
+  WHERE t.id = ?`;
+
 export function codingPrKey(url: string): string | null {
   const parsed = parsePrUrl(url);
   return parsed
@@ -94,17 +100,7 @@ export class CodingTodoPrRepository {
   }
 
   window(todoId: string): CodingTodoWindow {
-    const row = this.db
-      .prepare(
-        `SELECT t.started_at AS start,
-                (SELECT MIN(next.started_at) FROM neo_todo_sessions other
-                   JOIN neo_todos next ON next.id = other.todo_id
-                  WHERE other.ref = own.ref AND other.todo_id != t.id
-                    AND next.started_at > t.started_at) AS end
-           FROM neo_todos t LEFT JOIN neo_todo_sessions own ON own.todo_id = t.id
-          WHERE t.id = ?`
-      )
-      .get(todoId) as CodingTodoWindow | null;
+    const row = this.db.prepare(CODING_TODO_WINDOW_QUERY).get(todoId) as CodingTodoWindow | null;
     return row ?? { start: null, end: null };
   }
 

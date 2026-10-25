@@ -1,3 +1,4 @@
+import { runMigration456 } from './m456-neo-todo-query-indexes.ts';
 import { runMigration447 } from './m447-neo-todo-removed-index.ts';
 import { runMigration445 } from './m445-job-queue-message-lookup-index.ts';
 import { createNeoGoalsTable } from './m444-neo-goals.ts';
@@ -1114,6 +1115,7 @@ function createIndexes(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
   runMigration445(db);
   runMigration447(db);
+  runMigration456(db);
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
   );
