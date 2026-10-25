@@ -160,7 +160,7 @@ export class SDKRuntimeConfig {
     }
   }
 
-  private async refreshContextUsage(): Promise<void> {
+  async refreshContextUsage(): Promise<void> {
     const { session, internalEventBus, contextTracker, queryObject, logger } = this.ctx;
     if (!queryObject) return;
 

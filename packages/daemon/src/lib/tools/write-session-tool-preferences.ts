@@ -18,14 +18,13 @@ import {
   type LegacyToolPreference,
 } from './legacy-tool-preferences.ts';
 
+export type PreferenceCaptureDatabase = Pick<
+  Database,
+  'getDatabase' | 'captureSessionRuntimeSettings' | 'skills' | 'appMcpServers' | 'mcpEnablement'
+>;
 export type PreferenceDatabase = Pick<
   Database,
-  | 'getDatabase'
-  | 'captureSessionRuntimeSettings'
-  | 'casSessionToolPreferences'
-  | 'skills'
-  | 'appMcpServers'
-  | 'mcpEnablement'
+  'captureSessionToolPreferences' | 'casSessionToolPreferences'
 >;
 export type SessionToolPreferenceWriter = (
   id: string,
@@ -40,14 +39,14 @@ function storedDefaults(raw: unknown): SessionToolSelection | undefined {
     throw new Error('selection_version_unsupported');
   return value.toolSelectionDefaults;
 }
-function capture(
+export function captureSessionToolPreferenceState(
   id: string,
   request: LegacyToolPreference,
   tools: ToolsConfig | undefined,
-  db: PreferenceDatabase
+  db: PreferenceCaptureDatabase
 ) {
   const raw = db.getDatabase();
-  return raw.transaction(() => {
+  return (() => {
     const snapshot = db.captureSessionRuntimeSettings(id);
     if (!snapshot) return { reason: { ok: false as const, reason: 'session_not_found' as const } };
     const config = JSON.parse(snapshot.config) as SessionConfig;
@@ -125,7 +124,10 @@ function capture(
     };
   })();
 }
-type Prepared = Extract<ReturnType<typeof capture>, { value: unknown }>['value'];
+type Prepared = Extract<
+  ReturnType<typeof captureSessionToolPreferenceState>,
+  { value: unknown }
+>['value'];
 async function persist(prepared: Prepared, db: PreferenceDatabase) {
   const result = await changeSessionToolChoice(
     { sessionId: prepared.snapshot.id, changes: prepared.changes },
@@ -153,7 +155,16 @@ async function persist(prepared: Prepared, db: PreferenceDatabase) {
 }
 const write = (superpipe({})('write-session-tool-preferences') as PipelineAPI)
   .input(['id', 'request', 'tools', 'db', 'committed'])
-  .pipe(capture, ['id', 'request', 'tools', 'db'], 'result:write')
+  .pipe(
+    (
+      id: string,
+      request: LegacyToolPreference,
+      tools: ToolsConfig | undefined,
+      db: PreferenceDatabase
+    ) => db.captureSessionToolPreferences(id, request, tools),
+    ['id', 'request', 'tools', 'db'],
+    'result:write'
+  )
   .pipe(persist, ['write', 'db'], 'result:write')
   .pipe(
     async (

@@ -30,7 +30,7 @@ let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
 let transport:InstanceType<typeof WebSocketClientTransport>|undefined;
 let duplicate:AgentSession|undefined;
 let restoreLookup=()=>{};
-const evidence:Record<string,unknown>={activeConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
+const evidence:Record<string,unknown>={sdkConsumerWired:false,legacyRpcWired:true,sdkApplyVerified:false,queryStarted:false};
 try {
   app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
   assert.notEqual(app.server.port,8399);
@@ -52,17 +52,25 @@ try {
   const reload=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
   await reload();
   duplicate=await AgentSession.fromInit({sessionId,workspacePath:join(run,'workspace'),model:'haiku',provider:'anthropic'},app.db,hub,app.internalEventBus,async()=>null,'haiku');
+  const runtimeMcp={fixtureRuntime:{command:'not-executed'}};
+  duplicate.mergeRuntimeMcpServers(runtimeMcp);
   const originalLookup=app.taskAgentManager.getCachedAgentSessionById.bind(app.taskAgentManager);
   app.taskAgentManager.getCachedAgentSessionById=id=>id===sessionId?duplicate!:originalLookup(id);
   restoreLookup=()=>{app!.taskAgentManager.getCachedAgentSessionById=originalLookup;};
   const tools={disabledSkills:[],useClaudeCodePreset:false};
-  assert.deepEqual(await hub.request('tools.save',{sessionId,tools}),{success:true});
+  const originalCapture=app.db.captureSessionRuntimeSettings.bind(app.db);
+  app.db.captureSessionRuntimeSettings=()=>{throw new Error('caller-thread preference capture');};
+  try {
+    assert.deepEqual(await hub.request('tools.save',{sessionId,tools}),{success:true});
+    evidence.workerCaptureVerified=true;
+  } finally {app.db.captureSessionRuntimeSettings=originalCapture;}
   let session=await reload();
   assert.equal(session.config.toolSelection!.choices[`mcp:${server.id}`]?.selected,true);
   assert.equal(session.config.toolSelection!.choices[`skill:${instruction.id}`]?.selected,true);
   assert.deepEqual(session.config.tools,tools);
   assert.deepEqual(duplicate.getSessionData().config.toolSelection,session.config.toolSelection);
   assert.deepEqual(duplicate.getSessionData().config.tools,tools);
+  assert.deepEqual(duplicate.getSessionData().config.mcpServers,runtimeMcp);
   assert.deepEqual(session.config.sdkToolsPreset,['Read']);
   assert.deepEqual(session.config.toolSelection!.choices[`mcp:${server.id}`]?.aliases,['frozen-fixture']);
   const accepted=session.config.toolSelection;
@@ -104,6 +112,7 @@ try {
   evidence.serverId=server.id;
   evidence.rpcSavesCanonicalAndLegacy=true;
   evidence.bothCacheOwnersSynchronized=true;
+  evidence.runtimeMcpPreserved=true;
   evidence.failedWriteKeptCachesAndStorage=true;
   evidence.overrideClearInheritedDefault=true;
 } finally {

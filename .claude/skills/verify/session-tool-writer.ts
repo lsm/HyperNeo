@@ -89,7 +89,7 @@ try {
   assert.equal(app.db.mcpEnablement.getOverride('session',sessionId,server.id),null);
   function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};}
   const captured=deferred();const held=deferred();
-  const data:PreferenceDatabase={getDatabase:()=>raw,captureSessionRuntimeSettings:id=>app!.db.captureSessionRuntimeSettings(id),casSessionToolPreferences:async(...args)=>{captured.resolve();await held.promise;return app!.db.casSessionToolPreferences(...args);},skills:app.db.skills,appMcpServers:app.db.appMcpServers,mcpEnablement:app.db.mcpEnablement};
+  const data:PreferenceDatabase={captureSessionToolPreferences:(...args)=>app!.db.captureSessionToolPreferences(...args),casSessionToolPreferences:async(...args)=>{captured.resolve();await held.promise;return app!.db.casSessionToolPreferences(...args);}};
   const racingWrite=createSessionToolPreferenceWriter(data,async()=>{throw new Error('stale write must not notify');});
   const pending=racingWrite(sessionId,{kind:'mcp',serverId:server.id,enabled:true});
   void pending.catch(()=>{});

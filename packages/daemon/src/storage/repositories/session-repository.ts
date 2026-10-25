@@ -406,8 +406,12 @@ export class SessionRepository {
           `updateSession: failed to serialize config for session "${id}": ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      fields.push('config = ?');
-      values.push(serializedConfig);
+      fields.push(`config = CASE WHEN json_valid(config) AND json_type(config, '$.toolSelection') IS NOT NULL
+        THEN CASE WHEN json_type(config, '$.tools') IS NOT NULL
+          THEN json_set(?, '$.toolSelection', json_extract(config, '$.toolSelection'), '$.tools', json_extract(config, '$.tools'))
+          ELSE json_remove(json_set(?, '$.toolSelection', json_extract(config, '$.toolSelection')), '$.tools') END
+        ELSE ? END`);
+      values.push(serializedConfig, serializedConfig, serializedConfig);
     }
     if ('sdkSessionId' in updates) {
       fields.push('sdk_session_id = ?');

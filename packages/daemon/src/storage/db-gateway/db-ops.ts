@@ -1,3 +1,4 @@
+import { readSessionToolPreferences } from '../repositories/session-tool-preference-read.ts';
 import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
 import { neoWakeQueueWrite } from '../repositories/neo-wake-queue-repository.ts';
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
@@ -68,6 +69,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     readLatestSessionPrState,
     deleteWorkFeedBatch,
     sessionWrites,
+    readSessionToolPreferences,
     spaceTaskWrites,
     createStandaloneTask,
     transitionStandaloneTask,

@@ -7,16 +7,20 @@ import { SkillRepository } from '../../../../src/storage/repositories/skill-repo
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository.ts';
 import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository.ts';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
+import { readSessionToolPreferences } from '../../../../src/storage/repositories/session-tool-preference-read.ts';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTestSession } from '../../../helpers/database.ts';
 import {
   createSessionToolPreferenceWriter,
   type PreferenceDatabase,
+  type PreferenceCaptureDatabase,
   type SessionToolPreferenceWriter,
 } from '../../../../src/lib/tools/write-session-tool-preferences.ts';
 
 let db: Database;
 let repo: SessionRepository;
-let data: PreferenceDatabase;
+let captureGateway: DbGateway;
+let data: PreferenceDatabase & PreferenceCaptureDatabase;
 let write: SessionToolPreferenceWriter;
 let notices: string[];
 const ID = 'writer-fixture';
@@ -53,7 +57,10 @@ beforeEach(() => {
     db.prepare(
       "INSERT INTO skills (id,name,display_name,description,source_type,config,enabled,created_at) VALUES (?,?,?,'',?,?,0,1)"
     ).run(id, id, id, type, JSON.stringify(config));
+  captureGateway = new DbGateway(':memory:', db);
   data = {
+    captureSessionToolPreferences: (id, request, tools) =>
+      captureGateway.call(readSessionToolPreferences, 'capture', id, request, tools),
     getDatabase: () => db,
     captureSessionRuntimeSettings: (id) => repo.captureSessionRuntimeSettings(id),
     casSessionToolPreferences: async (...args) => repo.casSessionToolPreferences(...args),
@@ -271,7 +278,10 @@ describe('disabled-skill request authority', () => {
       useClaudeCodePreset: false,
       loadSettingSources: false,
     };
-    repo.updateSession(ID, { config: { ...current(), tools: priorTools } });
+    db.prepare('UPDATE sessions SET config=? WHERE id=?').run(
+      JSON.stringify({ ...current(), tools: priorTools }),
+      ID
+    );
     expect((await write(ID, { kind: 'skills', disabledSkills: ['notes'] })).ok).toBe(true);
     expect(current().tools).toEqual({ ...priorTools, disabledSkills: ['notes'] });
     expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(false);
@@ -317,20 +327,8 @@ describe('disabled-skill request authority', () => {
 
 describe('preference capture lane', () => {
   it('captures through the worker read adapter without touching a caller-thread connection', async () => {
-    const { readSessionToolPreferences } = await import(
-      '../../../../src/storage/repositories/session-tool-preference-read.ts'
-    );
-    const { ChangeRecorder } = await import('../../../../src/storage/db-gateway/db-op.ts');
     const reader = {
       ...data,
-      captureSessionToolPreferences: async (
-        id: string,
-        request: Parameters<typeof write>[1],
-        tools?: Parameters<typeof write>[2]
-      ) =>
-        db.transaction(() =>
-          readSessionToolPreferences.run(db, { id, request, tools }, new ChangeRecorder())
-        )(),
       getDatabase: () => {
         throw new Error('caller-thread SQLite capture');
       },

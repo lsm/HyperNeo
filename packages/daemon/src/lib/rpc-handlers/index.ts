@@ -1,3 +1,7 @@
+import {
+  createSessionToolPreferenceWriter,
+  type SessionToolPreferenceWriter,
+} from '../tools/write-session-tool-preferences.ts';
 import { createNeoHomeOperations } from '../neo/home/operations.ts';
 import { createNeoHomeGithubOperation } from '../neo/home/github.ts';
 import { NeoHomeRepository } from '../neo/home/repository.ts';
@@ -401,6 +405,33 @@ export interface RPCHandlerSetupResult {
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
+  let taskAgentManager: TaskAgentManager;
+  const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
+    createSessionToolPreferenceWriter(deps.db, async () => {
+      const stored = deps.db.getSession(id);
+      if (!stored) return;
+      const live = new Set([
+        taskAgentManager?.getCachedAgentSessionById(id),
+        deps.sessionManager.getCachedSession(id),
+      ]);
+      for (const session of live)
+        if (session)
+          session.getSessionData().config = {
+            ...session.getSessionData().config,
+            toolSelection: stored.config.toolSelection,
+            tools: stored.config.tools,
+          };
+      await deps.internalEventBus.publish('session.updated', {
+        sessionId: id,
+        source: 'tool-preferences',
+        session: { config: stored.config },
+      });
+      if (request.kind === 'skills')
+        await (
+          taskAgentManager?.getCachedAgentSessionById(id) ??
+          deps.sessionManager.getCachedSession(id)
+        )?.refreshToolsContextUsage();
+    })(id, request, tools);
   const pendingInactivityRunNow = new Set<Promise<void>>();
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
@@ -418,7 +449,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     deps.db.providers
   );
-  registerMcpHandlers(deps.messageHub, deps.sessionManager);
+  registerMcpHandlers(deps.messageHub, deps.sessionManager, writeToolPreferences);
   registerSettingsHandlers(
     deps.messageHub,
     deps.settingsManager,
@@ -475,7 +506,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     internalEventBus: deps.internalEventBus,
   });
 
-  setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db);
+  setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, writeToolPreferences);
 
   setupSpaceMcpHandlers(
     deps.messageHub,
@@ -1264,6 +1295,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     spaceRuntimeService,
     {
+      writeToolPreferences,
       ensureSession: (target) => ensureSession(target, sessionResolutionDeps),
       resolveClones,
       listClones: (parentId) => deps.db.listChildSessions(parentId),
@@ -1307,7 +1339,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
-  let taskAgentManager: TaskAgentManager;
   let sessionResolutionDeps: ReturnType<typeof createDefaultSessionResolutionDeps>;
   const sessionMessageInjector = async (
     spaceId: string,

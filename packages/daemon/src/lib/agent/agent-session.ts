@@ -1664,6 +1664,10 @@ export class AgentSession
     return this.queryRunner.getToolInventory();
   }
 
+  async refreshToolsContextUsage(): Promise<void> {
+    await this.sdkRuntimeConfig.refreshContextUsage();
+  }
+
   async updateToolsConfig(
     tools: Session['config']['tools']
   ): Promise<{ success: boolean; error?: string }> {
