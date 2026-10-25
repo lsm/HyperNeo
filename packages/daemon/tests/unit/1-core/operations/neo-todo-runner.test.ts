@@ -37,7 +37,7 @@ const completed = (value: unknown): OperationOutcome =>
 function setup(
   packDone: boolean | null = null,
   dbPath = ':memory:',
-  beforeInvoke?: (name: string) => void
+  beforeInvoke?: (name: string) => void | Promise<void>
 ) {
   const db = new Database(dbPath);
   runMigrations(db, () => {});
@@ -83,7 +83,7 @@ function setup(
     store,
     sessions,
     invoke: async (_caller, name, input) => {
-      beforeInvoke?.(name);
+      await beforeInvoke?.(name);
       calls.push({ name, input });
       if (name === 'work.start')
         return completed({
@@ -1385,9 +1385,10 @@ describe('stopped worker ladder', () => {
 
   async function stopped(
     check: NeoTodo['check'] = { pack: 'coding', kind: 'pr_merged', params: {} },
-    instruction: string | null = 'Build the rows.'
+    instruction: string | null = 'Build the rows.',
+    beforeInvoke?: (name: string) => void | Promise<void>
   ) {
-    const harness = setup();
+    const harness = setup(null, ':memory:', beforeInvoke);
     const todo = harness.add(check, instruction);
     if (instruction) await harness.runner.start(todo.id);
     else {
@@ -1419,6 +1420,72 @@ describe('stopped worker ladder', () => {
         .map((call) => String(call.input.message));
     return { ...harness, todo, at, sends, clock };
   }
+
+  test('overlapping refreshes send one reminder while delivery is pending', async () => {
+    let entered = 0;
+    let release!: () => void;
+    let firstSend!: () => void;
+    let secondSend!: () => void;
+    const delivery = new Promise<void>((done) => {
+      release = done;
+    });
+    const firstEntered = new Promise<void>((done) => {
+      firstSend = done;
+    });
+    const secondEntered = new Promise<void>((done) => {
+      secondSend = done;
+    });
+    const h = await stopped(null, 'Build the rows.', async (name) => {
+      if (name !== 'work.send') return;
+      if (++entered === 1) firstSend();
+      else secondSend();
+      await delivery;
+    });
+    try {
+      const first = h.at(20);
+      await firstEntered;
+      const second = h.at(20);
+      await Promise.race([second, secondEntered]);
+      release();
+      await Promise.all([first, second]);
+      expect(h.sends()).toHaveLength(1);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
+    } finally {
+      release();
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a late reminder completion preserves a newer activity incident', async () => {
+    let release!: () => void;
+    let sending!: () => void;
+    const delivery = new Promise<void>((done) => {
+      release = done;
+    });
+    const entered = new Promise<void>((done) => {
+      sending = done;
+    });
+    const h = await stopped(null, 'Build the rows.', async (name) => {
+      if (name !== 'work.send') return;
+      sending();
+      await delivery;
+    });
+    try {
+      const pending = h.at(20);
+      await entered;
+      const newer = { since: Date.now(), nudges: 0 };
+      h.sessions.recordNudge(h.todo.id, newer);
+      release();
+      await pending;
+      expect(h.sends()).toHaveLength(1);
+      expect(h.sessions.readNudge(h.todo.id)).toEqual(newer);
+    } finally {
+      release();
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
 
   test('a stopped worker is reminded at 20 and 40, escalated at 60, and never blocked', async () => {
     const h = await stopped();
