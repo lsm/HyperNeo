@@ -299,7 +299,11 @@ describe('desktop preview file tabs', () => {
       reference: 'a.md',
     };
     act(() => pushArtifactPreview(target));
-    await screen.findByRole('tab', { name: 'Report A' });
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Report A' }).getAttribute('aria-selected')).toBe(
+        'true'
+      )
+    );
     expect(screen.getAllByRole('tab')).toHaveLength(1);
     expect(screen.getByRole('heading', { name: 'Document a' })).toBe(heading);
     act(() => pushArtifactPreview({ ...target }));
@@ -459,7 +463,22 @@ describe('desktop preview file tabs', () => {
       })
     );
     await screen.findByRole('heading', { name: 'Document b' });
-    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.getByRole('tab', { name: 'b.md' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
+    await screen.findByRole('tab', { name: 'Report A' });
+    request.mockResolvedValue({ accepted: false, reason: 'unavailable' });
+    act(() =>
+      pushArtifactPreview({
+        kind: 'reference',
+        source: { kind: 'publication', id: 'p' },
+        reference: 'https://github.com/example/demo/pull/1',
+        file: { path: 'missing.md', headSha: 'a'.repeat(40) },
+      })
+    );
+    await screen.findByText('This file is no longer available to you.');
+    expect(screen.getByRole('tab', { name: 'missing.md' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
     await screen.findByRole('tab', { name: 'Report A' });
   });

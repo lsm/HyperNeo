@@ -325,6 +325,28 @@ describe('Neo preview Work layout', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('keeps an unavailable local reference beside Neo with working Work navigation', async () => {
+    viewport = 900;
+    mount();
+    request.mockResolvedValue({ accepted: false, reason: 'unavailable' });
+    act(() =>
+      openArtifactPreview({
+        kind: 'reference',
+        source: { kind: 'publication', id: 'synthetic-publication' },
+        reference: '~/HyperNeo/引用配色/quote-colour-options.html',
+      })
+    );
+    await screen.findByText('This file is no longer available to you.');
+    expect(document.querySelector('.neo-shell')?.classList.contains('neo-preview-focus')).toBe(
+      true
+    );
+    const work = screen.getByRole('tab', { name: 'Your work · 1' });
+    expect(screen.queryByRole('button', { name: 'Back', exact: true })).toBeNull();
+    fireEvent.click(work);
+    expect(screen.getByText('Existing task')).toBeTruthy();
+    expect(work.getAttribute('aria-selected')).toBe('true');
+  });
+
   it.each([false, true])(
     'promotes direct references into the Work workspace with existingFile=%s',
     async (file) => {
@@ -344,7 +366,9 @@ describe('Neo preview Work layout', () => {
           reference: 'reference.md',
         })
       );
-      expect(screen.queryByRole('tablist')).toBeNull();
+      expect(screen.getByRole('tab', { name: 'reference.md' }).getAttribute('aria-selected')).toBe(
+        'true'
+      );
       await screen.findByRole('heading', { name: 'Document reference' });
       await screen.findByRole('tab', { name: 'File reference' });
       expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();

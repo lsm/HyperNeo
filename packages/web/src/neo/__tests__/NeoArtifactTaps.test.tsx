@@ -1,13 +1,20 @@
 import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ArtifactPreviewPanel } from '../../components/artifacts/ArtifactPreviewPanel.tsx';
+import { closeArtifactPreview } from '../../lib/artifact-preview-store.ts';
+import { connectionState } from '../../lib/state.ts';
 import { artifactPreviewStack } from '../../lib/artifact-preview-store.ts';
 import { NeoAskTodos } from '../NeoAskTodos.tsx';
 import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
+const request = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/connection-manager.ts', () => ({
+  connectionManager: { getHub: async () => ({ request }) },
+}));
 const root = `neo:${conversationId}`;
 const origin = { sessionId: root, messageId: 'original' };
 const report = {
@@ -50,6 +57,75 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo artifact taps', () => {
+  describe('publication paths without registered artifacts', () => {
+    beforeEach(() => {
+      closeArtifactPreview();
+      connectionState.value = 'connected';
+      vi.spyOn(window, 'matchMedia').mockImplementation((media) => ({
+        matches: true,
+        media,
+        onchange: null,
+        addListener() {},
+        removeListener() {},
+        addEventListener() {},
+        removeEventListener() {},
+        dispatchEvent: () => true,
+      }));
+      vi.spyOn(history, 'back').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      closeArtifactPreview();
+      vi.restoreAllMocks();
+      request.mockReset();
+    });
+
+    it.each([
+      ['inline code', '~/HyperNeo/引用配色/quote-colour-options.html', true],
+      ['plain text', '/Users/synthetic/HyperNeo/引用配色/quote-colour-options.html', false],
+    ])('keeps an unavailable %s HTML path in the tabbed panel', async (_kind, path, code) => {
+      let refuse!: (value: unknown) => void;
+      request.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            refuse = resolve;
+          })
+      );
+      render(
+        <>
+          <NeoPublicConversation
+            conversation={conversation(
+              publication({
+                shortText: code ? `Read \`${path}\`` : 'Read the full report.',
+                fullText: code ? `Read \`${path}\`` : `Read ${path}`,
+              })
+            )}
+          />
+          <ArtifactPreviewPanel fileTabs work={{ id: 'work', showTab: true, count: 1 }} />
+        </>
+      );
+      if (!code) fireEvent.click(await screen.findByRole('button', { name: /more/i }));
+      fireEvent.click(await screen.findByText(path));
+      await waitFor(() => expect(refuse).toBeTypeOf('function'));
+      expect(screen.getByRole('tab', { name: 'Your work · 1' })).toBeTruthy();
+      const tab = screen.getByRole('tab', { name: path });
+      expect(tab.getAttribute('aria-selected')).toBe('true');
+      expect(screen.getByRole('status').textContent).toBe('Loading preview…');
+      refuse({ accepted: false, reason: 'unavailable' });
+      await screen.findByText('This file is no longer available to you.');
+      expect(screen.getByRole('tab', { name: path })).toBe(tab);
+      expect(screen.getByRole('tabpanel').id).toBe(tab.getAttribute('aria-controls'));
+      expect(screen.queryByRole('button', { name: 'Back', exact: true })).toBeNull();
+      expect(request.mock.calls[0][1].input.reference).toBe(path);
+      expect(request.mock.calls[0][1].input.sourceMessageOrCard).toMatchObject({
+        kind: 'publication',
+        id: publication().publicationId,
+      });
+      fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
+      await waitFor(() =>
+        expect(screen.queryByText('This file is no longer available to you.')).toBeNull()
+      );
+    });
+  });
   it('opens a registered document from a question card in the existing preview', () => {
     const entry: NeoAskEntry = {
       ask: {

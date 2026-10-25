@@ -10,15 +10,19 @@ export const artifactTabIds = (id: string) => ({
   title: `artifact-title-${id}`,
 });
 export const artifactWorkTabId = 'artifact-preview-work-tab';
+export const artifactReferenceTabId = 'artifact-preview-reference-tab';
+export const artifactReferencePanelId = 'artifact-preview-reference-panel';
 
 export function ArtifactPreviewTabs({
   files,
   selectedId,
   work,
+  reference,
 }: {
   files: readonly PreviewWorkspaceFile[];
   selectedId: string | null;
   work?: { id: string; count: number; selected: boolean };
+  reference?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const more = useRef<HTMLButtonElement>(null);
@@ -34,7 +38,7 @@ export function ArtifactPreviewTabs({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-  const budget = Math.max(0, available - 8 - (work ? 84 : 0));
+  const budget = Math.max(0, available - 8 - (work ? 84 : 0) - (reference ? 180 : 0));
   const count =
     files.length * 92 > budget ? Math.max(1, Math.floor((budget - 40) / 92)) : files.length;
   const indices = files.slice(0, count).map((_, index) => index);
@@ -48,16 +52,18 @@ export function ArtifactPreviewTabs({
   );
   useLayoutEffect(() => {
     if (menuOpen) root.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
-    const focusId = selectedId
-      ? artifactTabIds(selectedId).tab
-      : work?.selected
-        ? artifactWorkTabId
-        : null;
+    const focusId = reference
+      ? artifactReferenceTabId
+      : selectedId
+        ? artifactTabIds(selectedId).tab
+        : work?.selected
+          ? artifactWorkTabId
+          : null;
     if (focusSelected.current && focusId) {
       document.getElementById(focusId)?.focus();
       focusSelected.current = false;
     }
-  }, [selectedId, menuOpen, files.length, work?.selected]);
+  }, [selectedId, reference, menuOpen, files.length, work?.selected]);
   useEffect(() => {
     if (!overflow.length) setMenuOpen(false);
   }, [overflow.length]);
@@ -97,7 +103,7 @@ export function ArtifactPreviewTabs({
             id={artifactWorkTabId}
             aria-controls={work.id}
             aria-selected={work.selected}
-            tabIndex={work.selected || (!selectedId && !files.length) ? 0 : -1}
+            tabIndex={work.selected || (!reference && !selectedId && !files.length) ? 0 : -1}
             class={`h-8 w-20 shrink-0 truncate rounded-full px-2 text-xs hover:bg-surface-raised hover:text-fg ${work.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
             onClick={() => {
               setMenuOpen(false);
@@ -127,7 +133,11 @@ export function ArtifactPreviewTabs({
               aria-controls={artifactTabIds(file.artifactId).panel}
               aria-selected={file.artifactId === selectedId}
               tabIndex={
-                !work?.selected && file.artifactId === (selectedId ?? shown[0]?.artifactId) ? 0 : -1
+                !reference &&
+                !work?.selected &&
+                file.artifactId === (selectedId ?? shown[0]?.artifactId)
+                  ? 0
+                  : -1
               }
               title={file.title || t('artifact.untitled')}
               class="min-w-0 flex-1 truncate rounded-full px-3 py-1.5 text-left text-xs"
@@ -150,6 +160,20 @@ export function ArtifactPreviewTabs({
             </button>
           </div>
         ))}
+        {reference && (
+          <button
+            type="button"
+            role="tab"
+            id={artifactReferenceTabId}
+            aria-controls={artifactReferencePanelId}
+            aria-selected="true"
+            tabIndex={0}
+            title={reference}
+            class="h-8 max-w-44 min-w-0 flex-1 truncate rounded-full bg-surface-raised px-3 text-left text-xs text-fg"
+          >
+            {reference}
+          </button>
+        )}
       </div>
       {overflow.length > 0 && (
         <Dropdown
