@@ -57,8 +57,9 @@ cover repeated failures, dead-job cleanup before recovery, and cardless triage.
 The `recur` mode consumes a cardless triage report, cleans completed jobs and
 advances only the synthetic daemon's clock by eleven minutes. An identical new
 report must wake triage once again, then immediate repeats must reuse its new
-receipt. It restores the admission clock and makes only that owned synthetic
-job due immediately, since the separate queue worker retains its real clock.
+receipt. It temporarily restores the admission clock and makes only that owned
+synthetic job due immediately, since the separate queue worker retains its real
+clock, then resumes the advanced logical clock for repeat/restart assertions.
 The card-backed report remains deduplicated through the same time jump
 and restart. This run has three turns: the card and two triage episodes. Cardless
 consumed-report deduplication lasts ten minutes, matching the ordinary send

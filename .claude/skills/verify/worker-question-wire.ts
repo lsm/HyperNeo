@@ -190,8 +190,10 @@ try {
       const recurrenceDeadline = Date.now() + 45000;
       while ((modelTurns < 3 || wakes().length) && Date.now() < recurrenceDeadline) await Bun.sleep(100);
       assert.equal(modelTurns, 3);
+      assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, recurring.messageId), 'consumed');
       await Bun.sleep(1000);
       await app.jobProcessor.stop();
+      Date.now = () => realNow() + 11 * 60_000;
       assert.deepEqual(await workerSend(legacy), recurring);
       expectedTurns = 3;
     }
