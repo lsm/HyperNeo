@@ -1,3 +1,8 @@
+import {
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+} from '../../../../src/lib/drivers/worker-sandbox';
+import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -352,6 +357,12 @@ describe('codex-desktop adapter status and send', () => {
     async ({ status, rollout }) => {
       if (rollout !== 'present') rmSync(join(dir, 'finished.jsonl'));
       if (rollout === 'unreadable') mkdirSync(join(dir, 'finished.jsonl'));
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      const env = await prepareWorkerSandbox(root);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+      db.close();
       const calls: string[] = [];
       let closed = false;
       const driver = adapter(0, '', async () => ({
@@ -368,6 +379,10 @@ describe('codex-desktop adapter status and send', () => {
       }));
       const result = await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null);
       expect(result.ok).toBe(status === 'idle' || status === 'notLoaded');
+      expect(existsSync(env.TMPDIR)).toBe(!result.ok);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(!result.ok);
+      expect(existsSync(root)).toBe(true);
+      await releaseWorkerSandbox(root);
       expect(calls).toEqual(result.ok ? ['thread/read', 'thread/archive'] : ['thread/read']);
       expect(closed).toBe(true);
     }

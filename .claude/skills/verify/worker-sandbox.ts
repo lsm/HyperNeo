@@ -190,6 +190,12 @@ try {
   writeFileSync(join(run, 'sdk-finish'), 'done');
   await new Promise<void>(resolve => sdkModel!.once('exit', () => resolve()));
   sdkModel = undefined;
+  const archived = await rpc('rpc:session.archive', { sessionId: sdk.value.ref.id, confirmed: true });
+  assert.equal(app.db.getSession(sdk.value.ref.id)?.status, 'archived');
+  assert(!existsSync(sdkSettings.env.TMPDIR), 'Archive must release private temp root');
+  assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'Archive must release private cache root');
+  assert(existsSync(sdkWorker), 'Archive must preserve the private clone');
+  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, tempReleased: true, cacheReleased: true, cloneRetained: true }, null, 2));
   console.log(`PASS Codex Desktop, Claude Desktop and real HyperNeo SDK outside refusal + inside/Git/temp/cache/network: ${run}/evidence`);
 
 
