@@ -19,6 +19,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import type { NeoTodoRunnerDeps } from '../../../../src/lib/neo/todo-runner.ts';
+import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
 
 async function fixture(path = ':memory:') {
   const db = new Database(path);
@@ -148,6 +149,114 @@ test('a refused HyperNeo admission stays held until a successful retry', async (
     await f.flush();
     expect(f.inputs.size).toBe(1);
     expect(f.store.getTodo('todo')?.state).toBe('doing');
+  } finally {
+    f.db.close();
+  }
+});
+
+test('a competing duplicate rejection cannot strand an admitted answer or its hold', async () => {
+  const f = await fixture();
+  f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+  let entered!: () => void;
+  let release!: () => void;
+  const admitted = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const registry = createOperationRegistry([
+    createSendMessageOperation(
+      new JobQueueRepository(f.db),
+      () => 'active',
+      undefined,
+      undefined,
+      async () => {
+        entered();
+        await barrier;
+        return 'Neo';
+      }
+    ),
+  ]);
+  const outcomes: OperationOutcome[] = [];
+  const flush = createNeoQuestionAnswerDelivery(
+    f.store,
+    new NeoTodoSessionRepository(f.db),
+    async (caller, name, input) => {
+      const outcome = await invokeOperation(registry, name, input, caller);
+      outcomes.push(outcome);
+      return outcome;
+    },
+    async () => {},
+    async (todo) => f.store.recompute(todo, {}, 8, { state: 'no_opinion' }, async () => {}),
+    (error) => {
+      throw error;
+    }
+  );
+  const winner = flush(f.question.id);
+  try {
+    await admitted;
+    await flush();
+    expect(outcomes).toMatchObject([
+      {
+        kind: 'completed',
+        value: { kind: 'rejected', reason: expect.stringContaining('duplicate') },
+      },
+    ]);
+    release();
+    await winner;
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+    expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+  } finally {
+    release();
+    await winner;
+    f.db.close();
+  }
+});
+
+test('a lost acknowledgement replays its durable HyperNeo receipt without another admission', async () => {
+  const f = await fixture();
+  f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+  let admissions = 0;
+  const registry = createOperationRegistry([
+    createSendMessageOperation(
+      new JobQueueRepository(f.db),
+      () => 'active',
+      undefined,
+      undefined,
+      () => {
+        admissions++;
+        return 'Neo';
+      }
+    ),
+  ]);
+  let loseReply = true;
+  const warnings: unknown[] = [];
+  const createDelivery = () =>
+    createNeoQuestionAnswerDelivery(
+      f.store,
+      new NeoTodoSessionRepository(f.db),
+      async (caller, name, input) => {
+        const outcome = await invokeOperation(registry, name, input, caller);
+        if (loseReply) throw new Error('Synthetic lost acknowledgement');
+        return outcome;
+      },
+      async () => {},
+      async (todo) => f.store.recompute(todo, {}, 8, { state: 'no_opinion' }, async () => {}),
+      (error) => {
+        warnings.push(error);
+      }
+    );
+  try {
+    await createDelivery()();
+    expect(warnings).toHaveLength(1);
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+    expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    loseReply = false;
+    await createDelivery()();
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+    expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+    expect(admissions).toBe(1);
   } finally {
     f.db.close();
   }
