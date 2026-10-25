@@ -13,14 +13,14 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoPack } from './pack-contract.ts';
+import { NeoQuestionSchema } from './question-operations.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import {
   NeoStatusCodesSchema,
+  type NeoStatusLine,
   neoStatusLine,
   neoTextStatus,
-  type NeoStatusLine,
 } from './status-codes.ts';
-import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
 
 const NEO_TODO_STATUS_EN = {
@@ -285,5 +285,53 @@ export function createNeoDoneTodosOperation(
       const result = await read(input, caller);
       return result.ok ? { ...result, todos: await project(result.todos) } : result;
     },
+  });
+}
+
+export function createNeoAskReadOperation(
+  store: NeoAskTodoRepository,
+  packs: () => readonly NeoPack[],
+  admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection },
+  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]>
+) {
+  const id = z.string().trim().min(1);
+  const inputSchema = z
+    .object({ askId: id.optional(), todoId: id.optional(), questionId: id.optional() })
+    .refine(
+      (input) => !!(input.askId || input.todoId || input.questionId),
+      'Provide an ask, todo or question id.'
+    );
+  const read = (superpipe({})('neo.ask.read') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admit, 'caller', 'result:outcome')
+    .pipe((input: z.infer<typeof inputSchema>) => store.read('askFacts', input), 'input', 'facts')
+    .pipe(
+      (facts: ReturnType<NeoAskTodoRepository['askFacts']>) => requireNeoAskFound(facts.ask),
+      'facts',
+      'result:outcome'
+    )
+    .pipe(
+      async (facts: ReturnType<NeoAskTodoRepository['askFacts']>) => {
+        const entry = projectNeoAskEntries([facts.ask!], facts, packs())[0]!;
+        return { ok: true as const, entry: { ...entry, todos: await project(entry.todos) } };
+      },
+      'facts',
+      'outcome'
+    )
+    .endAsync('outcome') as (
+    input: z.infer<typeof inputSchema>,
+    caller: OperationCaller
+  ) => Promise<{ ok: true; entry: NeoAskEntry } | Rejection>;
+  return defineOperation({
+    name: 'neo.ask.read',
+    description:
+      'Read one exact work card by askId, todoId or questionId, including its todos and questions, even when it is outside the current snapshot window.',
+    inputSchema,
+    resultSchema: z.union([
+      z.object({ ok: z.literal(false), reason: z.string() }),
+      z.object({ ok: z.literal(true), entry: NeoAskEntrySchema }),
+    ]),
+    policy: { safetyClass: 'read', roles: ['neo'] },
+    execute: read,
   });
 }
