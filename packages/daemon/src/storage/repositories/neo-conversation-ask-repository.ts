@@ -1,5 +1,6 @@
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { NeoWakeQueueRepository } from './neo-wake-queue-repository.ts';
 import { sdkNeoIntake } from './sdk-message-transactions.ts';
 import type {
   NeoConversationAsk,
@@ -143,12 +144,24 @@ export function persistNeoIntakeTransaction(
         .length === 0
     )
       return { ...stored, created: false };
+    const batch = stored.created
+      ? new NeoWakeQueueRepository(db).attach(
+          ask.askOrigin.sessionId,
+          message.message.content,
+          undefined,
+          ask.requestId
+        )
+      : message.message.content;
+    const batched = {
+      ...message,
+      ...(batch !== message.message.content ? { neoBatchContent: batch } : {}),
+    };
     const prompt = ensurePromptInTransaction({
       db,
       sdkMessageRepo,
       jobQueue,
       sessionId: ask.askOrigin.sessionId,
-      message,
+      message: batched,
       hold,
       delivery: { origin: 'chat', priority: NEO_HUMAN_DELIVERY_PRIORITY },
       deferPostSaveSideEffects,

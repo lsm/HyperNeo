@@ -87,6 +87,8 @@ export function createDatabaseOperationCatalog(
         createStandaloneTaskMetadataEditor(db.getDatabase(), db.runSpaceTaskOp)(input, caller),
       transitionTask: (input) => db.runSpaceTaskOp(transitionStandaloneTask, input),
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
+      isNeo: (sessionId) =>
+        new NeoRepository(db.getDatabase()).getBindingBySession(sessionId)?.kind === 'neo',
       sessionTitle: async (id) => {
         const title = readSessionField(db, 'title', id);
         return title !== null
@@ -133,8 +135,18 @@ export function createDatabaseOperationCatalog(
       }),
       createResolveAgentOperation(agentLookups),
       createMessageStatusOperation({
-        readSendStatus: (sessionId, messageId) =>
-          db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus ?? null,
+        readSendStatus: (sessionId, messageId) => {
+          const note = jobQueue.getLatestByPayload('neo_notes', {
+            'to.sessionId': sessionId,
+            messageUuid: messageId,
+          });
+          if (note && !note.payload.neoBatchUuid) return 'enqueued';
+          const id = note ? String(note.payload.neoBatchUuid) : messageId;
+          return (
+            db.getSDKMessageRepo().getDeliveryContent(sessionId, id)?.sendStatus ??
+            (note ? 'enqueued' : null)
+          );
+        },
         readMailboxAdmission: (sessionId, messageId) =>
           jobQueue.getLatestByPayload(MAILBOX_LANE, {
             'to.sessionId': sessionId,

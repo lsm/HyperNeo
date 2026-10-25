@@ -2153,7 +2153,12 @@ export class SDKMessageRepository {
   getDeliveryContent(
     sessionId: string,
     uuid: string
-  ): { content: string | MessageContent[]; sendStatus: SendStatus; inputKind?: string } | null {
+  ): {
+    content: string | MessageContent[];
+    sendStatus: SendStatus;
+    inputKind?: string;
+    neoBatch?: true;
+  } | null {
     const row = this.db
       .prepare(
         hydrateSdkMessageBodies(
@@ -2170,13 +2175,15 @@ export class SDKMessageRepository {
       const message = JSON.parse(row.sdk_message) as {
         message?: { content?: string | MessageContent[] };
         inputKind?: string;
+        neoBatchContent?: string | MessageContent[];
       };
-      const content = message.message?.content ?? null;
+      const content = message.neoBatchContent ?? message.message?.content ?? null;
       if (content === null) return null;
       return {
         content,
         sendStatus: row.send_status,
         ...(message.inputKind ? { inputKind: message.inputKind } : {}),
+        ...(message.neoBatchContent !== undefined ? { neoBatch: true as const } : {}),
       };
     } catch {
       return null;

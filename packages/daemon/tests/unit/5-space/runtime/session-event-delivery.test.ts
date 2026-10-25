@@ -18,6 +18,8 @@ import {
 } from '../../../../src/storage/repositories/session-event-subscription-repository';
 import { runMigration329 } from '../../../../src/storage/schema/m329-session-event-subscriptions';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery.ts';
+import { NeoWakeQueueRepository } from '../../../../src/storage/repositories/neo-wake-queue-repository.ts';
 
 const PR = 'https://github.com/acme/widgets/pull/7';
 const PR_TOPIC = 'github/acme/widgets/pull_request/7.*';
@@ -197,6 +199,39 @@ describe('planSessionEventDeliveries', () => {
 });
 
 describe('mailSessionEvent', () => {
+  test('urgent GitHub feedback reaches Neo immediately rather than entering its note queue', async () => {
+    const db = createMailboxTestDb();
+    try {
+      db.db
+        .prepare("INSERT INTO neo_session_bindings(session_id,kind) VALUES ('neo:feedback','neo')")
+        .run();
+      await mailSessionEvent(db.jobQueue, {
+        sessionId: 'neo:feedback',
+        messageUuid: 'urgent-review',
+        text: 'PR review needs action.',
+        mode: 'immediate',
+      });
+      const handler = createMailboxDeliveryHandler({
+        jobQueue: db.jobQueue,
+        db: db.db,
+        sdkMessageRepo: db.sdkMessageRepo,
+        getSession: async () => ({}),
+        isSessionArchived: () => false,
+        prepareEntry: async (entry, id) =>
+          new NeoWakeQueueRepository(db.db).prepare(
+            entry,
+            id,
+            entry.origin === 'chat' ||
+              !!entry.message.workerReportKind ||
+              !!entry.message.neoWakeEvent
+          ),
+      });
+      await handler(db.jobQueue.dequeue('mailbox')[0]);
+      expect(db.sdkRows().map((row) => row.sdk_uuid)).toEqual(['urgent-review']);
+    } finally {
+      db.close();
+    }
+  });
   test('hands the event to the session mailbox as system input under its message id', async () => {
     const db = createMailboxTestDb();
     try {

@@ -51,6 +51,7 @@ export interface TaskOperationDependencies {
   sessionTitle?: SessionTitleRead;
   resolveMessageAgent?: AgentTargetResolver;
   sessionSent?: SessionSentObserver;
+  isNeo?: (sessionId: string) => boolean;
 }
 
 export function createDaemonOperationCatalog(
@@ -66,7 +67,8 @@ export function createDaemonOperationCatalog(
       createRemoteSendForwarder(remoteDaemons),
       tasks.resolveMessageAgent,
       tasks.sessionTitle,
-      tasks.sessionSent
+      tasks.sessionSent,
+      tasks.isNeo
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),

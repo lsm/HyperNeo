@@ -60,18 +60,41 @@ describe('Neo daemon notes', () => {
       .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: messageId })
       .map((job) => job.payload.deliveryMode);
 
+  test.each(['wakeNeo', 'sendToRef'])('%s keeps structured PR events immediate', async (path) => {
+    if (path === 'wakeNeo') await service.wakeNeo('structured-pr', 'PR requires action.');
+    else
+      await service.sendToRef(
+        { adapter: 'hyperneo', id: rootId },
+        'structured-pr',
+        'PR requires action.'
+      );
+    expect(queued('structured-pr')).toEqual(['immediate']);
+    const job = db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: 'structured-pr' })[0];
+    expect((job.payload.message as { neoWakeEvent?: boolean }).neoWakeEvent).toBe(true);
+  });
+
+  test('a burst of 20 unstructured worker notes does not start Neo', async () => {
+    for (let i = 0; i < 20; i++)
+      await service.deliverForward(rootId, `chatty-${i}`, `chatty-${i}`, 'worker');
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': rootId })
+    ).toHaveLength(0);
+  });
+
   test('notes to busy and idle Neo both use immediate ordinary mailbox delivery', async () => {
     await events.publish('session.updated', {
       sessionId: rootId,
       processingState: { status: 'processing' } as never,
     });
-    await service.deliverForward(rootId, 'note-busy', 'A card reported.', rootId);
+    await service.deliverForward(rootId, 'note-busy', 'A card reported.', rootId, 'event');
     expect(queued('note-busy')).toEqual(['immediate']);
     await events.publish('session.updated', {
       sessionId: rootId,
       processingState: { status: 'idle' } as never,
     });
-    await service.deliverForward(rootId, 'note-idle', 'A card reported.', rootId);
+    await service.deliverForward(rootId, 'note-idle', 'A card reported.', rootId, 'event');
     expect(queued('note-idle')).toEqual(['immediate']);
   });
 
@@ -136,10 +159,6 @@ describe('Neo daemon notes', () => {
         throw new Error(message, { cause: error });
       });
       const key = `neo-todo-turn:${todo.id}:${dispatch}:discussion-turn`;
-      if (['failed', 'needs_you'].includes(kind)) {
-        expect(queued(key)).toEqual(['immediate']);
-        return;
-      }
       expect(queued(key)).toEqual([]);
       expect(db.getSDKMessageRepo().findMessageIdByUuid(rootId, key)).toBeTruthy();
     }
@@ -157,7 +176,7 @@ describe('Neo daemon notes', () => {
     '%s retry preserves one pending urgent delivery',
     async (kind) => {
       const id = 'pending-urgent';
-      const urgent = service.deliverForward(rootId, id, 'Worker failed.', rootId);
+      const urgent = service.deliverForward(rootId, id, 'Worker failed.', rootId, 'event');
       await service.deliverForward(rootId, id, 'Quiet retry.', rootId, kind);
       await urgent;
       expect(storedCount(id)).toBe(0);
@@ -169,7 +188,7 @@ describe('Neo daemon notes', () => {
     '%s retry preserves one queued urgent delivery',
     async (kind) => {
       const id = 'queued-urgent';
-      await service.deliverForward(rootId, id, 'Worker failed.', rootId);
+      await service.deliverForward(rootId, id, 'Worker failed.', rootId, 'event');
       await service.deliverForward(rootId, id, 'Quiet retry.', rootId, kind);
       expect(storedCount(id)).toBe(0);
       expect(queued(id)).toEqual(['immediate']);

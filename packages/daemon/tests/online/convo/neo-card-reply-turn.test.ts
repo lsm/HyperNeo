@@ -8,8 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
-import { handoffPromptToMailbox } from '../../../src/lib/mailbox/handoff.ts';
-import { renderAddress } from '../../../src/lib/mailbox/address.ts';
 
 function deferred() {
   let resolve!: () => void;
@@ -28,7 +26,6 @@ async function until(check: () => boolean | Promise<boolean>) {
 test('Costco human input survives a consumed teammate prompt when question.ask omits replyTo', async () => {
   const isolated = await mkdtemp(join(tmpdir(), 'neo-card-reply-turn-'));
   const requestId = crypto.randomUUID();
-  const systemId = crypto.randomUUID();
   const firstModel = deferred();
   const releaseModel = deferred();
   const calls: unknown[] = [];
@@ -237,18 +234,17 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
       })
     ).toMatchObject({ ok: true, messageId: requestId });
     await firstModel.promise;
-    await handoffPromptToMailbox({
-      to: renderAddress({ kind: 'session', sessionId: root }),
-      origin: 'session:synthetic-teammate',
-      messageUuid: systemId,
-      message: {
-        type: 'user',
-        parent_tool_use_id: null,
-        inputKind: 'task',
-        message: { role: 'user', content: 'Synthetic teammate progress; not human input.' },
+    const report = await hub.request<{ kind: string; messageId: string }>('operation.invoke', {
+      name: 'message.send',
+      input: {
+        to: root,
+        from: 'session:synthetic-teammate',
+        kind: 'question',
+        text: 'Synthetic teammate question; not human input.',
       },
-      jobQueue: daemon.db.getJobQueueRepo(),
     });
+    expect(report.kind).toBe('accepted');
+    const systemId = report.messageId;
     await until(() => !!daemon!.db.getMessageByStatusAndUuid(root, 'consumed', systemId));
     const during = daemon.sessionManager.getCachedSession(root)!.getProcessingState();
     expect(during).toMatchObject({ status: 'processing', messageId: systemId });
@@ -300,22 +296,17 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     phase = 'background';
     rounds = 0;
     finished = false;
-    const backgroundId = crypto.randomUUID();
-    await handoffPromptToMailbox({
-      to: renderAddress({ kind: 'session', sessionId: root }),
-      origin: 'session:synthetic-teammate',
-      messageUuid: backgroundId,
-      message: {
-        type: 'user',
-        parent_tool_use_id: null,
-        inputKind: 'task',
-        message: {
-          role: 'user',
-          content: 'Synthetic background-only turn; open a background card.',
+    expect(
+      await hub.request('operation.invoke', {
+        name: 'message.send',
+        input: {
+          to: root,
+          from: 'session:synthetic-teammate',
+          kind: 'question',
+          text: 'Synthetic background-only question; open a background card.',
         },
-      },
-      jobQueue: daemon.db.getJobQueueRepo(),
-    });
+      })
+    ).toMatchObject({ kind: 'accepted' });
     await until(() => finished);
     await until(
       () => daemon!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle'

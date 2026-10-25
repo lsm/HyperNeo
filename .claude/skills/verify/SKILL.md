@@ -73,6 +73,10 @@ only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any
 additional ports; do not also start `launch.sh` for these helpers.
 
+A helper that starts another proof process must preserve the selected TMPDIR
+or give that child its own temporary directory inside its fresh run. A scrubbed
+child environment must not silently fall back to the host's default temp path.
+
 For a helper whose journey specifies no provider turn or only a synthetic ACP
 agent, omit the 8000/8001 preflight loop when it specifies no HTTP mock. Such
 helpers own their ephemeral listeners; the remaining isolated environment and
