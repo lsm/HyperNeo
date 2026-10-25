@@ -23,12 +23,14 @@ export function ReferenceView({
   markdownClass,
   promoteFiles = false,
   suspended = false,
+  tabbed = false,
 }: {
   target: Reference;
   resolved: Map<string, ArtifactResolution>;
   markdownClass?: string;
   promoteFiles?: boolean;
   suspended?: boolean;
+  tabbed?: boolean;
 }) {
   const key = JSON.stringify(target);
   const [settled, setSettled] = useState(() => ({ key, value: resolved.get(key) }));
@@ -83,7 +85,9 @@ export function ReferenceView({
     );
   return (
     <section class="flex h-full min-h-0 flex-col bg-surface text-fg">
-      <PreviewHeader title={t('artifact.untitled')} onBack={backArtifactPreview} />
+      {(!tabbed || target.file) && (
+        <PreviewHeader title={t('artifact.untitled')} onBack={backArtifactPreview} />
+      )}
       <div class="px-4 py-4 text-sm text-fg-muted">
         {resolution?.kind === 'choices' ? (
           <>

@@ -95,7 +95,7 @@ describe('Neo artifact taps', () => {
           <NeoPublicConversation
             conversation={conversation(
               publication({
-                shortText: code ? `Read \`${path}\`` : `Read ${path}`,
+                shortText: code ? `Read \`${path}\`` : 'Read the full report.',
                 fullText: code ? `Read \`${path}\`` : `Read ${path}`,
               })
             )}
@@ -103,13 +103,14 @@ describe('Neo artifact taps', () => {
           <ArtifactPreviewPanel fileTabs work={{ id: 'work', showTab: true, count: 1 }} />
         </>
       );
+      if (!code) fireEvent.click(await screen.findByRole('button', { name: /more/i }));
       fireEvent.click(await screen.findByText(path));
       await waitFor(() => expect(refuse).toBeTypeOf('function'));
       expect(screen.getByRole('tab', { name: 'Your work · 1' })).toBeTruthy();
       const tab = screen.getByRole('tab', { name: path });
       expect(tab.getAttribute('aria-selected')).toBe('true');
       expect(screen.getByRole('status').textContent).toBe('Loading preview…');
-      refuse({ accepted: false, reason: 'context_not_found' });
+      refuse({ accepted: false, reason: 'unavailable' });
       await screen.findByText('This file is no longer available to you.');
       expect(screen.getByRole('tab', { name: path })).toBe(tab);
       expect(screen.getByRole('tabpanel').id).toBe(tab.getAttribute('aria-controls'));
