@@ -186,9 +186,17 @@ export class KimiProvider implements Provider {
     ...KimiProvider.K31_MODELS,
   ];
 
-  private static readonly K31_MODEL_IDS: ReadonlySet<string> = new Set(
-    KimiProvider.K31_MODELS.map((model) => model.id)
-  );
+  private static isK31FamilyModelId(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    return (
+      id === 'k3.1' ||
+      id === 'kimi-k3.1' ||
+      id === 'moonshot-k3.1' ||
+      id.startsWith('k3.1-') ||
+      id.startsWith('kimi-k3.1-') ||
+      id.startsWith('moonshot-k3.1-')
+    );
+  }
 
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
@@ -423,7 +431,7 @@ export class KimiProvider implements Provider {
 
   private static gateK31ModelsForRegion(models: ModelInfo[], region: KimiRegion): ModelInfo[] {
     if (region === 'global') return models;
-    return models.filter((model) => !KimiProvider.K31_MODEL_IDS.has(model.id));
+    return models.filter((model) => !KimiProvider.isK31FamilyModelId(model.id));
   }
 
   private resolveEffectiveRegion(): KimiRegion {
@@ -473,7 +481,7 @@ export class KimiProvider implements Provider {
 
   isCuratedModelVisible(modelId: string): boolean {
     if (this.resolveEffectiveRegion() === 'global') return true;
-    return !KimiProvider.K31_MODEL_IDS.has(KimiProvider.canonicalizeModelId(modelId));
+    return !KimiProvider.isK31FamilyModelId(modelId);
   }
 
   getCachedModels(): ModelInfo[] | null {
