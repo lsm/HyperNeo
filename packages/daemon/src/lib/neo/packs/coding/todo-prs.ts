@@ -57,27 +57,33 @@ export class CodingTodoPrRepository {
     const todos = store.listTodosForAsks(store.listOpenAsks().map((ask) => ask.id));
     for (const row of rows)
       for (const claim of planCodingIssuePrClaims(row.repo, row.number, row.body ?? '', todos))
-        this.claim(claim.todoId, [{ url: claim.url, claim: 'named' }], now);
+        this.claim(claim.todoId, [{ url: claim.url, claim: 'named' }], now, 'additive');
   }
 
   stages(todoId: string) {
     return this.urls(todoId).flatMap((url) => this.stageFacts.read(url));
   }
 
-  claim(todoId: string, claims: readonly { url: string; claim: CodingPrClaim }[], now: number) {
+  claim(
+    todoId: string,
+    claims: readonly { url: string; claim: CodingPrClaim }[],
+    now: number,
+    mode: 'replace-reported' | 'additive' = 'replace-reported'
+  ) {
     const keyed = claims.flatMap(({ url, claim }) => {
       const key = codingPrKey(url);
       return key ? [{ key, claim }] : [];
     });
-    this.db
-      .prepare(
-        `DELETE FROM pack_coding_pr_claims WHERE todo_id = ? AND claim = 'reported'
+    if (mode === 'replace-reported')
+      this.db
+        .prepare(
+          `DELETE FROM pack_coding_pr_claims WHERE todo_id = ? AND claim = 'reported'
            AND url NOT IN (SELECT value FROM json_each(?))`
-      )
-      .run(
-        todoId,
-        JSON.stringify(keyed.filter((item) => item.claim === 'reported').map((item) => item.key))
-      );
+        )
+        .run(
+          todoId,
+          JSON.stringify(keyed.filter((item) => item.claim === 'reported').map((item) => item.key))
+        );
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(todo_id, url) DO UPDATE SET claim = excluded.claim, claimed_at = excluded.claimed_at
