@@ -303,7 +303,8 @@ export class KimiProvider implements Provider {
       id === 'k3' ||
       id.startsWith('kimi-') ||
       id.startsWith('moonshot-') ||
-      id.startsWith('k3-')
+      id.startsWith('k3-') ||
+      id.startsWith('k3.1-')
     );
   }
 

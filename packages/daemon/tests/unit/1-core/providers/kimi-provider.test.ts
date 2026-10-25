@@ -905,6 +905,8 @@ describe('KimiProvider', () => {
     it('routes K3.1 aliases to the canonical upstream IDs in both regions', () => {
       expect(provider.ownsModel('kimi-k3.1-pro')).toBe(true);
       expect(provider.ownsModel('kimi-k3.1-pro-highspeed')).toBe(true);
+      expect(provider.ownsModel('k3.1-pro')).toBe(true);
+      expect(provider.ownsModel('k3.1-pro-highspeed')).toBe(true);
       expect(provider.translateModelIdForSdk('k3.1')).toBe('kimi-k3.1-pro');
       expect(provider.translateModelIdForSdk('kimi-k3.1')).toBe('kimi-k3.1-pro');
       expect(provider.translateModelIdForSdk('k3.1-pro')).toBe('kimi-k3.1-pro');
