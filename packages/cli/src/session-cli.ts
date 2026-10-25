@@ -1,18 +1,10 @@
+import { SESSION_CLI_USAGE } from './session-cli-commands.ts';
 import { request } from 'node:http';
 import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
 
 type Env = Record<string, string | undefined>;
 
-export const SESSION_CLI_USAGE = `Usage:
-  hyperneo send <session-id> <text>   Message another session (inside a HyperNeo, Codex or Claude Code session)
-  hyperneo question <question-id>     Read a Neo question and whether the human answered it
-  hyperneo build                      Read daemon build and health through the owner-only session socket
-  hyperneo pair [--kind human|relay|daemon] [--name <name>]
-                                      Make a 10-minute pairing code; after the first device, it waits for Allow on a paired device
-  hyperneo pair --reset-lockout       Reopen pairing after too many bad codes
-  hyperneo devices                    List paired devices (never their credentials)
-  hyperneo devices revoke <id>        Revoke a paired device and close its connections
-  hyperneo devices reset-human        Lost-phone recovery: clear human devices, reopen one human pairing, and notify Neo`;
+export { SESSION_CLI_USAGE };
 
 export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
