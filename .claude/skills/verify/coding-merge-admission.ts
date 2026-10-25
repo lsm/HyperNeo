@@ -17,7 +17,7 @@ for (const name of ['evidence', 'bin']) mkdirSync(join(run, name), { recursive: 
 const url = 'https://github.com/synthetic/admission/pull/7', head = 'a'.repeat(40);
 const author = { adapter: 'fixture', id: 'author' }, ref = { adapter: 'fixture', id: 'verifier' };
 const actor = { kind: 'agent' as const, id: ref.id, model: 'gpt-6', harness: ref.adapter };
-const pr = { url, body: 'Agent: GPT-6 via fixture', headRefOid: head, state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', author: { login: 'author' }, changedFiles: 1, files: [{ path: 'src/change.ts' }], labels: [] };
+const pr = { url, body: 'Agent: gpt-6-sol (effort: high) via fixture', headRefOid: head, state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', author: { login: 'author' }, changedFiles: 1, files: [{ path: 'src/change.ts' }], labels: [] };
 const reviews = [{ state: 'APPROVED', commit_id: head, user: { login: 'fixture-bot', type: 'Bot' }, html_url: `${url}#review-1` }];
 const checks = [{ bucket: 'pass', name: 'Required CI', link: `${url}/checks` }];
 const threads = { headOid: head, unresolvedThreadUrls: [] as string[] };

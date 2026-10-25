@@ -1,5 +1,6 @@
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { planNudge } from '../../../../src/lib/neo/nudge.ts';
+import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,6 +65,7 @@ function setup(
     describe: 'coding',
     instructions: () => null,
     workerRules: 'Rules for this work: prove it by running it.',
+    workerBrief: withCodingWorkerProvenance,
     todos: {
       schema: () => {},
       check: async (todo: NeoTodo) => {
@@ -138,6 +140,28 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
+    const h = setup();
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr', params: {} });
+      await h.runner.start(todo.id);
+      const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
+      expect(opening).toContain('Agent: <exact model id> (effort: <effort>) via HyperNeo');
+      expect(opening).toContain('Never guess');
+      h.sessions.recordRef(todo.id, ref, 1_000, undefined, {
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+      });
+      await h.runner.proceed(todo.id, 'Write the PR body.');
+      const followup = h.calls.findLast((call) => call.name === 'work.send')!.input
+        .message as string;
+      expect(followup).toContain('Agent: gpt-6.1-sol (effort: high) via HyperNeo');
+      expect(followup).not.toContain('<effort>');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+    } finally {
+      h.db.close();
+    }
+  });
   test('refuses the external effect if accepting its durable input fails', async () => {
     const h = setup();
     try {

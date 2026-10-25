@@ -120,28 +120,39 @@ describe('coding provenance policy', () => {
         qualifies: true,
         preferred: true,
       });
-      expect(ledger.reviewerPolicy('synthetic/stages', body, {
-        ...reviewer, model: 'openai/gpt-6.1',
-      })).toMatchObject({ qualifies: false, reason: 'same_model' });
+      expect(
+        ledger.reviewerPolicy('synthetic/stages', body, {
+          ...reviewer,
+          model: 'openai/gpt-6.1',
+        })
+      ).toMatchObject({ qualifies: false, reason: 'same_model' });
       for (const line of [
         'Agent: GPT-6 via Codex',
         'Agent: gpt-6.1-sol via Codex',
         'Agent: GPT-6 (effort: high) via Codex',
         'Agent: gpt-6.1-sol (effort: unknown) via Codex',
-      ]) expect(ledger.reviewerPolicy('synthetic/stages', line, reviewer).reason)
-        .toContain('ask the author');
-    } finally { db.close(); }
+      ])
+        expect(ledger.reviewerPolicy('synthetic/stages', line, reviewer).reason).toContain(
+          'ask the author'
+        );
+    } finally {
+      db.close();
+    }
   });
   test('defaults on without saving, requires different model, prefers different harness, allows human', () => {
     const { db, ledger } = setup();
     try {
-      const body = 'Agent: GPT-6 via Harness A';
+      const body = 'Agent: gpt-6-sol (effort: high) via Harness A';
       expect(ledger.reviewerPolicy('synthetic/stages', body, reviewer)).toMatchObject({
         qualifies: true,
         preferred: true,
       });
       expect(
-        ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer)
+        ledger.reviewerPolicy(
+          'synthetic/stages',
+          'Author: gpt-6-sol (effort: high) via Harness A',
+          reviewer
+        )
       ).toMatchObject({ qualifies: true, preferred: true });
       expect(
         ledger.reviewerPolicy('synthetic/stages', body, { ...reviewer, harness: 'Harness A' })
@@ -154,7 +165,7 @@ describe('coding provenance policy', () => {
       ).toMatchObject({ qualifies: true });
       for (const invalid of [
         '',
-        'Author: GPT-6 via Harness A\n' + body,
+        'Author: gpt-6-sol (effort: high) via Harness A\n' + body,
         'Agent: <model> via <harness>',
         body + '\n' + body,
         'Agent: A via B via C',
@@ -166,18 +177,18 @@ describe('coding provenance policy', () => {
         });
       }
       for (const [author, model] of [
-        ['GPT-6', 'gpt-6-2026-09'],
-        ['GPT-6', 'openai/gpt-6'],
-        ['GPT-6', 'gpt 6'],
-        ['gpt-6', 'gpt-6.0'],
-        ['Opus 5.5', 'claude-opus-5-5[1m]'],
-        ['Claude Fable 5.1', 'claude-fable-5-1'],
-        ['Claude Opus 5.5', 'claude-opus-5-5'],
-        ['GPT-6', 'unidentified-model'],
+        ['gpt-6-sol', 'gpt-6-2026-09'],
+        ['gpt-6-sol', 'openai/gpt-6'],
+        ['gpt-6-sol', 'gpt 6'],
+        ['gpt-6-sol', 'gpt-6.0'],
+        ['claude-opus-5-5', 'claude-opus-5-5[1m]'],
+        ['claude-fable-5-1', 'claude-fable-5-1'],
+        ['claude-opus-5-5', 'claude-opus-5-5'],
+        ['gpt-6-sol', 'unidentified-model'],
         ['unidentified-model', 'claude-opus-5-5'],
       ])
         expect(
-          ledger.reviewerPolicy('synthetic/stages', `Agent: ${author} via A`, {
+          ledger.reviewerPolicy('synthetic/stages', `Agent: ${author} (effort: high) via A`, {
             ...reviewer,
             model,
           })

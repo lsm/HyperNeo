@@ -28,7 +28,7 @@ Review preferences do not apply when a review bot is configured.
 Provenance is a coding-pack preference, **on by default**, user-disableable.
 Use the existing first-use preference question; until answered, explicitly fall
 back to on without storing a value or marking the preference answered. When on,
-require `Agent: <model> via <harness>` with actual identity; ask the author to fix
+require `Agent: <exact model id> (effort: <effort>) via <harness>` with actual identity; ask the author to fix
 missing/ambiguous provenance before assigning review. For the no-bot reviewer
 session, require a **different model** and prefer a different harness too (for
 example Codex CLI reviewing Claude Code). Fallback: same harness, different model.

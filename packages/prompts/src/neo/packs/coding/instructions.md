@@ -47,8 +47,15 @@ Keep provenance an explicit pack preference. A no answer to an Apply settings
 proposal saves nothing, so unanswered provenance stays on. To disable it, propose
 provenance false separately and apply it only after the human answers yes, or let
 the human disable it in settings.
-When on, require one unambiguous PR body line `Agent: <model> via <harness>`
-with actual identities; ask the author to repair missing or ambiguous provenance.
+When on, require one unambiguous PR body line
+`Agent: <exact model id> (effort: <effort>) via <harness>`, for example
+`Agent: gpt-6.1-sol (effort: high) via Codex`.
+Use the worker session's recorded actual_model and actual_effort where available,
+as supplied in its worker brief. Preserve the exact id and effort rather than
+guessing from a family name or a requested configuration. If metadata is missing,
+obtain it from the session runtime or ask the author to report what is unavailable.
+Ask the author to repair open PRs missing the exact id or effort; never rewrite
+merged PR bodies. Legacy Author lines require the same exact id and effort.
 The reviewer policy requires a different model and prefers a different harness;
 same harness with a different model qualifies, same model with another harness does not.
 Known GPT/Codex and Claude family/version identities fold display, provider and dated

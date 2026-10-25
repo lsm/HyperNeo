@@ -7,6 +7,8 @@ import { CodingPrLedgerRepository, reconcileCodingPrLedger } from '../../../pack
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { CodingStageFact } from '../../../packages/daemon/src/lib/neo/packs/coding/stage-facts.ts';
+import { createOperationRegistry, defineOperation } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { SendWorkInputSchema, SendWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -30,6 +32,16 @@ try {
       await app.jobProcessor.stop();
       const db = app.db.getDatabase(); createCodingPackTables(db);
       const ledger = new CodingPrLedgerRepository(db), todos = new CodingTodoPrRepository(db);
+      db.prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'").run(JSON.stringify(['synthetic/first', 'synthetic/stages']));
+      const messages: string[] = [];
+      const registry = app.sessionManager.getOperationRegistry();
+      const harness = defineOperation({ name: 'work.send', description: 'Capture the synthetic worker inbox.', inputSchema: SendWorkInputSchema, resultSchema: SendWorkResultSchema, execute: async input => {
+        assert.equal(input.ref.id, 'signature-fixture');
+        messages.push(input.message);
+        return { ok: true as const, value: { delivered: true, receipt: { executionId: input.ref.id, inputId: crypto.randomUUID() } } };
+      } });
+      const bound = createOperationRegistry(registry.entries.map(entry => entry.name === 'work.send' ? harness : entry));
+      app.sessionManager.setOperationRegistryProvider(() => bound);
       assert.notEqual(app.server.port, 8399);
       ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
@@ -44,6 +56,20 @@ try {
       });
       if (phase === 'initial') {
         db.exec("INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at) VALUES ('ask-7', 'synthetic', 'Stages', 'Stages', 1, 1); INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at) VALUES ('todo-7', 'ask-7', 1, 'Stages', 'Merged', 'doing', 1, 1)");
+        db.prepare('UPDATE neo_todos SET check_json = ? WHERE id = ?').run(JSON.stringify({ pack: 'coding', kind: 'pr', params: {} }), 'todo-7');
+        const ref = { adapter: 'codex-desktop', id: 'signature-fixture' };
+        db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref, actual_model, actual_effort) VALUES (?, ?, ?, ?, ?)').run('todo-7', JSON.stringify({ verb: 'send', ref }), JSON.stringify(ref), 'gpt-6.1-sol', 'high');
+        const continued = await rpc('neo.todo.continue', { todoId: 'todo-7', message: 'Write the PR body.' }) as { ok: boolean };
+        assert.equal(continued.ok, true);
+        assert.equal(messages.length, 1);
+        assert(messages[0].includes('Agent: gpt-6.1-sol (effort: high) via Codex'));
+        evidence.push({ workerInbox: messages[0] });
+        for (const body of ['Agent: GPT-6 via Codex', 'Agent: gpt-6.1-sol via Codex', 'Agent: GPT-6 (effort: high) via Codex']) {
+          const repair = ledger.reviewerPolicy('synthetic/stages', body, reviewer);
+          assert.equal(repair.qualifies, false);
+          assert(repair.reason.includes('ask the author'));
+          evidence.push({ body, repair });
+        }
         await todos.write('claim', 'todo-7', [{ url, claim: 'named' }], 1);
         await ledger.write('replace', 'synthetic/stages', [row('head-a')], 1);
         assert(await ledger.write('recordStage', fact));
@@ -55,9 +81,10 @@ try {
         const proposal = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'stage-provenance', values: [{ ...setting, value: true }, { ...setting, key: 'mergePolicy', value: 'ci_only' }] }) as { ok: boolean; questionId: string };
         assert.equal(proposal.ok, true);
         assert(proposal.questionId);
-        assert.deepEqual(await rpc('pack.preferences.list', {}), { preferences: [] });
-        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: GPT-6 via Harness A', reviewer).qualifies, true);
-        const aliases = ['gpt-6-2026-09', 'openai/gpt-6', 'unidentified-model'].map(model => ledger.reviewerPolicy('synthetic/stages', 'Agent: GPT-6 via A', { ...reviewer, model }));
+        const listed = await rpc('pack.preferences.list', {}) as { preferences: { pack: string; key: string }[] };
+        assert.deepEqual(listed.preferences.filter(p => p.pack === 'coding' && p.key === 'provenance'), []);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Author: gpt-6-sol (effort: high) via Harness A', reviewer).qualifies, true);
+        const aliases = ['gpt-6-2026-09', 'openai/gpt-6', 'unidentified-model'].map(model => ledger.reviewerPolicy('synthetic/stages', 'Agent: gpt-6-sol (effort: high) via A', { ...reviewer, model }));
         await rpc('neo.question.answer', { questionId: proposal.questionId, answer: 'no' });
         const afterNo = await rpc('pack.preferences.get', setting) as { preference: { value: unknown } | null };
         evidence.push({ aliases, afterNo });
@@ -67,8 +94,8 @@ try {
         assert.equal(label.label, 'Keep current settings');
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, false);
         for (const model of ['claude-fable-5-1', 'Opus 5.5', 'claude-opus-5-5[1m]'])
-          assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: GPT-6 via A', { ...reviewer, model }).qualifies, true, model);
-        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: gpt-6 via A', { ...reviewer, model: 'gpt-6.0' }).qualifies, false);
+          assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: gpt-6-sol (effort: high) via A', { ...reviewer, model }).qualifies, true, model);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: gpt-6-sol (effort: high) via A', { ...reviewer, model: 'gpt-6.0' }).qualifies, false);
         const disable = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'disable-provenance', values: [{ ...setting, value: false }] }) as { ok: boolean; questionId: string };
         assert.equal(disable.ok, true);
         await rpc('neo.question.answer', { questionId: disable.questionId, answer: 'yes' });
