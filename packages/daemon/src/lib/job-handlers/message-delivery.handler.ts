@@ -16,6 +16,7 @@ export interface MessageDeliveryHandlerDeps {
   getSession(sessionId: string): Promise<MessageDeliverySession | null>;
   getSessionCooldownRetryAt?(sessionId: string): number | null;
   getMessageContent(sessionId: string, messageUuid: string): DeliveryLoadResult | null;
+  prepareContent?(loaded: DeliveryLoadResult, job: Job): Promise<DeliveryLoadResult>;
   isSessionArchived?(sessionId: string): boolean;
   markDeliveryFailed?(sessionId: string, messageUuid: string): Promise<string | null>;
   publishStatusChanged?(sessionId: string, messageIds: string[]): Promise<unknown>;
@@ -69,7 +70,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       return { outcome: 'no_content' };
     }
 
-    const { content, sendStatus } = loaded;
+    const { sendStatus } = loaded;
 
     if (sendStatus === 'consumed') {
       return { outcome: 'completed' };
@@ -80,6 +81,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     }
 
     if (!claimCurrent()) return { outcome: 'stale_attempt' };
+    const { content } = deps.prepareContent ? await deps.prepareContent(loaded, job) : loaded;
     let result: DeliveryOutcome;
     try {
       result = await session.driveDeliveryTurn(

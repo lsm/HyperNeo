@@ -911,6 +911,17 @@ export class JobQueueRepository {
     return result.changes > 0 ? this.getJob(jobId) : null;
   }
 
+  snapshotContent(jobId: string, content: unknown): unknown {
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          "UPDATE job_queue SET payload=json_set(payload, '$.contentSnapshot', json(?)) WHERE id=? AND json_type(payload, '$.contentSnapshot') IS NULL"
+        )
+        .run(JSON.stringify(content), jobId);
+      return this.getJob(jobId)?.payload.contentSnapshot;
+    })();
+  }
+
   getJob(jobId: string): Job | null {
     const stmt = this.db.prepare(`SELECT * FROM job_queue WHERE id = ?`);
     const row = stmt.get(jobId) as Record<string, unknown> | undefined;
@@ -1195,6 +1206,7 @@ export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueue
   'complete',
   'fail',
   'markDead',
+  'snapshotContent',
 ]);
 
 export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [
