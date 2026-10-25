@@ -1,0 +1,99 @@
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import type { Session } from '../../../packages/shared/src/mod.ts';
+import type { SessionToolSelection } from '../../../packages/shared/src/types/session-tool-choice.ts';
+import { captureToolPreferenceRow } from '../../../packages/daemon/src/storage/repositories/tool-preference-commit.ts';
+import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { Server } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js';
+import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
+import { ListToolsRequestSchema } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
+
+const run=resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV,'test');
+assert.equal(process.env.HOME,join(run,'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
+assert(!existsSync(join(run,'data')));
+for(const name of ['home','workspace','evidence']) mkdirSync(join(run,name),{recursive:true});
+const {createDaemonApp}=await import('../../../packages/daemon/src/app.ts');
+const {getConfig}=await import('../../../packages/daemon/src/config.ts');
+const {MessageHub,WebSocketClientTransport}=await import('../../../packages/shared/src/mod.ts');
+const mcp=new Server({name:'synthetic-browser',version:'1'},{capabilities:{tools:{}}});
+mcp.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[{name:'navigate',inputSchema:{type:'object'}}]}));
+const client=new Client({name:'synthetic-projection',version:'1'});
+const [a,b]=InMemoryTransport.createLinkedPair();
+await mcp.connect(a);
+await client.connect(b);
+let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
+let transport:InstanceType<typeof WebSocketClientTransport>|undefined;
+const evidence:Record<string,unknown>={defaultCallerWired:false,sdkConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
+const {toolDefaultTransitions}=await import('../../../packages/daemon/src/storage/repositories/tool-default-transition.ts');
+try {
+  app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
+  assert.notEqual(app.server.port,8399);
+  const hub=new MessageHub({defaultSessionId:'global'});
+  transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});
+  hub.registerTransport(transport);await transport.initialize();
+  for(const server of (await hub.request<{servers:{id:string}[]}>('mcp.registry.list',{})).servers)await hub.request('mcp.registry.setEnabled',{id:server.id,enabled:false});
+  const {server}=await hub.request<{server:{id:string}}>('mcp.registry.create',{name:'default-fixture',sourceType:'stdio',command:'not-executed',enabled:false});
+  await hub.request('skill.create',{params:{name:'default-wrapper',displayName:'Fixture wrapper',description:'Synthetic',sourceType:'mcp_server',config:{type:'mcp_server',appMcpServerId:server.id},enabled:false,validationStatus:'valid'}});
+  const {skill}=await hub.request<{skill:{id:string}}>('skill.create',{params:{name:'default-notes',displayName:'Fixture notes',description:'Synthetic',sourceType:'builtin',config:{type:'builtin',commandName:'default-notes'},enabled:false,validationStatus:'valid'}});
+  const {sessionId}=await hub.request<{sessionId:string}>('session.create',{workspacePath:join(run,'workspace'),config:{model:'haiku',provider:'anthropic',queryMode:'manual',sdkToolsPreset:['Read']}});
+  const raw=app.db.getDatabase();
+  const original:SessionToolSelection={version:1,choices:{[`mcp:${server.id}`]:{selected:false,aliases:['frozen-default']},[`skill:${skill.id}`]:{selected:false}}};
+  raw.prepare("UPDATE global_settings SET settings=json_set(settings,'$.toolSelectionDefaults',json(?)) WHERE id=1").run(JSON.stringify(original));
+  assert.equal(await app.db.casSessionRuntimeSettings(app.db.captureSessionRuntimeSettings(sessionId)!,{toolSelection:original}),'won');
+  const {SpaceRepository}=await import('../../../packages/daemon/src/storage/repositories/space-repository.ts');
+  const spaces=new SpaceRepository(raw);
+  const fixtures=['veto','inherit'].map(name=>spaces.createSpace({slug:name,name,workspacePath:join(run,name)}));
+  for(const space of fixtures)raw.prepare('UPDATE spaces SET config=?,stopped=1 WHERE id=?').run(JSON.stringify({toolSelectionDefaults:original}),space.id);
+  app.db.mcpEnablement.setOverride('space',fixtures[0].id,server.id,false);
+  const readDefault=(id?:string)=>{const target=captureToolPreferenceRow(raw,id?{table:'spaces',id}:{table:'global_settings',id:1});return JSON.parse(String(target.row![id?'config':'settings'])).toolSelectionDefaults as SessionToolSelection;};
+  const update={mutations:[{repository:'registry' as const,method:'update' as const,args:[server.id,{enabled:true}] as [string,{enabled:boolean}]}],edits:[{key:`mcp:${server.id}` as const,selected:true}]};
+  const prepare=raw.prepare.bind(raw);
+  raw.prepare=((...args:Parameters<typeof raw.prepare>)=>{if(new Error().stack?.includes('/tool-default-transition.ts'))throw new Error('main-thread default transition SQL');return prepare(...args);}) as typeof raw.prepare;
+  try {assert.equal((await app.db.gateway.run(toolDefaultTransitions,update)).ok,true);} finally {raw.prepare=prepare;}
+  assert.equal((await hub.request<{servers:{id:string;enabled:boolean}[]}>('mcp.registry.list',{})).servers.find(row=>row.id===server.id)!.enabled,true);
+  assert.equal(readDefault().choices[`mcp:${server.id}`]!.selected,true);
+  assert.equal(readDefault(fixtures[0].id).choices[`mcp:${server.id}`]!.selected,false);
+  assert.equal(readDefault(fixtures[1].id).choices[`mcp:${server.id}`]!.selected,true);
+  await app.sessionManager.interruptInMemorySession(sessionId);
+  assert.deepEqual((await hub.request<{session:Session}>('session.get',{sessionId})).session.config.toolSelection,original);
+  assert.equal((await app.db.gateway.run(toolDefaultTransitions,{spaceId:fixtures[0].id,mutations:[{repository:'overrides',method:'clearOverride',args:['space',fixtures[0].id,server.id]}],edits:[{key:`mcp:${server.id}`,selected:null}]})).ok,true);
+  assert.equal(readDefault(fixtures[0].id).choices[`mcp:${server.id}`]!.selected,true);
+  const before=readDefault();
+  raw.exec("CREATE TRIGGER reject_default_transition BEFORE UPDATE ON spaces BEGIN SELECT RAISE(ABORT,'synthetic default failure'); END");
+  await assert.rejects(app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'registry',method:'update',args:[server.id,{enabled:false}]}],edits:[{key:`mcp:${server.id}`,selected:false}]}),/synthetic default failure/);
+  raw.exec('DROP TRIGGER reject_default_transition');
+  assert.deepEqual(readDefault(),before);
+  assert.equal(app.db.appMcpServers.get(server.id)!.enabled,true);
+  assert.equal((await app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'skills',method:'setEnabled',args:[skill.id,true]}],edits:[{key:`skill:${skill.id}`,selected:true}]})).ok,true);
+  let resolveSkills!:(rows:{id:string;enabled:boolean}[])=>void;
+  let rejectSkills!:(error:Error)=>void;
+  const skillsSnapshot=new Promise<{id:string;enabled:boolean}[]>((resolve,reject)=>{resolveSkills=resolve;rejectSkills=reject;});
+  const skillsTimer=setTimeout(()=>rejectSkills(new Error('skills snapshot missing')),5000);
+  const stopSkills=hub.onEvent<{subscriptionId:string;rows:{id:string;enabled:boolean}[]}>('liveQuery.snapshot',event=>{if(event.subscriptionId==='default-proof-skills')resolveSkills(event.rows);});
+  try {
+    await hub.request('liveQuery.subscribe',{queryName:'skills.list',params:[],subscriptionId:'default-proof-skills'});
+    assert.equal((await skillsSnapshot).find(row=>row.id===skill.id)!.enabled,true);
+  } finally {clearTimeout(skillsTimer);stopSkills();await hub.request('liveQuery.unsubscribe',{subscriptionId:'default-proof-skills'});}
+  evidence.skillLiveQueryReadback=true;
+  assert.equal(readDefault().choices[`skill:${skill.id}`]!.selected,true);
+  assert.equal((await hub.request<{state:string}>('session.getToolInventory',{sessionId})).state,'not_running');
+  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['navigate']);
+  evidence.workerOffMain=true;evidence.globalAndSpaceDefaults=true;evidence.explicitSpaceVetoPreserved=true;evidence.clearInheritedCanonicalDefault=true;evidence.rollback=true;evidence.frozenSessionPreserved=true;
+  evidence.sessionId=sessionId;evidence.serverId=server.id;evidence.defaults=readDefault();evidence.original=original;
+} finally {
+  await transport?.close();await app?.cleanup();await client.close();await mcp.close();
+  writeFileSync(join(run,'evidence/tool-default-transition.json'),JSON.stringify(evidence,null,2));
+}
+const restarted=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
+const hub2=new MessageHub({defaultSessionId:'global'});const connection=new WebSocketClientTransport({url:`ws://127.0.0.1:${restarted.server.port}/ws`,autoReconnect:false});hub2.registerTransport(connection);
+try {
+  assert.notEqual(restarted.server.port,8399);await connection.initialize();
+  assert.deepEqual((await hub2.request<{session:Session}>('session.get',{sessionId:evidence.sessionId})).session.config.toolSelection,evidence.original);
+  const settings=captureToolPreferenceRow(restarted.db.getDatabase(),{table:'global_settings',id:1});
+  assert.deepEqual(JSON.parse(String(settings.row!.settings)).toolSelectionDefaults,evidence.defaults);
+  evidence.restartRetainedDefaults=true;evidence.pass=true;
+  console.log('PASS default-transition worker: global/Space defaults, explicit veto, canonical inherited clear, rollback, frozen-session RPC readback and restart; no active setter or SDK/UI flip');
+} finally {await connection.close();await restarted.cleanup();writeFileSync(join(run,'evidence/tool-default-transition.json'),JSON.stringify(evidence,null,2));}
