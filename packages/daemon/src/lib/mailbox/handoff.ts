@@ -73,7 +73,7 @@ export function enqueueStage(
   jobQueue: JobQueueRepository,
   entry: MailboxEntry
 ): Promise<MailboxHandoffOutcome> {
-  return gatewayFor(jobQueue.db).run(enqueueMailboxAdmission, entry);
+  return gatewayFor(jobQueue.db).call(enqueueMailboxAdmission, 'enqueue', entry);
 }
 
 export function crashHandler(error: unknown): MailboxHandoffOutcome {
