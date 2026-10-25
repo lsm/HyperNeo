@@ -635,6 +635,40 @@ describe('neo todo runner', () => {
     }
   });
 
+  for (const state of ['done', 'blocked', 'failed', 'removed'] as const) {
+    test(`a todo changed to ${state} during recovery keeps the recorded decision`, async () => {
+      const { db, store, sessions, runner, told, add } = setup();
+      try {
+        const todo = add();
+        store.claimStart(todo, 2);
+        const read = vi.spyOn(sessions, 'read').mockImplementationOnce((async () => {
+          const stale = sessions.unrecordedStarts();
+          store.updateTodo(
+            todo,
+            {
+              state,
+              reason: 'Human decision',
+              ...(state === 'blocked'
+                ? ({ blockedBy: 'failure', blockedReason: 'Human decision' } as const)
+                : {}),
+            },
+            3
+          );
+          return stale;
+        }) as typeof sessions.read);
+        try {
+          await runner.refresh(() => {});
+          expect(store.getTodo(todo.id)).toMatchObject({ state, reason: 'Human decision' });
+          expect(told).toEqual([]);
+        } finally {
+          read.mockRestore();
+        }
+      } finally {
+        db.close();
+      }
+    });
+  }
+
   test('a start a restart interrupted fails the todo on the next refresh', async () => {
     const { store, runner, told, add } = setup();
     const todo = add();
