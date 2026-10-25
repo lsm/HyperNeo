@@ -4,9 +4,9 @@ Run the native RPC proof from the worktree root:
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-preview-context-XXXXXX)
-mkdir -p "$RUN/home"
+mkdir -p "$RUN/home" "$RUN/tmp"
 env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
+  HYPERNEO_DATA_DIR="$RUN/data" TMPDIR="$RUN/tmp" TMP="$RUN/tmp" TEMP="$RUN/tmp" LOG_LEVEL=error \
   bun packages/daemon/tests/helpers/neo-preview-context-proof.ts "$RUN"
 ```
 
@@ -28,6 +28,22 @@ The initial bound send and post-restart retry use the actual web
 `presentConversationAskPage` before their exact context is asserted. Require
 `webClientContext` and `webProjectionContext` in the evidence too. This proves the
 client-to-daemon contract without a mock transport or a rendered binding control.
+
+The voice proof uses the actual recording snapshot, durable send and receipt
+functions with synthetic audio/transcript dependencies and in-memory IndexedDB.
+Require `voiceSnapshotPersisted`, `voiceRetryAfterRestart`, `voiceRefusalRetained`
+and `voiceMessageNoDuplicate`. A revoked snapshot retains its bound recording and
+refusal rather than falling back to unbound text. The accepted voice request has
+one SDK message/job after retry across daemon restart. This does not exercise a
+microphone, real ASR or browser/device persistence; no default daemon is contacted.
+
+Voice component/store regressions also require unsettled retries to preserve
+quote/attachment framing, and unchanged sent text to clear after Preview removal
+without clearing a newer draft/binding. Held bound recordings survive ordinary
+24-hour expiry and capacity pruning until explicitly deleted or accepted. The
+five-record durable limit still applies: full held capacity refuses new durable
+admission, buffers fresh audio in the existing in-memory fallback, and prevents
+sending until its settled intent can be durably stored.
 
 Keep the evidence before deleting the fresh run directory. The focused operation
 suite also checks strict input rejection and immutable retry conflicts. Run web

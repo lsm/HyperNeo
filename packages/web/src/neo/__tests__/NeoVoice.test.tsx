@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoVoice } from '../NeoVoice.tsx';
@@ -78,6 +78,62 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo voice', () => {
+  it('captures Preview and draft before microphone startup rather than after selection changes', async () => {
+    voice.enabled = true;
+    let started!: () => void;
+    voice.start.mockImplementationOnce(
+      () =>
+        new Promise<void>((done) => {
+          started = done;
+        })
+    );
+    const original = {
+      artifactId: 'report-a',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Report A',
+      state: 'available' as const,
+    };
+    const mutable = { ...original };
+    const onSendHandle = vi.fn();
+    const props = {
+      sessionId: 'neo:root',
+      connected: true,
+      draftText: 'Typed first',
+      previewContext: mutable,
+      onTranscript: vi.fn(),
+      onSendVoice: vi.fn(async () => ({ kind: 'accepted' }) as const),
+      onError: vi.fn(),
+      onPhase: vi.fn(),
+      onSendHandle,
+    };
+    const view = render(<NeoVoice {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    mutable.snapshot = 'c'.repeat(64);
+    voice.recording = true;
+    view.rerender(
+      <NeoVoice
+        {...props}
+        draftText="Later draft"
+        previewContext={{ ...original, artifactId: 'report-b', snapshot: 'b'.repeat(64) }}
+      />
+    );
+    voice.submit.mockResolvedValueOnce({
+      kind: 'routed',
+      recordId: 'recording',
+      outcome: { kind: 'insert', transcript: 'spoken' },
+    });
+    await act(async () => {
+      started();
+    });
+    await act(async () => {
+      onSendHandle.mock.calls[0][0]('send');
+    });
+    await waitFor(() => expect(voice.submit).toHaveBeenCalledOnce());
+    expect(voice.submit.mock.calls[0][0]).toMatchObject({
+      previewContext: original,
+      sendDraft: 'Typed first',
+    });
+  });
   it('only offers the microphone when configured and disables it offline', () => {
     const props = {
       sessionId: 'neo:root',

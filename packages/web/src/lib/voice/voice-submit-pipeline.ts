@@ -1,4 +1,5 @@
 import { generateUUID } from '@hyperneo/shared';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../connection-manager';
 import { deleteVoiceRecord, putVoiceRecord, type VoiceRecordEntry } from './voice-audio-store.ts';
@@ -24,6 +25,7 @@ export interface VoiceSubmitInput {
   intent?: 'draft' | 'send';
   sendDraft?: string;
   door?: 'session';
+  previewContext?: NeoPreviewReference;
 }
 
 export interface VoiceSubmitDeps {
@@ -107,7 +109,12 @@ function voiceSubmitErrorMessage(error: unknown): string {
 }
 
 function snapshotVoiceSubmit(ctx: VoiceSubmitCtx): VoiceSubmitSnapshotCtx {
-  return { ...ctx, recordId: ctx.deps.generateId(), startedAt: ctx.deps.now() };
+  return {
+    ...ctx,
+    ...(ctx.previewContext ? { previewContext: { ...ctx.previewContext } } : {}),
+    recordId: ctx.deps.generateId(),
+    startedAt: ctx.deps.now(),
+  };
 }
 
 async function stopAndEncodeRecording(ctx: VoiceSubmitSnapshotCtx): Promise<VoiceSubmitEncodedCtx> {
@@ -134,6 +141,7 @@ async function persistVoiceAudio(ctx: VoiceSubmitGatedCtx): Promise<VoiceSubmitP
     intent: ctx.intent === 'send' ? 'send' : 'draft',
     sendDraft: ctx.intent === 'send' ? (ctx.sendDraft ?? '') : undefined,
     ...(ctx.door ? { door: ctx.door } : {}),
+    ...(ctx.previewContext && ctx.door !== 'session' ? { previewContext: ctx.previewContext } : {}),
   };
   return { ...ctx, persisted: await ctx.deps.putRecord(entry) };
 }

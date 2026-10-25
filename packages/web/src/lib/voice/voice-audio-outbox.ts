@@ -66,7 +66,7 @@ export function endInteractiveVoiceSubmit(): void {
 
 export type VoiceSendOutcome =
   | { kind: 'accepted' }
-  | { kind: 'refused'; reason: string }
+  | { kind: 'refused'; reason: string; retained?: boolean }
   | { kind: 'unconfirmed' };
 
 export function combineVoiceSubmission(draft: string, transcript: string): string {
@@ -95,6 +95,10 @@ export async function submitVoiceSendIntent(
   record: VoiceRecordEntry,
   text: string
 ): Promise<VoiceSendOutcome> {
+  record = {
+    ...record,
+    ...(record.previewContext ? { previewContext: { ...record.previewContext } } : {}),
+  };
   if (!text.trim()) return { kind: 'unconfirmed' };
   const settled = record.sendText ?? text;
   if (record.sendText !== undefined && record.sendText !== text)
@@ -103,16 +107,19 @@ export async function submitVoiceSendIntent(
       settled,
       'That recording already has a different message queued.'
     );
-  if (record.sendText === undefined) {
-    const stored = await putVoiceRecord({ ...record, sendText: settled });
-    if (!stored) return { kind: 'unconfirmed' };
-  }
+  const stored = await putVoiceRecord({ ...record, sendText: settled });
+  if (!stored) return { kind: 'unconfirmed' };
   let receipt: { ok: true } | { ok: false; reason: string };
   try {
     receipt =
       record.door !== 'session'
         ? await submitNeoDraft(
-            { sessionId: record.sessionId, requestId: record.id, text: settled },
+            {
+              sessionId: record.sessionId,
+              requestId: record.id,
+              text: settled,
+              ...(record.previewContext ? { previewContext: record.previewContext } : {}),
+            },
             async () => hub
           )
         : await sendSessionVoice(hub, record.sessionId, settled);
@@ -129,6 +136,10 @@ async function refuseVoiceSend(
   text: string,
   reason: string
 ): Promise<VoiceSendOutcome> {
+  if (record.previewContext) {
+    const retained = await putVoiceRecord({ ...record, sendText: text, sendRefusal: reason });
+    return retained ? { kind: 'refused', reason, retained: true } : { kind: 'unconfirmed' };
+  }
   if (!enqueueTranscript(record.sessionId, text, record.id)) {
     removePendingTranscript(record.id);
     return { kind: 'unconfirmed' };
@@ -136,7 +147,7 @@ async function refuseVoiceSend(
   return { kind: 'refused', reason };
 }
 
-type VoiceSendCompletion = 'sent' | 'parked' | 'discarded' | 'retry';
+type VoiceSendCompletion = 'sent' | 'parked' | 'discarded' | 'retry' | 'held';
 
 async function completeSendIntent(
   hub: MessageHub,
@@ -168,7 +179,7 @@ async function completeSendIntent(
   if (!text.trim()) return 'discarded';
   const outcome = await submitVoiceSendIntent(hub, entry, text);
   if (outcome.kind === 'accepted') return 'sent';
-  if (outcome.kind === 'refused') return 'parked';
+  if (outcome.kind === 'refused') return outcome.retained ? 'held' : 'parked';
   return 'retry';
 }
 
@@ -245,6 +256,7 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     }
     for (const entry of pending) {
       if (!connectionManager.getHubIfConnected()) break;
+      if (entry.sendRefusal !== undefined) continue;
       if (deferredSessions.has(entry.sessionId)) continue;
       if (hasInteractiveVoiceActivity() || isVoiceAudioBusy(entry.id)) {
         needsRetry = true;
@@ -254,6 +266,7 @@ export async function flushPendingVoiceAudio(): Promise<void> {
       try {
         if (entry.intent === 'send') {
           const completion = await completeSendIntent(hub, entry);
+          if (completion === 'held') continue;
           if (completion === 'retry') {
             defer(entry.sessionId);
             continue;

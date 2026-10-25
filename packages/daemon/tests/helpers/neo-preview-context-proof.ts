@@ -12,6 +12,7 @@ import { NeoRepository } from '../../src/storage/repositories/neo-repository.ts'
 import { NeoTodoSessionRepository } from '../../src/storage/repositories/neo-todo-session-repository.ts';
 import { submitNeoDraft } from '../../../web/src/neo/neo-intake.ts';
 import { presentConversationAskPage } from '../../../web/src/neo/conversation-ask-client.ts';
+import { createVoicePreviewProof } from '../../../web/src/lib/voice/__tests__/voice-preview-proof.ts';
 
 const run = realpathSync(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -36,6 +37,7 @@ const requestId = '20000000-0000-4000-8000-000000000001';
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let hub: MessageHub;
+let voiceProof: Awaited<ReturnType<typeof createVoicePreviewProof>> | undefined;
 const evidence: Record<string, unknown> = { providerTurns: 0, guiTests: false };
 async function start() {
   app = await createDaemonApp({
@@ -142,6 +144,8 @@ try {
     displayName: 'Synthetic Preview report',
     state: 'available',
   };
+  voiceProof = await createVoicePreviewProof(sessionId, reference);
+  await voiceProof.send(hub);
   const input = {
     sessionId,
     requestId,
@@ -234,6 +238,18 @@ try {
   );
   assert(replay.ok && !replay.created);
   assert.deepEqual(replay.previewContext, reference);
+  await voiceProof.retry(hub);
+  await voiceProof.refuse(hub);
+  const voiceMessages = database()
+    .getDatabase()
+    .prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE sdk_uuid = ?')
+    .get(voiceProof.id) as { n: number };
+  const voiceJobs = database()
+    .getDatabase()
+    .prepare("SELECT COUNT(*) AS n FROM job_queue WHERE json_extract(payload,'$.messageUuid') = ?")
+    .get(voiceProof.id) as { n: number };
+  assert.equal(voiceMessages.n, 1);
+  assert.equal(voiceJobs.n, 1);
   count();
   const legacy = await rpc<{ ok: boolean }>('neo.message.send', {
     sessionId,
@@ -256,10 +272,19 @@ try {
     sourcePathsOmitted: true,
     webClientContext: true,
     webProjectionContext: true,
+    voiceSnapshotPersisted: true,
+    voiceRetryAfterRestart: true,
+    voiceRefusalRetained: true,
+    voiceMessageNoDuplicate: true,
+    syntheticIndexedDb: true,
   });
 } finally {
-  await stop();
-  evidence.ownedResourcesStopped = true;
-  writeFileSync(join(run, 'evidence/preview-context.json'), JSON.stringify(evidence, null, 2));
+  try {
+    await voiceProof?.cleanup();
+  } finally {
+    await stop();
+    evidence.ownedResourcesStopped = true;
+    writeFileSync(join(run, 'evidence/preview-context.json'), JSON.stringify(evidence, null, 2));
+  }
 }
 console.log(JSON.stringify(evidence));

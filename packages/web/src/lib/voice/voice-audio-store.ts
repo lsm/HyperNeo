@@ -1,3 +1,6 @@
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import { readNeoPreviewReference } from '../../neo/neo-preview-context.ts';
+
 export interface VoiceRecordEntry {
   id: string;
   sessionId: string;
@@ -10,6 +13,8 @@ export interface VoiceRecordEntry {
   sendDraft?: string;
   sendText?: string;
   door?: 'session';
+  previewContext?: NeoPreviewReference;
+  sendRefusal?: string;
 }
 
 const DB_NAME = 'hyperneo-voice-audio';
@@ -123,7 +128,10 @@ function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
     Number.isFinite(entry.createdAt) &&
     (entry.intent === undefined || entry.intent === 'draft' || entry.intent === 'send') &&
     (entry.sendDraft === undefined || typeof entry.sendDraft === 'string') &&
-    (entry.sendText === undefined || typeof entry.sendText === 'string')
+    (entry.sendText === undefined || typeof entry.sendText === 'string') &&
+    (entry.sendRefusal === undefined || typeof entry.sendRefusal === 'string') &&
+    (entry.previewContext === undefined ||
+      (entry.door !== 'session' && !!readNeoPreviewReference(entry.previewContext)))
   );
 }
 
@@ -132,6 +140,15 @@ interface DoomPlan {
   ids: Set<string>;
   merged: VoiceRecordEntry[];
   pending: VoiceRecordEntry[];
+  storedIds: Set<string>;
+}
+
+function heldVoiceRecord(entry: VoiceRecordEntry): boolean {
+  return !!entry.previewContext && entry.sendRefusal !== undefined;
+}
+
+function keepVoiceRecord(entry: VoiceRecordEntry, now = Date.now()): boolean {
+  return heldVoiceRecord(entry) || now - entry.createdAt < MAX_AGE_MS;
 }
 
 function planDoom(rows: unknown[]): DoomPlan {
@@ -148,6 +165,7 @@ function planDoom(rows: unknown[]): DoomPlan {
     }
   }
   const pending: VoiceRecordEntry[] = [];
+  const storedIds = new Set(valid.keys());
   for (const entry of mirror.values()) {
     if (!isVoiceRecordEntry(entry)) continue;
     valid.set(entry.id, entry);
@@ -155,16 +173,18 @@ function planDoom(rows: unknown[]): DoomPlan {
   }
   const merged = [...valid.values()].sort((a, b) => a.createdAt - b.createdAt);
   const now = Date.now();
-  const doomed = merged.filter((entry) => now - entry.createdAt >= MAX_AGE_MS);
-  const fresh = merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
+  const doomed = merged.filter((entry) => !keepVoiceRecord(entry, now));
+  const fresh = merged.filter((entry) => keepVoiceRecord(entry, now));
   if (fresh.length > MAX_AUDIO_RECORDS) {
-    doomed.push(...fresh.slice(0, fresh.length - MAX_AUDIO_RECORDS));
+    doomed.push(
+      ...fresh.filter((entry) => !heldVoiceRecord(entry)).slice(0, fresh.length - MAX_AUDIO_RECORDS)
+    );
   }
   for (const entry of doomed) {
     keys.push(entry.id);
     ids.add(entry.id);
   }
-  return { keys, ids, merged, pending: pending.filter((entry) => !ids.has(entry.id)) };
+  return { keys, ids, merged, pending: pending.filter((entry) => !ids.has(entry.id)), storedIds };
 }
 
 function pruneMirrorOnly(): void {
@@ -198,11 +218,23 @@ function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
 }
 
 export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
+  entry = {
+    ...entry,
+    ...(entry.previewContext ? { previewContext: { ...entry.previewContext } } : {}),
+  };
   return serializeMutation(async () => {
     if (!isVoiceRecordEntry(entry)) return false;
     mirror.set(entry.id, entry);
     tombstones.delete(entry.id);
-    const plan = await writeTx(() => {});
+    const plan = await writeTx((store, current) => {
+      if (
+        current.merged.length - current.ids.size > MAX_AUDIO_RECORDS &&
+        !current.storedIds.has(entry.id)
+      ) {
+        store.delete(entry.id);
+        current.ids.add(entry.id);
+      }
+    });
     if (!plan) return false;
     for (const id of plan.ids) mirror.delete(id);
     for (const key of plan.keys) {
@@ -211,22 +243,23 @@ export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
     for (const persisted of plan.pending) mirror.delete(persisted.id);
     const stored = !plan.ids.has(entry.id);
     if (stored) mirror.delete(entry.id);
+    else if (keepVoiceRecord(entry)) mirror.set(entry.id, entry);
     return stored;
   });
 }
 
 export async function getVoiceRecord(id: string): Promise<VoiceRecordEntry | null> {
   const mirrored = mirror.get(id);
-  if (mirrored && Date.now() - mirrored.createdAt < MAX_AGE_MS) return mirrored;
+  if (mirrored && keepVoiceRecord(mirrored)) return mirrored;
   const row = await readStore((store) => store.get(id));
   if (!isVoiceRecordEntry(row) || tombstones.has(id)) return null;
-  return Date.now() - row.createdAt < MAX_AGE_MS ? row : null;
+  return keepVoiceRecord(row) ? row : null;
 }
 
 export async function listVoiceRecords(): Promise<VoiceRecordEntry[]> {
   const now = Date.now();
   const rows = (await readStore((store) => store.getAll())) ?? [];
-  return planDoom(rows).merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
+  return planDoom(rows).merged.filter((entry) => keepVoiceRecord(entry, now));
 }
 
 export function deleteVoiceRecord(id: string): Promise<boolean> {
