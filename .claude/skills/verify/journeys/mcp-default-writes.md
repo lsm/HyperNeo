@@ -14,6 +14,10 @@ changes the legacy row, but the global canonical default stays off. With wiring:
 - Exercise mcp.enablement set/clear at Space scope and space.mcp set/clear.
   Preserve explicit Space vetoes and clear to canonical global defaults. Repeating
   clear with no legacy row remains accepted, with the original RPC response shape.
+- Send generic Space-scope set and clear requests for a missing Space. Both
+  errors identify it as `Space not found: <id>`; no override, defaults or success
+  notification is written. Require contextualMissingSpace=true. Mapping uses the
+  authoritative worker refusal rather than adding a caller-thread pre-read.
 - Save two registry toggles concurrently: both succeed without losing either
   canonical choice. Internal worker serialization owns the atomic transition.
 - Fail a later Space write with a synthetic SQL trigger: earlier registry and

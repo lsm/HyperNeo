@@ -9,7 +9,12 @@ export async function writeToolDefaults(
   request: ToolDefaultTransition
 ) {
   const result = await db.gateway.call(toolDefaultTransitions, 'apply', request);
-  if (!result.ok) throw new Error(result.reason);
+  if (!result.ok)
+    throw new Error(
+      result.reason === 'default_target_not_found' && request.spaceId
+        ? `Space not found: ${request.spaceId}`
+        : result.reason
+    );
   return result;
 }
 export async function writeSpaceMcpDefault(
