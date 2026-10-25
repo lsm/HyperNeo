@@ -135,7 +135,7 @@ export class NeoRepository {
   }
 
   async reserveHomeProjects(): Promise<{ id: string; homePath: string }[]> {
-    const result = await gatewayFor(this.db).run(reserveNeoHomeProjects, undefined);
+    const result = await gatewayFor(this.db).call(reserveNeoHomeProjects, 'reserve');
     if (result.changed) this.notify();
     return result.projects;
   }

@@ -1,13 +1,13 @@
-import { defineDbOp } from '../db-gateway/db-op.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoRepository } from './neo-repository.ts';
 
-export const reserveNeoHomeProjects = defineDbOp({
-  name: 'neo.home.reserveProjects',
-  mode: 'write',
-  run: (db: Database) => {
+class NeoHomeReservation {
+  constructor(private readonly db: Database) {}
+
+  reserve() {
     let changed = false;
-    const projects = new NeoRepository(db, () => {
+    const projects = new NeoRepository(this.db, () => {
       changed = true;
     });
     const reserved = projects.listProjects().map((project) => ({
@@ -15,5 +15,12 @@ export const reserveNeoHomeProjects = defineDbOp({
       homePath: projects.ensureHomePath(project),
     }));
     return { projects: reserved, changed };
-  },
-});
+  }
+}
+
+export const reserveNeoHomeProjects = defineRepositoryOp(
+  'neo.home.reserveProjects',
+  'write',
+  NeoHomeReservation,
+  ['reserve']
+);
