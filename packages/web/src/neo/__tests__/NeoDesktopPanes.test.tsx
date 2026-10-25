@@ -118,6 +118,31 @@ function mount(publicMode = true, status = 'ready') {
 }
 
 describe('Neo desktop panes', () => {
+  it('paints expanded Work above the opaque preview frame', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    const style = document.createElement('style');
+    style.textContent = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
+    document.head.append(style);
+    try {
+      const { container } = render(
+        <div class="neo-shell neo-preview-focus neo-preview-work neo-preview-expanded">
+          <main class="neo-scroll">
+            <div class="neo-scene-list" />
+          </main>
+          <div class="artifact-preview-panel" />
+        </div>
+      );
+      const work = getComputedStyle(container.querySelector('.neo-scene-list')!);
+      const frame = getComputedStyle(container.querySelector('.artifact-preview-panel')!);
+      const rank = (index: string) => (!index || index === 'auto' ? 0 : Number(index));
+      expect(work.position).toBe('absolute');
+      expect(frame.position).toBe('absolute');
+      expect(rank(work.zIndex)).toBeGreaterThan(rank(frame.zIndex));
+    } finally {
+      style.remove();
+    }
+  });
+
   it('keeps the list beside the same chat and composer when a scene opens its work chat', () => {
     const { container, model } = mount();
     act(() => {

@@ -798,6 +798,7 @@
   }
   .neo-shell.neo-preview-focus.neo-preview-expanded .neo-scene-list {
     position: absolute;
+    z-index: 1;
     grid-area: auto;
     inset: calc(12px + 4rem) 12px 12px;
     margin: 0;
