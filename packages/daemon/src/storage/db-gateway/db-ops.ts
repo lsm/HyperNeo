@@ -1,3 +1,4 @@
+import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
   codingAncestryReads,
   codingAncestryWrites,
@@ -143,5 +144,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     enqueueMailboxAdmission,
     cancelRateLimitDelivery,
     claimOwnedInputWithdrawal,
+    globalSettingsWrites,
   ].map((op) => [op.name, op])
 );

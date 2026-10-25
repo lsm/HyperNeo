@@ -1,9 +1,13 @@
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { GlobalToolsConfig, GlobalSettings } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 export class SettingsRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private reactiveDb?: ReactiveDatabase
+  ) {}
 
   getGlobalToolsConfig(): GlobalToolsConfig {
     const stmt = this.db.prepare(`SELECT config FROM global_tools_config WHERE id = 1`);
@@ -87,6 +91,7 @@ export class SettingsRepository {
 			VALUES (1, ?, datetime('now'))
 		`);
     stmt.run(JSON.stringify(settings));
+    this.reactiveDb?.notifyChange('global_settings');
   }
 
   updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {

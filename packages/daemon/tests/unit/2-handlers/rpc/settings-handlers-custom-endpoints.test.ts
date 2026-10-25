@@ -52,6 +52,8 @@ function makeSettings(initial: GlobalSettings): {
       state.settings = settings;
     }),
   } as unknown as SettingsManager;
+  manager.updateGlobalSettingsAsync = async (updates) => manager.updateGlobalSettings(updates);
+  manager.saveGlobalSettingsAsync = async (settings) => manager.saveGlobalSettings(settings);
   return { manager, state };
 }
 
