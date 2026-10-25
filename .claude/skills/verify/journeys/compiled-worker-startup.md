@@ -48,3 +48,24 @@ bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-windows-x
 
 The child uses its own HOME/USERPROFILE, DB, data directory and temporary files.
 Keep build.json, daemon.log and cleanup.json. Do not use the human's daemon.
+
+## Compiled fixture timeout regression
+
+The fixture's outer test budget is 50 seconds: 10 for source execution, 30 for
+compilation and 10 for compiled execution. Each child retains its original limit
+and both `compiled-worker-ready` assertions remain required.
+
+Run `bun .claude/skills/verify/compiled-worker-timeout.ts <fresh-run>` to exercise
+a disposable copy of the actual test with a 5.5-second delay inside the compiler
+child, followed by the real compile. It keeps the source and compiled assertions
+unchanged and scrubs HOME/USERPROFILE/TEMP/TMP for its child. No daemon or model
+runs. The copy is removed in finally; logs stay under `<fresh-run>/evidence/`.
+
+Pass `--reproduce` to restore a 5-second test limit on the copy. This must report
+`Test timed out after 5000ms`; the helper accepts only that expected failure.
+Without the flag the same delayed compile must pass. This injects compiler delay;
+it does not claim to reproduce Windows runner load naturally.
+
+The Windows CI job runs that red reproduction and three separate green executions
+on the native Windows runner, then retains each log in its existing evidence
+artifact. A macOS/Linux pass alone does not verify Windows stability.

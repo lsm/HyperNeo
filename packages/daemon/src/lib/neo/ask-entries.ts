@@ -124,21 +124,17 @@ function projectNeoTodoEntries(
       todos,
       packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
     ),
-    ...(links.get(todo.id) ?? { link: null, remoteLink: null }),
+    ...(links.get(todo.id) ?? { worker: null, link: null, remoteLink: null }),
   }));
 }
 
 export function projectNeoAskEntries(
   asks: readonly NeoAsk[],
-  store: NeoAskTodoRepository,
-  sessions: NeoTodoSessionRepository,
+  facts: ReturnType<NeoAskTodoRepository['snapshot']>['facts'],
   packs: readonly NeoPack[]
 ): NeoAskEntry[] {
   if (!asks.length) return [];
-  const ids = asks.map((ask) => ask.id);
-  const allTodos = store.listTodosForAsks(ids);
-  const allQuestions = store.listQuestionsForAsks(ids);
-  const links = sessions.readLinksForTodos(allTodos.map((todo) => todo.id));
+  const { todos: allTodos, questions: allQuestions, links } = facts;
   return asks.map((ask) => {
     const todos = allTodos.filter((todo) => todo.askId === ask.id);
     const questions = allQuestions.filter((question) => question.askId === ask.id);
@@ -228,7 +224,7 @@ export function pageNeoDoneTodos(
 
 export function createNeoDoneTodosOperation(
   store: NeoAskTodoRepository,
-  sessions: NeoTodoSessionRepository,
+  _sessions: NeoTodoSessionRepository,
   packs: () => readonly NeoPack[],
   admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection },
   project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos]
@@ -236,29 +232,40 @@ export function createNeoDoneTodosOperation(
   const read = (superpipe({})('neo.ask.doneTodos') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:outcome')
-    .pipe((input: z.infer<typeof DoneTodos>) => store.getAsk(input.askId), 'input', 'ask')
-    .pipe(requireNeoAskFound, 'ask', 'result:outcome')
-    .pipe((ask: NeoAsk) => store.listTodos(ask.id), 'outcome', 'todos')
+    .pipe(
+      (input: z.infer<typeof DoneTodos>) => store.read('doneTodoFacts', input.askId),
+      'input',
+      'facts'
+    )
+    .pipe(
+      (facts: ReturnType<NeoAskTodoRepository['doneTodoFacts']>) => requireNeoAskFound(facts.ask),
+      'facts',
+      'result:outcome'
+    )
+    .pipe(
+      (facts: ReturnType<NeoAskTodoRepository['doneTodoFacts']>) => facts.todos,
+      'facts',
+      'todos'
+    )
     .pipe(pageNeoDoneTodos, ['todos', 'input'], 'paged')
     .pipe(
-      (paged: ReturnType<typeof pageNeoDoneTodos>, todos: NeoTodo[]): DonePage => ({
+      (
+        paged: ReturnType<typeof pageNeoDoneTodos>,
+        todos: NeoTodo[],
+        facts: ReturnType<NeoAskTodoRepository['doneTodoFacts']>
+      ): DonePage => ({
         ok: true,
-        todos: projectNeoTodoEntries(
-          paged.page,
-          todos,
-          sessions.readLinksForTodos(paged.page.map((todo) => todo.id)),
-          packs()
-        ),
+        todos: projectNeoTodoEntries(paged.page, todos, facts.links, packs()),
         doneCount: paged.doneCount,
         nextOffset: paged.nextOffset,
       }),
-      ['paged', 'todos'],
+      ['paged', 'todos', 'facts'],
       'outcome'
     )
-    .end('outcome') as (
+    .endAsync('outcome') as (
     input: z.infer<typeof DoneTodos>,
     caller: OperationCaller
-  ) => DonePage | Rejection;
+  ) => Promise<DonePage | Rejection>;
   return defineOperation({
     name: 'neo.ask.doneTodos',
     description:
@@ -275,7 +282,7 @@ export function createNeoDoneTodosOperation(
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
     execute: async (input, caller) => {
-      const result = read(input, caller);
+      const result = await read(input, caller);
       return result.ok ? { ...result, todos: await project(result.todos) } : result;
     },
   });
