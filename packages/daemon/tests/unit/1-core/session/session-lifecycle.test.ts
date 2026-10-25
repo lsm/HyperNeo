@@ -1113,6 +1113,7 @@ describe('SessionLifecycle', () => {
   describe('deleteResources (UI-only: session.delete)', () => {
     it('should delete session from database', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
       });
@@ -1125,6 +1126,7 @@ describe('SessionLifecycle', () => {
     it('should remove session from cache', async () => {
       (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
       });
@@ -1142,6 +1144,7 @@ describe('SessionLifecycle', () => {
       (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
       (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
       });
@@ -1153,6 +1156,7 @@ describe('SessionLifecycle', () => {
 
     it('should delete worktree if present', async () => {
       const sessionWithWorktree = {
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
         worktree: {
@@ -1173,6 +1177,7 @@ describe('SessionLifecycle', () => {
 
     it('should broadcast deletion event', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
       });
@@ -1200,6 +1205,7 @@ describe('SessionLifecycle', () => {
       (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
       (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
       });
@@ -1213,6 +1219,7 @@ describe('SessionLifecycle', () => {
         new Error('Worktree removal failed')
       );
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
         worktree: {
@@ -1229,6 +1236,7 @@ describe('SessionLifecycle', () => {
     it('commits the archived barrier and cancels durable deliveries BEFORE teardown (#3743968033)', async () => {
       const order: string[] = [];
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'test-id',
         workspacePath: '/test',
         status: 'active',
@@ -1288,6 +1296,7 @@ describe('SessionLifecycle', () => {
   describe('archiveResources (UI-only: session.archive + task.archive)', () => {
     it('should NOT delete the DB row — archive preserves conversation history', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        metadata: {},
         id: 'archive-id',
         workspacePath: '/test',
       });

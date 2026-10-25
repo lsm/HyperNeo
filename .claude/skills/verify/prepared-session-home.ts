@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Session } from '@hyperneo/shared';
@@ -17,6 +17,8 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 assert(!existsSync(join(run, 'data')));
 for (const dir of ['bin', 'evidence', 'home/Library/Application Support/Claude/claude-code-sessions/synthetic/account']) mkdirSync(join(run, dir), { recursive: true });
+copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
+chmodSync(join(run, 'bin/gh'), 0o700);
 function git(cwd: string, ...args: string[]) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
@@ -105,7 +107,10 @@ try {
   assert.equal(readFileSync(join(source, 'code.txt'), 'utf8'), 'human dirty bytes');
   const snapshot = await rpc('daemon.snapshot', { limit: 50 }) as { resources: { kind: string; entries: { id: string; workspacePath: string }[] }[] };
   const inventory = snapshot.resources.find((page) => page.kind === 'session')!.entries.find((entry) => entry.id === session.id)!;
-  evidence.push({ inventory });
+  const inspected = await rpc('daemon.session.inspect', { sessionId: session.id }) as { accepted: boolean; resource: { workspacePath: string } };
+  assert(inspected.accepted, JSON.stringify(inspected));
+  assert.equal(inspected.resource.workspacePath, source);
+  evidence.push({ inventory, inspected });
   await rpc('session.archive', { sessionId: session.id, confirmed: true }, true);
   evidence.push({ archivedCloneRemoved: !existsSync(worker) });
   const archivedCloneRemoved = !existsSync(worker);

@@ -8,7 +8,7 @@ const SOURCES = [
   {
     kind: 'session',
     query: `SELECT id, title AS name, status, last_active_at AS updatedAt,
-      COALESCE(main_repo_path, workspace_path) AS workspacePath,
+      COALESCE(main_repo_path, json_extract(metadata, '$.executionProjectPath'), workspace_path) AS workspacePath,
       space_id AS spaceId, parent_id AS parentSessionId FROM sessions`,
     visible: "status != 'archived'",
   },
@@ -115,7 +115,7 @@ export class DaemonInventoryRepository {
     return (
       (this.db
         .prepare(`SELECT s.id, s.title AS name, s.status,
-      s.last_active_at AS lastActiveAt, COALESCE(s.main_repo_path, s.workspace_path) AS workspacePath,
+      s.last_active_at AS lastActiveAt, COALESCE(s.main_repo_path, json_extract(s.metadata, '$.executionProjectPath'), s.workspace_path) AS workspacePath,
       CASE WHEN json_valid(s.processing_state) THEN
         CASE WHEN json_type(s.processing_state, '$.status') = 'text'
           THEN json_extract(s.processing_state, '$.status') ELSE NULL END

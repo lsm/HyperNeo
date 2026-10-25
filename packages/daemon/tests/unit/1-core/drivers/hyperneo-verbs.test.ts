@@ -84,6 +84,7 @@ describe('hyperneo adapter send and status', () => {
     execFileSync('git', ['init', source]);
     projectBase = join(source, 'project-storage');
     oldProjectBase = process.env.TEST_WORKTREE_BASE_DIR;
+    process.env.TEST_WORKTREE_BASE_DIR = projectBase;
     handed = [];
     events = [];
     outcome = { kind: 'enqueued', id: 'mb1' };
