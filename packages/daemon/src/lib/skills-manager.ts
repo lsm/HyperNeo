@@ -14,6 +14,9 @@ import type {
 import type { SkillRepository } from '../storage/repositories/skill-repository.ts';
 import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository.ts';
 import type { JobQueueRepository } from '../storage/repositories/job-queue-repository.ts';
+import type { Database } from '../storage/database.ts';
+import type { ToolDefaultMutation } from '../storage/repositories/tool-default-transition.ts';
+import { writeToolDefaults } from './tools/write-tool-defaults.ts';
 import { SKILL_VALIDATE } from './job-queue-constants.ts';
 import { BUILTIN_MCP_SERVERS, BUILTIN_SKILLS, type BuiltinSkill } from './builtins.ts';
 import {
@@ -132,6 +135,7 @@ export class SkillsManager {
   constructor(
     private repo: SkillRepository,
     private appMcpServerRepo: AppMcpServerRepository,
+    private defaults: Pick<Database, 'gateway'>,
     jobQueue?: JobQueueRepository
   ) {
     if (jobQueue) this.jobQueue = jobQueue;
@@ -145,7 +149,7 @@ export class SkillsManager {
     return this.repo.get(id);
   }
 
-  addSkill(params: CreateSkillParams): AppSkill {
+  async addSkill(params: CreateSkillParams): Promise<AppSkill> {
     this.validateSkillConfig(params.sourceType, params.config);
 
     const existing = this.repo.getByName(params.name);
@@ -166,7 +170,11 @@ export class SkillsManager {
       createdAt: Date.now(),
     };
 
-    this.repo.insert(skill);
+    await this.writeSkill(
+      skill,
+      [{ repository: 'skills', method: 'insert', args: [skill] }],
+      skill.enabled
+    );
     this.enqueueValidation(skill.id);
     const inserted = this.repo.get(skill.id);
     if (!inserted) {
@@ -175,7 +183,7 @@ export class SkillsManager {
     return inserted;
   }
 
-  updateSkill(id: string, params: UpdateSkillParams): AppSkill {
+  async updateSkill(id: string, params: UpdateSkillParams): Promise<AppSkill> {
     const existing = this.repo.get(id);
     if (!existing) {
       throw new Error(`Skill not found: ${id}`);
@@ -185,37 +193,52 @@ export class SkillsManager {
       this.validateSkillConfig(existing.sourceType, params.config);
     }
 
-    this.repo.update(id, params);
+    const mutations: ToolDefaultMutation[] = [
+      { repository: 'skills', method: 'update', args: [id, params] },
+    ];
+    if (params.config !== undefined)
+      mutations.push({
+        repository: 'skills',
+        method: 'setValidationStatus',
+        args: [id, 'pending'],
+      });
+    await this.writeSkill({ ...existing, ...params }, mutations, params.enabled);
     if (params.config !== undefined) {
-      this.repo.setValidationStatus(id, 'pending');
       this.enqueueValidation(id);
     }
     return this.repo.get(id)!;
   }
 
-  setSkillEnabled(id: string, enabled: boolean): AppSkill {
+  async setSkillEnabled(id: string, enabled: boolean): Promise<AppSkill> {
     const existing = this.repo.get(id);
     if (!existing) {
       throw new Error(`Skill not found: ${id}`);
     }
-    this.repo.setEnabled(id, enabled);
+    await this.writeSkill(
+      existing,
+      [{ repository: 'skills', method: 'setEnabled', args: [id, enabled] }],
+      enabled
+    );
     return this.repo.get(id)!;
   }
 
-  setSkillValidationStatus(id: string, status: SkillValidationStatus): AppSkill {
+  async setSkillValidationStatus(id: string, status: SkillValidationStatus): Promise<AppSkill> {
     const existing = this.repo.get(id);
     if (!existing) {
       throw new Error(`Skill not found: ${id}`);
     }
-    this.repo.setValidationStatus(id, status);
+    await this.writeSkill(existing, [
+      { repository: 'skills', method: 'setValidationStatus', args: [id, status] },
+    ]);
     return this.repo.get(id)!;
   }
 
-  removeSkill(id: string): boolean {
+  async removeSkill(id: string): Promise<boolean> {
     const existing = this.repo.get(id);
     if (!existing) return false;
     if (existing.builtIn) return false;
-    return this.repo.delete(id);
+    await this.writeSkill(existing, [{ repository: 'skills', method: 'delete', args: [id] }]);
+    return true;
   }
 
   getEnabledSkills(): AppSkill[] {
@@ -264,7 +287,11 @@ export class SkillsManager {
       validationStatus: 'valid',
       createdAt: Date.now(),
     };
-    this.repo.insert(skill);
+    await this.writeSkill(
+      skill,
+      [{ repository: 'skills', method: 'insert', args: [skill] }],
+      skill.enabled
+    );
 
     await this.ensureBuiltinPluginWrappers().catch(() => {});
 
@@ -358,24 +385,26 @@ export class SkillsManager {
     }
   }
 
-  initializeBuiltins(): void {
+  async initializeBuiltins(): Promise<void> {
     for (const def of BUILTIN_SKILLS) {
-      this.upsertBuiltinSkill(def);
+      await this.upsertBuiltinSkill(def);
     }
   }
 
-  private upsertBuiltinSkill(def: BuiltinSkill): void {
+  private async upsertBuiltinSkill(def: BuiltinSkill): Promise<void> {
     if (def.kind === 'mcp_server') {
-      this.upsertMcpServerSkill(def);
+      await this.upsertMcpServerSkill(def);
       return;
     }
-    this.upsertBuiltinCommandSkill(def);
+    await this.upsertBuiltinCommandSkill(def);
   }
 
-  private upsertMcpServerSkill(def: Extract<BuiltinSkill, { kind: 'mcp_server' }>): void {
+  private async upsertMcpServerSkill(
+    def: Extract<BuiltinSkill, { kind: 'mcp_server' }>
+  ): Promise<void> {
     const appMcpEntry =
       this.appMcpServerRepo.getByName(def.appMcpServerName) ??
-      this.createMissingMcpServer(def.appMcpServerName);
+      (await this.createMissingMcpServer(def.appMcpServerName));
 
     const existing = this.repo.getByName(def.name);
     if (existing) return;
@@ -392,10 +421,16 @@ export class SkillsManager {
       validationStatus: 'valid',
       createdAt: Date.now(),
     };
-    this.repo.insert(skill);
+    await this.writeSkill(
+      skill,
+      [{ repository: 'skills', method: 'insert', args: [skill] }],
+      skill.enabled
+    );
   }
 
-  private upsertBuiltinCommandSkill(def: Extract<BuiltinSkill, { kind: 'builtin-command' }>): void {
+  private async upsertBuiltinCommandSkill(
+    def: Extract<BuiltinSkill, { kind: 'builtin-command' }>
+  ): Promise<void> {
     const existing = this.repo.getByName(def.name);
     if (existing) return;
 
@@ -415,10 +450,14 @@ export class SkillsManager {
       validationStatus: 'valid',
       createdAt: Date.now(),
     };
-    this.repo.insert(skill);
+    await this.writeSkill(
+      skill,
+      [{ repository: 'skills', method: 'insert', args: [skill] }],
+      skill.enabled
+    );
   }
 
-  private createMissingMcpServer(name: string) {
+  private async createMissingMcpServer(name: string) {
     const serverDef = BUILTIN_MCP_SERVERS.find((s) => s.name === name);
     if (!serverDef) {
       throw new Error(
@@ -426,16 +465,28 @@ export class SkillsManager {
           `Add the server to BUILTIN_MCP_SERVERS in src/lib/builtins.ts.`
       );
     }
-    return this.appMcpServerRepo.create({
-      name: serverDef.name,
-      description: serverDef.description,
-      sourceType: serverDef.sourceType,
-      command: serverDef.command,
-      args: serverDef.args,
-      env: serverDef.env,
-      enabled: serverDef.enabled,
-      source: 'builtin',
+    await writeToolDefaults(this.defaults, {
+      mutations: [
+        {
+          repository: 'registry',
+          method: 'create',
+          args: [
+            {
+              name: serverDef.name,
+              description: serverDef.description,
+              sourceType: serverDef.sourceType,
+              command: serverDef.command,
+              args: serverDef.args,
+              env: serverDef.env,
+              enabled: serverDef.enabled,
+              source: 'builtin',
+            },
+          ],
+        },
+      ],
+      edits: [],
     });
+    return this.appMcpServerRepo.getByName(name)!;
   }
 
   async ensureBuiltinPluginWrappers(
@@ -471,6 +522,25 @@ export class SkillsManager {
         errorOnExist: false,
       });
     } catch {}
+  }
+
+  private async writeSkill(
+    skill: AppSkill,
+    mutations: ToolDefaultMutation[],
+    enabled?: boolean
+  ): Promise<void> {
+    await writeToolDefaults(this.defaults, {
+      mutations,
+      edits:
+        enabled === undefined
+          ? []
+          : [
+              {
+                key: `skill:${skill.id}`,
+                selected: enabled,
+              },
+            ],
+    });
   }
 
   private enqueueValidation(skillId: string): void {

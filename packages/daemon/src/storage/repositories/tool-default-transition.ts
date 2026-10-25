@@ -132,6 +132,30 @@ function commit(
       results.push(result);
     }
     const after = catalog(prepared.repos);
+    const requested = new Map(request.edits.map((edit) => [edit.key, edit]));
+    for (const mutation of request.mutations) {
+      if (mutation.repository !== 'skills') continue;
+      const id = mutation.method === 'insert' ? mutation.args[0].id : mutation.args[0];
+      const [previous, current] = [prepared.before, after].map((catalog) => {
+        const config = catalog.skills.find((skill) => skill.id === id)?.config;
+        return config?.type === 'mcp_server' ? config.appMcpServerId : undefined;
+      });
+      if (!previous && !current) continue;
+      if (!requested.delete(`skill:${id}`) && previous === current) continue;
+      for (const serverId of new Set([previous, current])) {
+        if (!serverId) continue;
+        const key: SessionToolChoiceKey = `mcp:${serverId}`;
+        requested.set(key, {
+          key,
+          selected: after.skills.some(
+            (skill) =>
+              skill.enabled &&
+              skill.config.type === 'mcp_server' &&
+              skill.config.appMcpServerId === serverId
+          ),
+        });
+      }
+    }
     const inherited =
       prepared.defaults.get(1) ??
       projectLegacySessionToolSelection({
@@ -145,7 +169,7 @@ function commit(
         id: `defaults:${spaceId ?? 'global'}`,
         context: spaceId ? { spaceId } : {},
       };
-      const edits = request.edits
+      const edits = [...requested.values()]
         .filter(
           (edit) =>
             edit.selected !== null ||

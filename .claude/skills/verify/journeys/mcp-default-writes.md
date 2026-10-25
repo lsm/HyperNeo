@@ -40,7 +40,8 @@ changes the legacy row, but the global canonical default stays off. With wiring:
 Require evidence/mcp-default-writes.json pass=true and true registryCrudAndIntent,
 bothSpaceApis, repeatedClear, parallelToggles, rollbackWithoutNotification,
 absentTemplatePreserved, frozenSessionPreserved and restartRetainedDefaults.
-mcpDefaultCallerWired=true; skillDefaultCallerWired, importDefaultCallerWired,
+mcpDefaultCallerWired=true and skillDefaultCallerWired=true (see skill-default-writes);
+importDefaultCallerWired,
 sdkConsumerWired, sdkApplyVerified and queryStarted remain false. No attachment
 or Use here UI proof is claimed. All owned resources close in finally.
 

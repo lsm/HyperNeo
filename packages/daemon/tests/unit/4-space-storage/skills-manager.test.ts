@@ -11,12 +11,15 @@ import {
   resolveGitHubApiContentsUrl,
   validateCommandName,
 } from '../../../src/lib/skills-manager';
+import { createSpaceTables } from '../helpers/space-test-db.ts';
+import { DbGateway } from '../../../src/storage/db-gateway/db-gateway.ts';
 import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { AppSkill } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   createTables(db);
+  createSpaceTables(db);
   return db;
 }
 
@@ -31,7 +34,7 @@ function makeMcpRepo(db: BunDatabase): AppMcpServerRepository {
 function makeManager(db: BunDatabase): { mgr: SkillsManager; mcpRepo: AppMcpServerRepository } {
   const mcpRepo = makeMcpRepo(db);
   const skillRepo = makeRepo(db);
-  const mgr = new SkillsManager(skillRepo, mcpRepo);
+  const mgr = new SkillsManager(skillRepo, mcpRepo, { gateway: new DbGateway(':memory:', db) });
   return { mgr, mcpRepo };
 }
 
@@ -291,8 +294,8 @@ describe('SkillsManager', () => {
     db.close();
   });
 
-  test('addSkill creates a skill with generated id and createdAt', () => {
-    const skill = mgr.addSkill({
+  test('addSkill creates a skill with generated id and createdAt', async () => {
+    const skill = await mgr.addSkill({
       name: 'my-skill',
       displayName: 'My Skill',
       description: 'Does something',
@@ -308,8 +311,8 @@ describe('SkillsManager', () => {
     expect(skill.createdAt).toBeGreaterThan(0);
   });
 
-  test('listSkills returns all skills', () => {
-    mgr.addSkill({
+  test('listSkills returns all skills', async () => {
+    await mgr.addSkill({
       name: 's1',
       displayName: 'S1',
       description: 'd',
@@ -318,7 +321,7 @@ describe('SkillsManager', () => {
       enabled: true,
       validationStatus: 'pending',
     });
-    mgr.addSkill({
+    await mgr.addSkill({
       name: 's2',
       displayName: 'S2',
       description: 'd',
@@ -334,8 +337,8 @@ describe('SkillsManager', () => {
     expect(mgr.getSkill('unknown')).toBeNull();
   });
 
-  test('updateSkill modifies displayName', () => {
-    const skill = mgr.addSkill({
+  test('updateSkill modifies displayName', async () => {
+    const skill = await mgr.addSkill({
       name: 'upd',
       displayName: 'Old',
       description: 'd',
@@ -344,16 +347,16 @@ describe('SkillsManager', () => {
       enabled: true,
       validationStatus: 'pending',
     });
-    const updated = mgr.updateSkill(skill.id, { displayName: 'New' });
+    const updated = await mgr.updateSkill(skill.id, { displayName: 'New' });
     expect(updated.displayName).toBe('New');
   });
 
-  test('updateSkill throws for unknown id', () => {
-    expect(() => mgr.updateSkill('ghost', { displayName: 'x' })).toThrow('not found');
+  test('updateSkill throws for unknown id', async () => {
+    await expect(mgr.updateSkill('ghost', { displayName: 'x' })).rejects.toThrow('not found');
   });
 
-  test('setSkillEnabled toggles enabled', () => {
-    const skill = mgr.addSkill({
+  test('setSkillEnabled toggles enabled', async () => {
+    const skill = await mgr.addSkill({
       name: 'toggle',
       displayName: 'T',
       description: 'd',
@@ -362,12 +365,12 @@ describe('SkillsManager', () => {
       enabled: true,
       validationStatus: 'pending',
     });
-    const disabled = mgr.setSkillEnabled(skill.id, false);
+    const disabled = await mgr.setSkillEnabled(skill.id, false);
     expect(disabled.enabled).toBe(false);
   });
 
-  test('setSkillValidationStatus updates status and returns updated skill', () => {
-    const skill = mgr.addSkill({
+  test('setSkillValidationStatus updates status and returns updated skill', async () => {
+    const skill = await mgr.addSkill({
       name: 'valst',
       displayName: 'V',
       description: 'd',
@@ -376,16 +379,16 @@ describe('SkillsManager', () => {
       enabled: true,
       validationStatus: 'pending',
     });
-    const updated = mgr.setSkillValidationStatus(skill.id, 'valid');
+    const updated = await mgr.setSkillValidationStatus(skill.id, 'valid');
     expect(updated.validationStatus).toBe('valid');
   });
 
-  test('setSkillValidationStatus throws for unknown id', () => {
-    expect(() => mgr.setSkillValidationStatus('ghost', 'valid')).toThrow('not found');
+  test('setSkillValidationStatus throws for unknown id', async () => {
+    await expect(mgr.setSkillValidationStatus('ghost', 'valid')).rejects.toThrow('not found');
   });
 
-  test('getEnabledSkills filters disabled skills', () => {
-    mgr.addSkill({
+  test('getEnabledSkills filters disabled skills', async () => {
+    await mgr.addSkill({
       name: 'on',
       displayName: 'On',
       description: 'd',
@@ -394,7 +397,7 @@ describe('SkillsManager', () => {
       enabled: true,
       validationStatus: 'pending',
     });
-    const off = mgr.addSkill({
+    const off = await mgr.addSkill({
       name: 'off',
       displayName: 'Off',
       description: 'd',
@@ -408,8 +411,8 @@ describe('SkillsManager', () => {
     expect(enabled).toHaveLength(1);
   });
 
-  test('addSkill throws a friendly error on duplicate name', () => {
-    mgr.addSkill({
+  test('addSkill throws a friendly error on duplicate name', async () => {
+    await mgr.addSkill({
       name: 'dupe',
       displayName: 'Dupe',
       description: 'd',
@@ -418,7 +421,7 @@ describe('SkillsManager', () => {
       enabled: true,
       validationStatus: 'pending',
     });
-    expect(() =>
+    await expect(
       mgr.addSkill({
         name: 'dupe',
         displayName: 'Dupe 2',
@@ -428,10 +431,10 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('already exists');
+    ).rejects.toThrow('already exists');
   });
 
-  test('removeSkill returns false for built-in skill', () => {
+  test('removeSkill returns false for built-in skill', async () => {
     const repo = makeRepo(db);
     repo.insert({
       id: 'builtin-1',
@@ -445,16 +448,16 @@ describe('SkillsManager', () => {
       validationStatus: 'valid',
       createdAt: Date.now(),
     });
-    expect(mgr.removeSkill('builtin-1')).toBe(false);
+    expect(await mgr.removeSkill('builtin-1')).toBe(false);
     expect(mgr.getSkill('builtin-1')).not.toBeNull();
   });
 
-  test('removeSkill returns false for unknown id', () => {
-    expect(mgr.removeSkill('ghost')).toBe(false);
+  test('removeSkill returns false for unknown id', async () => {
+    expect(await mgr.removeSkill('ghost')).toBe(false);
   });
 
-  test('removeSkill deletes non-built-in skill', () => {
-    const skill = mgr.addSkill({
+  test('removeSkill deletes non-built-in skill', async () => {
+    const skill = await mgr.addSkill({
       name: 'rem',
       displayName: 'R',
       description: 'd',
@@ -463,12 +466,12 @@ describe('SkillsManager', () => {
       enabled: true,
       validationStatus: 'pending',
     });
-    expect(mgr.removeSkill(skill.id)).toBe(true);
+    expect(await mgr.removeSkill(skill.id)).toBe(true);
     expect(mgr.getSkill(skill.id)).toBeNull();
   });
 
-  test('addSkill rejects mismatched sourceType and config.type', () => {
-    expect(() =>
+  test('addSkill rejects mismatched sourceType and config.type', async () => {
+    await expect(
       mgr.addSkill({
         name: 'mismatch',
         displayName: 'M',
@@ -479,11 +482,11 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('must match config.type');
+    ).rejects.toThrow('must match config.type');
   });
 
-  test('addSkill with plugin: valid absolute path passes', () => {
-    const skill = mgr.addSkill({
+  test('addSkill with plugin: valid absolute path passes', async () => {
+    const skill = await mgr.addSkill({
       name: 'plugin-ok',
       displayName: 'P',
       description: 'd',
@@ -495,8 +498,8 @@ describe('SkillsManager', () => {
     expect(skill.name).toBe('plugin-ok');
   });
 
-  test('addSkill with plugin: empty pluginPath throws', () => {
-    expect(() =>
+  test('addSkill with plugin: empty pluginPath throws', async () => {
+    await expect(
       mgr.addSkill({
         name: 'plugin-empty',
         displayName: 'P',
@@ -506,11 +509,11 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('pluginPath must not be empty');
+    ).rejects.toThrow('pluginPath must not be empty');
   });
 
-  test('addSkill with plugin: relative path throws', () => {
-    expect(() =>
+  test('addSkill with plugin: relative path throws', async () => {
+    await expect(
       mgr.addSkill({
         name: 'plugin-rel',
         displayName: 'P',
@@ -520,11 +523,11 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('absolute path');
+    ).rejects.toThrow('absolute path');
   });
 
-  test('addSkill with plugin: path traversal with ../ throws', () => {
-    expect(() =>
+  test('addSkill with plugin: path traversal with ../ throws', async () => {
+    await expect(
       mgr.addSkill({
         name: 'plugin-traverse',
         displayName: 'P',
@@ -534,11 +537,11 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('traversal');
+    ).rejects.toThrow('traversal');
   });
 
-  test('addSkill with plugin: path traversal at end (/foo/..) throws', () => {
-    expect(() =>
+  test('addSkill with plugin: path traversal at end (/foo/..) throws', async () => {
+    await expect(
       mgr.addSkill({
         name: 'plugin-traverse-end',
         displayName: 'P',
@@ -548,12 +551,12 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('traversal');
+    ).rejects.toThrow('traversal');
   });
 
-  test('addSkill with mcp_server: valid appMcpServerId passes', () => {
+  test('addSkill with mcp_server: valid appMcpServerId passes', async () => {
     const server = mcpRepo.create({ name: 'test-server', sourceType: 'stdio', command: 'npx' });
-    const skill = mgr.addSkill({
+    const skill = await mgr.addSkill({
       name: 'mcp-ok',
       displayName: 'MCP',
       description: 'd',
@@ -565,8 +568,8 @@ describe('SkillsManager', () => {
     expect(skill.name).toBe('mcp-ok');
   });
 
-  test('addSkill with mcp_server: non-existent appMcpServerId throws', () => {
-    expect(() =>
+  test('addSkill with mcp_server: non-existent appMcpServerId throws', async () => {
+    await expect(
       mgr.addSkill({
         name: 'mcp-bad',
         displayName: 'MCP',
@@ -576,11 +579,11 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('not found');
+    ).rejects.toThrow('not found');
   });
 
-  test('addSkill with mcp_server: empty appMcpServerId throws', () => {
-    expect(() =>
+  test('addSkill with mcp_server: empty appMcpServerId throws', async () => {
+    await expect(
       mgr.addSkill({
         name: 'mcp-empty',
         displayName: 'MCP',
@@ -590,11 +593,11 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('appMcpServerId must not be empty');
+    ).rejects.toThrow('appMcpServerId must not be empty');
   });
 
-  test('addSkill with builtin: valid commandName passes', () => {
-    const skill = mgr.addSkill({
+  test('addSkill with builtin: valid commandName passes', async () => {
+    const skill = await mgr.addSkill({
       name: 'bi-ok',
       displayName: 'BI',
       description: 'd',
@@ -606,8 +609,8 @@ describe('SkillsManager', () => {
     expect(skill.name).toBe('bi-ok');
   });
 
-  test('addSkill with builtin: empty commandName throws', () => {
-    expect(() =>
+  test('addSkill with builtin: empty commandName throws', async () => {
+    await expect(
       mgr.addSkill({
         name: 'bi-empty',
         displayName: 'BI',
@@ -617,11 +620,11 @@ describe('SkillsManager', () => {
         enabled: true,
         validationStatus: 'pending',
       })
-    ).toThrow('commandName must not be empty');
+    ).rejects.toThrow('commandName must not be empty');
   });
 
-  test('updateSkill validates new config', () => {
-    const skill = mgr.addSkill({
+  test('updateSkill validates new config', async () => {
+    const skill = await mgr.addSkill({
       name: 'upd-val',
       displayName: 'U',
       description: 'd',
@@ -631,13 +634,13 @@ describe('SkillsManager', () => {
       validationStatus: 'pending',
     });
 
-    expect(() =>
+    await expect(
       mgr.updateSkill(skill.id, { config: { type: 'plugin', pluginPath: 'bad/relative' } })
-    ).toThrow('absolute path');
+    ).rejects.toThrow('absolute path');
   });
 
-  test('initializeBuiltins registers playwright skill', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins registers playwright skill', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'playwright');
     expect(skill).toBeDefined();
@@ -648,8 +651,8 @@ describe('SkillsManager', () => {
     expect(skill!.validationStatus).toBe('valid');
   });
 
-  test('initializeBuiltins playwright has correct commandName', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright has correct commandName', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'playwright')!;
     expect(skill.config.type).toBe('builtin');
@@ -658,31 +661,31 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins playwright is included in getEnabledSkills', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright is included in getEnabledSkills', async () => {
+    await mgr.initializeBuiltins();
 
     const enabled = mgr.getEnabledSkills();
     expect(enabled.some((s) => s.name === 'playwright')).toBe(true);
   });
 
-  test('initializeBuiltins playwright cannot be deleted (builtIn guard)', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright cannot be deleted (builtIn guard)', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'playwright')!;
-    expect(mgr.removeSkill(skill.id)).toBe(false);
+    expect(await mgr.removeSkill(skill.id)).toBe(false);
     expect(mgr.getSkill(skill.id)).not.toBeNull();
   });
 
-  test('initializeBuiltins playwright is idempotent', () => {
-    mgr.initializeBuiltins();
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright is idempotent', async () => {
+    await mgr.initializeBuiltins();
+    await mgr.initializeBuiltins();
 
     const skills = mgr.listSkills().filter((s) => s.name === 'playwright');
     expect(skills).toHaveLength(1);
   });
 
-  test('initializeBuiltins registers playwright-interactive skill', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins registers playwright-interactive skill', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive');
     expect(skill).toBeDefined();
@@ -693,8 +696,8 @@ describe('SkillsManager', () => {
     expect(skill!.validationStatus).toBe('valid');
   });
 
-  test('initializeBuiltins playwright-interactive has correct commandName', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright-interactive has correct commandName', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive')!;
     expect(skill.config.type).toBe('builtin');
@@ -703,31 +706,31 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins playwright-interactive is included in getEnabledSkills', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright-interactive is included in getEnabledSkills', async () => {
+    await mgr.initializeBuiltins();
 
     const enabled = mgr.getEnabledSkills();
     expect(enabled.some((s) => s.name === 'playwright-interactive')).toBe(true);
   });
 
-  test('initializeBuiltins playwright-interactive cannot be deleted (builtIn guard)', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright-interactive cannot be deleted (builtIn guard)', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive')!;
-    expect(mgr.removeSkill(skill.id)).toBe(false);
+    expect(await mgr.removeSkill(skill.id)).toBe(false);
     expect(mgr.getSkill(skill.id)).not.toBeNull();
   });
 
-  test('initializeBuiltins playwright-interactive is idempotent', () => {
-    mgr.initializeBuiltins();
-    mgr.initializeBuiltins();
+  test('initializeBuiltins playwright-interactive is idempotent', async () => {
+    await mgr.initializeBuiltins();
+    await mgr.initializeBuiltins();
 
     const skills = mgr.listSkills().filter((s) => s.name === 'playwright-interactive');
     expect(skills).toHaveLength(1);
   });
 
-  test('initializeBuiltins registers chrome-devtools-mcp skill', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins registers chrome-devtools-mcp skill', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp');
     expect(skill).toBeDefined();
@@ -738,8 +741,8 @@ describe('SkillsManager', () => {
     expect(skill!.validationStatus).toBe('valid');
   });
 
-  test('initializeBuiltins creates backing app_mcp_servers entry chrome-devtools if absent', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins creates backing app_mcp_servers entry chrome-devtools if absent', async () => {
+    await mgr.initializeBuiltins();
 
     const server = mcpRepo.getByName('chrome-devtools');
     expect(server).not.toBeNull();
@@ -748,8 +751,8 @@ describe('SkillsManager', () => {
     expect(server!.args).toEqual(['chrome-devtools-mcp@latest', '--isolated']);
   });
 
-  test('initializeBuiltins chrome-devtools-mcp skill config references the app_mcp_servers entry', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins chrome-devtools-mcp skill config references the app_mcp_servers entry', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
     const server = mcpRepo.getByName('chrome-devtools');
@@ -762,8 +765,8 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins chrome-devtools-mcp is disabled by default', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins chrome-devtools-mcp is disabled by default', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
     expect(skill.enabled).toBe(false);
@@ -772,17 +775,17 @@ describe('SkillsManager', () => {
     expect(enabled.some((s) => s.name === 'chrome-devtools-mcp')).toBe(false);
   });
 
-  test('initializeBuiltins chrome-devtools-mcp cannot be deleted (builtIn guard)', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins chrome-devtools-mcp cannot be deleted (builtIn guard)', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
-    expect(mgr.removeSkill(skill.id)).toBe(false);
+    expect(await mgr.removeSkill(skill.id)).toBe(false);
     expect(mgr.getSkill(skill.id)).not.toBeNull();
   });
 
-  test('initializeBuiltins chrome-devtools-mcp is idempotent', () => {
-    mgr.initializeBuiltins();
-    mgr.initializeBuiltins();
+  test('initializeBuiltins chrome-devtools-mcp is idempotent', async () => {
+    await mgr.initializeBuiltins();
+    await mgr.initializeBuiltins();
 
     const skills = mgr.listSkills().filter((s) => s.name === 'chrome-devtools-mcp');
     expect(skills).toHaveLength(1);
@@ -790,7 +793,7 @@ describe('SkillsManager', () => {
     expect(servers).toHaveLength(1);
   });
 
-  test('initializeBuiltins reuses pre-existing chrome-devtools app_mcp_servers entry', () => {
+  test('initializeBuiltins reuses pre-existing chrome-devtools app_mcp_servers entry', async () => {
     const seeded = mcpRepo.create({
       name: 'chrome-devtools',
       description: 'Seeded by seed-defaults',
@@ -801,7 +804,7 @@ describe('SkillsManager', () => {
       enabled: false,
     });
 
-    mgr.initializeBuiltins();
+    await mgr.initializeBuiltins();
 
     const servers = mcpRepo.list().filter((s) => s.name === 'chrome-devtools');
     expect(servers).toHaveLength(1);
@@ -813,8 +816,8 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins registers fetch-mcp skill', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins registers fetch-mcp skill', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp');
     expect(skill).toBeDefined();
@@ -825,8 +828,8 @@ describe('SkillsManager', () => {
     expect(skill!.validationStatus).toBe('valid');
   });
 
-  test('initializeBuiltins creates backing app_mcp_servers entry fetch-mcp if absent', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins creates backing app_mcp_servers entry fetch-mcp if absent', async () => {
+    await mgr.initializeBuiltins();
 
     const server = mcpRepo.getByName('fetch-mcp');
     expect(server).not.toBeNull();
@@ -835,8 +838,8 @@ describe('SkillsManager', () => {
     expect(server!.args).toEqual(['-y', '@tokenizin/mcp-npx-fetch']);
   });
 
-  test('initializeBuiltins fetch-mcp skill config references the app_mcp_servers entry', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins fetch-mcp skill config references the app_mcp_servers entry', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp')!;
     const server = mcpRepo.getByName('fetch-mcp');
@@ -849,8 +852,8 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins fetch-mcp is enabled by default and included in getEnabledSkills', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins fetch-mcp is enabled by default and included in getEnabledSkills', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp')!;
     expect(skill.enabled).toBe(true);
@@ -859,17 +862,17 @@ describe('SkillsManager', () => {
     expect(enabled.some((s) => s.name === 'fetch-mcp')).toBe(true);
   });
 
-  test('initializeBuiltins fetch-mcp cannot be deleted (builtIn guard)', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins fetch-mcp cannot be deleted (builtIn guard)', async () => {
+    await mgr.initializeBuiltins();
 
     const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp')!;
-    expect(mgr.removeSkill(skill.id)).toBe(false);
+    expect(await mgr.removeSkill(skill.id)).toBe(false);
     expect(mgr.getSkill(skill.id)).not.toBeNull();
   });
 
-  test('initializeBuiltins fetch-mcp is idempotent', () => {
-    mgr.initializeBuiltins();
-    mgr.initializeBuiltins();
+  test('initializeBuiltins fetch-mcp is idempotent', async () => {
+    await mgr.initializeBuiltins();
+    await mgr.initializeBuiltins();
 
     const skills = mgr.listSkills().filter((s) => s.name === 'fetch-mcp');
     expect(skills).toHaveLength(1);
@@ -877,7 +880,7 @@ describe('SkillsManager', () => {
     expect(servers).toHaveLength(1);
   });
 
-  test('initializeBuiltins reuses pre-existing fetch-mcp app_mcp_servers entry', () => {
+  test('initializeBuiltins reuses pre-existing fetch-mcp app_mcp_servers entry', async () => {
     const seeded = mcpRepo.create({
       name: 'fetch-mcp',
       description: 'Seeded by seed-defaults',
@@ -888,7 +891,7 @@ describe('SkillsManager', () => {
       enabled: true,
     });
 
-    mgr.initializeBuiltins();
+    await mgr.initializeBuiltins();
 
     const servers = mcpRepo.list().filter((s) => s.name === 'fetch-mcp');
     expect(servers).toHaveLength(1);
@@ -900,8 +903,8 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins registers all six built-in skills total', () => {
-    mgr.initializeBuiltins();
+  test('initializeBuiltins registers all six built-in skills total', async () => {
+    await mgr.initializeBuiltins();
 
     const builtIns = mgr.listSkills().filter((s) => s.builtIn);
     expect(builtIns).toHaveLength(6);
@@ -922,7 +925,7 @@ describe('SkillsManager', () => {
       const wrappersRoot = join(tmpRoot, 'skill-plugins');
       const skillsRoot = join(tmpRoot, 'skills');
 
-      mgr.initializeBuiltins();
+      await mgr.initializeBuiltins();
       const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
 
       expect(result.size).toBe(3);
@@ -957,7 +960,7 @@ describe('SkillsManager', () => {
       const wrappersRoot = join(tmpRoot, 'skill-plugins');
       const skillsRoot = join(tmpRoot, 'skills');
 
-      mgr.initializeBuiltins();
+      await mgr.initializeBuiltins();
       await writeFile(skillsRoot, 'not a directory');
 
       const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
@@ -1117,9 +1120,10 @@ describe('SkillsManager.installSkillFromGit', () => {
   beforeEach(() => {
     db = new BunDatabase(':memory:');
     createTables(db);
+    createSpaceTables(db);
     const mcpRepo = new AppMcpServerRepository(db, noOpReactiveDb);
     const skillRepo = new SkillRepository(db, noOpReactiveDb);
-    mgr = new SkillsManager(skillRepo, mcpRepo);
+    mgr = new SkillsManager(skillRepo, mcpRepo, { gateway: new DbGateway(':memory:', db) });
   });
 
   afterEach(() => {
@@ -1127,7 +1131,7 @@ describe('SkillsManager.installSkillFromGit', () => {
   });
 
   function makeGitHubApiFetch(fileContent: string = '# Playwright Skill\n\nContent here') {
-    return async (url: string | URL | Request) => {
+    return (url: string | URL | Request) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (urlStr.includes('api.github.com')) {
         return new Response(
@@ -1209,7 +1213,7 @@ describe('SkillsManager.installSkillFromGit', () => {
   test('is truly idempotent — does not call fetch on second call', async () => {
     let fetchCalls = 0;
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: string | URL | Request) => {
+    globalThis.fetch = ((url: string | URL | Request) => {
       fetchCalls++;
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (urlStr.includes('api.github.com')) {
@@ -1248,7 +1252,7 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('throws when GitHub API returns non-ok status', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
+    globalThis.fetch = (() =>
       new Response('Not Found', {
         status: 404,
         statusText: 'Not Found',
@@ -1268,7 +1272,7 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('falls back to single SKILL.md fetch for raw URL', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
+    globalThis.fetch = (() =>
       new Response('# Content', { status: 200 })) as typeof globalThis.fetch;
 
     try {
@@ -1285,7 +1289,7 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('throws when GitHub API returns an entry with path traversal in its name', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: string | URL | Request) => {
+    globalThis.fetch = ((url: string | URL | Request) => {
       const urlStr =
         typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       if (urlStr.includes('api.github.com')) {
@@ -1318,7 +1322,7 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('throws when GitHub API returns an entry with a leading-dot name', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: string | URL | Request) => {
+    globalThis.fetch = ((url: string | URL | Request) => {
       const urlStr =
         typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       if (urlStr.includes('api.github.com')) {
@@ -1351,7 +1355,7 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('throws when directory nesting exceeds max depth', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: string | URL | Request) => {
+    globalThis.fetch = ((url: string | URL | Request) => {
       const urlStr =
         typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       if (urlStr.includes('api.github.com') || urlStr.includes('deep')) {
@@ -1387,7 +1391,7 @@ describe('SkillsManager.installSkillFromGit', () => {
       download_url: `https://raw.githubusercontent.com/mock/file${i}.md`,
       url: '',
     }));
-    globalThis.fetch = (async (url: string | URL | Request) => {
+    globalThis.fetch = ((url: string | URL | Request) => {
       const urlStr =
         typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       if (urlStr.includes('api.github.com')) {
