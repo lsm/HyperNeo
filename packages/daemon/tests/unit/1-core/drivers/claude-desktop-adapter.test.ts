@@ -135,6 +135,7 @@ describe('claude-desktop adapter against the app session records', () => {
       admitInbox: sendInbox
         ? (context) => requireClaudeReplyDestination(context, { hasSession: () => false })
         : undefined,
+      listProcesses: async () => [],
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
