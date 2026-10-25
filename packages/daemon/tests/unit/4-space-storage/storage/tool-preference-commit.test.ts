@@ -284,3 +284,36 @@ describe('atomic tool default commits', () => {
     expect(called).toBe(false);
   });
 });
+
+describe('corrupt default target refusal', () => {
+  it('never reports success when an array-shaped settings value cannot hold the canonical field', () => {
+    db.prepare("UPDATE global_settings SET settings='[]' WHERE id=1").run();
+    const target = defaults();
+    let called = false;
+    expect(() =>
+      commitToolDefaultUpdate(db, target, [], selection, () => {
+        called = true;
+        db.prepare("UPDATE app_mcp_servers SET enabled=1 WHERE id='browser'").run();
+        return true;
+      })
+    ).toThrow('JSON object');
+    expect(called).toBe(false);
+    expect(server().row?.enabled).toBe(0);
+    expect(defaults()).toEqual(target);
+  });
+});
+
+describe('default write completion', () => {
+  it('rolls back when the legacy callback leaves a target that cannot store object fields', () => {
+    const target = defaults();
+    expect(
+      commitToolDefaultUpdate(db, target, [], selection, () => {
+        db.prepare("UPDATE global_settings SET settings='[]' WHERE id=1").run();
+        db.prepare("UPDATE app_mcp_servers SET enabled=1 WHERE id='browser'").run();
+        return true;
+      })
+    ).toBe('superseded');
+    expect(defaults()).toEqual(target);
+    expect(server().row?.enabled).toBe(0);
+  });
+});
