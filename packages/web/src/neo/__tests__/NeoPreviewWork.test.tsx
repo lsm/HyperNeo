@@ -176,6 +176,8 @@ describe('Neo preview Work layout', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(artifactPreviewWorkspace.state.value.open).toBe(true);
+    fireEvent.popState(window);
+    expect(artifactPreviewWorkspace.state.value.open).toBe(true);
     fireEvent.click(chat);
     expect(screen.getByRole('dialog')).toBe(preview);
     expect(pushed.mock.calls.length).toBe(opens);
@@ -184,6 +186,8 @@ describe('Neo preview Work layout', () => {
     expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
       'true'
     );
+    fireEvent.popState(window);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it.each([false, true])('keeps reference navigation intact with existingFile=%s', async (file) => {

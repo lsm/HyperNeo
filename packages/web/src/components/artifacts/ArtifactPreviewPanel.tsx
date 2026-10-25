@@ -56,7 +56,9 @@ export function ArtifactPreviewPanel({
     if (!open) return;
     const entry = generateUUID();
     history.pushState({ ...history.state, artifactPreview: entry }, '');
-    const onPop = () => closeArtifactPreview();
+    const onPop = () => {
+      if (visible.current) closeArtifactPreview();
+    };
     let foregroundEscape: KeyboardEvent | undefined;
     const onCapture = (event: KeyboardEvent) => {
       if (
