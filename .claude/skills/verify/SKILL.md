@@ -52,6 +52,21 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
 
 ## In-process RPC proofs
 
+On macOS, check `df -h /System/Volumes/Data` before every heavy verification
+run or dependency install. Stop if less than 25 GiB is free. Reuse one checkout
+and its dependencies; do not create baseline worktrees just to compare proofs.
+For a metadata-only Bun helper taking `[arguments] <run>`, use:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory "$PROOF" verify
+```
+
+The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
+the helper's evidence JSON and log outside that run, then immediately removes
+its temporary daemon data. It preserves failure status and never deletes the
+run if saving evidence fails. Keep baseline and fixed evidence in separate
+directories; the helper must close its resources in finally.
+
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
 
@@ -148,7 +163,7 @@ state a user can observe.
 
 ## Evidence
 
-Keep everything in `$RUN/evidence/` and quote it in the pull request:
+Save `$RUN/evidence/` outside the disposable run and summarize it in the pull request:
 
 - the RPC replies and DB query output for each journey;
 - `voice.json` from journey 2 and `gh.log` from journey 3;
@@ -166,7 +181,8 @@ kill "$(cat "$RUN/asr-stub.pid")"   # only if journey 2 started it
 
 `stop.sh` stops only the daemon and mock it started, by their pid files, and
 waits for both to exit before the run directory can be reused. Close
-the browser tab you opened. Delete `$RUN` once the evidence is in the PR.
+the browser tab you opened. After saving evidence, immediately delete the
+temporary daemon data and run directory you created.
 
 ## Metadata-only daemon proofs
 

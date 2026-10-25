@@ -98,6 +98,40 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
     ).toBe(false);
     expect(sessions.readLiveStatus('t0')).toBe('running');
     expect(sessions.readCardCheck('t0')).toEqual({ checkedAt: 9, unchecked: true });
+    const claims = await Promise.all([
+      sessions.write('claimNeedsYou', 't0', 10),
+      sessions.write('claimNeedsYou', 't0', 11),
+    ]);
+    expect(claims.filter(Boolean)).toEqual([todos.getTodo('t0')]);
+    expect(sessions.readNeedsYouSince('t0')).toBe(10);
+    for (const [state, blockedBy, eligible] of [
+      ['blocked', 'worker', true],
+      ['blocked', 'question', false],
+      ['blocked', 'human', false],
+      ['done', null, false],
+      ['failed', null, false],
+      ['removed', null, false],
+    ] as const) {
+      db.prepare('UPDATE neo_todos SET state=?, blocked_by=? WHERE id=?').run(
+        state,
+        blockedBy,
+        't0'
+      );
+      sessions.recordNeedsYouSince('t0', null);
+      expect(Boolean(await sessions.write('claimNeedsYou', 't0', 12))).toBe(eligible);
+      expect(sessions.readNeedsYouSince('t0')).toBe(eligible ? 12 : null);
+    }
+    expect(await sessions.write('claimNeedsYou', 'missing', 13)).toBeNull();
+    db.prepare("UPDATE neo_todos SET state='doing' WHERE id='t0'").run();
+    db.exec(
+      "CREATE TRIGGER reject_incident BEFORE UPDATE OF needs_you_since ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic incident refusal'); END"
+    );
+    await expect(sessions.write('claimNeedsYou', 't0', 14)).rejects.toThrow(
+      'synthetic incident refusal'
+    );
+    expect(sessions.readNeedsYouSince('t0')).toBeNull();
+    db.exec('DROP TRIGGER reject_incident');
+    expect(await sessions.write('claimNeedsYou', 't0', 15)).toEqual(todos.getTodo('t0'));
   } finally {
     await gateway.close();
     db.close();
