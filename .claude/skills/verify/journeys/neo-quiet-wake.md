@@ -32,3 +32,17 @@ turn. The fixed code's normal run must retain the 0/0/1 result above. Model
 request evidence distinguishes the coordinator's operations tool from the
 separate title-generation request; only one coordinator request and one SDK
 result count as the human's turn.
+
+
+## Quiet retry during urgent delivery
+
+The helper then pauses only its isolated daemon's job processor. It delivers an
+urgent report, retries that exact ID with a status-only kind both while delivery
+is pending and after its mailbox job is queued, and records overlaps.json.
+Each must have zero premature history rows and exactly one mailbox job. After
+resuming that owned processor, each urgent report must produce exactly one Neo
+turn and one history row. The original quiet/quiet/human result remains 0/0/1;
+these two additional urgent reports bring the final SDK result count to three.
+The note-delivery unit tests cover both quiet kinds, plus ten concurrent quiet
+retries yielding only one stored row and zero jobs. Against the prior reviewed
+head, the same helper fails the overlap assertion and retains overlaps.json.

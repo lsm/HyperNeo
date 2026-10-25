@@ -103,6 +103,30 @@ try {
   assert.equal(results().n, 1);
   assert.equal(modelTurns, 1);
   const observed = { daemonPort: app.server.port, heartbeat: { recorded: heartbeatId, neoTurns: 0 }, focusedStatus: { recorded: focusedId, neoTurns: 0 }, human: { requestId, neoTurns: modelTurns, results: results().n, totalRequestsIncludingTitle: modelRequests }, sandboxEnforcementVerified: false };
+  await app.jobProcessor.stop();
+  const historyCount = (id: string) => (app.db.getDatabase().prepare(
+    'SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND sdk_uuid=?'
+  ).get(root, id) as { n: number }).n;
+  const overlaps = [];
+  for (const phase of ['pending', 'queued']) {
+    const id = `synthetic-urgent-${phase}`;
+    const urgent = service.deliverForward(root, id, `Worker failed (${phase}).`, root);
+    if (phase === 'queued') await urgent;
+    await service.deliverForward(root, id, 'Status-only retry.', root, 'focused_status');
+    await urgent;
+    const before = { phase, historyRows: historyCount(id), jobs: app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': root, messageUuid: id }).length };
+    overlaps.push(before);
+    writeFileSync(join(run, 'evidence/overlaps.json'), JSON.stringify(overlaps, null, 2));
+    assert.equal(before.historyRows, 0, 'quiet retry saved while urgent delivery was active');
+    assert.equal(before.jobs, 1);
+  }
+  app.jobProcessor.start();
+  const overlapDeadline = Date.now() + 45000;
+  while (results().n < 3 && Date.now() < overlapDeadline) await Bun.sleep(100);
+  assert.equal(results().n, 3);
+  assert.equal(modelTurns, 3);
+  for (const phase of ['pending', 'queued']) assert.equal(historyCount(`synthetic-urgent-${phase}`), 1);
+  Object.assign(observed, { urgentOverlaps: overlaps, urgentTurns: modelTurns - 1, urgentHistoryRows: 2 });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
 } finally {

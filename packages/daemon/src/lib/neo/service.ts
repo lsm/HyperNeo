@@ -652,7 +652,7 @@ export class NeoService {
     kind?: 'focused_status' | 'quiet_heartbeat'
   ): Promise<void> {
     if (kind && this.repo.getBindingBySession(sessionId)?.kind === 'neo') {
-      if (!this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId)) {
+      if (!this.hasDelivery(sessionId, messageId)) {
         const message = {
           type: 'user' as const,
           uuid: messageId as UUID,
