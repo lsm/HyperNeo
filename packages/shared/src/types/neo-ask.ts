@@ -29,7 +29,7 @@ export interface NeoTodoCheck {
 
 export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'removed';
 
-export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question';
+export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question' | 'needs-human';
 
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;

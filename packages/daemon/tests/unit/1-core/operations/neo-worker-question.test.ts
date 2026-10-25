@@ -49,8 +49,40 @@ const report = {
   title: 'Choose a destination',
   options: ['Use staging', 'Use production'],
   language: 'en',
-  report: 'Original worker evidence',
+  report: '  Original worker evidence\n',
 };
+
+test('assignment is revalidated after source lookup and the card/hold commit together', async () => {
+  const { db, store, sessions, ref } = setup();
+  try {
+    const write = createNeoWorkerQuestionWriter(
+      store,
+      sessions,
+      () => 'en',
+      async () => {
+        sessions.bind('todo', { ...ref, id: 'replacement' }, 3);
+        return { ...ref, name: 'Worker', label: 'Worker', provider: 'Test', link: null };
+      }
+    );
+    expect(await write(ref, report)).toMatchObject({ ok: false });
+    expect(store.listQuestions('ask')).toHaveLength(0);
+    sessions.bind('todo', ref, 4);
+    const atomic = createNeoWorkerQuestionWriter(
+      store,
+      sessions,
+      () => 'en',
+      async () => ({ ...ref, name: 'Worker', label: 'Worker', provider: 'Test', link: null })
+    );
+    db.exec(
+      "CREATE TRIGGER refuse_hold BEFORE UPDATE ON neo_todos WHEN NEW.blocked_by = 'needs-human' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END"
+    );
+    await expect(atomic(ref, report)).rejects.toThrow('synthetic write failure');
+    expect(store.listQuestions('ask')).toHaveLength(0);
+    expect(store.getTodo('todo')?.state).toBe('doing');
+  } finally {
+    db.close();
+  }
+});
 
 test('worker reports reuse the existing card and preserve a durable hold through routine updates', async () => {
   const { db, store, ref, write } = setup();

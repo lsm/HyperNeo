@@ -62,8 +62,8 @@ for port in 8000 8001; do
   fi
 done
 RUN=$(mktemp -d /private/tmp/hyperneo-rpc-proof-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
+mkdir -p "$RUN/home" "$RUN/tmp"
+env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
   HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$RUN"
 ```
 

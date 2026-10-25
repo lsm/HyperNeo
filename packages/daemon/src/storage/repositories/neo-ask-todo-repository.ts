@@ -631,6 +631,10 @@ export class NeoAskTodoRepository {
   }
 
   askQuestion(id: string, askId: string, draft: NeoQuestionDraft, now: number): NeoQuestion {
+    const existing = draft.todoId
+      ? this.listQuestions(askId).find((q) => q.todoId === draft.todoId && q.state === 'open')
+      : null;
+    if (existing) return existing;
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
