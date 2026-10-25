@@ -1,4 +1,5 @@
 import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
+import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
 import {
   neoTodoSessionReads,
   neoTodoSessionWrites,
@@ -81,6 +82,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     deleteWorkFeedBatch,
     sessionWrites,
     sessionToolPreferenceReads,
+    toolDefaultTransitions,
     spaceTaskWrites,
     createStandaloneTask,
     transitionStandaloneTask,

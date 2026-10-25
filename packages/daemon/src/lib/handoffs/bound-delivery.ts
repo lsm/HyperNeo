@@ -5,6 +5,10 @@ import { jobQueueWrites, type Job } from '../../storage/repositories/job-queue-r
 import type { DeliveryContent, DeliveryLoadResult } from '../agent/message-delivery.ts';
 import { getDataDir } from '../data-dir.ts';
 import { publishTextHandoff } from './publish-text.ts';
+import {
+  NeoSessionMessageRepository,
+  WORKER_BATCH_SENDER,
+} from '../../storage/repositories/neo-session-message-repository.ts';
 
 export const boundDeliveryContent = (superpipe({})('bound-batch-delivery') as PipelineAPI)
   .input(['db', 'job', 'loaded'])
@@ -32,6 +36,29 @@ export const boundDeliveryContent = (superpipe({})('bound-batch-delivery') as Pi
           content
         )) as DeliveryContent,
       };
+    },
+    ['db', 'job', 'loaded'],
+    'loaded'
+  )
+  .pipe(
+    async (db: Database, job: Job, loaded: DeliveryLoadResult) => {
+      if (!loaded.neoWorkerBatch) return loaded;
+      const sessionId = String(job.payload.sessionId);
+      const content = loaded.content;
+      await new NeoSessionMessageRepository(db).record({
+        messageId: String(job.payload.messageUuid),
+        conversationId: sessionId.slice(4),
+        fromSession: WORKER_BATCH_SENDER,
+        fromName: 'System-forwarded worker messages',
+        toSession: sessionId,
+        toName: 'Neo',
+        text:
+          typeof content === 'string'
+            ? content
+            : content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n\n'),
+        createdAt: new Date(job.createdAt).toISOString(),
+      });
+      return loaded;
     },
     ['db', 'job', 'loaded'],
     'loaded'

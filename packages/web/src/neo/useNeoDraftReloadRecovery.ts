@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { loadArtifactMetadata } from '../lib/artifact-preview-client.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { connectionState } from '../lib/state.ts';
@@ -48,32 +49,68 @@ export function useNeoDraftReloadRecovery(
   sessionId: string | null,
   buffer: Buffer,
   readDraft: () => string,
-  writeDraft: (text: string) => void
-): void {
-  const attempted = useRef(new Set<string>());
-  const owner = useRef(sessionId);
-  owner.current = sessionId;
+  writeDraft: (text: string, reference?: NeoDraftReloadEntry['previewContext']) => void,
+  readVersion: () => unknown = () => undefined
+): boolean {
   const readRef = useRef(readDraft);
   readRef.current = readDraft;
   const writeRef = useRef(writeDraft);
   writeRef.current = writeDraft;
+  const versionRef = useRef(readVersion);
+  versionRef.current = readVersion;
+  const captures = useRef(new Map<string, { id: string; version: unknown }>());
   const connected = connectionState.value === 'connected';
+  const key = JSON.stringify([sessionId, connected]);
+  const generation = useRef({ key, ticket: 0 });
+  if (generation.current.key !== key)
+    generation.current = { key, ticket: generation.current.ticket + 1 };
+  const ticket = generation.current.ticket;
+  const [settled, setSettled] = useState(() => (sessionId && buffer.read(sessionId) ? -1 : ticket));
 
-  useEffect(() => {
-    if (!sessionId || !connected || attempted.current.has(sessionId)) return;
-    const entry = buffer.read(sessionId);
+  useLayoutEffect(() => {
+    const entry = sessionId ? buffer.read(sessionId) : null;
+    if (!entry) {
+      setSettled(ticket);
+      return;
+    }
     const hub = connectionManager.getHubIfConnected();
-    if (!entry || !hub) return;
-    attempted.current.add(sessionId);
+    if (!sessionId || !connected || !hub) return;
+    let active = true;
+    if (captures.current.get(sessionId)?.id !== entry.id)
+      captures.current.set(sessionId, { id: entry.id, version: versionRef.current() });
+    const version = captures.current.get(sessionId)!.version;
+    if (versionRef.current() !== version) return;
+    const current = () =>
+      active &&
+      generation.current.ticket === ticket &&
+      versionRef.current() === version &&
+      buffer.read(sessionId)?.id === entry.id;
     void invokeOperation<unknown>(hub, 'neo.draft.recover', neoDraftRecoveryInput(entry))
-      .then((result) => {
-        if (owner.current !== sessionId) return;
+      .then(async (result) => {
+        if (!current()) return;
         const settlement = settleNeoDraftRecovery(result, entry, readRef.current());
-        if (settlement === 'restore') writeRef.current(entry.text);
-        else if (settlement === 'forget') buffer.forget(sessionId, entry.id);
+        if (settlement === 'restore') {
+          let reference = entry.previewContext;
+          if (reference) {
+            const metadata = await loadArtifactMetadata(hub, reference.artifactId);
+            const available =
+              'value' in metadata &&
+              metadata.value?.artifact?.artifactId === reference.artifactId &&
+              metadata.value?.sha256 === reference.snapshot;
+            reference = { ...reference, state: available ? 'available' : 'unavailable' };
+          }
+          if (!current() || settleNeoDraftRecovery(result, entry, readRef.current()) !== 'restore')
+            return;
+          writeRef.current(entry.text, reference);
+        } else if (settlement === 'forget') buffer.forget(sessionId, entry.id);
+        setSettled(ticket);
       })
       .catch(() => {
-        attempted.current.delete(sessionId);
+        if (current()) setSettled(ticket);
       });
-  }, [sessionId, connected]);
+    return () => {
+      active = false;
+    };
+  }, [sessionId, connected, ticket]);
+  return !sessionId || !buffer.read(sessionId) || settled === ticket;
 }

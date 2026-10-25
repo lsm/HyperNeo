@@ -2158,6 +2158,7 @@ export class SDKMessageRepository {
     sendStatus: SendStatus;
     inputKind?: string;
     neoBatch?: true;
+    neoWorkerBatch?: true;
   } | null {
     const row = this.db
       .prepare(
@@ -2176,6 +2177,7 @@ export class SDKMessageRepository {
         message?: { content?: string | MessageContent[] };
         inputKind?: string;
         neoBatchContent?: string | MessageContent[];
+        neoWorkerBatch?: boolean;
       };
       const content = message.neoBatchContent ?? message.message?.content ?? null;
       if (content === null) return null;
@@ -2183,7 +2185,10 @@ export class SDKMessageRepository {
         content,
         sendStatus: row.send_status,
         ...(message.inputKind ? { inputKind: message.inputKind } : {}),
-        ...(message.neoBatchContent !== undefined ? { neoBatch: true as const } : {}),
+        ...(message.neoWorkerBatch ? { neoWorkerBatch: true as const } : {}),
+        ...(message.neoBatchContent !== undefined || message.neoWorkerBatch
+          ? { neoBatch: true as const }
+          : {}),
       };
     } catch {
       return null;

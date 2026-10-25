@@ -76,6 +76,10 @@ only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any
 additional ports; do not also start `launch.sh` for these helpers.
 
+When a journey specifies an ephemeral model mock, omit the 8000/8001 preflight.
+That helper must bind its model listener to port 0 and redirect both session and
+title requests to the assigned loopback URL. Never reuse another run's listener.
+
 A helper that starts another proof process must preserve the selected TMPDIR
 or give that child its own temporary directory inside its fresh run. A scrubbed
 child environment must not silently fall back to the host's default temp path.
