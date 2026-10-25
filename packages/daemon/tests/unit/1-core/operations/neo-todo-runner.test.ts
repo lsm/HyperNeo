@@ -140,6 +140,29 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('a refused check stamp preserves the prior worker status and needs-you incident', async () => {
+    const h = setup();
+    try {
+      const todo = h.add(null, null);
+      h.sessions.recordRef(todo.id, ref, 1_000);
+      h.store.updateTodo(todo, { state: 'doing', startedAt: 1_000 }, 1_000);
+      h.sessions.recordLive(todo.id, 'needs_you', undefined);
+      h.sessions.recordNeedsYouSince(todo.id, 900);
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1_001 } });
+      h.db.exec(
+        "CREATE TRIGGER reject_check BEFORE UPDATE OF checked_at ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic check refusal'); END"
+      );
+      const warnings: string[] = [];
+      await h.runner.refresh((_message, error) => warnings.push(String(error)));
+      expect(warnings.some((warning) => warning.includes('synthetic check refusal'))).toBe(true);
+      expect(h.sessions.readLiveStatus(todo.id)).toBe('needs_you');
+      expect(h.sessions.readNeedsYouSince(todo.id)).toBe(900);
+      expect(h.sessions.readCardCheck(todo.id)).toBeNull();
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a refused receipt save leaves no partially recorded worker assignment', async () => {
     const h = setup();
     try {
