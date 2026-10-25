@@ -6,6 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import { MAX_IMAGE_BASE64_SIZE } from '../session/message-persistence.ts';
 import type { MailboxAddress } from './address.ts';
+import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 import { createUlid, decodeUlidTimestamp, isUlid } from './ulid.ts';
 
 export interface MailboxEntryPolicy {
@@ -29,6 +30,7 @@ export type MailboxMessage = {
   priority?: 'now' | 'next' | 'later';
   inputKind?: MessageInputKind;
   taskKickoff?: boolean;
+  workerReportKind?: (typeof WORKER_REPORT_KINDS)[number];
   referenceMetadata?: ReferenceMetadata;
 };
 
@@ -129,6 +131,12 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
   if (message.taskKickoff !== undefined && typeof message.taskKickoff !== 'boolean') {
     return { reason: 'message.taskKickoff must be a boolean' };
   }
+  if (
+    message.workerReportKind !== undefined &&
+    !WORKER_REPORT_KINDS.includes(message.workerReportKind)
+  ) {
+    return { reason: 'message.workerReportKind must be done, blocked, question or failed' };
+  }
   const content = message.message?.content;
   let projected: { role?: 'user'; content: MailboxMessageContent } | null = null;
   if (typeof content === 'string') {
@@ -159,6 +167,7 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
       ...(message.priority !== undefined ? { priority: message.priority } : {}),
       ...(message.inputKind !== undefined ? { inputKind: message.inputKind } : {}),
       ...(message.taskKickoff === true ? { taskKickoff: true } : {}),
+      ...(message.workerReportKind ? { workerReportKind: message.workerReportKind } : {}),
       ...(referenceMetadata !== undefined ? { referenceMetadata } : {}),
     },
   };

@@ -32,4 +32,4 @@ Rules for this work:
     - In a public repo: no local paths, machine names, session ids or private repo names.
     An issue states the problem and what done looks like, in a few sentences.
 
-Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.
+Use message.send with an explicit kind (done, blocked, question, failed), or hyperneo send <Neo id> --kind <kind> <text>. Use done for PR milestones. Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.

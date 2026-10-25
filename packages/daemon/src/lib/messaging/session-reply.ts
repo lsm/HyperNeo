@@ -4,7 +4,8 @@ import { parseAddress, parseRemoteAddress } from '../mailbox/address.ts';
 export const REPLY_ORIGIN_MAX = 500;
 const CLI_PREFIX =
   'Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ';
-const CLI_SUFFIX = ' "<text>" (not SendMessage). Keep working after you send.';
+const CLI_SUFFIX =
+  ' --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.';
 
 export function replyMessageBodyLength(message: string): number {
   const at = message.lastIndexOf(`\n\n${CLI_PREFIX}`);
@@ -27,7 +28,7 @@ export function withReplyLine(
     sender?.kind === 'session' ? sender.sessionId : parseRemoteAddress(from) ? from : null;
   if (!replyTo) return message;
   if (format === 'mcp')
-    return `${message}\n\nReply with ${sessionReplyCall(replyTo)}, not SendMessage.`;
+    return `${message}\n\nReport milestones with ${sessionReplyCall(replyTo)}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`;
   const argument = /^[A-Za-z0-9_:./%-]+$/.test(replyTo)
     ? replyTo
     : `'${replyTo.replaceAll("'", "'\\''")}'`;
@@ -40,6 +41,7 @@ export function sessionReplyCall(sessionId: string): string {
     name: 'message.send',
     input: {
       sessionId,
+      kind: 'done',
       message: { type: 'user', message: { content: '<your reply>' }, parent_tool_use_id: null },
     },
   })}`;

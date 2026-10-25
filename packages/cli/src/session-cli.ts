@@ -1,6 +1,7 @@
 import { SESSION_CLI_USAGE } from './session-cli-commands.ts';
 import { request } from 'node:http';
 import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
+import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 
 type Env = Record<string, string | undefined>;
 
@@ -18,6 +19,13 @@ export function planSessionCommand(
   sender: string
 ): { value: { name: string; input: unknown } } | { reason: string } {
   const [command, target, ...rest] = args;
+  if (command === 'send' && target && rest[0] === '--kind') {
+    const kind = WORKER_REPORT_KINDS.find((value) => value === rest[1]);
+    const text = rest.slice(2).join(' ');
+    return kind && text.trim()
+      ? { value: { name: 'message.send', input: { to: target, text, kind } } }
+      : { reason: SESSION_CLI_USAGE };
+  }
   if (command === 'send' && target && rest.join(' ').trim())
     return {
       value: {

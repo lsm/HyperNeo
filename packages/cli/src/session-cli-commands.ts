@@ -1,5 +1,6 @@
 const commands = {
-  send: `  hyperneo send <session-id> <text>   Message another session (inside a HyperNeo, Codex or Claude Code session)`,
+  send: `  hyperneo send <session-id> [--kind done|blocked|question|failed] <text>
+                                      Message another session; --kind marks a milestone report`,
   question: `  hyperneo question <question-id>     Read a Neo question and whether the human answered it`,
   build: `  hyperneo build                      Read daemon build and health through the owner-only session socket`,
   pair: `  hyperneo pair [--kind human|relay|daemon] [--name <name>]
