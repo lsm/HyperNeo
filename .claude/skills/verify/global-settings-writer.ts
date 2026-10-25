@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { ProviderCredentialManager } from '../../../packages/daemon/src/lib/credentials/provider-credential-manager.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { Database as SQLiteDatabase } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { SettingsRepository } from '../../../packages/daemon/src/storage/repositories/settings-repository.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
 const run = resolve(process.argv[2]);
@@ -59,8 +61,11 @@ try {
   assert.equal(second.settings.outputStyle, 'synthetic-style');
   evidence.persisted = JSON.parse((prepare('SELECT settings FROM global_settings WHERE id = 1').get() as { settings: string }).settings);
   assert.equal(changes.length, 2, 'each committed RPC write must announce one change');
+  const competingDb = new SQLiteDatabase(app.db.getDbPath());
+  const competitor = new SettingsRepository(competingDb);
   const storeApiKey = ProviderCredentialManager.prototype.storeApiKey;
   ProviderCredentialManager.prototype.storeApiKey = async () => {
+    competitor.updateGlobalSettings({ autoScroll: false, neo: { standingRules: 'concurrent-rule' } });
     throw new Error('synthetic credential-store failure');
   };
   try {
@@ -69,9 +74,14 @@ try {
       voice: { endpoint: 'https://synthetic.invalid/transcribe', apiKey: 'synthetic-only' },
     } }), /synthetic credential-store failure/);
     assert.equal(app.settingsManager.getGlobalSettings().showArchived, true);
-    evidence.rollback = 'prior settings restored before failure reply';
+    const restored = app.settingsManager.getGlobalSettings();
+    evidence.rollbackConcurrent = { autoScroll: restored.autoScroll, rule: restored.neo?.standingRules };
+    assert.equal(restored.autoScroll, false, 'rollback must preserve an unrelated concurrent commit');
+    assert.equal(restored.neo?.standingRules, 'concurrent-rule');
+    evidence.rollback = 'touched settings restored without losing the concurrent commit';
   } finally {
     ProviderCredentialManager.prototype.storeApiKey = storeApiKey;
+    competingDb.close();
   }
   main.exec('BEGIN IMMEDIATE');
   let settled = false;
