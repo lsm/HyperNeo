@@ -1152,21 +1152,18 @@ export async function startCodexThread(
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
+      const config = {
+        ...sandbox?.config,
+        ...(configuration.value.effort
+          ? { model_reasoning_effort: configuration.value.effort }
+          : {}),
+      };
       const started = await server.call('thread/start', {
         projectId,
         cwd: workFolder.cwd,
         approvalPolicy: 'never',
         sandbox: sandbox?.sandbox ?? 'danger-full-access',
-        ...(sandbox || configuration.value.effort
-          ? {
-              config: {
-                ...sandbox?.config,
-                ...(configuration.value.effort
-                  ? { model_reasoning_effort: configuration.value.effort }
-                  : {}),
-              },
-            }
-          : {}),
+        ...(sandbox || configuration.value.effort ? { config } : {}),
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
       });
       threadId = startedThreadId(started);

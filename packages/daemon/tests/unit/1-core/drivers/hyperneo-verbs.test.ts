@@ -229,7 +229,7 @@ describe('hyperneo adapter send and status', () => {
 
   test('creates the native session without scanning unrelated protected temp directories', async () => {
     const root = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-'));
-    const directory = root;
+    const directory = join(root, 'prepared');
     const unrelated = mkdtempSync(join(tmpdir(), 'hyperneo-unrelated-'));
     chmodSync(unrelated, 0);
     mkdirSync(join(directory, '.git/info'), { recursive: true });

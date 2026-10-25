@@ -74,6 +74,28 @@ real Bash deleted its policy, report env pointed at the wrong directory, and
 archive/delete retained runtime roots. No production clone-placement change is
 part of this fix; the policy always takes its root from the prepared directory.
 
+## Runtime portability (review 9464)
+
+`worker-sandbox.test.ts` models Windows `process.platform`, absent `getuid`,
+system temp variables and synthesized NTFS mode bits. It must prepare usable
+worker temp/cache paths under the system temp root without applying POSIX mode
+checks; the POSIX counterpart must still reject shared mode bits. These are
+modeled API-shape tests, not a native Windows sandbox proof. Native Windows and
+Linux worker OS enforcement are not verified on this macOS machine.
+
+Darwin deliberately keeps the short `/tmp` base: the real CLI journey rejects
+Claude's shared-temp fallback when a long path exceeds its socket limit. Other
+platforms use `os.tmpdir()`. The SDK adapter fixture owns a dedicated parent with
+its prepared clone below it. A synthetic unreadable directory alongside that
+parent reproduces the shared-temp sibling-scan EACCES before the fixture fix,
+and must not affect the corrected prepared start. All owned permissions are
+restored in finally. Regressions were committed first in `311804768a`.
+
+Per-worker policy replacements are atomic. No cross-worker filesystem transaction
+is claimed for the pre-existing native-permission sibling refresh; try/precompute
+cannot provide crash-atomicity across several file renames. Existing workers keep
+their own OS sandbox roots when those native permissions refresh.
+
 ## Legacy and damaged policies (review 9453)
 
 Run the same command above with `VERIFY_LEGACY_POLICY=1` added to the `env -i`

@@ -1,10 +1,12 @@
+import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function workerSandboxPaths(root: string) {
-  const runtime = `/tmp/hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
+  const base = process.platform === 'darwin' ? '/tmp' : tmpdir();
+  const runtime = join(base, `hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`);
   return {
     TMPDIR: join(runtime, 'tmp'),
     TMP: join(runtime, 'tmp'),
@@ -24,8 +26,9 @@ export async function prepareWorkerSandbox(root: string) {
   for (const path of new Set([runtime, ...Object.values(env)])) {
     await mkdir(path, { recursive: true, mode: 0o700 });
     const entry = await lstat(path);
-    const owner = process.getuid?.() ?? entry.uid;
-    if (!entry.isDirectory() || (entry.mode & 0o077) !== 0 || entry.uid !== owner)
+    const owner = process.platform === 'win32' ? entry.uid : (process.getuid?.() ?? entry.uid);
+    const mode = process.platform === 'win32' ? 0 : entry.mode;
+    if (!entry.isDirectory() || (mode & 0o077) !== 0 || entry.uid !== owner)
       throw new Error('Worker runtime roots must be owned private directories');
   }
   await writeFile(join(root, '.git/hyperneo-worker-sandbox'), 'restricted');
