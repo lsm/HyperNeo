@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SessionEventSubscription } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { canonicalJson } from '../agent/prompt-comparison.ts';
-import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
-import { createMailboxEntry, type MailboxDeliveryMode } from '../mailbox/entry.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { submitSessionEvent } from '../../storage/repositories/session-event-submission.ts';
+import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
 import { crashHandler, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { externalEventTopicSuffix } from './event-tiers.ts';
 import type { ExternalEventPublishedPayload } from './external-event-service.ts';
@@ -124,10 +125,10 @@ export async function mailSessionEvent(
   const key = digest([SESSION_EVENT_ORIGIN, args.to, delivery.messageUuid]);
   const fingerprint = digest([args.to, args.origin, args.messageUuid, args.message]);
   try {
-    return jobQueue.commitSubmissionReceipt(key, fingerprint, () => {
-      const outcome = enqueueMailboxEntry(jobQueue, createMailboxEntry(args));
-      if (outcome.kind === 'rejected') throw new Error(outcome.reason);
-      return outcome;
+    return await gatewayFor(jobQueue.db).call(submitSessionEvent, 'submit', {
+      key,
+      fingerprint,
+      entryArgs: args,
     });
   } catch (error) {
     return crashHandler(error);

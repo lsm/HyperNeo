@@ -37,6 +37,7 @@ import {
   jobQueueReads,
   jobQueueWrites,
 } from '../repositories/job-queue-repository.ts';
+import { submitSessionEvent } from '../repositories/session-event-submission.ts';
 import { recordClaudeInboxRoute } from '../repositories/claude-inbox-route-repository.ts';
 import { replaceNeoSessionSeen } from '../repositories/neo-session-seen-repository.ts';
 import {
@@ -86,6 +87,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     touchDevice,
     recordUnpaired,
     jobQueueWrites,
+    submitSessionEvent,
     jobQueueReads,
     externalEventSweeps,
     messageSearchIndexWrites,
