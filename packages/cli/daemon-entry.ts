@@ -32,7 +32,8 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
     process.env.HYPERNEO_DATA_DIR = options.dataDir;
   }
 
-  process.env.NODE_ENV = 'production';
+  const environment = process.env;
+  if (environment.NODE_ENV !== 'test') environment.NODE_ENV = 'production';
 
   const [{ getConfig }, { installProcessFatalLogging }] = await Promise.all([
     import('@hyperneo/daemon/config'),

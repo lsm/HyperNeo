@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const [binaryPath, directory] = process.argv.slice(2);
@@ -10,6 +10,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 for (const part of ['bin', 'data', 'workspace', 'evidence', 'tmp']) mkdirSync(join(run, part), { recursive: true });
 for (const command of ['security', 'gh', 'open', 'ps'])
   writeFileSync(join(run, 'bin', command), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+writeFileSync(join(run, 'bin/security'), "#!/bin/sh\nprintf \"unexpected-discovery\\n\" >> \"$HYPERNEO_DATA_DIR/security-attempts\"\nexit 1\n", { mode: 0o700 });
 writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
 const probe = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('unused') });
 const port = probe.port;
@@ -51,6 +52,9 @@ try {
   const logs = `${await stdout}\n${await stderr}`;
   writeFileSync(join(run, 'evidence/daemon.log'), logs);
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ pid: child.pid, exit, stopped: true }));
+  assert(logs.includes('OAuth refresh scheduler skipped: test daemon without the human login'), 'real compiled usesHumanLogin must disable human login');
+  assert(!existsSync(join(run, 'data/security-attempts')), 'test mode must not attempt credential discovery');
+  assert(!existsSync(join(run, 'data/logs/daemon.db.jsonl')), 'test config must not enable the default structured log file');
   assert(!logs.includes('ModuleNotFound'), 'Compiled worker module is missing');
   assert(!logs.includes('embedding worker crashed'), 'Embedding worker failed to execute');
   assert(!logs.includes('Unexpected use of reserved word') && !logs.includes('daemon runs without an event-loop watchdog'), 'Watchdog did not load as JavaScript');
