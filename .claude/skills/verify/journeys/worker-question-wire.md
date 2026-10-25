@@ -36,7 +36,9 @@ reports and a hold arriving during the nudge's async status lookup.
 An optional third fresh run uses `triage` instead of `old`: a large report with
 no card payload is published in full and wakes Neo once for triage. Its repeats
 publish fresh references with the same hash but reuse the original receipt and
-never add another wake. This run has two model turns total, one for the todo card
+never add another wake. Neither the queued wake nor the actual Neo model input
+may contain the full report text; the model must receive its prepared stub and
+hash-checked file reference. This run has two model turns total, one for the todo card
 and one for the separate ambiguous incident; restart adds none.
 
 Use `media` in another fresh run for envelope-form image-only reports. Two valid

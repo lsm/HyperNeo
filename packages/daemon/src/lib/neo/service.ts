@@ -503,7 +503,9 @@ export class NeoService {
             neoDerivedId(
               JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
             ),
-            text
+            input.handoff && typeof content !== 'string'
+              ? (content.find((b) => b.type === 'text')?.text ?? text)
+              : text
           );
           return receipt;
         }
