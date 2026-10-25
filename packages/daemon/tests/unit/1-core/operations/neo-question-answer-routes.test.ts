@@ -61,7 +61,7 @@ async function fixture() {
     async () => {},
     async () => ({ ok: true })
   ).find((op) => op.name === 'neo.question.get')!;
-  const read = () => get.execute({ questionId: result.question.id }, { source: 'rpc' });
+  const read = (questionId = result.question.id) => get.execute({ questionId }, { source: 'rpc' });
   return { db, store, source, write, report, question: result.question, read };
 }
 
@@ -179,6 +179,42 @@ test('a failed route write rolls back the new card and its needs-human hold', as
     );
     expect(f.store.listQuestions('ask')).toHaveLength(1);
     expect(f.store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+  } finally {
+    f.db.close();
+  }
+});
+
+test('startup does not turn a later manual replacement into a worker report', async () => {
+  const f = await fixture();
+  try {
+    const ask = createNeoQuestionOperations(
+      f.store,
+      async () => {},
+      async () => ({ ok: true }),
+      undefined,
+      undefined,
+      async () => f.source
+    ).find((op) => op.name === 'neo.question.ask')!;
+    expect(
+      await ask.execute(
+        {
+          askId: 'ask',
+          todoId: 'todo',
+          sourceSession: f.source,
+          kind: 'reply',
+          text: 'A manual clarification',
+          replaces: f.question.id,
+        },
+        { source: 'rpc' }
+      )
+    ).toMatchObject({ ok: true });
+    const replacement = f.store.listQuestions('ask').find((q) => q.state === 'open')!;
+    expect(await f.read(replacement.id)).toMatchObject({ answerDelivery: [] });
+    expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    runMigrations(f.db, () => {});
+    createTables(f.db);
+    expect(await f.read(replacement.id)).toMatchObject({ answerDelivery: [] });
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'waiting' }] });
   } finally {
     f.db.close();
   }

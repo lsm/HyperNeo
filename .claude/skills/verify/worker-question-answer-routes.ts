@@ -53,14 +53,33 @@ try {
   const initial = await rpc('neo.question.get', { questionId: first.question.id });
   assert.equal(initial.answerDelivery?.length, 1, 'the worker card must expose one durable answer route');
   assert.equal(initial.answerDelivery[0].state, 'waiting');
-  const routeId = initial.answerDelivery[0].id;
+  const manual = await rpc('neo.question.ask', {
+    askId: todo.askId, todoId: todo.id, sourceSession: ref,
+    kind: 'reply', text: 'A later manual clarification', replaces: first.question.id,
+  });
+  assert.equal(manual.ok, true, JSON.stringify(manual));
+  const beforeRestart = await rpc('neo.question.get', { questionId: manual.question.id });
+  assert.deepEqual(beforeRestart.answerDelivery, []);
+  await app.cleanup();
+  app = await createDaemonApp({ config, verbose: false });
+  await app.spaceRuntimeService.ready();
+  const afterRestart = await rpc('neo.question.get', { questionId: manual.question.id });
+  writeFileSync(join(run, 'evidence/manual-restart.json'), JSON.stringify({ beforeRestart, afterRestart }, null, 2));
+  assert.deepEqual(afterRestart.answerDelivery, [], 'restart must not synthesize a worker route for a later manual card');
+  const reopenedStore = new NeoAskTodoRepository(app.db.getDatabase());
+  reopenedStore.retireQuestion(reopenedStore.getQuestion(manual.question.id)!, 'Synthetic fixture complete', null, Date.now());
+  const again = await createNeoWorkerQuestionWriter(reopenedStore, new NeoTodoSessionRepository(app.db.getDatabase()), () => 'zh-Hans', async () => source)(ref, report);
+  assert(again.ok, JSON.stringify(again));
+  first.question = again.question;
+  const activeStore = reopenedStore;
+  const routeId = (await rpc('neo.question.get', { questionId: first.question.id })).answerDelivery[0].id;
   const answer = await rpc('neo.question.answer', { questionId: first.question.id, answer: [report.options[0]] });
   assert.equal(answer.ok, true, JSON.stringify(answer));
   const pending = await rpc('neo.question.get', { questionId: first.question.id });
   assert.equal(pending.answerDelivery[0].state, 'pending');
   assert.deepEqual(pending.answerDelivery[0].answer, [report.options[0]]);
   assert.equal(pending.answerDelivery[0].answeredBy, 'button');
-  assert.equal(store.getTodo(todo.id)?.blockedBy, 'needs-human');
+  assert.equal(activeStore.getTodo(todo.id)?.blockedBy, 'needs-human');
   const text = `Answer to "${first.question.text}": ${report.options[0]}`;
   const input = { to: ref.id, text, idempotencyKey: routeId };
   const delivered = await rpc('message.send', input);
@@ -72,7 +91,7 @@ try {
   const changedOrigin = await rpc('message.send', { ...input, from: 'session:synthetic-neo' });
   assert.equal(changedOrigin.kind, 'accepted');
   assert.notEqual(changedOrigin.messageId, delivered.messageId);
-  assert.equal(store.questionAnswers.accept(routeId, delivered.messageId, Date.now()), true);
+  assert.equal(activeStore.questionAnswers.accept(routeId, delivered.messageId, Date.now()), true);
   await app.cleanup();
   app = await createDaemonApp({ config, verbose: false });
   await app.spaceRuntimeService.ready();
