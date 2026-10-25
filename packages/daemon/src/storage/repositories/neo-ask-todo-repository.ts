@@ -558,6 +558,9 @@ export class NeoAskTodoRepository {
       todo,
       change,
       judgement,
+      humanAnswerDelivered:
+        todo.blockedBy === 'needs-human' &&
+        this.questionAnswers.delivered(todo.id, live?.ref ?? null),
       askOpen: this.getAsk(todo.askId)?.status === 'open',
       order: this.db
         .prepare(

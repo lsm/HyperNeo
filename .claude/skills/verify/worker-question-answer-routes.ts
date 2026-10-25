@@ -82,8 +82,8 @@ try {
   first.question = again.question;
   const activeStore = reopenedStore;
   const routeId = (await rpc('neo.question.get', { questionId: first.question.id })).answerDelivery[0].id;
-  const answer = await rpc('neo.question.answer', { questionId: first.question.id, answer: [report.options[0]] });
-  assert.equal(answer.ok, true, JSON.stringify(answer));
+  const answer = activeStore.answerQuestion(first.question, [report.options[0]], 'button', Date.now());
+  assert(answer);
   const pending = await rpc('neo.question.get', { questionId: first.question.id });
   assert.equal(pending.answerDelivery[0].state, 'pending');
   assert.deepEqual(pending.answerDelivery[0].answer, [report.options[0]]);

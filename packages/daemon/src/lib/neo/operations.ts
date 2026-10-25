@@ -701,7 +701,10 @@ export function createNeoOperations(service: NeoService) {
     createNeoIntakeOperation(
       service.db,
       service.repo,
-      () => service.notifyChanged(),
+      (_sessionId, questionId) => {
+        service.notifyChanged();
+        if (questionId) void service.deliverQuestionAnswers(questionId);
+      },
       service.todos
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service)),
@@ -809,7 +812,8 @@ export function createNeoOperations(service: NeoService) {
             }
           : null;
       },
-      (id) => service.notifyPublicationsChanged(id)
+      (id) => service.notifyPublicationsChanged(id),
+      (questionId) => service.deliverQuestionAnswers(questionId)
     ),
     defineOperation({
       name: 'neo.open',
