@@ -4,6 +4,9 @@ This is the build rung of #8712. Existing RPC/job recompute callers stay on
 their legacy path until the admission and wiring slices. This journey proves
 the new command and its state as observed through a real daemon snapshot; it
 does not claim those existing routes have moved off main.
+The command publishes no Neo events and starts no work. Later wiring must
+notify and attempt advancement after the awaited commit reply; `startNext` is
+a candidate ID, not a reservation to start it.
 
 Use the shared metadata-only setup, disk guard and cleanup wrapper in SKILL.md.
 Do not run this helper while a memory or daemon-proof hold is active.
