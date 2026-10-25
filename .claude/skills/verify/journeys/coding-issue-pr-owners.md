@@ -22,7 +22,9 @@ Observe `issue-pr-owners.json`: both owned PRs move from `approved_pending` to
 `approved_green`. A rejected mailbox write leaves durable delivery intent.
 After reopening the app, each worker's actual mailbox accepts exactly one ready
 event; another sweep adds nothing, `told_at` is populated, and the issue todo
-remains doing. The public Neo snapshot, ledger, mailbox payloads and synthetic
+remains doing. A public `neo.todo.add` attempt to duplicate the issue-owned PR
+must refuse it and advise continuing that todo, without suggesting `addUrls`,
+which only supports PR-merge checks. The public Neo snapshot, ledger, mailbox payloads and synthetic
 GitHub request arguments are saved. Before the fix, the closing PR lacks an
 owner; the focused regression separately isolates hidden opening evidence.
 

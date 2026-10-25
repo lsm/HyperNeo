@@ -85,6 +85,13 @@ try {
   const pending = new CodingPrLedgerRepository(sql()).snapshot(null, now);
   assert.deepEqual(pending.map(row => [row.pr, row.state, row.ownerId]), [[ 'synthetic/mixedcase#20', 'approved_pending', workers[0] ], [ 'synthetic/mixedcase#21', 'approved_pending', workers[1] ], [ 'synthetic/mixedcase#22', 'approved_pending', null ]]);
   assert.equal(jobs().length, 0);
+  const duplicate = await rpc('neo.todo.add', { askId: 'ask', title: 'Duplicate PR', doneWhen: 'PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/mixedcase/pull/20'] } } });
+  assert.equal(duplicate.ok, false);
+  assert.match(String(duplicate.reason), /pr_already_tracked:/);
+  assert.doesNotMatch(String(duplicate.reason), /addUrls/);
+  assert.match(String(duplicate.reason), /Continue that todo/);
+  assert.equal(store.listTodos('ask').length, 2);
+  proof.duplicateRefusal = duplicate;
   sql().exec("CREATE TRIGGER reject_owner_delivery BEFORE INSERT ON job_queue WHEN NEW.queue='mailbox' BEGIN SELECT RAISE(ABORT,'synthetic rejection'); END");
   fixture('SUCCESS'); await coding.sweep!(now + 1000);
   assert.equal(jobs().length, 0);
