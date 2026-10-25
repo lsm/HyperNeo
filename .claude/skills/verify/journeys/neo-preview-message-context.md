@@ -57,6 +57,12 @@ the existing artifact reader authorizes it again. Work/file switching must keep
 the viewer and avoid rereading file bytes even when binding metadata is fetched.
 No unattended GUI/browser or real-device claim is made.
 
+Mount-time Preview/draft load ordering and failure are tracked in #8675 with
+refresh/reconnect recovery. Metadata arriving before an empty saved draft may
+leave auto-binding inactive; Use current Preview still binds explicitly. Recovery
+must publish scoped reactive readiness and preserve original/unbound context,
+newer edits and explicit rebinds rather than treating a failed load as empty.
+
 Also run the compiled-worker-startup journey when changing these schema import
 boundaries. Source-mode RPC can pass while a schema-to-runtime dependency cycle
 causes Bun to emit invalid compiled initializers. Require the actual compiled
