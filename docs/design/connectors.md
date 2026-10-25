@@ -1,13 +1,14 @@
 # Connections: shared base, Google first
 
-**Proposed; docs only.** Human approval is required before implementation, which
-starts after 0.49.0 ships. Order by one account unlocking several services:
-Google (Gmail, Calendar, selected Drive files), Microsoft Graph, Slack, then
-other tools through remote MCP + OAuth. A connection is account access, not a
-model provider, skill or pack. HyperNeo owns authorization and action policy;
+**Human-approved phased design; docs only.** Phase-1 implementation starts
+immediately after this design merges; there is no release-freeze wait. Phase 1 is our own Google connection, Gmail reads/drafts and read-only
+Calendar; the human sends drafts from Gmail. Phase 2 adds approved sends/event
+writes; phase 3 adds selected Drive files. Then Microsoft Graph, Slack and other
+tools through remote MCP + OAuth, ordered by one account unlocking many services.
+A connection is account access, not a model provider, skill or pack. HyperNeo owns authorization and action policy;
 the model harness receives tools, never credentials.
 
-## Step 1: account and authorization boundary
+## Phase 1: connection base and usable Google reads/drafts
 
 **Settings > Connections** adds Connect Google, account/email, granted scopes,
 per-service health, Reconnect and Disconnect. A new instance has no connections;
@@ -15,15 +16,14 @@ never import browser, CLI, SDK or another instance's logins. Human-only manageme
 operations start consent in the system browser; a short-lived listener binds
 `127.0.0.1` on an available port. Use a Desktop OAuth client, authorization code,
 PKCE S256, `access_type=offline`, random one-use state, exact callback path/redirect
-and timeout. Exchange
-codes only in the daemon; validate OpenID issuer, audience, nonce and expiry,
-keying accounts by `sub`, not email ([Desktop OAuth][native], [identity][oidc]).
+and timeout. Exchange codes only in the daemon; validate OpenID issuer, audience,
+nonce and expiry, keying accounts by `sub`, not email ([Desktop OAuth][native], [identity][oidc]).
 Status RPCs/events return account, scopes, feature availability and health only,
 never codes, access/refresh/ID tokens or secret-store contents.
 
-Use one connection per instance/provider/account, with grant slots for the
-Workspace bundle and Drive file selection. Nonsecret metadata stays in the
-instance database. Vault keys include persisted daemon identity, provider,
+Use one connection per instance/provider/account, initially with one Google
+grant; the separate Drive file-selection grant belongs to phase 3. Nonsecret
+metadata stays in the instance database. Vault keys include persisted daemon identity, provider,
 connection and grant; use the existing `artifact_file_identity`, never hostname
 or the provider manager's shared `default` account. Reuse `CredentialStore`:
 macOS Keychain first, encrypted SQLite-file fallback (also Linux/Windows),
@@ -40,52 +40,45 @@ refresh, expiry and actual scopes together. A lost/failed rotation cannot be
 reported healthy. `invalid_grant` stops retries and marks **Reconnect needed**;
 transient failures have bounded backoff. Missing scopes disable affected tools.
 Reconnect validates the same account before replacing credentials. Disconnect
-cancels this instance's refresh/actions, invalidates pending approvals and erases
-its credentials. Google-wide grant revocation is a separate explicit action,
-since it can affect other installations; do not silently revoke another instance.
+cancels this instance's refresh/in-flight operations and erases its credentials;
+phase 2 also invalidates pending approvals. Google-wide grant revocation is a
+separate explicit action, since it can affect other installations; do not silently revoke another instance.
 
-### Google scopes and selected files
+### Phase-1 scopes and tools
 
-The selected feature bundle requests `openid email`, `gmail.readonly` plus
-`gmail.compose` for real Gmail drafts/sending, and
-`calendar.calendarlist.readonly` plus `calendar.events` for accessible-calendar
-read/write. Read-only feature selection can use `calendar.events.readonly`
-instead. No `mail.google.com`, label/archive scope or whole-Drive scope. Both
-Gmail scopes are Restricted; compose already permits sending, so scope consent
-cannot replace the daemon gate ([Gmail scopes][gmail-scopes], [Calendar scopes][calendar-scopes]).
+Request only `openid email`, `gmail.readonly`, `gmail.compose`,
+`calendar.calendarlist.readonly` and `calendar.events.readonly`. No Calendar
+write, Drive, `mail.google.com` or label/archive scopes. Gmail read/compose are
+Restricted; compose includes sending permission upstream, but **phase 1 exposes
+no send tool**, raw HTTP proxy or final-submit operation. The daemon operation
+catalog permits only the reads/draft preparation below ([Gmail scopes][gmail-scopes],
+[Calendar scopes][calendar-scopes]). The human reviews and sends in Gmail.
 
-Desktop OAuth does **not** support incremental authorization: changing the
-feature bundle starts a fresh explicit consent flow for the needed scopes,
-checking the actual grant rather than assuming an additive upgrade [native].
-Drive-enabled connections include `drive.file`. Selecting existing files uses
-Google's system-browser Picker flow with `prompt=consent`,
-`trigger_onepick=true`, and **only** `drive.file` in that request. This is an
-additional file-selection consent step, not a promise of one universal consent
-screen. Keep that grant separate so it cannot overwrite Gmail/Calendar tokens.
-Compare Drive `about.user.permissionId` from the main grant and Picker grant
-before attaching selected IDs to the account; mismatches are refused
-([Picker][picker], [account read][drive-about]). `drive.search` sees only IDs
-selected or created by **this instance**, not every file a shared OAuth client
-may previously have accessed. A pasted ID or selected folder never grants an
-unrestricted scan ([Drive scope][drive-scope]).
-
-## Tools and approval
+Desktop OAuth does **not** support incremental authorization. Adding write
+scopes later means one explicit reconnect requesting the new bundle and checking
+the actual grant; that extra consent is accepted [native].
 
 Expose a built-in Google toolset through the existing operations MCP, using the
 same transport-neutral daemon operations for every harness. Each call names a
 connection and checks session eligibility, account ownership and granted scopes.
 
-| Tools | First delivery |
+| Phase-1 tools | Behavior |
 | --- | --- |
 | `gmail.search`, `gmail.read_thread` | Bounded query/page cursor and header/snippet results; full bodies and attachments only when requested. |
-| `gmail.draft`, `gmail.send_draft` | Create/update a Gmail draft; sending is a separate approved action on that draft/version. |
-| `calendar.list`, `calendar.create`, `calendar.update` | List calendars/events; create/update first proposes the exact event, including attendees, calendar, timezone, all-day semantics and notification policy. |
-| `drive.search`, `drive.read`, `drive.save` | Search selected IDs, bounded read/export/download, and approved creation of a new app-owned file; overwrite/sharing changes are later. |
+| `gmail.draft` | Create/update a Gmail draft, returning its ID for review and manual sending in Gmail. No sending. |
+| `calendar.list` | List calendars and events, read only; preserve timezone and all-day semantics. |
 
 All outputs have byte/item limits, field projection, opaque paged cursors and
 explicit truncation. Bodies are untrusted content, never instructions or approval.
 No mailbox mirror or automatic background model turn; `history.list` incremental
 sync is later.
+
+## Deferred phase 2: approved external actions
+
+This phase adds action snapshots, approval cards and one-use execution before
+exposing `gmail.send_draft`, `calendar.create` or `calendar.update`. Event proposals
+include attendees, calendar, timezone, all-day semantics and notification policy.
+Phase 1 does not build this machinery or expose these operations.
 
 **Mandatory daemon gate:** send, event create/update and final submit (including
 Drive save) require one human approval, regardless of permission mode, prompt or
@@ -118,6 +111,20 @@ One approval is consumed once. Audit question/human attribution, resource IDs,
 hash, attempt/result IDs, timestamps and outcome; diagnostic logs contain neither
 message bodies nor credentials.
 
+## Deferred phase 3: selected Drive files
+
+Add `drive.search`, `drive.read` and approved `drive.save` for new app-owned files;
+overwrite/sharing changes remain later. Add `drive.file` to the account grant by
+reconnect. Selecting existing files uses Google's system-browser Picker flow
+with `prompt=consent`, `trigger_onepick=true`, and **only** `drive.file` in that
+request. Keep this separate file-selection grant from Gmail/Calendar tokens;
+this is an additional consent, not one universal consent screen [picker]. Compare
+Drive `about.user.permissionId` from the main and Picker grants before attaching
+selected IDs to the account; mismatches are refused [drive-about]. Search only
+IDs selected or created by **this instance**; pasted IDs and selected folders
+never authorize unrestricted scans. Reads/exports are bounded, and save uses
+the phase-2 approval gate ([Drive scope][drive-scope]).
+
 ## Reuse on current dev
 
 | Existing seam | Reuse / gap |
@@ -125,21 +132,24 @@ message bodies nor credentials.
 | [Settings navigation](../../packages/web/src/islands/ContextPanel.tsx), [routing](../../packages/web/src/lib/router.ts), [content](../../packages/web/src/islands/MainContent.tsx), [sections](../../packages/web/src/components/settings/SettingsSection.tsx) | Add Connections; keep model Providers and raw MCP configuration separate. |
 | [Credential stores](../../packages/daemon/src/lib/credentials/credential-store.ts), [provider manager](../../packages/daemon/src/lib/credentials/provider-credential-manager.ts), [refresh scheduler](../../packages/daemon/src/lib/credentials/oauth-refresh-scheduler.ts) | Reuse encryption/store interface and scheduling patterns; add instance/account/grant namespace, rotation serialization and status APIs. Existing provider/default-account wiring is not connector support. |
 | [Persisted daemon ID](../../packages/daemon/src/storage/repositories/artifact-file-repository.ts), [operations registry](../../packages/daemon/src/lib/operations/registry.ts), [MCP bridge](../../packages/daemon/src/lib/operations/mcp-server.ts) | Reuse identity and caller/transport boundary; register built-in tools here, not token-bearing session configs. |
-| [Questions](../../packages/daemon/src/lib/neo/question-operations.ts), [cards](../../packages/web/src/neo/NeoAskTodos.tsx), [immutable proposal pattern](../../packages/daemon/src/lib/neo/home/github.ts), [DB gateway](../../packages/daemon/src/storage/db-gateway/db-gateway.ts) | Reuse human card/answer rendering, immutable proposal binding and durable reservations; add connector-specific resource/hash/expiry/one-use enforcement. |
+| [Questions](../../packages/daemon/src/lib/neo/question-operations.ts), [cards](../../packages/web/src/neo/NeoAskTodos.tsx), [immutable proposal pattern](../../packages/daemon/src/lib/neo/home/github.ts), [DB gateway](../../packages/daemon/src/storage/db-gateway/db-gateway.ts) | Phase 2 reuses human card/answer rendering, immutable proposal binding and durable reservations; add connector-specific resource/hash/expiry/one-use enforcement then. |
 | [App MCP lifecycle](../../packages/daemon/src/lib/mcp/app-mcp-lifecycle-manager.ts), [repository](../../packages/daemon/src/storage/repositories/app-mcp-server-repository.ts) | Remote transport/static headers exist; managed OAuth connections and dynamic daemon-owned token injection do not. Do not reuse registry headers as a vault. |
 
 ## Human-only Google Console checklist
 
-These are instructions for the human; no agent creates or changes Cloud resources.
+Give the human this phase-1-only checklist near the end of phase 1, before a
+real-account check. No agent creates or changes Cloud resources; fake-Google
+proofs do not require a real Cloud project.
 
-1. Create/select the application's own Cloud project. Enable Gmail, Calendar,
-   Drive and Google Picker APIs [picker].
+1. Create/select the application's own Cloud project. Enable only Gmail and
+   Calendar APIs; Drive/Picker setup waits for phase 3.
 2. Configure Google Auth Platform branding, support/developer contacts, audience
    **External** for personal Google accounts, and an accurate privacy/data-use
    description, including content sent to the user's model service [data-policy].
-3. In Data Access declare the exact scopes above; confirm Calendar sensitivity
-   in Console. `drive.file` is non-sensitive; Gmail read/compose are Restricted.
-   Do not replace them with wider scopes just to bypass setup.
+3. In Data Access declare only `openid email`, `gmail.readonly`, `gmail.compose`,
+   `calendar.calendarlist.readonly` and `calendar.events.readonly`. Confirm their
+   Console classifications; Gmail read/compose are Restricted. No Calendar write
+   or Drive scopes in phase 1; do not widen scopes to bypass setup.
 4. Create a **Desktop app** OAuth client for the agent application; give the
    implementation its client ID/configuration. A distributed desktop client
    secret is not confidential. Use the app's loopback/PKCE flow, not a web-client
@@ -157,53 +167,49 @@ These are instructions for the human; no agent creates or changes Cloud resource
    actual restricted-data/cloud-model flow, including any required security
    assessment. A local daemon is not an automatic exemption [verification].
 
-## Ordered implementation PRs and proof
+## Phase-1 implementation PRs and proof
 
-After design approval **and** 0.49.0 shipment, cut each row as one PR of about
-100–200 production lines, measured before cutting; tests/fixtures ride the slice.
-Split at the named seam if it does not fit; never combine an unverified write
-path with a working read path. Each PR owns a reproducible journey/evidence.
+Immediately after this design merges, cut about eight ordered phase-1 PRs of
+**100–200 production lines** each, measured before cutting; tests/fixtures ride the slice. Reuse the seams
+above; split at the named seam if it does not fit. Each PR owns a reproducible
+journey/evidence. Deferred phases are not prerequisites for this usable phase
+and retain the same per-PR production-line budget.
 
 | Order / slice | Test and isolated acceptance |
 | --- | --- |
-| 1. Connection metadata/status operations | Two instance databases start empty; account IDs/status visible, no tokens in schemas/results. |
-| 2. Namespaced vault adapter | Synthetic Keychain adapter and real encrypted-file fallback; two instances/accounts cannot read each other's bundle; failed replacement preserves prior durable value. |
-| 3. PKCE/state/loopback transport | Fake Google consent/token endpoints; reject wrong state, replay, expired attempt and wrong callback. |
-| 4. Connect/reconnect/disconnect operations | Real RPC completes fake login, partial scope and wrong-account cases; disconnect disables tools/refresh immediately. |
-| 5. Refresh lifecycle | Fake clock: concurrent calls refresh once; rotated token survives restart; omitted refresh token preserved; invalid_grant shows Reconnect needed without loops. |
-| 6. Connections settings UI | Isolated browser clicks Connect through fake consent; account/scopes/health, reconnect and disconnect persist across reload, with screenshots. |
-| 7. Bounded Google HTTP client + Gmail search | Fake 401/429/timeout, redaction, page/byte bounds and correct account routing through real MCP. |
-| 8. Thread read + MIME draft preparation | Full bodies only on request; draft ID, recipients/body/attachments and stable Message-ID preserved. |
-| 9. Action snapshot + question card | Real card displays exact consequences; wrong human/question/account/hash, expired/edited snapshot and agent approval all refuse. |
-| 10. One-use execution reservation/audit | Concurrent requests consume once; crash/restart preserves Uncertain; no generic job retry repeats a write. |
-| 11. Gmail approved send/reconciliation | Mutate draft after preview; race edit at send; lost response after acceptance finds matching Sent, issuing exactly one send. Unresolved timeout never retries. |
-| 12. Calendar reads | Shared-calendar selection, pagination, timezones and all-day dates through fake API/MCP. |
-| 13. Calendar approved writes | Reserved ID, ETag conflict, changed attendees/notifications and lost response; only approved bytes are applied once. |
-| 14. Native Drive Picker grant/selection | Fake separate drive.file-only consent, account mismatch and two-instance selection isolation; callback returns IDs, never RPC tokens. |
-| 15. Selected Drive search/read | Unselected/pasted IDs and implicit folder traversal refused; bounded metadata/export/body results. |
-| 16. Approved new-file save + combined RC | Hash/edit/replay checks and save receipt; run Gmail/Calendar/Drive together through restart/refresh and a post-deploy synthetic smoke. |
+| 1. Connection metadata/status + namespaced vault adapter | Two instances/accounts start empty and cannot read each other's bundles; synthetic Keychain and real encrypted-file fallback; failed replacement preserves prior durable value; no RPC tokens. |
+| 2. PKCE/state/loopback transport | Fake Google consent/token endpoints; reject wrong state, replay, expired attempt and wrong callback. |
+| 3. Connect/reconnect/disconnect operations | Real RPC completes fake login, partial-scope and wrong-account cases; disconnect disables tools/refresh immediately. |
+| 4. Refresh lifecycle | Fake clock: concurrent calls refresh once; rotated token survives restart; omitted refresh token preserved; invalid_grant shows Reconnect needed without loops. |
+| 5. Minimal Connections UI | Isolated browser clicks Connect through fake consent; account/scopes/health, Reconnect and Disconnect persist across reload, with screenshots. |
+| 6. Bounded Google HTTP client + Gmail search | Fake 401/429/timeout, redaction, page/byte bounds and correct account routing through real MCP. |
+| 7. Thread read + create/update MIME drafts | Bodies only on request; exact draft ID, recipients/body/attachments round-trip. Catalog and fake endpoint prove no send operation/request exists. |
+| 8. Read-only Calendar + phase-1 RC | List calendars/events, pages, timezones/all-day dates; prove zero event writes. Combined Gmail/Calendar journey covers restart/refresh, isolation, no sends and a post-deploy synthetic smoke. |
 
 Use the [verify skill](../../.claude/skills/verify/SKILL.md): `NODE_ENV=test`, fresh
 HOME/data/DB, isolated ports, fake Google endpoints and synthetic token fixtures
 only; fake endpoint/key material is injected only into the test daemon, never
 session environments. Extend journeys as each surface ships. UI slices run the
 real UI in an isolated headless profile with screenshots, never human signed-in
-apps. RC asserts zero pre-approval writes, exactly one approved external effect,
-no secrets in RPC/MCP/config/logs, correct two-instance isolation, and all resources
-closed. Fake endpoints prove our control flow, not Google's consent deployment or
-real account interoperability. **This docs-only PR has no runtime proof or
-implementation; those acceptance runs remain to be delivered by the slices.**
+apps. Phase-1 RC checks usable reads/drafts, no email sends/event writes, no secrets
+in RPC/MCP/config/logs, correct two-instance isolation and all resources closed.
+Phase 2 additionally proves zero writes before approval, one approved external
+effect, edit invalidation and uncertain-send reconciliation; phase 3 proves
+Picker account binding and selected-file boundaries. Fake endpoints prove our
+control flow, not Google's consent deployment or real account interoperability.
+**This docs-only PR implements no runtime behavior; these acceptance runs belong
+to the future slices.**
 
-## Steps 2–4 use the same base
+## Later providers share the base
 
-2. **Microsoft Graph:** one delegated account connection exposes Outlook mail and
+- **Microsoft Graph:** one delegated account connection exposes Outlook mail and
    calendar, OneDrive and eligible Teams APIs; adapters reuse the vault, refresh,
    compact output and action gate. Show tenant/admin/account limitations rather
    than assuming all services work for personal accounts [graph].
-3. **Slack:** workspace/account-specific OAuth and official API adapter; same
+- **Slack:** workspace/account-specific OAuth and official API adapter; same
    proposal/approval path for sending. Confirm the provider's supported client
    flow and required installation permissions before wiring it [slack].
-4. **Tools via remote MCP:** daemon-owned OAuth client/proxy for Figma, Notion,
+- **Tools via remote MCP:** daemon-owned OAuth client/proxy for Figma, Notion,
    Atlassian, GitHub and others. Discover resource/authorization metadata, use
    PKCE and supported pre-registration/CIMD (DCR compatibility where supported),
    bind tokens to their resource/audience, and keep them out of app registry
