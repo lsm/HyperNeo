@@ -1,0 +1,116 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createTestDb, createTestSession } from '../../../helpers/database';
+import { neoIntakeMessage } from '../../../../src/lib/neo/intake';
+import { createMailboxEntry } from '../../../../src/lib/mailbox/entry';
+import { boundDeliveryContent } from '../../../../src/lib/handoffs/bound-delivery';
+import { NeoWakeQueueRepository } from '../../../../src/storage/repositories/neo-wake-queue-repository';
+import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository';
+import { NeoSessionMessageRepository } from '../../../../src/storage/repositories/neo-session-message-repository';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
+
+const conversationId = '10000000-0000-4000-8000-000000008723';
+const sessionId = `neo:${conversationId}`;
+const requestId = '20000000-0000-4000-8000-000000008723';
+
+describe('worker batches before human intake', () => {
+  let db: Awaited<ReturnType<typeof createTestDb>>;
+  let root: string;
+  let previous: string | undefined;
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'neo-human-batch-'));
+    previous = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = root;
+    db = await createTestDb();
+    await db.createSession(createTestSession(sessionId));
+    new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', projectId: null });
+  });
+  afterEach(() => {
+    db.close();
+    if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
+    else process.env.HYPERNEO_DATA_DIR = previous;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const hold = (text: string) =>
+    new NeoWakeQueueRepository(db.getDatabase()).hold(
+      createMailboxEntry({
+        to: { kind: 'session', sessionId },
+        origin: 'session:synthetic-worker',
+        messageUuid: crypto.randomUUID(),
+        message: { type: 'user', parent_tool_use_id: null, message: { content: text } },
+      })
+    );
+  const accept = (content: string) => {
+    const prompt = neoIntakeMessage({ sessionId, requestId, content });
+    const ledger = new NeoConversationAskRepository(db.getDatabase());
+    expect(
+      ledger.acceptPromptSync(
+        conversationId,
+        prompt,
+        'immediate',
+        db.getSDKMessageRepo(),
+        db.getJobQueueRepo()
+      )
+    ).toMatchObject({ accepted: true });
+    return { prompt, ledger };
+  };
+
+  test('a separately labelled input precedes the byte-identical human prompt and retries once', () => {
+    hold('Worker note A');
+    hold('Worker note B');
+    const human = '  Keep my words inline, exactly.\n第二行。  ';
+    const { prompt, ledger } = accept(human);
+    const messages = db.getSDKMessageRepo().getSDKMessages(sessionId, 100).messages;
+    expect(messages).toHaveLength(2);
+    expect(db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, requestId)).toEqual([prompt]);
+    const queue = db.getJobQueueRepo();
+    const [batchJob] = queue.dequeueSessionFifo('message_delivery', 1);
+    expect(batchJob.payload.messageUuid).not.toBe(requestId);
+    const batch = db
+      .getSDKMessageRepo()
+      .getDeliveryContent(sessionId, String(batchJob.payload.messageUuid))!;
+    expect(batch.inputKind).toBe('system');
+    expect(JSON.stringify(batch.content)).toContain('System-forwarded worker messages');
+    expect(JSON.stringify(batch.content)).toContain('Worker note A');
+    expect(JSON.stringify(batch.content)).toContain('Worker note B');
+    expect(JSON.stringify(batch.content)).not.toContain(human);
+    queue.complete(batchJob.id, {}, batchJob.claimToken);
+    expect(queue.dequeueSessionFifo('message_delivery', 1)[0].payload.messageUuid).toBe(requestId);
+    expect(new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10)).toEqual([
+      expect.objectContaining({ text: expect.stringContaining('Worker note A') }),
+    ]);
+    expect(
+      ledger.acceptPromptSync(conversationId, prompt, 'immediate', db.getSDKMessageRepo(), queue)
+    ).toMatchObject({ accepted: true, created: false });
+    expect(db.getSDKMessageRepo().getSDKMessages(sessionId, 100).messages).toHaveLength(2);
+  });
+
+  test('oversized worker content is bounded independently of the inline human message', async () => {
+    hold('worker-only-' + 'x'.repeat(70 * 1024));
+    const human = 'Human text must stay inline.';
+    const { prompt } = accept(human);
+    const queue = db.getJobQueueRepo();
+    const jobs = queue.listActiveByPayload('message_delivery', { sessionId });
+    expect(jobs).toHaveLength(2);
+    const batchJob = jobs.find((job) => job.payload.messageUuid !== requestId)!;
+    const humanJob = jobs.find((job) => job.payload.messageUuid === requestId)!;
+    const sdk = db.getSDKMessageRepo();
+    const bounded = await boundDeliveryContent(
+      db.getDatabase(),
+      batchJob,
+      sdk.getDeliveryContent(sessionId, String(batchJob.payload.messageUuid))!
+    );
+    expect(Buffer.byteLength(JSON.stringify(bounded.content))).toBeLessThan(65536);
+    expect(JSON.stringify(bounded.content)).toContain('handoffFiles');
+    const inline = await boundDeliveryContent(
+      db.getDatabase(),
+      humanJob,
+      sdk.getDeliveryContent(sessionId, requestId)!
+    );
+    expect(inline.content).toEqual(prompt.message.content);
+    expect(JSON.stringify(inline.content)).not.toContain('handoffFiles');
+  });
+});
