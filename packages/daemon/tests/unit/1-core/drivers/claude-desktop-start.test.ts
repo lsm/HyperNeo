@@ -553,6 +553,65 @@ describe('claude-desktop start', () => {
     }
   );
 
+  test.each(['legacy', 'missing', 'corrupt'])(
+    'resume repairs %s prepared-worker settings before launch',
+    async (state) => {
+      const directory = join(dir, 'prepared');
+      const driver = adapter({
+        prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
+      });
+      expect(
+        (await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user))
+          .ok
+      ).toBe(true);
+      const path = join(directory, '.claude/settings.local.json');
+      const original = JSON.parse(readFileSync(path, 'utf8'));
+      if (state === 'missing') rmSync(path);
+      else
+        writeFileSync(
+          path,
+          state === 'legacy' ? JSON.stringify({ permissions: original.permissions }) : '{broken'
+        );
+      expect(
+        (
+          await driver.send!(
+            { adapter: 'claude-desktop', id: 'local_u1' },
+            'Synthetic legacy resume',
+            user
+          )
+        ).ok
+      ).toBe(true);
+      const repaired = JSON.parse(readFileSync(path, 'utf8'));
+      expect(repaired.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
+      expect(repaired.env.TMPDIR).toBe(original.env.TMPDIR);
+      expect(spawned.at(-1)).toContain(path);
+    }
+  );
+
+  test.each(['missing', 'corrupt'])(
+    'a %s sibling policy does not block a new prepared start',
+    async (state) => {
+      const first = join(dir, 'prepared');
+      const second = join(dir, 'sibling');
+      mkdirSync(join(second, '.git/info'), { recursive: true });
+      const start = async (directory: string) =>
+        adapter({
+          prepareExecution: async () => ({
+            ok: true,
+            value: { directory, release: async () => {} },
+          }),
+        }).start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user);
+      expect((await start(first)).ok).toBe(true);
+      const path = join(first, '.claude/settings.local.json');
+      if (state === 'missing') rmSync(path);
+      else writeFileSync(path, '{broken');
+      expect((await start(second)).ok).toBe(true);
+      const repaired = JSON.parse(readFileSync(path, 'utf8'));
+      expect(repaired.sandbox.enabled).toBe(true);
+      expect(repaired.env.TMPDIR).toBeTruthy();
+    }
+  );
+
   test('resuming a prepared worker recreates purged runtime directories and passes its policy', async () => {
     const directory = join(dir, 'prepared');
     const driver = adapter({

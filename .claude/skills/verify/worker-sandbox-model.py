@@ -7,14 +7,15 @@ engine = sys.argv[3] if len(sys.argv) > 3 else 'claude'
 outside = run / (engine + '-outside')
 outside.mkdir(exist_ok=True)
 probe = worker / 'probe.sh'
+for name in ['fallback-cache', 'fallback-tmp']: (worker / name).mkdir(exist_ok=True)
 probe.write_text(f'''#!/bin/sh
 printf inside > inside-{engine}.txt
 printf metadata > .git/hyperneo-probe-{engine}
-printf cache > "$XDG_CACHE_HOME/probe-{engine}"
-printf "%s" "$TMPDIR" > observed-temp-{engine}.txt
+printf cache > "${{XDG_CACHE_HOME:-{worker}/fallback-cache}}/probe-{engine}"
+printf "%s" "${{TMPDIR:-{worker}/fallback-tmp}}" > observed-temp-{engine}.txt
 printf outside > '{outside}/escaped.txt'
 printf 'outside-status=%s\\n' "$?"
-printf temp > "$TMPDIR/probe-{engine}"
+printf temp > "${{TMPDIR:-{worker}/fallback-tmp}}/probe-{engine}"
 printf 'temp-status=%s\\n' "$?"
 ''')
 protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine != 'codex' else []

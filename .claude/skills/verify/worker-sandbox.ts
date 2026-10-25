@@ -87,6 +87,13 @@ try {
   const started = await rpc('work.start', request) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
   const worker = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
+  if (process.env.VERIFY_LEGACY_POLICY === '1') {
+    const path = join(worker, '.claude/settings.local.json');
+    const current = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ permissions: current.permissions }));
+    const resumed = await rpc('work.send', { ref: started.value.ref, message: 'Synthetic legacy policy resume' }) as { ok: boolean };
+    assert(resumed.ok, JSON.stringify(resumed));
+  }
   const proof = spawnSync('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, worker], { encoding: 'utf8', timeout: 120000 });
   evidence.push({ stdout: proof.stdout, stderr: proof.stderr, status: proof.status });
   assert.equal(proof.status, 0, proof.stdout + proof.stderr);
