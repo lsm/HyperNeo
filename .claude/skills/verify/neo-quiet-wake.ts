@@ -2,11 +2,10 @@ import { strict as assert } from 'node:assert';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
-import { z } from '../../../packages/daemon/node_modules/zod/index.js';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
-import { createOperationRegistry, defineOperation } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { readCodexTurn, type CodexThreadDetail } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import type { SessionManager } from '../../../packages/daemon/src/lib/session/session-manager.ts';
@@ -58,9 +57,21 @@ try {
   assert(opened.ok);
   const root = opened.sessionId;
   let turnEnds: Awaited<ReturnType<typeof readCodexTurn>>['turnEnds'] = [];
-  const registry = createOperationRegistry([defineOperation({ name: 'work.status', description: 'Synthetic status source', inputSchema: z.unknown(), resultSchema: z.unknown(), policy: { safetyClass: 'read' }, execute: async () => ({ ok: true, value: { status: 'running', lastActivityAt: Date.now(), turnEnds } }) })]);
+  const status = app.sessionManager.getOperationRegistry().get('work.status');
+  assert(status);
+  const registry = createOperationRegistry([{ ...status, execute: async () => ({ ok: true, value: {
+    ref: { adapter: 'codex-desktop', id: 'synthetic-worker' }, title: 'Synthetic worker',
+    place: { machine: 'local', name: 'Synthetic' }, status: 'running',
+    lastActivityAt: Date.now(), turnEnds,
+  } }) }]);
   service = createNeoService(app.db, { getOperationRegistry: () => registry } as unknown as SessionManager, app.messageHub, app.internalEventBus);
   const readOnlyQuiet = [];
+  const bodyCopyReady = () => app.db.getDatabase().prepare(
+    "SELECT 1 FROM migration_markers WHERE key='sdk_message_bodies_copy_v1:complete'"
+  ).get();
+  const bodyCopyDeadline = Date.now() + 15000;
+  while (!bodyCopyReady() && Date.now() < bodyCopyDeadline) await Bun.sleep(25);
+  assert(bodyCopyReady(), 'startup body copy must finish before the read-only proof');
   app.db.getDatabase().exec('PRAGMA query_only=ON');
   try {
     for (const kind of ['focused_status', 'quiet_heartbeat'] as const) {

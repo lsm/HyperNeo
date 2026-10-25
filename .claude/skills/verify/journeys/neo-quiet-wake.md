@@ -51,7 +51,8 @@ head, the same helper fails the overlap assertion and retains overlaps.json.
 ## Quiet history uses the DB writer
 
 Before delivering worker turn ends, the helper makes only the isolated daemon's
-main connection read-only. Ten concurrent retries of each quiet kind must still
+main connection read-only, after observing the startup body-copy completion
+marker so that setup cannot interrupt its background migration. Ten concurrent retries of each quiet kind must still
 persist exactly one history row through the DB writer and produce zero Neo
 turns. The main connection is restored in finally. Retain readonly-quiet.json;
 the prior head fails with a read-only database error. Also run the
