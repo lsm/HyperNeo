@@ -73,7 +73,8 @@ The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
 the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
 run if saving evidence fails. Keep baseline and fixed evidence in separate
-directories; the helper must close its resources in finally.
+directories; the helper must close its resources in finally. The wrapper trims
+the host TMPDIR's trailing slash so its isolated paths match normalized paths.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
 

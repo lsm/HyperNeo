@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 
-type IssueTodo = { id: string; issue: string };
+type IssueTodo = Pick<NeoTodo, 'id' | 'state' | 'check'>;
 
 export const planCodingIssuePrClaims = (superpipe({})('coding.issue-pr-claims') as PipelineAPI)
   .input(['repo', 'number', 'body', 'todos'])
@@ -17,7 +18,14 @@ export const planCodingIssuePrClaims = (superpipe({})('coding.issue-pr-claims') 
   .pipe(
     (repo: string, number: number, issues: string[], todos: readonly IssueTodo[]) =>
       todos
-        .filter((todo) => issues.includes(todo.issue.toLowerCase()))
+        .filter(
+          (todo) =>
+            ['todo', 'doing', 'blocked'].includes(todo.state) &&
+            todo.check?.pack === 'coding' &&
+            todo.check.kind === 'issue_closed' &&
+            typeof todo.check.params.issue === 'string' &&
+            issues.includes(todo.check.params.issue.toLowerCase())
+        )
         .map((todo) => ({
           todoId: todo.id,
           url: `https://github.com/${repo.toLowerCase()}/pull/${number}`,

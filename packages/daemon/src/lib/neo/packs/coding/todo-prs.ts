@@ -16,6 +16,7 @@ import { createCodingPackTables } from './schema/coding-tables.ts';
 import { neoGitRepo } from '../../todo-repo.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
 import { planCodingIssuePrClaims } from './issue-pr-claims.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
 
 export type CodingPrClaim = 'named' | 'reported' | 'branch';
 export type CodingPrClaimRow = {
@@ -52,13 +53,8 @@ export class CodingTodoPrRepository {
     rows: readonly { repo: string; number: number; body?: string }[],
     now: number
   ): void {
-    const todos = this.db
-      .prepare(`SELECT id, json_extract(check_json, '$.params.issue') AS issue
-      FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked')
-      AND json_extract(check_json, '$.pack') = 'coding'
-      AND json_extract(check_json, '$.kind') = 'issue_closed'
-      AND json_type(check_json, '$.params.issue') = 'text'`)
-      .all() as { id: string; issue: string }[];
+    const store = new NeoAskTodoRepository(this.db);
+    const todos = store.listTodosForAsks(store.listOpenAsks().map((ask) => ask.id));
     for (const row of rows)
       for (const claim of planCodingIssuePrClaims(row.repo, row.number, row.body ?? '', todos))
         this.claim(claim.todoId, [{ url: claim.url, claim: 'named' }], now);
