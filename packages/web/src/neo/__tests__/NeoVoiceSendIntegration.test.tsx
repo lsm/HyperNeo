@@ -5,6 +5,7 @@ import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import type { NeoQuote } from '../neo-intake.ts';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import { resetVoiceAudioOutbox } from '../../lib/voice/voice-audio-outbox.ts';
 
 type IntakeInput = {
   sessionId: string;
@@ -137,7 +138,7 @@ function renderComposer(
   });
   const onCancelQuote = vi.fn();
   const sessionStore = makeStore();
-  const composer = (selectedQuote?: NeoQuote) => (
+  const composer = (selectedQuote?: NeoQuote, selectedPreview = previewContext ?? null) => (
     <NeoComposer
       store={sessionStore}
       sessionId="neo-1"
@@ -147,7 +148,7 @@ function renderComposer(
       onTranscript={onTranscript}
       onSend={onSend}
       quote={selectedQuote}
-      previewContext={previewContext}
+      previewContext={selectedPreview ?? undefined}
       onCancelQuote={onCancelQuote}
     />
   );
@@ -160,7 +161,8 @@ function renderComposer(
     onTranscript,
     onCancelQuote,
     unmount: view.unmount,
-    rerender: (selectedQuote?: NeoQuote) => view.rerender(composer(selectedQuote)),
+    rerender: (selectedQuote?: NeoQuote, selectedPreview = previewContext ?? null) =>
+      view.rerender(composer(selectedQuote, selectedPreview)),
   };
 }
 
@@ -181,6 +183,7 @@ const asks = () =>
   ) as Array<[string, { name: string; input: IntakeInput }]>;
 
 beforeEach(() => {
+  resetVoiceAudioOutbox();
   vi.clearAllMocks();
   hubRequest.mockReset().mockImplementation(defaultHub);
   store.records.clear();
@@ -199,9 +202,113 @@ beforeEach(() => {
     };
   });
 });
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await Promise.resolve();
+  resetVoiceAudioOutbox();
+});
 
 describe('NeoComposer and NeoVoice send integration', () => {
+  it.each([
+    ['quote', false],
+    ['quote', true],
+    ['attachment', false],
+    ['attachment', true],
+  ] as const)(
+    'does not settle a partial voice retry around %s framing (Preview: %s)',
+    async (framing, bound) => {
+      voice.recording = false;
+      const original: NeoPreviewReference = {
+        artifactId: 'report-a',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Saved A',
+        state: 'available',
+      };
+      store.records.set('unsettled', {
+        id: 'unsettled',
+        sessionId: 'neo-1',
+        audioBase64: 'aGk=',
+        mimeType: 'audio/wav',
+        peakLevel: 0.5,
+        createdAt: Date.now(),
+        intent: 'send',
+        sendDraft: 'typed first',
+        ...(bound ? { previewContext: original } : {}),
+      });
+      if (framing === 'attachment')
+        attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];
+      const quote: NeoQuote | undefined =
+        framing === 'quote'
+          ? { author: 'Neo', text: 'Earlier answer', anchor: 'source' }
+          : undefined;
+      const { current, onSend, onTranscript, onError } = renderComposer('typed first', quote);
+      fireEvent.click(await screen.findByTestId('resend-voice-audio'));
+      await waitFor(() =>
+        expect(reportedErrors(onError)).toContain(
+          'Could not send that recording. It is saved below so you can retry.'
+        )
+      );
+      expect(asks()).toHaveLength(0);
+      expect(store.records.has('unsettled')).toBe(true);
+      expect(store.records.get('unsettled')?.sendText).toBeUndefined();
+      expect(current.value).toBe('typed first');
+      expect(onSend).not.toHaveBeenCalled();
+      expect(onTranscript).not.toHaveBeenCalled();
+      if (framing === 'quote')
+        expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
+          'Earlier answer'
+        );
+      else expect(screen.getByText('notes.txt')).toBeTruthy();
+    }
+  );
+  it.each([false, true])(
+    'clears sent text after unbinding unless newer text exists: %s',
+    async (newer) => {
+      voice.recording = false;
+      const original: NeoPreviewReference = {
+        artifactId: 'report-a',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Saved A',
+        state: 'available',
+      };
+      store.records.set('bound-unset', {
+        id: 'bound-unset',
+        sessionId: 'neo-1',
+        audioBase64: 'aGk=',
+        mimeType: 'audio/wav',
+        peakLevel: 0.5,
+        createdAt: Date.now(),
+        intent: 'send',
+        sendDraft: 'typed first',
+        sendText: 'typed first\nspoken second',
+        previewContext: original,
+      });
+      let complete!: () => void;
+      const gate = new Promise<void>((done) => {
+        complete = done;
+      });
+      hubRequest.mockImplementation(async (method, payload) => {
+        if (method === 'operation.invoke') await gate;
+        return defaultHub(method, payload);
+      });
+      const { current, onDraft, rerender } = renderComposer('typed first', undefined, original);
+      rerender(undefined, null);
+      fireEvent.click(await screen.findByTestId('resend-voice-audio'));
+      await waitFor(() => expect(asks()).toHaveLength(1));
+      if (newer) {
+        current.value = 'Newer text';
+        rerender(undefined, null);
+      }
+      complete();
+      await waitFor(() => expect(store.records.size).toBe(0));
+      expect(asks()[0][1].input.previewContext).toEqual({
+        artifactId: original.artifactId,
+        snapshot: original.snapshot,
+      });
+      expect(current.value).toBe(newer ? 'Newer text' : '');
+      if (newer) expect(onDraft).not.toHaveBeenCalledWith('');
+    }
+  );
   it.each([false, true])(
     'retries the saved Preview rather than current binding, refused first: %s',
     async (refused) => {

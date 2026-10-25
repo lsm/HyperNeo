@@ -107,10 +107,8 @@ export async function submitVoiceSendIntent(
       settled,
       'That recording already has a different message queued.'
     );
-  if (record.sendText === undefined) {
-    const stored = await putVoiceRecord({ ...record, sendText: settled });
-    if (!stored) return { kind: 'unconfirmed' };
-  }
+  const stored = await putVoiceRecord({ ...record, sendText: settled });
+  if (!stored) return { kind: 'unconfirmed' };
   let receipt: { ok: true } | { ok: false; reason: string };
   try {
     receipt =

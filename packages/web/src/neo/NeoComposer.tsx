@@ -193,7 +193,10 @@ export function NeoComposer({
     record: VoiceRecordEntry,
     transcript: string
   ): Promise<VoiceSendOutcome> {
-    if (record.intent !== 'send' && record.sendText === undefined && needsDraft)
+    if (
+      record.sendText === undefined &&
+      (hasAttachments || quote || (record.intent !== 'send' && boundPreview))
+    )
       return { kind: 'unconfirmed' };
     const composed =
       record.sendText ?? combineVoiceSubmission(record.sendDraft ?? draft, transcript);
@@ -216,8 +219,9 @@ export function NeoComposer({
         currentSession.current === sessionId &&
         currentDraft.current === draft &&
         draft === record.sendDraft &&
-        currentPreview.current?.artifactId === record.previewContext?.artifactId &&
-        currentPreview.current?.snapshot === record.previewContext?.snapshot &&
+        (!currentPreview.current ||
+          (currentPreview.current.artifactId === record.previewContext?.artifactId &&
+            currentPreview.current.snapshot === record.previewContext?.snapshot)) &&
         !currentQuote.current
       )
         onDraft('');

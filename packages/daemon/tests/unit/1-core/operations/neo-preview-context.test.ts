@@ -250,6 +250,7 @@ describe('typed Neo Preview context', () => {
 test('Preview context survives the actual isolated RPC door and daemon restart', () => {
   const run = realpathSync(mkdtempSync(join(tmpdir(), 'neo-preview-context-proof-')));
   mkdirSync(join(run, 'home'));
+  mkdirSync(join(run, 'tmp'));
   try {
     const output = execFileSync(
       'bun',
@@ -262,6 +263,9 @@ test('Preview context survives the actual isolated RPC door and daemon restart',
           PATH: process.env.PATH,
           HOME: join(run, 'home'),
           HYPERNEO_DATA_DIR: join(run, 'data'),
+          TMPDIR: join(run, 'tmp'),
+          TMP: join(run, 'tmp'),
+          TEMP: join(run, 'tmp'),
           NODE_ENV: 'test',
           LOG_LEVEL: 'error',
         },

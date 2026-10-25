@@ -11,6 +11,8 @@ import {
   deleteVoiceRecord,
   getVoiceRecord,
   putVoiceRecord,
+  listVoiceRecords,
+  pruneVoiceRecords,
   resetVoiceAudioStore,
   type VoiceRecordEntry,
 } from '../voice-audio-store.ts';
@@ -65,9 +67,127 @@ afterEach(() => {
   resetVoiceAudioStore();
   io.hub = null;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('durable voice Preview context', () => {
+  it('keeps a held reference and audio past the ordinary 24-hour prune boundary until explicit deletion', async () => {
+    const held = { ...record(), sendText: 'Frozen text', sendRefusal: 'Preview unavailable' };
+    expect(await putVoiceRecord(held)).toBe(true);
+    vi.spyOn(Date, 'now').mockReturnValue(held.createdAt + 25 * 60 * 60 * 1000);
+    expect(await getVoiceRecord(id)).toMatchObject({
+      previewContext: reference,
+      sendRefusal: held.sendRefusal,
+    });
+    expect((await listVoiceRecords()).map((entry) => entry.id)).toContain(id);
+    await pruneVoiceRecords();
+    resetVoiceAudioStore();
+    expect(await getVoiceRecord(id)).toMatchObject({
+      audioBase64: held.audioBase64,
+      previewContext: reference,
+    });
+    await deleteVoiceRecord(id);
+    expect(await getVoiceRecord(id)).toBeNull();
+  });
+  it('evicts ordinary audio before an older held reference at capacity', async () => {
+    await putVoiceRecord({
+      ...record(),
+      createdAt: Date.now() - 7200000,
+      sendText: 'Frozen',
+      sendRefusal: 'Preview unavailable',
+    });
+    for (let index = 0; index < 5; index++) {
+      const plain = {
+        ...record(),
+        id: `plain-${index}`,
+        createdAt: Date.now() + index,
+        previewContext: undefined,
+      };
+      expect(await putVoiceRecord(plain)).toBe(true);
+    }
+    resetVoiceAudioStore();
+    expect(await getVoiceRecord(id)).toMatchObject({ previewContext: reference });
+    expect(await getVoiceRecord('plain-0')).toBeNull();
+    expect(await listVoiceRecords()).toHaveLength(5);
+  });
+  it('refuses a new ordinary record rather than silently deleting any of five held references', async () => {
+    for (let index = 0; index < 5; index++)
+      expect(
+        await putVoiceRecord({
+          ...record(),
+          id: `held-${index}`,
+          sendText: 'Frozen',
+          sendRefusal: 'Preview unavailable',
+        })
+      ).toBe(true);
+    expect(await putVoiceRecord({ ...record(), id: 'new-record', previewContext: undefined })).toBe(
+      false
+    );
+    resetVoiceAudioStore();
+    expect((await listVoiceRecords()).map((entry) => entry.id)).toEqual([
+      'held-0',
+      'held-1',
+      'held-2',
+      'held-3',
+      'held-4',
+    ]);
+  });
+  it('does not admit a sixth new held reference while preserving the original five', async () => {
+    for (let index = 0; index < 5; index++)
+      await putVoiceRecord({
+        ...record(),
+        id: `held-${index}`,
+        sendText: 'Frozen',
+        sendRefusal: 'Preview unavailable',
+      });
+    expect(
+      await putVoiceRecord({
+        ...record(),
+        id: 'sixth-held',
+        sendText: 'Frozen',
+        sendRefusal: 'Preview unavailable',
+      })
+    ).toBe(false);
+    resetVoiceAudioStore();
+    expect(await listVoiceRecords()).toHaveLength(5);
+    expect(await getVoiceRecord('held-0')).not.toBeNull();
+    expect(await getVoiceRecord('sixth-held')).toBeNull();
+  });
+  it('keeps overflow audio in memory but cannot send it before durable space is available', async () => {
+    for (let index = 0; index < 5; index++)
+      await putVoiceRecord({
+        ...record(),
+        id: `held-${index}`,
+        sendText: 'Frozen',
+        sendRefusal: 'Preview unavailable',
+      });
+    expect(await putVoiceRecord({ ...record(), id: 'overflow' })).toBe(false);
+    const buffered = await getVoiceRecord('overflow');
+    expect(buffered).not.toBeNull();
+    const request = vi.fn(async (_method: string, { input }: { input: Payload }) =>
+      accepted(input)
+    );
+    const hub = { request } as unknown as MessageHub;
+    expect(await submitVoiceSendIntent(hub, buffered!, 'Spoken overflow')).toEqual({
+      kind: 'unconfirmed',
+    });
+    const settled = await getVoiceRecord('overflow');
+    expect(settled?.sendText).toBe('Spoken overflow');
+    expect(await submitVoiceSendIntent(hub, settled!, 'Spoken overflow')).toEqual({
+      kind: 'unconfirmed',
+    });
+    expect(request).not.toHaveBeenCalled();
+    await deleteVoiceRecord('held-0');
+    expect(await submitVoiceSendIntent(hub, settled!, 'Spoken overflow')).toEqual({
+      kind: 'accepted',
+    });
+    expect(request).toHaveBeenCalledOnce();
+    resetVoiceAudioStore();
+    expect(await getVoiceRecord('overflow')).toMatchObject({
+      sendText: 'Spoken overflow',
+      previewContext: reference,
+    });
+  });
   it('captures the exact reference before stopping/encoding audio', async () => {
     let stop!: () => void;
     const stopped = new Promise<void>((done) => {
