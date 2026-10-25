@@ -476,4 +476,10 @@ env -i HOME="$RATE_LIMIT_CANCEL_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$RATE_LIMIT_CANCEL_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-rate-limit-cancel.ts" "$RATE_LIMIT_CANCEL_RUN"
 
+OWNED_WITHDRAWAL_RUN="$WORK_DIR/owned-withdrawal"
+mkdir -p "$OWNED_WITHDRAWAL_RUN/home"
+env -i HOME="$OWNED_WITHDRAWAL_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$OWNED_WITHDRAWAL_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-owned-input-withdrawal.ts" "$OWNED_WITHDRAWAL_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

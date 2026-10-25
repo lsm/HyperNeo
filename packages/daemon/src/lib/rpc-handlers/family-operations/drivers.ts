@@ -172,7 +172,7 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
 }
 
 export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
-  const { sessionManager, internalEventBus, db, jobQueue } = context.deps;
+  const { sessionManager, internalEventBus, db } = context.deps;
   return {
     rename: async (ref, title) => {
       const session = sessionManager.getSessionFromDB(ref.id);
@@ -185,9 +185,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
     },
     withdraw: (sessionId, id, from) =>
       withdrawOwnedInput(sessionId, id, from, {
-        jobs: jobQueue,
-        transaction: (effect) => db.getDatabase().transaction(effect)(),
-        messageId: (target, uuid) => db.getSDKMessageRepo().findMessageIdByUuid(target, uuid),
+        db: db.getDatabase(),
         removeDeferred: async (target, dbId, jobId) => {
           const session = sessionManager.getCachedSession(target);
           if (session)
