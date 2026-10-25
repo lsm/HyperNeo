@@ -317,3 +317,42 @@ describe('default write completion', () => {
     expect(server().row?.enabled).toBe(0);
   });
 });
+
+describe('default commit last-change timestamps', () => {
+  it('refreshes global settings time using the existing UTC text format', () => {
+    db.prepare("UPDATE global_settings SET updated_at='2000-01-01 00:00:00' WHERE id=1").run();
+    const target = defaults();
+    const before = (db.prepare("SELECT datetime('now') AS value").get() as { value: string }).value;
+    expect(commitToolDefaultUpdate(db, target, [], selection, () => true)).toBe('won');
+    const after = (db.prepare("SELECT datetime('now') AS value").get() as { value: string }).value;
+    const updated = defaults().row!.updated_at as string;
+    expect(typeof updated).toBe('string');
+    expect(updated).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(updated! >= before).toBe(true);
+    expect(updated! <= after).toBe(true);
+  });
+  it('moves an edited Space ahead of an older edit and exposes its current millisecond timestamp', () => {
+    const spaces = new SpaceRepository(db);
+    const edited = spaces.createSpace({
+      name: 'Edited',
+      slug: 'edited',
+      workspacePath: '/synthetic',
+    });
+    const other = spaces.createSpace({
+      name: 'Other',
+      slug: 'other',
+      workspacePath: '/synthetic/other',
+    });
+    db.prepare('UPDATE spaces SET updated_at=1000 WHERE id=?').run(edited.id);
+    db.prepare('UPDATE spaces SET updated_at=2000 WHERE id=?').run(other.id);
+    expect(spaces.listSpaces().map((space) => space.id)).toEqual([other.id, edited.id]);
+    const target = captureToolPreferenceRow(db, { table: 'spaces', id: edited.id });
+    const before = Date.now();
+    expect(commitToolDefaultUpdate(db, target, [], selection, () => true)).toBe('won');
+    expect(spaces.listSpaces().map((space) => space.id)).toEqual([edited.id, other.id]);
+    const updated = spaces.getSpace(edited.id)!.updatedAt;
+    expect(typeof updated).toBe('number');
+    expect(updated).toBeGreaterThanOrEqual(before);
+    expect(updated).toBeLessThanOrEqual(Date.now());
+  });
+});
