@@ -113,16 +113,19 @@ try {
   report.successSnapshot = snapshot;
   if (mode === 'before') assert(mainQueries.length > 0, 'baseline progress SQL remains on main');
   else assert.equal(mainQueries.length, 0, 'progress writes and reset lookup leave main');
+  sessions.recordStartedAt('progress-todo', null);
+  sessions.recordLive('progress-todo', 'needs_you', undefined);
+  sessions.recordNeedsYouSince('progress-todo', 900);
   lock = spawn('/usr/bin/python3', ['-c', "import sqlite3,sys,time\ndb=sqlite3.connect(sys.argv[1]); db.execute('BEGIN IMMEDIATE'); print('locked',flush=True); time.sleep(1.2); db.rollback(); db.close()", join(run, 'data/daemon.db')], { stdio: ['ignore', 'pipe', 'pipe'] });
   const released = new Promise<void>((done, fail) => { lock!.once('error', fail); lock!.once('exit', (code) => code === 0 ? done() : fail(new Error('synthetic lock holder failed'))); });
   await new Promise<void>((done) => lock!.stdout!.once('data', (data) => { assert(String(data).includes('locked')); done(); }));
   const progress = { landed: 7, live: { status: 'running' as const, lastActivityAt: 7 }, cardStatus: 'running' as const };
   const start = performance.now();
   recording = true;
-  const write = mode === 'before' ? Promise.resolve().then(() => {
+  const write = mode === 'before' ? Promise.resolve().then(async () => {
     sessions.recordStartedAt('progress-todo', progress.landed);
     if (sessions.readNeedsYouSince('progress-todo') !== null) sessions.recordNeedsYouSince('progress-todo', null);
-    sessions.recordLive('progress-todo', 'running', undefined);
+    await sessions.write('recordLive', 'progress-todo', 'running', undefined);
     sessions.recordCardCheck('progress-todo', { checkedAt: 8, unchecked: false });
   }) : sessions.write('recordProgress', 'progress-todo', progress, 8);
   const healthStart = performance.now();
