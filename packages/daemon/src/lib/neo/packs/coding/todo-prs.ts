@@ -15,6 +15,7 @@ import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';
 import { neoGitRepo } from '../../todo-repo.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
+import { planCodingIssuePrClaims } from './issue-pr-claims.ts';
 
 export type CodingPrClaim = 'named' | 'reported' | 'branch';
 export type CodingPrClaimRow = {
@@ -45,6 +46,22 @@ export class CodingTodoPrRepository {
   constructor(private readonly db: Database) {
     this.stageFacts = new CodingStageFactsRepository(db);
     this.deliveryFacts = new CodingDeliveryFactsRepository(db);
+  }
+
+  claimClosingIssues(
+    rows: readonly { repo: string; number: number; body?: string }[],
+    now: number
+  ): void {
+    const todos = this.db
+      .prepare(`SELECT id, json_extract(check_json, '$.params.issue') AS issue
+      FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked')
+      AND json_extract(check_json, '$.pack') = 'coding'
+      AND json_extract(check_json, '$.kind') = 'issue_closed'
+      AND json_type(check_json, '$.params.issue') = 'text'`)
+      .all() as { id: string; issue: string }[];
+    for (const row of rows)
+      for (const claim of planCodingIssuePrClaims(row.repo, row.number, row.body ?? '', todos))
+        this.claim(claim.todoId, [{ url: claim.url, claim: 'named' }], now);
   }
 
   stages(todoId: string) {
@@ -550,7 +567,6 @@ export function createCodingTodoPack(
     schema: createCodingPackTables,
     repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
     openedPrs: async (todo, urls) => {
-      if (todo.check?.kind === 'issue_closed') return;
       await repo.write(
         'claim',
         todo.id,

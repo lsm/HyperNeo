@@ -23,7 +23,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import type { NeoSessionFacts } from '../../pack-contract.ts';
-import { codingPrKey } from './todo-prs.ts';
+import { CodingTodoPrRepository, codingPrKey } from './todo-prs.ts';
 import type { CodingLedgerRead } from './pr-ledger-source.ts';
 
 export {
@@ -56,6 +56,7 @@ const log = new Logger('NeoCodingLedger');
 const Node = z.object({
   number: z.number().int(),
   title: z.string(),
+  body: z.string().default(''),
   headRefName: z.string(),
   headRefOid: z.string(),
   state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
@@ -195,6 +196,7 @@ export type CodingLedgerRow = {
   repo: string;
   number: number;
   title: string;
+  body?: string;
   branch: string;
   head: string;
   state: CodingPrState;
@@ -226,6 +228,7 @@ export function planCodingLedgerRead(
       repo: canonical,
       number: pr.number,
       title: pr.title,
+      ...(pr.body ? { body: pr.body } : {}),
       branch: pr.headRefName,
       head: pr.headRefOid,
       state: codingPrState(pr, repoHasCi, policy),
@@ -244,6 +247,7 @@ type CodingSessionLinks = {
   repos: string[];
   branches: string[];
   owned: string[];
+  opened?: string[];
   prs: string[];
   dismissed: string[];
   sidebar?: boolean;
@@ -263,6 +267,13 @@ export function planCodingPrOwner(
   const claim = claims.get(url);
   if (claim) return claim;
   const owned = sessions.filter((session) => session.owned.includes(url));
+  const opened = sessions.filter(
+    (session) =>
+      session.opened?.includes(url) &&
+      !session.dismissed.includes(url) &&
+      (session.sidebar === false ||
+        (JSON.parse(session.ref) as { adapter: string }).adapter !== 'claude-desktop')
+  );
   const linked = sessions.filter(
     (session) =>
       session.prs.includes(url) &&
@@ -275,7 +286,7 @@ export function planCodingPrOwner(
       session.repos.includes(row.repo.toLowerCase()) &&
       session.branches.includes(row.branch)
   );
-  const candidates = [owned, linked, branched].find((tier) => tier.length) ?? [];
+  const candidates = [owned, opened, linked, branched].find((tier) => tier.length) ?? [];
   if (candidates.some((session) => session.ref === row.owner)) return row.owner;
   if (candidates.length) return candidates[0].ref;
   return sessions.some((session) => session.ref === row.owner) ? null : row.owner;
@@ -389,6 +400,7 @@ export class CodingPrLedgerRepository {
         ).map((row) => [row.number, row.state])
       );
       this.upsert(rows, now, observedAt);
+      new CodingTodoPrRepository(this.db).claimClosingIssues(rows, now);
       this.db
         .prepare(
           `DELETE FROM pack_coding_pr_ledger WHERE repo = ? AND closed_at IS NULL
@@ -577,6 +589,7 @@ export class CodingPrLedgerRepository {
       repos: JSON.parse(row.repos) as string[],
       branches: JSON.parse(row.branches) as string[],
       owned: JSON.parse(row.owned) as string[],
+      opened: JSON.parse(row.opened) as string[],
       prs: JSON.parse(row.linked ?? row.opened) as string[],
       sidebar: row.linked !== null,
       dismissed: JSON.parse(row.dismissed) as string[],
