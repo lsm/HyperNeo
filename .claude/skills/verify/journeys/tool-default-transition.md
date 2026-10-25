@@ -5,11 +5,11 @@ Use shared in-process setup in SKILL.md with
 provider registration or GUI is required. The helper owns a fresh file-backed
 isolated daemon, two boots, sockets and an in-memory synthetic MCP server.
 
-This is a Build slice. Invoke the registered worker operation directly, then read
+This is a Build-slice proof. Invoke the registered worker operation directly, then read
 its catalog effects through the real registry RPC and the web's skills.list
 LiveQuery subscription. Canonical templates are inspected in the synthetic DB;
-cold session.get proves the existing session stays frozen. Active setters and
-SDK/UI consumers are not wired by this slice.
+cold session.get proves the existing session stays frozen. The mcp-default-writes journey covers the separately wired MCP/Space setters.
+SDK/UI consumers remain assigned to later slices.
 
 Pass requires:
 
@@ -42,8 +42,8 @@ Pass requires:
 Read evidence/tool-default-transition.json. Require pass=true and true
 workerOffMain/globalAndSpaceDefaults/explicitSpaceVetoPreserved/
 clearInheritedCanonicalDefault/rollback/frozenSessionPreserved/
-skillLiveQueryReadback/restartRetainedDefaults flags. defaultCallerWired,
-sdkConsumerWired, sdkApplyVerified and queryStarted remain false. No attachment
+skillLiveQueryReadback/restartRetainedDefaults flags. workerInvokedDirectly=true; sdkConsumerWired, sdkApplyVerified and queryStarted
+remain false. No attachment
 or Use here UI proof is claimed. All owned resources close in finally.
 
 Run tool-default-transition.test.ts alongside tool-preference-commit,

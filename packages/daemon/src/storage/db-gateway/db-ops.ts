@@ -1,3 +1,7 @@
+import {
+  codingBranchReads,
+  codingBranchWrites,
+} from '../../lib/neo/packs/coding/branch-facts-db.ts';
 import { neoProjectForgetWrites } from '../repositories/neo-project-forget-writes.ts';
 import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
 import { neoProjectCleanupWrites } from '../repositories/neo-project-cleanup-writes.ts';
@@ -33,6 +37,7 @@ import {
   jobQueueReads,
   jobQueueWrites,
 } from '../repositories/job-queue-repository.ts';
+import { submitSessionEvent } from '../repositories/session-event-submission.ts';
 import { parkDeliveryJob } from '../repositories/job-delivery-parking.ts';
 import { recordClaudeInboxRoute } from '../repositories/claude-inbox-route-repository.ts';
 import { replaceNeoSessionSeen } from '../repositories/neo-session-seen-repository.ts';
@@ -62,10 +67,13 @@ import { createStandaloneTask } from '../tasks/create-task.ts';
 import { editStandaloneTaskWithDependencies } from '../tasks/set-task-dependencies.ts';
 import { transitionStandaloneTask } from '../tasks/transition-task.ts';
 import { deleteWorkFeedBatch } from '../work-feed.ts';
+import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write.ts';
 import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    codingBranchReads,
+    codingBranchWrites,
     neoProjectForgetWrites,
     neoProjectCleanupWrites,
     reserveNeoHomeProjects,
@@ -80,6 +88,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     touchDevice,
     recordUnpaired,
     jobQueueWrites,
+    submitSessionEvent,
     jobQueueReads,
     parkDeliveryJob,
     externalEventSweeps,
@@ -114,5 +123,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
     jobEnqueueWrites,
+    enqueueMailboxAdmission,
   ].map((op) => [op.name, op])
 );

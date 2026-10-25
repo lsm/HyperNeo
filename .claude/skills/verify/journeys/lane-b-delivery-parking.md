@@ -20,7 +20,8 @@ Expect pending at the cooldown deadline, one park, zero retry spend, cleared
 lease timestamps and a retained claim token. The public `message.status` RPC
 must still report `queued`, and health must answer before/after. Evidence is
 `evidence/delivery-parking.json`. The pre-fix daemon fails with one forbidden
-main parking write. Resources close in finally. Deno smoke runs the same proof.
+main parking write. Resources close in finally; once evidence JSON is saved and cleanup finishes, the helper
+removes its temporary data, home and workspace directories. Deno smoke runs the same proof.
 
 Unit tests retain all three parking routes, pause before the writer transaction
 to replace the claim and require `stale_attempt` without mutating the new owner,

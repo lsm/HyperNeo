@@ -26,7 +26,7 @@ await mcp.connect(a);
 await client.connect(b);
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
 let transport:InstanceType<typeof WebSocketClientTransport>|undefined;
-const evidence:Record<string,unknown>={defaultCallerWired:false,sdkConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
+const evidence:Record<string,unknown>={workerInvokedDirectly:true,sdkConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
 const {toolDefaultTransitions}=await import('../../../packages/daemon/src/storage/repositories/tool-default-transition.ts');
 try {
   app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
@@ -50,7 +50,7 @@ try {
   app.db.mcpEnablement.setOverride('space',fixtures[0].id,server.id,false);
   const untouched=spaces.createSpace({slug:'untouched',name:'Untouched',workspacePath:join(run,'untouched')});
   raw.prepare('UPDATE spaces SET stopped=1,updated_at=1000 WHERE id=?').run(untouched.id);
-  assert.equal((await app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'registry',method:'update',args:[server.id,{name:'renamed-default-fixture'}]}],edits:[]})).ok,true);
+  assert.equal((await app.db.gateway.call(toolDefaultTransitions,'apply',{mutations:[{repository:'registry',method:'update',args:[server.id,{name:'renamed-default-fixture'}]}],edits:[]})).ok,true);
   assert.equal(Object.hasOwn(spaces.getSpace(untouched.id)!.config??{},'toolSelectionDefaults'),false);
   assert.equal(spaces.getSpace(untouched.id)!.updatedAt,1000);
   evidence.absentDefaultsRemainAbsent=true;
@@ -60,9 +60,9 @@ try {
   raw.prepare=((...args:Parameters<typeof raw.prepare>)=>{if(new Error().stack?.includes('/packages/daemon/src/storage/repositories/tool-default-transition.ts'))throw new Error('main-thread default transition SQL');return prepare(...args);}) as typeof raw.prepare;
   try {
     const {ChangeRecorder}=await import('../../../packages/daemon/src/storage/db-gateway/db-op.ts');
-    assert.throws(()=>toolDefaultTransitions.run(raw,update,new ChangeRecorder()),/main-thread default transition SQL/);
+    assert.throws(()=>toolDefaultTransitions.run(raw,{method:'apply',args:[update]},new ChangeRecorder()),/main-thread default transition SQL/);
     evidence.mainThreadProbeNegativeControl=true;
-    assert.equal((await app.db.gateway.run(toolDefaultTransitions,update)).ok,true);
+    assert.equal((await app.db.gateway.call(toolDefaultTransitions,'apply',update)).ok,true);
   } finally {raw.prepare=prepare;}
   assert.equal((await hub.request<{servers:{id:string;enabled:boolean}[]}>('mcp.registry.list',{})).servers.find(row=>row.id===server.id)!.enabled,true);
   assert.equal(readDefault().choices[`mcp:${server.id}`]!.selected,true);
@@ -70,18 +70,18 @@ try {
   assert.equal(readDefault(fixtures[1].id).choices[`mcp:${server.id}`]!.selected,true);
   await app.sessionManager.interruptInMemorySession(sessionId);
   assert.deepEqual((await hub.request<{session:Session}>('session.get',{sessionId})).session.config.toolSelection,original);
-  assert.equal((await app.db.gateway.run(toolDefaultTransitions,{spaceId:fixtures[0].id,mutations:[{repository:'overrides',method:'clearOverride',args:['space',fixtures[0].id,server.id]}],edits:[{key:`mcp:${server.id}`,selected:null}]})).ok,true);
+  assert.equal((await app.db.gateway.call(toolDefaultTransitions,'apply',{spaceId:fixtures[0].id,mutations:[{repository:'overrides',method:'clearOverride',args:['space',fixtures[0].id,server.id]}],edits:[{key:`mcp:${server.id}`,selected:null}]})).ok,true);
   assert.equal(readDefault(fixtures[0].id).choices[`mcp:${server.id}`]!.selected,true);
   const before=readDefault();
-  assert.deepEqual(await app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'registry',method:'update',args:[server.id,{enabled:false}]},{repository:'skills',method:'setEnabled',args:['missing',true]}],edits:[{key:`mcp:${server.id}`,selected:false}]}),{ok:false,reason:'superseded'});
+  assert.deepEqual(await app.db.gateway.call(toolDefaultTransitions,'apply',{mutations:[{repository:'registry',method:'update',args:[server.id,{enabled:false}]},{repository:'skills',method:'setEnabled',args:['missing',true]}],edits:[{key:`mcp:${server.id}`,selected:false}]}),{ok:false,reason:'superseded'});
   assert.equal(app.db.appMcpServers.get(server.id)!.enabled,true);assert.deepEqual(readDefault(),before);
   evidence.missingSkillBatchRefused=true;
   raw.exec("CREATE TRIGGER reject_default_transition BEFORE UPDATE ON spaces BEGIN SELECT RAISE(ABORT,'synthetic default failure'); END");
-  await assert.rejects(app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'registry',method:'update',args:[server.id,{enabled:false}]}],edits:[{key:`mcp:${server.id}`,selected:false}]}),/synthetic default failure/);
+  await assert.rejects(app.db.gateway.call(toolDefaultTransitions,'apply',{mutations:[{repository:'registry',method:'update',args:[server.id,{enabled:false}]}],edits:[{key:`mcp:${server.id}`,selected:false}]}),/synthetic default failure/);
   raw.exec('DROP TRIGGER reject_default_transition');
   assert.deepEqual(readDefault(),before);
   assert.equal(app.db.appMcpServers.get(server.id)!.enabled,true);
-  assert.equal((await app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'skills',method:'setEnabled',args:[skill.id,true]}],edits:[{key:`skill:${skill.id}`,selected:true}]})).ok,true);
+  assert.equal((await app.db.gateway.call(toolDefaultTransitions,'apply',{mutations:[{repository:'skills',method:'setEnabled',args:[skill.id,true]}],edits:[{key:`skill:${skill.id}`,selected:true}]})).ok,true);
   let resolveSkills!:(rows:{id:string;enabled:boolean}[])=>void;
   let rejectSkills!:(error:Error)=>void;
   const skillsSnapshot=new Promise<{id:string;enabled:boolean}[]>((resolve,reject)=>{resolveSkills=resolve;rejectSkills=reject;});
@@ -109,5 +109,5 @@ try {
   const settings=captureToolPreferenceRow(restarted.db.getDatabase(),{table:'global_settings',id:1});
   assert.deepEqual(JSON.parse(String(settings.row!.settings)).toolSelectionDefaults,evidence.defaults);
   evidence.restartRetainedDefaults=true;evidence.pass=true;
-  console.log('PASS default-transition worker: global/Space defaults, explicit veto, canonical inherited clear, rollback, frozen-session RPC readback and restart; no active setter or SDK/UI flip');
+  console.log('PASS default-transition worker: global/Space defaults, explicit veto, canonical inherited clear, rollback, frozen-session RPC readback and restart; direct worker proof; no SDK/UI flip');
 } finally {await connection.close();await restarted.cleanup();writeFileSync(join(run,'evidence/tool-default-transition.json'),JSON.stringify(evidence,null,2));}

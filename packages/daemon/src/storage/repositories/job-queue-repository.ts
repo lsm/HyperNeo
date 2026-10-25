@@ -230,12 +230,16 @@ export class JobQueueRepository {
         const prior = this.submissionReceipt<T>(key, fingerprint);
         if (prior !== null) return prior;
         const receipt = submit();
-        this.db
-          .prepare('INSERT INTO message_send_receipts (key, fingerprint, receipt) VALUES (?, ?, ?)')
-          .run(key, fingerprint, JSON.stringify(receipt));
+        this.recordSubmissionReceipt(key, fingerprint, receipt);
         return receipt;
       }, 'immediate')()
     );
+  }
+
+  recordSubmissionReceipt<T>(key: string, fingerprint: string, receipt: T): void {
+    this.db
+      .prepare('INSERT INTO message_send_receipts (key, fingerprint, receipt) VALUES (?, ?, ?)')
+      .run(key, fingerprint, JSON.stringify(receipt));
   }
 
   enqueue(params: EnqueueParams): Job {

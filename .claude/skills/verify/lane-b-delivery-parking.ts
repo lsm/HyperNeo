@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const run = resolve(process.argv[2]);
@@ -72,5 +72,6 @@ try {
   writeFileSync(join(run, 'evidence/delivery-parking.json'), JSON.stringify(evidence, null, 2));
   await transport?.close();
   await app?.cleanup();
+  for (const name of ['data', 'home', 'workspace']) rmSync(join(run, name), { recursive: true, force: true });
 }
 console.log('ok real delivery handler parks on writer without spending a retry; RPC keeps input queued');

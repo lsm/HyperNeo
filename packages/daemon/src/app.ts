@@ -741,8 +741,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
-    skillsManager.initializeBuiltins();
+    const skillsManager = new SkillsManager(db.skills, db.appMcpServers, db, jobQueue);
+    await skillsManager.initializeBuiltins();
 
     try {
       startupTimer.start('skill plugin wrappers');

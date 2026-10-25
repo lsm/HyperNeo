@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
-import { withBusyRetry } from '../../../../storage/busy-retry.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { codingBranchReads, codingBranchWrites, callCodingBranchDb } from './branch-facts-db.ts';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
@@ -82,19 +83,22 @@ export class CodingBranchFactsRepository {
     };
   }
 
-  refresh(
+  snapshot(repo: string, branch: string, at: number) {
+    const current = this.read(repo, branch, at);
+    return { current, retryAt: this.row(current.repo, branch)?.retry_at ?? 0 };
+  }
+
+  async refresh(
     repo: string,
     branch: string,
     spawn: SpawnFn = spawnProcess,
     now = Date.now
   ): Promise<ReturnType<CodingBranchFactsRepository['read']>> {
-    const canonical = this.canonical(repo),
-      current = this.read(canonical, branch, now());
-    if (
-      current.membership.status === 'known' ||
-      (this.row(canonical, branch)?.retry_at ?? 0) > now()
-    )
-      return Promise.resolve(current);
+    const { current, retryAt } = await callCodingBranchDb(() =>
+      gatewayFor(this.db).call(codingBranchReads, 'snapshot', repo, branch, now())
+    );
+    const canonical = current.repo;
+    if (current.membership.status === 'known' || retryAt > now()) return Promise.resolve(current);
     let reads = pending.get(this.db);
     if (!reads) {
       reads = new Map();
@@ -165,34 +169,44 @@ export class CodingBranchFactsRepository {
     } catch {
       observation = { reason: 'failed', retryMs: 0 };
     }
-    const persist = this.db.transaction(() => {
-      const before = this.row(repo, branch);
-      if ((before?.observation_revision ?? 0) !== revision) return;
-      const observed = observation;
-      const at = now(),
-        success = 'urls' in observed;
-      const urls = success ? JSON.stringify(observed.urls) : (before?.urls_json ?? null);
-      this.db
-        .prepare(`INSERT INTO pack_coding_branch_facts
-        (repo,branch,fact_revision,observation_revision,urls_json,observed_at,attempted_at,retry_at,reason,coverage_limit)
-        VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,branch) DO UPDATE SET
-        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,
-        urls_json=excluded.urls_json, observed_at=excluded.observed_at, attempted_at=excluded.attempted_at,
-        retry_at=excluded.retry_at, reason=excluded.reason, coverage_limit=excluded.coverage_limit`)
-        .run(
-          repo,
-          branch,
-          (before?.fact_revision ?? 0) + (success && urls !== before?.urls_json ? 1 : 0),
-          revision + 1,
-          urls,
-          success ? at : (before?.observed_at ?? null),
-          at,
-          success ? 0 : at + observed.retryMs,
-          success ? null : observed.reason,
-          CODING_BRANCH_PR_LIMIT
-        );
-    }, 'immediate');
-    withBusyRetry(persist);
-    return this.read(repo, branch, now());
+    return callCodingBranchDb(() =>
+      gatewayFor(this.db).call(
+        codingBranchWrites,
+        'observe',
+        repo,
+        branch,
+        revision,
+        observation,
+        now()
+      )
+    );
+  }
+
+  observe(repo: string, branch: string, revision: number, observation: Observation, at: number) {
+    const before = this.row(repo, branch);
+    if ((before?.observation_revision ?? 0) !== revision) return this.read(repo, branch, at);
+    const observed = observation;
+    const success = 'urls' in observed;
+    const urls = success ? JSON.stringify(observed.urls) : (before?.urls_json ?? null);
+    this.db
+      .prepare(`INSERT INTO pack_coding_branch_facts
+      (repo,branch,fact_revision,observation_revision,urls_json,observed_at,attempted_at,retry_at,reason,coverage_limit)
+      VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,branch) DO UPDATE SET
+      fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,
+      urls_json=excluded.urls_json, observed_at=excluded.observed_at, attempted_at=excluded.attempted_at,
+      retry_at=excluded.retry_at, reason=excluded.reason, coverage_limit=excluded.coverage_limit`)
+      .run(
+        repo,
+        branch,
+        (before?.fact_revision ?? 0) + (success && urls !== before?.urls_json ? 1 : 0),
+        revision + 1,
+        urls,
+        success ? at : (before?.observed_at ?? null),
+        at,
+        success ? 0 : at + observed.retryMs,
+        success ? null : observed.reason,
+        CODING_BRANCH_PR_LIMIT
+      );
+    return this.read(repo, branch, at);
   }
 }

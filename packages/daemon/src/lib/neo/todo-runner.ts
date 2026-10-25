@@ -234,6 +234,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
   const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
+    instruction += `\n\nEven when told to stay quiet, report questions or blockers with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
     const pack = deps.packs().find((candidate) => candidate.id === todo.check?.pack);
     const recorded = existing ? sessions.readCard(todo.id) : null;
     return (
@@ -394,12 +395,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     ask: NeoAsk,
     live: ReturnType<typeof readDriverLive>
   ) => {
-    if (!live) return;
+    if (!live || live.status !== 'needs_you') return;
     const since = sessions.readNeedsYouSince(todoId);
-    if (live.status !== 'needs_you') {
-      if (since !== null) sessions.recordNeedsYouSince(todoId, null);
-      return;
-    }
     const todo = store.getTodo(todoId);
     const followed =
       todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
@@ -426,16 +423,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       await observe(card.id, outcome, ref);
       return outcome;
     },
-    recordStartedAt: (id, at) => sessions.recordStartedAt(id, at),
-    recordLive: (id, status, live) => {
-      if (status !== 'needs_you' && sessions.readNeedsYouSince(id) !== null)
-        sessions.recordNeedsYouSince(id, null);
-      return sessions.write('recordLive', id, status, live.link, live.remoteLink);
-    },
-    recordCheck: (id, read, now) => {
-      sessions.recordCardCheck(id, { checkedAt: now, unchecked: !read });
-      return false;
-    },
+    recordProgress: (id, progress, now) => sessions.write('recordProgress', id, progress, now),
     notifyChanged: () => deps.changed(),
     noteUnsettled: (card, _ref, outcome) => noteNeedsYou(card.id, ask, readDriverLive(outcome)),
     forgetActivity: () => {},
@@ -535,7 +523,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ref,
           readDriverLive(outcome),
           turn,
-          deps.tell
+          deps.tell,
+          sessions.turnReports
         );
     }
   };
@@ -567,10 +556,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         });
         await observe(todo.id, outcome, target.ref);
         const live = readDriverLive(outcome);
-        if (live)
-          await sessions.write('recordLive', todo.id, live.status, live.link, live.remoteLink);
+        await sessions.write(
+          'recordProgress',
+          todo.id,
+          { landed: null, live, cardStatus: live?.status ?? null },
+          now
+        );
         await noteNeedsYou(todo.id, target.ask, live);
-        sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
         if (
           todo.state === 'blocked' &&
           (live?.status === 'running' ||
@@ -617,6 +609,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
       return;
     const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
+    if (store.getTodo(todo.id)?.state !== 'doing') return;
     if (!live || live.status === 'queued') return;
     const since = Math.max(
       todo.startedAt ?? todo.createdAt,

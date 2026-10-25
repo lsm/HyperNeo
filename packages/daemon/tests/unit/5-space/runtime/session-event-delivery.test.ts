@@ -1,3 +1,4 @@
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { describe, expect, test } from 'bun:test';
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import {
@@ -199,6 +200,56 @@ describe('planSessionEventDeliveries', () => {
 });
 
 describe('mailSessionEvent', () => {
+  test('concurrent retries return one durable receipt while conflicting content is rejected', async () => {
+    const db = createMailboxTestDb();
+    const delivery = {
+      sessionId: 's1',
+      messageUuid: 'concurrent-event',
+      text: 'Same feedback',
+      mode: 'immediate' as const,
+    };
+    try {
+      const [first, retry, conflict] = await Promise.all([
+        mailSessionEvent(db.jobQueue, delivery),
+        mailSessionEvent(db.jobQueue, { ...delivery, mode: 'defer' }),
+        mailSessionEvent(db.jobQueue, { ...delivery, text: 'Conflicting feedback' }),
+      ]);
+      expect(first.kind).toBe('enqueued');
+      expect(retry).toEqual(first);
+      expect(conflict).toMatchObject({
+        kind: 'rejected',
+        reason: expect.stringContaining('idempotency_conflict'),
+      });
+      expect(db.jobsByQueue('mailbox')).toHaveLength(1);
+      expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('writer failure is rejected without falling back to the main queue', async () => {
+    const db = createMailboxTestDb();
+    const gateway = new DbGateway(':memory:', null, undefined, () => {
+      throw new Error('submission writer unavailable');
+    });
+    bindGateway(db.db, gateway);
+    try {
+      expect(
+        await mailSessionEvent(db.jobQueue, {
+          sessionId: 's1',
+          messageUuid: 'unavailable',
+          text: 'Feedback',
+          mode: 'defer',
+        })
+      ).toEqual({ kind: 'rejected', reason: 'internal: submission writer unavailable' });
+      expect(db.jobsByQueue('mailbox')).toEqual([]);
+      expect(db.db.prepare('SELECT * FROM message_send_receipts').all()).toEqual([]);
+    } finally {
+      await gateway.close();
+      db.close();
+    }
+  });
+
   test('urgent GitHub feedback reaches Neo immediately rather than entering its note queue', async () => {
     const db = createMailboxTestDb();
     try {

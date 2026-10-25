@@ -20,6 +20,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
@@ -41,6 +42,7 @@ function setup(
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
+  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   store.openAsk({
@@ -140,6 +142,36 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('a refused check stamp preserves the prior worker status and needs-you incident', async () => {
+    const h = setup();
+    try {
+      const todo = h.add(null, null);
+      h.sessions.recordRef(todo.id, ref, 1_000);
+      h.store.updateTodo(todo, { state: 'doing', startedAt: 1_000 }, 1_000);
+      h.sessions.recordLive(todo.id, 'needs_you', undefined);
+      h.sessions.recordNeedsYouSince(todo.id, 900);
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1_001 } });
+      h.db.exec(
+        "CREATE TRIGGER reject_check BEFORE UPDATE OF checked_at ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic check refusal'); END"
+      );
+      const warnings: string[] = [];
+      await h.runner.refresh((_message, error) => warnings.push(String(error)));
+      expect(warnings.some((warning) => warning.includes('synthetic check refusal'))).toBe(true);
+      const afterRefusal = {
+        live: h.sessions.readLiveStatus(todo.id),
+        needsYouSince: h.sessions.readNeedsYouSince(todo.id),
+        check: h.sessions.readCardCheck(todo.id),
+      };
+      h.db.exec('DROP TRIGGER reject_check');
+      h.setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 1_002 } });
+      await h.runner.refresh((_message, error) => warnings.push(String(error)));
+      expect(h.told).toEqual([]);
+      expect(afterRefusal).toEqual({ live: 'needs_you', needsYouSince: 900, check: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a refused receipt save leaves no partially recorded worker assignment', async () => {
     const h = setup();
     try {
@@ -166,6 +198,9 @@ describe('neo todo runner', () => {
       const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
       expect(opening).toContain('Agent: <exact model id> (effort: <effort>) via HyperNeo');
       expect(opening).toContain('Never guess');
+      expect(opening).toContain('Even when told to stay quiet');
+      expect(opening).toContain(`todoId: "${todo.id}"`);
+      expect(opening).toContain('2–6 short options');
       h.sessions.recordRef(todo.id, ref, 1_000, undefined, {
         model: 'gpt-6.1-sol',
         effort: 'high',

@@ -4,7 +4,7 @@ import type {
 } from '@hyperneo/shared/types/session-tool-choice';
 import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
+import { ChangeRecorder, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { SpaceRepository } from './space-repository.ts';
@@ -37,7 +37,7 @@ export interface ToolDefaultTransition {
 }
 
 export type ToolDefaultTransitionResult =
-  | { ok: true; results: unknown[] }
+  | { ok: true; results: unknown[]; changed: boolean }
   | {
       ok: false;
       reason: 'default_target_not_found' | 'selection_version_unsupported' | 'superseded';
@@ -127,10 +127,35 @@ function commit(
       )
         return false;
       const result = repo[mutation.method](...mutation.args);
-      if (result === false || result === null) return false;
+      if ((result === false && mutation.method !== 'clearOverride') || result === null)
+        return false;
       results.push(result);
     }
     const after = catalog(prepared.repos);
+    const requested = new Map(request.edits.map((edit) => [edit.key, edit]));
+    for (const mutation of request.mutations) {
+      if (mutation.repository !== 'skills') continue;
+      const id = mutation.method === 'insert' ? mutation.args[0].id : mutation.args[0];
+      const [previous, current] = [prepared.before, after].map((catalog) => {
+        const config = catalog.skills.find((skill) => skill.id === id)?.config;
+        return config?.type === 'mcp_server' ? config.appMcpServerId : undefined;
+      });
+      if (!previous && !current) continue;
+      if (!requested.delete(`skill:${id}`) && previous === current) continue;
+      for (const serverId of new Set([previous, current])) {
+        if (!serverId) continue;
+        const key: SessionToolChoiceKey = `mcp:${serverId}`;
+        requested.set(key, {
+          key,
+          selected: after.skills.some(
+            (skill) =>
+              skill.enabled &&
+              skill.config.type === 'mcp_server' &&
+              skill.config.appMcpServerId === serverId
+          ),
+        });
+      }
+    }
     const inherited =
       prepared.defaults.get(1) ??
       projectLegacySessionToolSelection({
@@ -144,7 +169,14 @@ function commit(
         id: `defaults:${spaceId ?? 'global'}`,
         context: spaceId ? { spaceId } : {},
       };
-      const edits = request.edits
+      const edits = [...requested.values()]
+        .filter(
+          (edit) =>
+            edit.selected !== null ||
+            prepared.local.changes.length > 0 ||
+            inherited.choices[edit.key] !== undefined ||
+            prepared.defaults.get(target.key.id)?.choices[edit.key] !== undefined
+        )
         .filter(
           (edit) =>
             request.spaceId ||
@@ -176,7 +208,7 @@ function commit(
   });
   if (outcome !== 'won') return { ok: false, reason: 'superseded' };
   for (const change of prepared.local.changes) changes.notifyChange(change.table, change.scope);
-  return { ok: true, results };
+  return { ok: true, results, changed: prepared.local.changes.length > 0 };
 }
 const transition = (superpipe({})('transition-tool-defaults') as PipelineAPI)
   .input(['db', 'request', 'changes'])
@@ -187,8 +219,18 @@ const transition = (superpipe({})('transition-tool-defaults') as PipelineAPI)
   request: ToolDefaultTransition,
   changes: ChangeRecorder
 ) => ToolDefaultTransitionResult;
-export const toolDefaultTransitions = defineDbOp({
-  name: 'tool_defaults.transition',
-  mode: 'write',
-  run: transition,
-});
+class ToolDefaultTransitionRepository {
+  constructor(
+    private db: Database,
+    private changes?: ReactiveDatabase
+  ) {}
+  apply(request: ToolDefaultTransition) {
+    return transition(this.db, request, (this.changes ?? new ChangeRecorder()) as ChangeRecorder);
+  }
+}
+export const toolDefaultTransitions = defineRepositoryOp(
+  'tool_defaults.transition',
+  'write',
+  ToolDefaultTransitionRepository,
+  ['apply']
+);
