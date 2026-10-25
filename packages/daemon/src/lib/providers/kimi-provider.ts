@@ -484,6 +484,11 @@ export class KimiProvider implements Provider {
     this.curatedModels = models;
   }
 
+  isCuratedModelVisible(modelId: string): boolean {
+    if (this.resolveEffectiveRegion() === 'global') return true;
+    return !KimiProvider.K31_MODEL_IDS.has(KimiProvider.canonicalizeModelId(modelId));
+  }
+
   getCachedModels(): ModelInfo[] | null {
     if (!this.curatedModels?.length) return null;
     const region = this.resolveEffectiveRegion();

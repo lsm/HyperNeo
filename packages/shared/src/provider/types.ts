@@ -90,6 +90,8 @@ export interface Provider {
 
   hasCuratedModelList?(): boolean;
 
+  isCuratedModelVisible?(modelId: string): boolean;
+
   listRemoteModels?(options?: ListRemoteModelsOptions): Promise<ModelInfo[]>;
 
   getDiscoveryEndpointFingerprint?(discoveryBaseUrl?: string): string;
