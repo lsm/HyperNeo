@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -50,11 +50,48 @@ const peer = Bun.serve({
 });
 const evidence: Record<string, unknown> = { mode };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+let socket: WebSocket | undefined;
+let timer: ReturnType<typeof setInterval> | undefined;
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
+  socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise<void>((done, fail) => { socket!.onopen = () => done(); socket!.onerror = () => fail(new Error('RPC connection failed')); });
+  const health = () => new Promise<number>((done, fail) => {
+    const start = performance.now();
+    const id = crypto.randomUUID();
+    const timeout = setTimeout(() => fail(new Error('Health timed out')), 10000);
+    socket!.onmessage = (event) => {
+      const reply = JSON.parse(String(event.data));
+      if (reply.id !== id && reply.requestId !== id) return;
+      clearTimeout(timeout);
+      if (reply.error) fail(new Error(JSON.stringify(reply.error)));
+      else done(performance.now() - start);
+    };
+    socket!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'system.health', data: {}, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  const dispatchCalls: unknown[] = [];
+  const call = app.db.gateway.call.bind(app.db.gateway);
+  app.db.gateway.call = (async (op, method, ...args) => {
+    if (op.name !== 'neo.todoSessionWrites' || method !== 'recordDispatch') return call(op, method, ...args);
+    const start = performance.now();
+    const healthy = health();
+    try {
+      const result = await call(op, method, ...args);
+      const roundTripMs = performance.now() - start;
+      dispatchCalls.push({ roundTripMs, argsBytes: Buffer.byteLength(JSON.stringify(args)), resultBytes: Buffer.byteLength(JSON.stringify(result)), healthMs: await healthy });
+      return result;
+    } catch (error) {
+      dispatchCalls.push({ failed: true, roundTripMs: performance.now() - start, healthMs: await healthy });
+      throw error;
+    }
+  }) as typeof app.db.gateway.call;
+  evidence.dispatchCalls = dispatchCalls;
+  let previous = performance.now(), maxLagMs = 0;
+  timer = setInterval(() => { const now = performance.now(); if (recording) maxLagMs = Math.max(maxLagMs, now - previous - 10); previous = now; }, 10);
+  evidence.rssBefore = process.memoryUsage().rss;
   const root = 'neo:10000000-0000-4000-8000-000000008712';
   await app.db.createSession({ id: root, title: 'Synthetic dispatch', workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const db = app.db.getDatabase();
@@ -84,6 +121,13 @@ try {
   evidence.mainQueries = [...queries];
   if (mode === 'before') assert(queries.length > 0);
   else assert.equal(queries.length, 0, 'dispatch assignment/receipt persistence leaves main');
+  const warmMs: number[] = [];
+  for (let n = 0; n < 3; n++) {
+    const start = performance.now();
+    assert.equal((await add(`Warm dispatch ${n}`)).ok, true);
+    warmMs.push(performance.now() - start);
+  }
+  evidence.warmRpcMs = warmMs;
   db.exec("CREATE TRIGGER reject_receipt BEFORE UPDATE OF sent_opening ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic receipt refusal'); END");
   const failed = await add('Refused receipt');
   evidence.failure = failed;
@@ -92,14 +136,22 @@ try {
   evidence.failedRef = sessions.readRef(id);
   evidence.failedSent = sessions.readSent(id);
   evidence.externalEffects = effects;
-  assert.equal(effects, 2, 'each external effect ran once without replay');
+  assert.equal(effects, 5, 'each external effect ran once without replay');
   assert.equal(sessions.inputs.list(id).length, 1);
+  assert.deepEqual(sessions.inputs.list(id)[0].outcome?.delivery, { delivered: true, startedTurnId: 'synthetic-turn-5' });
   if (mode === 'before') assert(evidence.failedRef, 'baseline partially records the worker before receipt refusal');
   else assert.equal(evidence.failedRef, null, 'receipt refusal rolls back the worker assignment');
   assert.equal(evidence.failedSent, null);
+  evidence.maxLagMs = maxLagMs;
+  evidence.rssAfter = process.memoryUsage().rss;
+  evidence.walBytes = statSync(join(run, 'data/daemon.db-wal')).size;
+  evidence.affectedRpcUnder250ms = Number(evidence.rpcMs) < 250 && warmMs.every((ms) => ms < 250);
+  assert(maxLagMs < 1000);
   evidence.verified = true;
-  console.log(JSON.stringify({ mode, mainQueries: queries.length, rpcMs: evidence.rpcMs, failedRef: evidence.failedRef, externalEffects: effects }));
+  console.log(JSON.stringify({ mode, mainQueries: queries.length, rpcMs: evidence.rpcMs, warmMs, dispatchCalls, maxLagMs, affectedRpcUnder250ms: evidence.affectedRpcUnder250ms, failedRef: evidence.failedRef, externalEffects: effects }));
 } finally {
+  clearInterval(timer);
+  socket?.close();
   await app?.cleanup();
   peer.stop(true);
   await closeDesktop();

@@ -152,7 +152,7 @@ describe('neo todo runner', () => {
       expect(h.sessions.readRef(todo.id)).toBeNull();
       expect(h.sessions.readSent(todo.id)).toBeNull();
       expect(h.sessions.inputs.list(todo.id)).toHaveLength(1);
-      expect(h.sessions.inputs.list(todo.id)[0].outcome).not.toBeNull();
+      expect(h.sessions.inputs.list(todo.id)[0].outcome).toMatchObject({ ref, receipt });
     } finally {
       h.db.close();
     }

@@ -2,8 +2,10 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
-import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
+import type { DriverSent, NeoDriverTarget } from '../../lib/neo/driver-work.ts';
+import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
+import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { WorkDeliveryInputRepository } from './work-delivery-input-repository.ts';
 import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
@@ -50,11 +52,36 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return gatewayFor(this.db).call(neoTodoSessionReads, method);
   }
 
-  write(
-    method: 'recordLive',
-    ...args: Parameters<NeoTodoSessionRepository['recordLive']>
-  ): Promise<boolean> {
-    return gatewayFor(this.db).call(neoTodoSessionWrites, method, ...args);
+  write<K extends (typeof neoTodoSessionWrites.methods)[number]>(
+    method: K,
+    ...args: Parameters<NeoTodoSessionRepository[K]>
+  ): Promise<ReturnType<NeoTodoSessionRepository[K]>> {
+    return gatewayFor(this.db).call(neoTodoSessionWrites, method, ...(args as never)) as Promise<
+      ReturnType<NeoTodoSessionRepository[K]>
+    >;
+  }
+
+  recordDispatch(input: {
+    todoId: string;
+    askId: string;
+    ref: WorkRef;
+    startedAt?: number;
+    link?: string;
+    observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'>;
+    sent: DriverSent | null;
+    keepIdentity: boolean;
+  }) {
+    const recorded = input.keepIdentity ? this.readCard(input.todoId) : null;
+    this.recordRef(input.todoId, input.ref, input.startedAt, input.link, {
+      model: input.observed.model ?? recorded?.model ?? undefined,
+      effort: input.observed.effort ?? recorded?.effort ?? undefined,
+    });
+    this.recordSent(input.todoId, input.sent);
+    const todos = new NeoAskTodoRepository(this.db);
+    return {
+      todo: todos.getTodo(input.todoId),
+      askOpen: todos.getAsk(input.askId)?.status === 'open',
+    };
   }
 
   readonly inputs: WorkDeliveryInputRepository;
@@ -167,5 +194,5 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
   'write',
   NeoTodoSessionRepository,
-  ['recordLive']
+  ['recordLive', 'recordDispatch']
 );

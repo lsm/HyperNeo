@@ -308,6 +308,15 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       if (!starts.includes("deno-todo") || reports.some(row => row.todoId === "deno-todo") || window.start !== 1 || window.end !== null || !changed || unchanged) Deno.exit(1);
       if (db.prepare("SELECT live_status AS status FROM neo_todo_sessions WHERE todo_id=?").get("deno-todo").status !== "running") Deno.exit(1);
       console.log("[deno-smoke] todo recovery, PR window and committed live status use DB workers");
+      const dispatched = await gateway.call(neoTodoSessionWrites, "recordDispatch", {todoId:"deno-todo",askId:"deno-todo-ask",ref:{adapter:"hyperneo",id:"deno-worker"},startedAt:2,observed:{model:"synthetic-model",effort:"high"},keepIdentity:false,sent:{inputBefore:0,opening:"Complete synthetic instruction"}});
+      const receipt = db.prepare("SELECT ref,actual_model,sent_opening FROM neo_todo_sessions WHERE todo_id=?").get("deno-todo");
+      if (!dispatched.askOpen || dispatched.todo?.id !== "deno-todo" || JSON.parse(receipt.ref).id !== "deno-worker" || receipt.actual_model !== "synthetic-model" || receipt.sent_opening !== "Complete synthetic instruction") Deno.exit(1);
+      db.exec("CREATE TRIGGER reject_todo_receipt BEFORE UPDATE OF sent_opening ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic refusal'); END");
+      let refused = false;
+      try { await gateway.call(neoTodoSessionWrites, "recordDispatch", {todoId:"deno-todo",askId:"deno-todo-ask",ref:{adapter:"hyperneo",id:"rejected-worker"},observed:{},keepIdentity:true,sent:null}); } catch { refused = true; }
+      db.exec("DROP TRIGGER reject_todo_receipt");
+      if (!refused || JSON.parse(db.prepare("SELECT ref FROM neo_todo_sessions WHERE todo_id=?").get("deno-todo").ref).id !== "deno-worker") Deno.exit(1);
+      console.log("[deno-smoke] dispatch assignment and receipt commit or roll back together");
       const { neoTodoReads } = await import(src + "/storage/repositories/neo-ask-todo-repository.ts");
       const cards = await gateway.call(neoTodoReads, "snapshot", undefined, 50);
       const page = await gateway.call(neoTodoReads, "doneTodoFacts", "deno-read-missing");
