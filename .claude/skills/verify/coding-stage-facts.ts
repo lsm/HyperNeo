@@ -51,7 +51,7 @@ try {
         assert.equal(todos.stages('todo-7').length, 2);
         assert.deepEqual(await rpc('pack.preferences.get', setting), { preference: null });
         assert.equal(ledger.reviewerPolicy('synthetic/stages', '', reviewer).qualifies, false);
-        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: GPT-6 via Harness A', reviewer).preferred, true);
+        assert.equal(ledger.reviewerPolicy('synthetic/stages', 'Agent: gpt-6.1-sol (effort: high) via Harness A', reviewer).preferred, true);
         const proposal = await rpc('pack.preferences.ask', { askId: 'ask-7', requestId: 'stage-provenance', values: [{ ...setting, value: true }, { ...setting, key: 'mergePolicy', value: 'ci_only' }] }) as { ok: boolean; questionId: string };
         assert.equal(proposal.ok, true);
         assert(proposal.questionId);

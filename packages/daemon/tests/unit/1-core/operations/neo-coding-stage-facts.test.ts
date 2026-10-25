@@ -112,6 +112,26 @@ describe('coding stage facts', () => {
 });
 
 describe('coding provenance policy', () => {
+  test('requires an exact id and effort for independent review', () => {
+    const { db, ledger } = setup();
+    try {
+      const body = 'Agent: gpt-6.1-sol (effort: high) via Codex';
+      expect(ledger.reviewerPolicy('synthetic/stages', body, reviewer)).toMatchObject({
+        qualifies: true,
+        preferred: true,
+      });
+      expect(ledger.reviewerPolicy('synthetic/stages', body, {
+        ...reviewer, model: 'openai/gpt-6.1',
+      })).toMatchObject({ qualifies: false, reason: 'same_model' });
+      for (const line of [
+        'Agent: GPT-6 via Codex',
+        'Agent: gpt-6.1-sol via Codex',
+        'Agent: GPT-6 (effort: high) via Codex',
+        'Agent: gpt-6.1-sol (effort: unknown) via Codex',
+      ]) expect(ledger.reviewerPolicy('synthetic/stages', line, reviewer).reason)
+        .toContain('ask the author');
+    } finally { db.close(); }
+  });
   test('defaults on without saving, requires different model, prefers different harness, allows human', () => {
     const { db, ledger } = setup();
     try {
