@@ -1,3 +1,4 @@
+import { ownedNeoProjectGroups } from './owned-project-groups.ts';
 import type { SQLiteQueryObservabilityOptions } from '../../storage/sqlite-query-observability.ts';
 import {
   publishSQLiteWorkerLogs,
@@ -34,7 +35,7 @@ worker.onmessage = ({ data }) => {
     db.exec('PRAGMA foreign_keys=ON');
     db.exec('PRAGMA busy_timeout=5000');
     db.exec('PRAGMA synchronous=NORMAL');
-    result = { changed: mirrorNeoWorkspaceProjects(db, data.groups) };
+    result = { changed: mirrorNeoWorkspaceProjects(db, ownedNeoProjectGroups(db, data.groups)) };
   } catch (error) {
     result = { error: error instanceof Error ? error.message : String(error) };
   } finally {

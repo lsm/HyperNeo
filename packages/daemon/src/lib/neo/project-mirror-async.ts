@@ -1,3 +1,4 @@
+import { ownedNeoProjectGroups } from './owned-project-groups.ts';
 import { runtimeWorkerUrl } from '../runtime-worker-url.ts';
 import { getConfig } from '../../config.ts';
 import {
@@ -27,7 +28,9 @@ export function mirrorNeoWorkspaceProjectsAsync(
   spawn: () => Worker = createWorker
 ): Promise<boolean> {
   if (db.getDbPath() === ':memory:')
-    return Promise.resolve(mirrorNeoWorkspaceProjects(db.getDatabase(), groups));
+    return Promise.resolve(
+      mirrorNeoWorkspaceProjects(db.getDatabase(), ownedNeoProjectGroups(db.getDatabase(), groups))
+    );
   const path = resolve(db.getDbPath());
   const run = (pending.get(path) ?? Promise.resolve())
     .catch(() => {})

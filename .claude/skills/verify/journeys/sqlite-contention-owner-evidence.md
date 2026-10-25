@@ -28,6 +28,8 @@ The rejected write creates no row. Production busy_timeout, retry policy,
 durability, SQL and connection lifetime are unchanged.
 
 Then actual merge and mirror workers contend with another synthetic writer.
+The minimal fixture includes empty started-work, todo-binding and native-session
+tables so the mirror applies its normal instance-ownership admission.
 Both must forward slow SQL with original time and request identity, and retain
 `merged` / `false` results. Five rows remain. `events.jsonl` is the real structured
 log stream; the helper closes all owned connections and workers in finally.

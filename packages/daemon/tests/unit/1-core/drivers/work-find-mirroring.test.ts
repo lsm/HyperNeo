@@ -1,3 +1,4 @@
+import { recordStartedWork } from '../../../../src/storage/work-started-sessions';
 import { expect, test } from 'bun:test';
 import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
 import { mirrorNeoWorkspaceProjects } from '../../../../src/lib/neo/project-mirror';
@@ -11,6 +12,7 @@ test.each(['delayed', 'memory'])(
   'work.find replies after the discovered project is mirrored using %s storage',
   async (mode) => {
     const db = await createTestDb();
+    recordStartedWork(db.getDatabase(), { adapter: 'fixture', id: 'owned' });
     let pending = Promise.resolve();
     const operation = createFindWorkOperation({
       adapters: () => [
@@ -29,7 +31,20 @@ test.each(['delayed', 'memory'])(
               openCount: 0,
               archivedCount: 0,
               adapters: ['fixture'],
-              work: [],
+              work: [
+                {
+                  ref: { adapter: 'fixture', id: 'owned' },
+                  title: 'Synthetic',
+                  status: 'done',
+                  lastActivityAt: 1,
+                  place: {
+                    machine: 'synthetic',
+                    name: 'Synthetic',
+                    toolProject: { id: 't', name: 'Synthetic' },
+                    remotes: ['https://github.com/synthetic/repo.git'],
+                  },
+                },
+              ],
             },
           ],
         },
