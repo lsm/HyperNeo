@@ -37,7 +37,10 @@ const WorkerQuestion = z.strictObject({
   title: ReportLine,
   options: z.array(ReportLine).min(2).max(6),
   language: z.enum(['en', 'zh-Hans']),
-  report: z.string().min(1).refine((text) => text.trim().length > 0),
+  report: z
+    .string()
+    .min(1)
+    .refine((text) => text.trim().length > 0),
 });
 
 export function createNeoWorkerQuestionWriter(
@@ -173,7 +176,9 @@ const Asked = {
   focused: z.boolean().optional(),
   sourceSession: WorkRefSchema.optional(),
   artifacts: Artifacts,
-  todoId: Text.optional(),
+  todoId: Text.optional().describe(
+    'One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.'
+  ),
   askId: Text,
   text: Text,
   replyTo: z.array(z.uuid()).max(100).optional(),
@@ -552,7 +557,20 @@ export function createNeoQuestionOperations(
         plan: QuestionPlan & { replaced: NeoQuestion | null },
         reply: { context: NeoCardReplyContext | null; mutationId: string }
       ): QuestionReceipt | Rejection => {
+        let reason = 'question_closed: the question to replace is no longer open.';
         const question = store.writeCardReply(reply.context, reply.mutationId, () => {
+          const conflict =
+            plan.draft.todoId &&
+            store
+              .listQuestions(plan.ask.id)
+              .find(
+                (q) =>
+                  q.todoId === plan.draft.todoId && q.state === 'open' && q.id !== plan.replaced?.id
+              );
+          if (conflict) {
+            reason = `todo_question_open: this todo already has open question ${conflict.id}; use replaces to change it explicitly.`;
+            return null;
+          }
           if (plan.reworded) {
             const { id, startTodos } = plan.reworded;
             store.extendStartQuestion(
@@ -573,9 +591,7 @@ export function createNeoQuestionOperations(
             : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
         });
         if (question && reply.context) publicationChanged(reply.context.conversationId);
-        return question
-          ? { ok: true, question }
-          : { ok: false, reason: 'question_closed: the question to replace is no longer open.' };
+        return question ? { ok: true, question } : { ok: false, reason };
       },
       ['outcome', 'reply'],
       'outcome'

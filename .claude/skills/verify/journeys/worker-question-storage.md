@@ -10,7 +10,11 @@ It calls the internal storage entry point (message.send wiring is slice 2),
 then reads the existing card API and Neo snapshot over actual WebSocket RPC.
 A Chinese title and options, original report, and validated worker source must
 survive storage. Ten simultaneous repeats must reuse one open card. A foreign
-worker must be refused. After stopping and reopening that daemon's own DB,
+worker must be refused.
+Asking a distinct question through `neo.question.ask` on the same todo must
+return `todo_question_open`, retaining the original card. Worker repeats still
+reuse the card; explicit replacement is covered by the operation tests.
+After stopping and reopening that daemon's own DB,
 routine activity and a completion judgement must leave the todo blocked with
 its needs-human hold and the card still readable. The free-text answer route
 is the existing card reply control; no new card UI is introduced.
