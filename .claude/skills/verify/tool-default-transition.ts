@@ -48,6 +48,12 @@ try {
   const fixtures=['veto','inherit'].map(name=>spaces.createSpace({slug:name,name,workspacePath:join(run,name)}));
   for(const space of fixtures)raw.prepare('UPDATE spaces SET config=?,stopped=1 WHERE id=?').run(JSON.stringify({toolSelectionDefaults:original}),space.id);
   app.db.mcpEnablement.setOverride('space',fixtures[0].id,server.id,false);
+  const untouched=spaces.createSpace({slug:'untouched',name:'Untouched',workspacePath:join(run,'untouched')});
+  raw.prepare('UPDATE spaces SET stopped=1,updated_at=1000 WHERE id=?').run(untouched.id);
+  assert.equal((await app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'registry',method:'update',args:[server.id,{name:'renamed-default-fixture'}]}],edits:[]})).ok,true);
+  assert.equal(Object.hasOwn(spaces.getSpace(untouched.id)!.config??{},'toolSelectionDefaults'),false);
+  assert.equal(spaces.getSpace(untouched.id)!.updatedAt,1000);
+  evidence.absentDefaultsRemainAbsent=true;
   const readDefault=(id?:string)=>{const target=captureToolPreferenceRow(raw,id?{table:'spaces',id}:{table:'global_settings',id:1});return JSON.parse(String(target.row![id?'config':'settings'])).toolSelectionDefaults as SessionToolSelection;};
   const update={mutations:[{repository:'registry' as const,method:'update' as const,args:[server.id,{enabled:true}] as [string,{enabled:boolean}]}],edits:[{key:`mcp:${server.id}` as const,selected:true}]};
   const prepare=raw.prepare.bind(raw);
@@ -62,6 +68,9 @@ try {
   assert.equal((await app.db.gateway.run(toolDefaultTransitions,{spaceId:fixtures[0].id,mutations:[{repository:'overrides',method:'clearOverride',args:['space',fixtures[0].id,server.id]}],edits:[{key:`mcp:${server.id}`,selected:null}]})).ok,true);
   assert.equal(readDefault(fixtures[0].id).choices[`mcp:${server.id}`]!.selected,true);
   const before=readDefault();
+  assert.deepEqual(await app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'registry',method:'update',args:[server.id,{enabled:false}]},{repository:'skills',method:'setEnabled',args:['missing',true]}],edits:[{key:`mcp:${server.id}`,selected:false}]}),{ok:false,reason:'superseded'});
+  assert.equal(app.db.appMcpServers.get(server.id)!.enabled,true);assert.deepEqual(readDefault(),before);
+  evidence.missingSkillBatchRefused=true;
   raw.exec("CREATE TRIGGER reject_default_transition BEFORE UPDATE ON spaces BEGIN SELECT RAISE(ABORT,'synthetic default failure'); END");
   await assert.rejects(app.db.gateway.run(toolDefaultTransitions,{mutations:[{repository:'registry',method:'update',args:[server.id,{enabled:false}]}],edits:[{key:`mcp:${server.id}`,selected:false}]}),/synthetic default failure/);
   raw.exec('DROP TRIGGER reject_default_transition');

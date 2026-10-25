@@ -241,4 +241,104 @@ describe('atomic tool default transition worker', () => {
     expect(overrides.listAll()).toEqual([]);
     expect(readSpace()).toEqual(selection());
   });
+  it.each(['empty', 'rename'])(
+    'keeps absent default templates and timestamps unchanged for a %s transition',
+    async (kind) => {
+      const server = registry.create({
+        name: 'before-rename',
+        sourceType: 'stdio',
+        command: 'synthetic',
+        enabled: true,
+      });
+      db.prepare(
+        "UPDATE global_settings SET settings='{}',updated_at='2000-01-01 00:00:00' WHERE id=1"
+      ).run();
+      db.prepare("UPDATE spaces SET config='{}',updated_at=1000").run();
+      expect(
+        (
+          await apply({
+            mutations:
+              kind === 'rename'
+                ? [
+                    {
+                      repository: 'registry',
+                      method: 'update',
+                      args: [server.id, { name: 'after-rename' }],
+                    },
+                  ]
+                : [],
+            edits: [],
+          })
+        ).ok
+      ).toBe(true);
+      expect(readGlobal()).toBeUndefined();
+      for (const id of ['space', 'other']) {
+        expect(readSpace(id)).toBeUndefined();
+        expect(spaces.getSpace(id)!.updatedAt).toBe(1000);
+      }
+      expect(
+        (
+          db.prepare('SELECT updated_at FROM global_settings WHERE id=1').get() as {
+            updated_at: string;
+          }
+        ).updated_at
+      ).toBe('2000-01-01 00:00:00');
+      expect(registry.get(server.id)!.name).toBe(
+        kind === 'rename' ? 'after-rename' : 'before-rename'
+      );
+    }
+  );
+  it('refuses missing skill updates atomically for each void-returning method', async () => {
+    const notices: unknown[] = [];
+    gateway.onChanges = (changes) => {
+      notices.push(changes);
+    };
+    const mutations: ToolDefaultTransition['mutations'] = [
+      { repository: 'skills', method: 'update', args: ['missing', { enabled: true }] },
+      { repository: 'skills', method: 'setEnabled', args: ['missing', true] },
+      { repository: 'skills', method: 'setValidationStatus', args: ['missing', 'valid'] },
+    ];
+    for (const mutation of mutations) {
+      expect(
+        await apply({ mutations: [...update().mutations, mutation], edits: update().edits })
+      ).toMatchObject({ ok: false, reason: 'superseded' });
+      expect(registry.get('browser')!.enabled).toBe(false);
+      expect(readGlobal()).toEqual(selection());
+      expect(notices).toEqual([]);
+    }
+  });
+  it('allows a new skill insert but rolls back a duplicate insert with preceding mutations', async () => {
+    const skill = {
+      id: 'created',
+      name: 'created',
+      displayName: 'Created',
+      description: '',
+      sourceType: 'builtin' as const,
+      config: { type: 'builtin' as const, commandName: 'created' },
+      enabled: true,
+      builtIn: false,
+      validationStatus: 'valid' as const,
+      createdAt: 1,
+    };
+    expect(
+      (
+        await apply({
+          mutations: [{ repository: 'skills', method: 'insert', args: [skill] }],
+          edits: [],
+        })
+      ).ok
+    ).toBe(true);
+    expect(readGlobal().choices['skill:created'].selected).toBe(true);
+    await expect(
+      apply({
+        mutations: [
+          ...update().mutations,
+          { repository: 'skills', method: 'insert', args: [skill] },
+        ],
+        edits: update().edits,
+      })
+    ).rejects.toThrow();
+    expect(registry.get('browser')!.enabled).toBe(false);
+    expect(readGlobal().choices['mcp:browser'].selected).toBe(false);
+  });
 });
