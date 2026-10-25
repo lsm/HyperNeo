@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createNeoProjectForgetOperation } from '../../../../src/lib/neo/project-forget-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -40,6 +40,18 @@ beforeEach(async () => {
 afterEach(() => db.close());
 
 describe('neo.project.forget', () => {
+  test('forget admission does not read repositories on the main repository', async () => {
+    const main = spyOn(repo, 'allRepositories').mockImplementation(() => {
+      throw new Error('forget admission used the main repository');
+    });
+    try {
+      expect(await forget(atlas)).toEqual({ ok: true, repos: ['lsm/neo-atlas'] });
+      expect(repo.getProject(atlas)).toBeNull();
+    } finally {
+      main.mockRestore();
+    }
+  });
+
   test('deletes the project, so its repository leaves the list', async () => {
     expect(repo.allRepositories()).toEqual(['lsm/hyperneo', 'lsm/neo-atlas']);
     expect(await forget(atlas)).toEqual({ ok: true, repos: ['lsm/neo-atlas'] });
