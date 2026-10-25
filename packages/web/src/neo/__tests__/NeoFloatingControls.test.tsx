@@ -125,7 +125,8 @@ describe('Neo floating controls', () => {
     const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
     expect(within(drawer).getByText('Connected')).toBeTruthy();
     expect(within(drawer).queryByText('Projects')).toBeNull();
-    expect(within(drawer).queryByRole('combobox')).toBeNull();
+    expect(within(drawer).getByRole('combobox', { name: '主题' })).toBeTruthy();
+    expect(within(drawer).queryByRole('combobox', { name: /Move under/ })).toBeNull();
     expect(within(drawer).getByRole('button', { name: 'Reconnect' })).toBeTruthy();
     expect(logo.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(within(drawer).getByRole('button', { name: 'Refresh Neo' }));

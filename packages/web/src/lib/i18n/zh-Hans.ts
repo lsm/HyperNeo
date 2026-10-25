@@ -1,6 +1,11 @@
 import type { en } from './en.ts';
 
 export const zhHans: Record<keyof typeof en, string> = {
+  'drawer.appearance': '外观',
+  'drawer.theme': '主题',
+  'drawer.theme.light': '浅色',
+  'drawer.theme.dark': '深色',
+  'drawer.theme.system': '跟随系统',
   'goalDetails.failed': '无法读取目标详情',
   'goalDetails.journal': '工作记录',
   'goalDetails.worked': '有效做法',
