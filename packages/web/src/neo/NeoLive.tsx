@@ -204,7 +204,7 @@ export function NeoLive() {
     () => JSON.stringify([editRevision.value, frame]),
     [editRevision.value, frame]
   );
-  const recoveryReady = useNeoDraftReloadRecovery(
+  const recovery = useNeoDraftReloadRecovery(
     neo.sessionId,
     reloadBuffer,
     () => draft ?? '',
@@ -218,6 +218,7 @@ export function NeoLive() {
     },
     readVersion
   );
+  const recoveryReady = recovery.ready;
   const priorFrame = useRef({ scope: neo.sessionId, frame });
   useLayoutEffect(() => {
     const prior = priorFrame.current;
@@ -965,6 +966,10 @@ export function NeoLive() {
               onError={neo.setError}
               onSend={(input) => {
                 editRevision.value += 1;
+                const handoff = recovery.handoff().catch((error: unknown) => {
+                  if (currentScope.current === sceneScope)
+                    neo.setError(error instanceof Error ? error.message : String(error));
+                });
                 const submitted = draft ?? '';
                 const sessionId = neo.sessionId ?? '';
                 const captured = reloadBuffer.read(sessionId);
@@ -981,7 +986,7 @@ export function NeoLive() {
                   const flight = neo.send(input);
                   const requestId = neo.sendRequestId(input);
                   if (requestId) acceptedCleanups.set(requestId, cleanup);
-                  const receipt = await flight;
+                  const receipt = await (recoveryReady ? flight : flight.finally(() => handoff));
                   if (receipt.ok) {
                     if (requestId) acceptedCleanups.delete(requestId);
                     await cleanup();

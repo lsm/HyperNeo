@@ -62,27 +62,37 @@ function mount(
   if (captured) expect(buffer.remember(scope, capturedText, 'Saved baseline', context)).toBe(true);
   let visible = '';
   let version = 0;
+  let epoch = 0;
+  let transfer!: () => Promise<void>;
   const write = vi.fn((text: string, _context?: NeoPreviewReference | null) => {
     visible = text;
   });
   function Harness({ sessionId }: { sessionId: string | null; epoch: number }) {
-    const ready = useNeoDraftReloadRecovery(
+    const recovery = useNeoDraftReloadRecovery(
       sessionId,
       buffer,
       () => visible,
       write,
       () => version
     );
+    transfer = recovery.handoff;
     useLayoutEffect(() => {
       if (editBeforePassiveEffects) version += 1;
     }, []);
-    return <output data-testid="ready">{String(ready)}</output>;
+    return <output data-testid="ready">{String(recovery.ready)}</output>;
   }
-  const view = render(<Harness sessionId={scope} epoch={version} />);
+  const view = render(<Harness sessionId={scope} epoch={++epoch} />);
   return {
     ...view,
     write,
     buffer,
+    handoff: () => {
+      version += 1;
+      visible = '';
+      const pending = transfer();
+      view.rerender(<Harness sessionId={scope} epoch={++epoch} />);
+      return pending;
+    },
     refuseWrites: () => {
       refuse = true;
     },
@@ -93,8 +103,8 @@ function mount(
       version += 1;
     },
     select: (sessionId: string | null) =>
-      view.rerender(<Harness sessionId={sessionId} epoch={version} />),
-    rerender: () => view.rerender(<Harness sessionId={scope} epoch={version} />),
+      view.rerender(<Harness sessionId={sessionId} epoch={++epoch} />),
+    rerender: () => view.rerender(<Harness sessionId={scope} epoch={++epoch} />),
   };
 }
 const ready = () => screen.getByTestId('ready').textContent;
@@ -353,6 +363,242 @@ describe('useNeoDraftReloadRecovery', () => {
     expect(recoveryCalls()[1][1].input.base).toBe('Captured reply');
     expect(view.buffer.read(scope)).toEqual(newest);
     expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('releases a send handoff without waiting for metadata, preserving the original backup', async () => {
+    const auth = deferred();
+    seams.request.mockImplementation(async (method, input) =>
+      method === 'session.clearInputDraftIf'
+        ? { cleared: true }
+        : input.name === 'artifact.file.get'
+          ? auth.promise
+          : { ok: true }
+    );
+    const view = mount(reference);
+    const original = view.buffer.read(scope);
+    await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await view.handoff();
+    });
+    expect(ready()).toBe('true');
+    expect(view.buffer.read(scope)).toEqual(original);
+    expect(view.write).not.toHaveBeenCalled();
+    expect(seams.request).toHaveBeenCalledWith('session.clearInputDraftIf', {
+      sessionId: scope,
+      expected: 'Captured reply',
+    });
+    await act(async () => auth.resolve(metadata()));
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('orders send cleanup after the existing recovery RPC before releasing adoption', async () => {
+    const rpc = deferred();
+    seams.request.mockImplementation(async (method) =>
+      method === 'session.clearInputDraftIf' ? { cleared: true } : rpc.promise
+    );
+    const view = mount(reference);
+    await waitFor(() => expect(recoveryCalls()).toHaveLength(1));
+    const pending = view.handoff();
+    expect(
+      seams.request.mock.calls.filter(([name]) => name === 'session.clearInputDraftIf')
+    ).toHaveLength(0);
+    await act(async () => {
+      rpc.resolve({ ok: true });
+      await pending;
+    });
+    expect(ready()).toBe('true');
+    expect(view.write).not.toHaveBeenCalled();
+    expect(view.buffer.read(scope)?.previewContext).toEqual(reference);
+    expect(recoveryCalls()).toHaveLength(1);
+  });
+
+  it('keeps one send claim when acceptance removes its browser capture during cleanup', async () => {
+    const auth = deferred();
+    const clear = deferred();
+    let clearCount = 0;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') {
+        clearCount += 1;
+        return clear.promise;
+      }
+      return input.name === 'artifact.file.get' ? auth.promise : { ok: true };
+    });
+    const view = mount(reference);
+    await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+    const captured = view.buffer.read(scope)!;
+    const pending = view.handoff();
+    await waitFor(() => expect(clearCount).toBe(1));
+    view.buffer.forget(scope, captured.id);
+    view.rerender();
+    expect(ready()).toBe('false');
+    await act(async () => {
+      clear.resolve({ cleared: true });
+      await pending;
+    });
+    await waitFor(() => expect(ready()).toBe('true'));
+    expect(clearCount).toBe(1);
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('serializes a newer same-text rebind behind an in-flight send cleanup', async () => {
+    const clear = deferred();
+    const auth = deferred();
+    seams.request.mockImplementation(async (method, input) =>
+      method === 'session.clearInputDraftIf'
+        ? clear.promise
+        : input.name === 'artifact.file.get'
+          ? auth.promise
+          : { ok: true }
+    );
+    const view = mount(reference);
+    await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+    const pending = view.handoff();
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    const rebound = { ...reference, artifactId: 'new-report', snapshot: 'b'.repeat(64) };
+    view.edit();
+    view.setVisible('Captured reply');
+    view.buffer.remember(scope, 'Captured reply', undefined, rebound);
+    const newer = view.buffer.read(scope);
+    view.rerender();
+    await act(async () => {
+      clear.resolve({ cleared: true });
+      await pending;
+    });
+    await waitFor(() => expect(ready()).toBe('true'));
+    expect(recoveryCalls()).toHaveLength(2);
+    expect(recoveryCalls()[1][1].input).toMatchObject({
+      base: '',
+      previewContext: { artifactId: rebound.artifactId, snapshot: rebound.snapshot },
+    });
+    expect(view.buffer.read(scope)).toEqual(newer);
+    expect(view.write).not.toHaveBeenCalled();
+    await act(async () => auth.resolve(metadata()));
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('never releases adoption over a newer rebind whose durable capture failed', async () => {
+    const clear = deferred();
+    const auth = deferred();
+    seams.request.mockImplementation(async (method, input) =>
+      method === 'session.clearInputDraftIf'
+        ? clear.promise
+        : input.name === 'artifact.file.get'
+          ? auth.promise
+          : { ok: true }
+    );
+    const view = mount(reference);
+    await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+    const pending = view.handoff();
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    view.edit();
+    view.refuseWrites();
+    expect(view.buffer.remember(scope, 'Captured reply', undefined, null)).toBe(false);
+    view.rerender();
+    await act(async () => {
+      clear.resolve({ cleared: true });
+      await pending;
+    });
+    expect(ready()).toBe('false');
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('retains a failed handoff and reuses the existing reconnect effect to finish it', async () => {
+    const auth = deferred();
+    let clearCount = 0;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') {
+        clearCount += 1;
+        if (clearCount === 1) throw new Error('Synthetic transport failure');
+        return { cleared: true };
+      }
+      return input.name === 'artifact.file.get' ? auth.promise : { ok: true };
+    });
+    const view = mount(reference);
+    await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+    await expect(view.handoff()).rejects.toThrow('Synthetic transport failure');
+    expect(ready()).toBe('false');
+    expect(view.buffer.read(scope)?.previewContext).toEqual(reference);
+    await act(async () => {
+      connectionState.value = 'disconnected';
+    });
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+    await waitFor(() => expect(ready()).toBe('true'));
+    expect(clearCount).toBe(2);
+    expect(recoveryCalls()).toHaveLength(1);
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
+  it('keeps an uncertain recovery handoff guarded until reconnect resolves its conditional cleanup', async () => {
+    let reject!: (error: Error) => void;
+    const rpc = new Promise((_resolve, fail) => {
+      reject = fail;
+    });
+    seams.request.mockImplementation(async (method) =>
+      method === 'session.clearInputDraftIf' ? { cleared: true } : rpc
+    );
+    const view = mount(reference);
+    await waitFor(() => expect(recoveryCalls()).toHaveLength(1));
+    const pending = view.handoff();
+    const refusal = expect(pending).rejects.toThrow('Unconfirmed recovery');
+    await act(async () => {
+      reject(new Error('Unconfirmed recovery'));
+      await refusal;
+    });
+    expect(ready()).toBe('false');
+    expect(view.buffer.read(scope)?.previewContext).toEqual(reference);
+    expect(view.write).not.toHaveBeenCalled();
+    await act(async () => {
+      connectionState.value = 'disconnected';
+    });
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+    await waitFor(() => expect(ready()).toBe('true'));
+    expect(recoveryCalls()).toHaveLength(1);
+    expect(seams.request).toHaveBeenCalledWith('session.clearInputDraftIf', {
+      sessionId: scope,
+      expected: 'Captured reply',
+    });
+  });
+
+  it('does not apply an old send handoff completion to another session', async () => {
+    const clear = deferred();
+    const auth = deferred();
+    seams.request.mockImplementation(async (method, input) =>
+      method === 'session.clearInputDraftIf'
+        ? clear.promise
+        : input.name === 'artifact.file.get'
+          ? auth.promise
+          : { ok: true }
+    );
+    const view = mount(reference);
+    await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+    const pending = view.handoff();
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    view.select('neo:other');
+    await act(async () => {
+      clear.resolve({ cleared: true });
+      await pending;
+    });
+    expect(ready()).toBe('true');
+    expect(view.write).not.toHaveBeenCalled();
+    view.select(scope);
+    await waitFor(() => expect(ready()).toBe('true'));
+    expect(recoveryCalls()).toHaveLength(1);
   });
 
   it('does not start another recovery for ordinary edits after initial recovery settled', async () => {

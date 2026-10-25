@@ -529,6 +529,81 @@ describe('NeoLive reload draft restore', () => {
     }
   );
 
+  it.each(['refused', 'forget failed'] as const)(
+    'resumes later draft adoption after sending during pending recovery: %s',
+    async (outcome) => {
+      remember('Original reload capture', null, root, reference);
+      let release!: (value: unknown) => void;
+      recover.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve;
+        })
+      );
+      const view = mount();
+      await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+      type('New submitted text');
+      if (outcome === 'refused')
+        view.model.value.send.mockResolvedValueOnce({ ok: false, reason: 'Synthetic refusal' });
+      else {
+        const storage = window.sessionStorage;
+        vi.spyOn(window, 'sessionStorage', 'get').mockReturnValue(
+          new Proxy(storage, {
+            get(target, name) {
+              if (name === 'removeItem')
+                return () => {
+                  throw new Error('Storage unavailable');
+                };
+              const value = Reflect.get(target, name);
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          })
+        );
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      await act(async () => release({ ok: true }));
+      expect(read()?.text).toBe('New submitted text');
+      persisted.set(root, 'Later dictation after the send');
+      for (const [name, callback] of seams.event.mock.calls) {
+        if (name === 'session.voiceLanded')
+          await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+      }
+      await waitFor(() => expect(value()).toBe('Later dictation after the send'));
+    }
+  );
+
+  it('does not show an old send handoff failure in a different session', async () => {
+    remember('Original reload capture', null, root, reference);
+    let release!: (value: unknown) => void;
+    recover.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    const request = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') throw new Error('Old session handoff failed');
+      return request(method, input);
+    });
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type('Submitted before scope change');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    act(() => {
+      view.store.activeSessionId.value = holder;
+      view.model.value = { ...view.model.value, sessionId: holder };
+    });
+    view.model.value.setError.mockClear();
+    await act(async () => release({ ok: true }));
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    expect(view.model.value.setError).not.toHaveBeenCalled();
+  });
+
   it('does not capture the dropped Preview after a fully empty reset', async () => {
     const first = mount();
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'report-a' }));

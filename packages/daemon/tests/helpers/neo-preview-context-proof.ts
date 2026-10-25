@@ -219,6 +219,44 @@ try {
   );
   assert(!legacyRecovery.ok && legacyRecovery.reason === 'submitted');
 
+  await hub.request('session.update', { sessionId, metadata: { inputDraftVoicePending: null } });
+  const pendingVoice = 'Independent staged voice after a send';
+  await hub.request('session.appendVoiceDraft', {
+    sessionId,
+    text: pendingVoice,
+    dedupId: 'handoff-voice',
+  });
+  const clearedRecovery = await hub.request<{ cleared: boolean }>('session.clearInputDraftIf', {
+    sessionId,
+    expected: input.content,
+  });
+  assert(clearedRecovery.cleared);
+  const afterClear = await hub.request<{
+    session: { metadata: { inputDraft?: string; inputDraftVoicePending?: string } };
+  }>('session.get', { sessionId });
+  assert.equal(database().captureSessionInputDraft(sessionId)?.draft, null);
+  assert.equal(afterClear.session.metadata.inputDraft, pendingVoice);
+  assert.equal(afterClear.session.metadata.inputDraftVoicePending, pendingVoice);
+  await hub.request('session.update', {
+    sessionId,
+    metadata: { inputDraft: 'Newer manual draft' },
+  });
+  const staleClear = await hub.request<{ cleared: boolean }>('session.clearInputDraftIf', {
+    sessionId,
+    expected: input.content,
+  });
+  assert.equal(staleClear.cleared, false);
+  const newerDraft = await hub.request<{ session: { metadata: { inputDraft?: string } } }>(
+    'session.get',
+    { sessionId }
+  );
+  assert.equal(database().captureSessionInputDraft(sessionId)?.draft, 'Newer manual draft');
+  assert(newerDraft.session.metadata.inputDraft?.includes('Newer manual draft'));
+  await hub.request('session.update', {
+    sessionId,
+    metadata: { inputDraft: null, inputDraftVoicePending: null },
+  });
+
   async function readContext() {
     const asks = await rpc<{ ok: boolean; items: NeoConversationAsk[] }>(
       'neo.conversation.asks.read',
@@ -336,6 +374,9 @@ try {
     voiceRefusalRetained: true,
     voiceMessageNoDuplicate: true,
     syntheticIndexedDb: true,
+    sendHandoffConditionalClear: true,
+    sendHandoffPreservesVoice: true,
+    sendHandoffPreservesNewerDraft: true,
     reloadContextContract: true,
     reloadRecoveryProjection: true,
     reloadSizeRefusalPreserved: true,
