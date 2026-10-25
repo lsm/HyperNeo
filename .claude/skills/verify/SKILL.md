@@ -98,6 +98,10 @@ SDK proof helpers disable external registry MCP servers through `mcp.registry.li
 and `mcp.registry.setEnabled` before opening sessions. Inline operation tools remain
 available; startup must not depend on downloading an external MCP executable.
 
+When the host restricts the SDK's default `/private/tmp/claude-<uid>` scratch
+directory, set `CLAUDE_CODE_TMPDIR` to a fresh directory inside the owned run,
+alongside `TMPDIR`. Keep the native SDK sandbox enabled for OS write proofs.
+
 The helper creates its own GitHub stub, uses an ephemeral daemon port, seeds
 only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any

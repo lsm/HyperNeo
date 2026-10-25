@@ -2206,7 +2206,8 @@ describe('QueryOptionsBuilder', () => {
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
             expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
             expect(options.additionalDirectories).toEqual([]);
-            expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
+            expect(options.sandbox?.filesystem?.denyWrite).toBeUndefined();
+            expect(options.sandbox?.filesystem?.allowWrite).toContain('/test/workspace');
             expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
             expect(options.env?.GH_TOKEN).toBe('synthetic-poller-query-token');

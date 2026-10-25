@@ -144,10 +144,10 @@ describe('Curated home reads within a Neo wake', () => {
     const head = await git(root, 'rev-parse', 'HEAD');
     await version('Remote edit');
     const failed = await read();
-    expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('dirty') });
+    expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('sync_failed') });
     expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Human uncommitted edit');
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
-    expect(await pulls()).toBe(0);
+    expect(await pulls()).toBe(1);
     await writeFile(join(root, 'direction.md'), 'Initial');
     expect(await read()).toMatchObject({ content: 'Remote edit' });
   });

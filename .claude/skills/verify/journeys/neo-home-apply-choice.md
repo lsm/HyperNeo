@@ -8,7 +8,6 @@ repository, auth file or human home is used. There is no unattended GUI run.
 
 ```bash
 bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_NORMAL" after 9417
-bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_RACE" after 9418 race
 bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_IGNORED" after 9419 ignored
 bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_CHAT" after 9420 chat
 ```
@@ -30,10 +29,8 @@ channel stores scalar text, unlike the question button's array. Both forms must
 apply identically, and the protected-file choice still requires its separate yes.
 The retained `before ... chat` mode records the original scalar-answer refusal.
 
-Race mode injects an unrelated uncommitted human edit while Git inspects the
-remote, after staging. Save must return stale_conflict with original local and
-remote heads intact and both human files unchanged. The marker must prove the
-intervention occurred; a missing marker is a failure, not a pass.
+Unrelated local or remote commits no longer invalidate a recorded version choice.
+Git still reports real merge failures; publication retains its remote revision lease.
 
 Ignored mode creates an ignored human file before the conflict question while
 origin introduces the same path. The conflict read must preserve those bytes
@@ -43,14 +40,14 @@ the application baseline explicit. Save must refuse without replacing that file
 or moving either head. The evidence retains both read-time and save-time bytes.
 
 Evidence: `$RUN/evidence/neo-home-apply-choice.json` contains actual RPC replies,
-commit IDs, both human answer paths and preservation assertions. All three modes
+commit IDs, both human answer paths and preservation assertions. All retained modes
 must print PASS and the launcher must report its owned daemon stopped. The
 initial tests-first commit records before-mode RPC refusing even an answered
 choice. The initial implementation plus the retained race/ignored fixtures
 records the two failing publication decisions before the fixes.
 
 Focused contracts also inject local commits during staging and at Git publication,
-remote commits before fetch and during push, incorrect/unanswered choices and
+remote commits during push, incorrect/unanswered choices and
 wrong protected hashes. A successful save updates the current runtime wake's
 sync receipt so a subsequent Neo read returns the applied bytes rather than its
 old cached conflict, without another pull.

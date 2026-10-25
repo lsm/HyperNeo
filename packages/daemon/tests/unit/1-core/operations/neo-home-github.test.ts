@@ -225,15 +225,22 @@ describe('Neo private GitHub home proposal', () => {
     });
     expect((await log()).match(/repo create/g)).toHaveLength(1);
   });
-  test.each(['existing origin', 'dirty file'])('refuses %s before creation', async (state) => {
-    const proposed = await call({ askId: 'ask' });
-    await answer(proposed.questionId);
-    if (state === 'existing origin')
-      await git('remote', 'add', 'origin', join(fixture, 'remote.git'));
-    else await writeFile(join(root, 'human.md'), 'Preserve human draft.');
-    expect(await call({ questionId: proposed.questionId })).toMatchObject({ ok: false });
-    expect(await log()).not.toContain('repo create');
-  });
+  test.each(['existing origin', 'credential history'])(
+    'refuses %s before creation',
+    async (state) => {
+      const proposed = await call({ askId: 'ask' });
+      await answer(proposed.questionId);
+      if (state === 'existing origin')
+        await git('remote', 'add', 'origin', join(fixture, 'remote.git'));
+      else {
+        await writeFile(join(root, 'fixture.md'), 'TOKEN=' + 'synthetic'.repeat(4));
+        await git('add', 'fixture.md');
+        await git('commit', '-m', 'Synthetic local fixture');
+      }
+      expect(await call({ questionId: proposed.questionId })).toMatchObject({ ok: false });
+      expect(await log()).not.toContain('repo create');
+    }
+  );
   test('concurrent proposals show only one question and reject replacement repository fields', async () => {
     const results = await Promise.all([call({ askId: 'ask' }), call({ askId: 'ask' })]);
     expect(results[0]).toEqual(results[1]);

@@ -50,12 +50,6 @@ export function reportHomeConflict<T extends { ok: boolean }>(
   return { ...receipt, questionId } as T & { questionId: string };
 }
 
-export function homeConflictQuestionId(root: string, local: string, remote: string): string {
-  return neoDerivedId(
-    `home-conflict-question:${neoDerivedId(JSON.stringify([root, local, remote]))}`
-  );
-}
-
 export function requireHomeChoice(
   input: HomeSavePlan,
   store: NeoAskTodoRepository,

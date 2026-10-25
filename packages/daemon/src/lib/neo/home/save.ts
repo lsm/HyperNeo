@@ -10,9 +10,7 @@ export const HomeSaveInput = z.object({
     .string()
     .min(1)
     .optional()
-    .describe(
-      'The answered revision-bound conflict choice; separate from protected-file questionId.'
-    ),
+    .describe('The answered conflict choice; separate from protected-file questionId.'),
 });
 export const HomeSaveResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string(), questionId: z.string().optional() }),
@@ -42,15 +40,15 @@ export function requireHomePath<T extends { path: string }>(input: T) {
     : { value: input };
 }
 
-export function requireHomeSave(input: HomeSaveInput) {
+export function requireHomeSave(input: HomeSaveInput, publish = true) {
   const sensitive =
     /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/.test(input.content) ||
     /(?:sk-|ghp_|github_pat_|xox[baprs]-|AKIA)[A-Za-z0-9_-]{16,}/.test(input.content) ||
     /(?:KEY|TOKEN|SECRET|PASSWORD)\s*=\s*["']?[^\s"']{16,}/i.test(input.content);
   const reason = !input.content.isWellFormed()
     ? 'content_refused: content must be well-formed Unicode text.'
-    : sensitive
-      ? 'content_refused: private keys or credential-like content cannot be saved.'
+    : publish && sensitive
+      ? 'content_refused: private keys or credential-like content cannot be published.'
       : null;
   return reason ? { reason: { ok: false as const, reason } } : { value: input };
 }

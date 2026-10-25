@@ -153,15 +153,23 @@ describe('Neo home save remote sync', () => {
     expect(await readFile(join(root, input.path)).catch(() => null)).toBeNull();
     expect(await git(root, 'status', '--porcelain')).toBe('');
   });
-  test('preserves dirty human work without pulling or writing', async () => {
+  test('saves alongside an unrelated edited home document', async () => {
     await writeFile(join(root, 'README.md'), 'Human draft.');
-    const head = await git(root, 'rev-parse', 'HEAD');
     expect(await call('neo.home.save', input)).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('dirty'),
+      ok: true,
     });
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Human draft.');
-    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await git(root, 'show', `HEAD:${input.path}`)).toBe(input.content.trim());
+  });
+  test('keeps credential-like local history off the remote', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    await commit(root, 'fixture.md', 'TOKEN=' + 'synthetic'.repeat(4));
+    expect(await call('neo.home.save', input)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('content_refused'),
+    });
+    expect(await git(root, 'show', `HEAD:${input.path}`)).toBe(input.content.trim());
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
   });
   test('leaves a human rebase paused for editing rather than aborting it', async () => {
     await commit(root, 'local.md', 'Local commit.');

@@ -2,8 +2,7 @@ import { Buffer } from 'node:buffer';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { homeConflictQuestionId } from './conflicts.ts';
-import type { HomeSavePlan, HomeSaveResult } from './save.ts';
+import { requireHomeSave, type HomeSavePlan, type HomeSaveResult } from './save.ts';
 
 type Git = (
   args: string[],
@@ -27,7 +26,7 @@ export async function applyHomeChoice(
     upstream.code ||
     !upstream.text.startsWith('refs/remotes/origin/')
   )
-    return refuse('stale_conflict: restore the selected home branch and its origin tracking.');
+    return refuse('sync_failed: restore the selected home branch and its origin tracking.');
   const remoteBranch = `refs/heads/${upstream.text.slice('refs/remotes/origin/'.length)}`;
   const reference = `refs/neo-home-choice/${crypto.randomUUID()}`;
   const temporary = await mkdtemp(join(tmpdir(), 'neo-home-choice-stage-'));
@@ -42,10 +41,6 @@ export async function applyHomeChoice(
     );
     if (fetched.code) return refuse(`sync_failed: ${fetched.error}`);
     const remote = (await git(['rev-parse', reference])).text;
-    if (homeConflictQuestionId(root, local.text, remote) !== input.resolution!.questionId)
-      return refuse(
-        'stale_conflict: question does not bind the current home revisions; use the current home-sync conflict question.'
-      );
     const selected = input.resolution!.version === 'local' ? local.text : remote;
     const mode = (await git(['ls-tree', selected, '--', input.path])).text.slice(0, 6);
     const content = await git(['show', `${selected}:${input.path}`], true);
@@ -99,25 +94,26 @@ export async function applyHomeChoice(
     const message = `${input.message}\n\nNeo-Conflict-Choice: question ${input.resolution!.questionId}${input.confirmation ? `\nNeo-Confirmed-By: question ${input.confirmation.questionId}` : ''}`;
     await inStage(['commit', '-m', message]);
     const commit = (await inStage(['rev-parse', 'HEAD'])).text;
-    const latest = await git(['ls-remote', '--exit-code', 'origin', remoteBranch], true, true);
-    if (latest.code || latest.text.split(/\s/)[0] !== remote)
-      return refuse('stale_conflict: remote changed while preparing the choice; nothing applied.');
-    const current = (await git(['rev-parse', 'HEAD'])).text;
-    const currentBranch = (await git(['symbolic-ref', 'HEAD'], true)).text;
-    if (
-      current !== local.text ||
-      currentBranch !== branch.text ||
-      (await git(['status', '--porcelain'])).text
-    )
-      return refuse(
-        'stale_conflict: local history or human edits changed while preparing the choice.'
-      );
+    const publication = requireHomeSave({
+      ...input,
+      content: (
+        await inStage([
+          'log',
+          '--format=',
+          '--patch',
+          '--no-ext-diff',
+          '--no-textconv',
+          `${remote}..HEAD`,
+        ])
+      ).text,
+    });
+    if (publication.reason) return publication.reason;
     const installed = await git(
       ['merge', '--ff-only', '--no-edit', '--no-overwrite-ignore', commit],
       true
     );
     if (installed.code)
-      return refuse(`stale_conflict: local changed before publication. ${installed.error}`);
+      return refuse(`sync_failed: Git could not apply the resolution. ${installed.error}`);
     const pushed = await git(
       [
         'push',

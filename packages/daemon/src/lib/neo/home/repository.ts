@@ -22,7 +22,12 @@ import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
 import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
-import { requireHomePath, type HomeSavePlan, type HomeSaveResult } from './save.ts';
+import {
+  requireHomePath,
+  requireHomeSave,
+  type HomeSavePlan,
+  type HomeSaveResult,
+} from './save.ts';
 
 export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
@@ -104,12 +109,8 @@ export class NeoHomeRepository {
     }
   }
 
-  private async synchronize(requireClean = false): Promise<HomeSyncResult> {
+  private async synchronize(): Promise<HomeSyncResult> {
     if ((await this.git(['remote', 'get-url', 'origin'], true)).code) return { value: null };
-    if (requireClean && (await this.git(['status', '--porcelain'])).text)
-      return {
-        reason: { ok: false, reason: 'dirty: review existing home changes before synchronizing.' },
-      };
     const upstream = await this.git(['rev-parse', '--symbolic-full-name', '@{upstream}'], true);
     const prefix = 'refs/remotes/origin/';
     if (upstream.code || !upstream.text.startsWith(prefix))
@@ -224,16 +225,6 @@ export class NeoHomeRepository {
               reason: 'sync_failed: a home rebase began during synchronization; no update applied.',
             },
           };
-      if (
-        (await this.git(['rev-parse', 'HEAD'])).text !== local ||
-        (await this.git(['status', '--porcelain'])).text
-      )
-        return {
-          reason: {
-            ok: false,
-            reason: 'dirty: home changed during synchronization; no update applied.',
-          },
-        };
       const applied = await this.git(
         ['merge', '--ff-only', '--no-overwrite-ignore', '--no-autostash', candidate],
         true
@@ -347,8 +338,14 @@ export class NeoHomeRepository {
       if (!initialized.ok) return initialized;
       if (!(await this.git(['remote', 'get-url', 'origin'], true)).code)
         return { ok: false as const, reason: 'remote_exists: keep the configured origin.' };
-      if ((await this.git(['status', '--porcelain'])).text)
-        return { ok: false as const, reason: 'dirty: review existing home changes first.' };
+      const publication = requireHomeSave({
+        path: 'home',
+        message: 'Publish home',
+        content: (
+          await this.git(['log', '--format=', '--patch', '--no-ext-diff', '--no-textconv', 'HEAD'])
+        ).text,
+      });
+      if (publication.reason) return publication.reason;
       if (!reserve())
         return {
           ok: false as const,
@@ -429,7 +426,7 @@ export class NeoHomeRepository {
     });
     if (!metadata) return { ok: false, reason: 'not_found: home is not initialized.' };
     if (!metadata.isDirectory()) return { ok: false, reason: 'invalid_path: home git directory.' };
-    const synced = await this.synchronize(true);
+    const synced = await this.synchronize();
     if ('reason' in synced) return synced.reason;
     if (await this.hasSymbolicLink(path))
       return { ok: false, reason: 'invalid_path: symbolic link.' };
@@ -473,19 +470,14 @@ export class NeoHomeRepository {
     });
     if (metadata && !metadata.isDirectory())
       return { ok: false, reason: 'invalid_path: home git directory.' };
-    const dirty = metadata
-      ? (await this.git(['status', '--porcelain', '-z', '--untracked-files=all'])).text
-          .split('\0')
-          .some(
-            (entry) => entry && !HOME_RUNTIME_DIRS.some((dir) => entry.startsWith(`?? ${dir}/`))
-          )
-      : (
-          await readdir(this.root).catch((error) => {
-            if (error.code !== 'ENOENT') throw error;
-            return [];
-          })
-        ).some((name) => !HOME_RUNTIME_DIRS.includes(name));
-    if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
+    const publish = !!metadata && !(await this.git(['remote', 'get-url', 'origin'], true)).code;
+    for (const content of [
+      input.content,
+      ...(input.confirmation ? [input.confirmation.entry] : []),
+    ]) {
+      const checked = requireHomeSave({ ...input, content }, publish);
+      if (checked.reason) return checked.reason;
+    }
     if (metadata)
       for (const path of paths)
         if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
@@ -494,8 +486,7 @@ export class NeoHomeRepository {
             reason: 'ignored_path: this document or decision log is git-ignored.',
           };
     if (input.resolution) {
-      if (!metadata)
-        return { ok: false, reason: 'stale_conflict: the home repository is missing.' };
+      if (!metadata) return { ok: false, reason: 'not_found: the home repository is missing.' };
       return applyHomeChoice(this.root, input, (args, failure, network, cwd) =>
         this.git(args, failure, network, cwd)
       );
@@ -553,6 +544,20 @@ export class NeoHomeRepository {
     }
     const commit = (await this.git(['rev-parse', 'HEAD'])).text;
     if (synced.value) {
+      const publication = requireHomeSave({
+        ...input,
+        content: (
+          await this.git([
+            'log',
+            '--format=',
+            '--patch',
+            '--no-ext-diff',
+            '--no-textconv',
+            `${synced.value.replace('refs/heads/', 'refs/remotes/origin/')}..HEAD`,
+          ])
+        ).text,
+      });
+      if (publication.reason) return publication.reason;
       const pushed = await this.git(['push', 'origin', `HEAD:${synced.value}`], true, true);
       if (pushed.code)
         return {
@@ -570,24 +575,6 @@ export class NeoHomeRepository {
     const ignores = (await this.git(['show', 'HEAD:.gitignore'], true)).text.split('\n');
     const paths = ['README.md', '.gitignore', 'direction.md'];
     if (!hasHead || !HOME_RUNTIME_DIRS.every((dir) => ignores.includes(`${dir}/`))) {
-      const changes = (
-        await this.git(
-          hasHead
-            ? ['status', '--porcelain', '-z', '--untracked-files=all']
-            : ['diff', '--cached', '--name-only', '-z']
-        )
-      ).text
-        .split('\0')
-        .filter(
-          (entry) =>
-            entry && !(hasHead && HOME_RUNTIME_DIRS.some((dir) => entry.startsWith(`?? ${dir}/`)))
-        );
-      const interrupted =
-        !hasHead &&
-        changes.length === paths.length &&
-        paths.every((path) => changes.includes(path));
-      if (changes.length && !interrupted)
-        return { ok: false, reason: 'dirty: review existing home changes before initialization.' };
       const documents = new Map([
         [
           'README.md',

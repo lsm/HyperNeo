@@ -145,7 +145,7 @@ describe('Neo home setup', () => {
     }
   );
   test.each(['untracked document', 'staged transcript'])(
-    'does not ignore unrelated changes during ignore repair: %s',
+    'repairs ignores alongside unrelated changes: %s',
     async (change) => {
       await init();
       await rm(join(root, '.gitignore'));
@@ -155,7 +155,7 @@ describe('Neo home setup', () => {
       await writeFile(join(root, path), 'Human draft.');
       if (change === 'staged transcript') await git('add', path);
       const before = await git('status', '--porcelain', '-z');
-      expect(await init()).toMatchObject({ ok: false, reason: expect.stringContaining('dirty') });
+      expect(await init()).toMatchObject({ ok: true });
       expect(await git('status', '--porcelain', '-z')).toBe(before);
     }
   );
@@ -205,11 +205,11 @@ describe('Neo home setup', () => {
     expect(await git('status', '--porcelain')).toBe('');
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
   });
-  test('refuses bootstrap when pre-existing changes are staged', async () => {
+  test('bootstraps without committing pre-existing staged changes', async () => {
     await git('init', '--quiet');
     await writeFile(join(root, 'human.md'), 'Human draft.');
     await git('add', 'human.md');
-    expect(await init()).toMatchObject({ ok: false, reason: expect.stringContaining('dirty') });
+    expect(await init()).toMatchObject({ ok: true });
     expect(await git('diff', '--cached', '--name-only')).toBe('human.md');
   });
   test('belongs to the local human or root Neo', async () => {

@@ -161,6 +161,7 @@ describe('Neo home save', () => {
     'SECRET=' + 'h'.repeat(24),
     'PASSWORD=' + 'i'.repeat(24),
   ])('refuses synthetic credential content without writes: %s', async (content) => {
+    await git('remote', 'add', 'origin', join(fixture, 'synthetic-remote.git'));
     const before = await git('rev-parse', 'HEAD');
     expect(await save({ path: 'digest.md', content })).toMatchObject({
       ok: false,
@@ -168,6 +169,11 @@ describe('Neo home save', () => {
     });
     expect(await git('rev-parse', 'HEAD')).toBe(before);
     expect(await git('status', '--porcelain')).toBe('');
+  });
+  test('local-only content is Neo’s to edit and commit', async () => {
+    const content = 'TOKEN=' + 'synthetic'.repeat(4);
+    expect(await save({ path: 'fixture.md', content })).toMatchObject({ ok: true });
+    expect(await git('show', 'HEAD:fixture.md')).toBe(content);
   });
   test.each([
     '../escape.md',
@@ -204,7 +210,7 @@ describe('Neo home save', () => {
     expect(await git('status', '--porcelain')).toBe('');
   });
   test.each(['untracked', 'staged', 'modified', 'staged transcript'])(
-    'refuses %s human changes without altering them',
+    'saves alongside %s changes without committing them',
     async (state) => {
       if (state === 'modified') await writeFile(join(root, 'README.md'), 'Human change.');
       else if (state !== 'staged transcript')
@@ -218,10 +224,8 @@ describe('Neo home save', () => {
         await git('add', '.coordinators/transcript.md');
       }
       const before = await git('status', '--porcelain', '-z');
-      expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('dirty'),
-      });
+      expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({ ok: true });
+      expect(await git('show', '--format=', '--name-only', 'HEAD')).toBe('digest.md');
       expect(await git('status', '--porcelain', '-z')).toBe(before);
     }
   );
@@ -243,17 +247,6 @@ describe('Neo home save', () => {
     expect(
       await readFile(join(fixture, 'outside', 'digest.md'), 'utf8').catch(() => null)
     ).toBeNull();
-  });
-  test('refuses a first save on a dirty non-repository without bootstrapping it', async () => {
-    await rm(root, { recursive: true });
-    await mkdir(root);
-    await writeFile(join(root, 'human.md'), 'Preserve me.');
-    expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('dirty'),
-    });
-    expect(await readFile(join(root, 'README.md'), 'utf8').catch(() => null)).toBeNull();
-    expect(await readFile(join(root, '.git', 'HEAD'), 'utf8').catch(() => null)).toBeNull();
   });
   test.each(['existing', 'new', 'non-UTF-8'])(
     'restores only its own %s document after commit failure',

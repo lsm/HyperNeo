@@ -41,7 +41,7 @@ export function requireHomeConfirmation(
       },
     };
   const entry = `\n## ${new Date(read.question.answeredAt).toISOString()}\n\n${input.message}\n\nPath: ${input.path}\nSHA-256: ${sha256}\nConfirmed by human: question ${question.id}\n\n${question.text}\n`;
-  const content = requireHomeSave({ ...input, content: entry });
+  const content = requireHomeSave({ ...input, content: entry }, false);
   return content.reason
     ? content
     : { value: { ...input, confirmation: { questionId: question.id, entry } } };

@@ -69,7 +69,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       name: 'Bash',
       input: {
         command: sandboxProof
-          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
+          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (mkdir -p '${isolated}/data/Neo/.git/info'; printf HOME_OK > '${isolated}/data/Neo/blocked.txt'; printf 'evidence/\\n' >> '${isolated}/data/Neo/.git/info/exclude'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
           : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
       },
     },
@@ -742,7 +742,8 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
             approvalProbeCreatedFile: existsSync(approvalProbeFile),
             tempWriteAllowed: existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')),
             checkoutWriteAllowed: existsSync(join(readCheckout, 'allowed.txt')),
-            protectedWritesDenied: [workerCheckout, join(isolated, 'data'), newCwd].every(
+            homeWriteAllowed: existsSync(join(newCwd, 'blocked.txt')),
+            protectedWritesDenied: [workerCheckout, join(isolated, 'data')].every(
               (path) => !existsSync(join(path, 'blocked.txt'))
             ),
             sdkSessionId,
@@ -799,7 +800,9 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
       expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
       expect(existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt'))).toBe(true);
-      for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
+      expect(readFileSync(join(newCwd, 'blocked.txt'), 'utf8')).toBe('HOME_OK');
+      expect(readFileSync(join(newCwd, '.git/info/exclude'), 'utf8')).toContain('evidence/');
+      for (const path of [workerCheckout, join(isolated, 'data')])
         expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
     }
     for (const index of [4, 5]) {

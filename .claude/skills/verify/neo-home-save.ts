@@ -26,6 +26,24 @@ if (mode === 'runtime') {
   }
 }
 const input = { path: 'projects/verify/digest.md', content: '  Curated progress 🦊.\n\n', message: 'Record verified progress' };
+if (mode === 'ownership-before' || mode === 'ownership') {
+  await mkdir(`${root}/evidence`, { recursive: true });
+  await writeFile(`${root}/evidence/run.json`, '{"observed":true}');
+  const saved = await rpc(input);
+  await writeFile(`${run}/evidence/neo-home-ownership.json`, JSON.stringify({ mode, saved }, null, 2));
+  if (mode === 'ownership-before') {
+    if (saved.ok || !saved.reason?.includes('dirty')) throw new Error('Expected original dirty refusal');
+    console.log('REPRODUCED: untracked evidence refuses the real save RPC.');
+    process.exit(0);
+  }
+  if (!saved.ok) throw new Error(JSON.stringify(saved));
+  const committed = await git('show', `HEAD:${input.path}`);
+  const evidence = { saved, exactContent: await readFile(`${root}/${input.path}`, 'utf8'), head: await git('rev-parse', 'HEAD'), committed, untracked: await git('status', '--porcelain'), trackedEvidence: await git('ls-files', 'evidence'), original: await readFile(`${root}/evidence/run.json`, 'utf8') };
+  await writeFile(`${run}/evidence/neo-home-ownership.json`, JSON.stringify(evidence, null, 2));
+  if (evidence.exactContent !== input.content || saved.commit !== evidence.head || committed !== input.content.trim() || evidence.trackedEvidence || evidence.original !== '{"observed":true}' || !evidence.untracked.includes('evidence/')) throw new Error('Ownership proof failed');
+  console.log('PASS: real daemon saves and commits exact document bytes with untracked evidence present.');
+  process.exit(0);
+}
 const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
@@ -65,10 +83,10 @@ const repeat = await rpc(input);
 const commits = await git('rev-list', '--count', 'HEAD');
 const committedPaths = await git('show', '--format=', '--name-only', 'HEAD');
 const content = await readFile(`${root}/${input.path}`, 'utf8');
-const denied = await rpc({ ...input, path: 'secret.md', content: 'sk-' + 'v'.repeat(32) });
+const denied = await rpc({ ...input, path: 'secret.md', content: '\ud800' });
 const confirmation = await rpc({ ...input, path: 'direction.md' });
 await writeFile(`${root}/human.md`, 'Synthetic human draft.');
-const dirty = await rpc({ ...input, content: 'Must not write.' });
+const dirty = await rpc(input);
 const humanDraft = await readFile(`${root}/human.md`, 'utf8');
 await rm(`${root}/human.md`);
 await git('config', 'user.name', '');
@@ -97,5 +115,5 @@ if (mode === 'runtime') for (const dir of ['.claude', 'worktrees']) {
 }
 const evidence = { runtime, first, repeat, commits, committedPaths, head, content, denied, confirmation, dirty, humanDraft, failure, afterFailure, retry, writeFailure, createFailure, finalHead: await git('rev-parse', 'HEAD'), status: await git('status', '--porcelain'), trackedTranscripts: await git('ls-files', '.coordinators') };
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
-if (!repeat.ok || first.commit !== head || repeat.commit !== head || commits !== '2' || committedPaths !== input.path || content !== input.content || denied.ok || !denied.reason?.includes('content') || confirmation.ok || !confirmation.reason?.includes('confirmation_required') || dirty.ok || !dirty.reason?.includes('dirty') || humanDraft !== 'Synthetic human draft.' || !String(failure.error).includes('Author identity unknown') || afterFailure !== input.content || !retry.ok || !String(writeFailure.error).includes('ENAMETOOLONG') || !String(createFailure.error).includes('EACCES') || evidence.finalHead !== head || evidence.status || evidence.trackedTranscripts) throw new Error('Home save contract failed');
-console.log('PASS: real RPC saves exact bytes in one commit, refuses credentials/confirmation/dirty writes, preserves existing content on failure, and retries cleanly.');
+if (!repeat.ok || first.commit !== head || repeat.commit !== head || commits !== '2' || committedPaths !== input.path || content !== input.content || denied.ok || !denied.reason?.includes('content') || confirmation.ok || !confirmation.reason?.includes('confirmation_required') || !dirty.ok || humanDraft !== 'Synthetic human draft.' || !String(failure.error).includes('Author identity unknown') || afterFailure !== input.content || !retry.ok || !String(writeFailure.error).includes('ENAMETOOLONG') || !String(createFailure.error).includes('EACCES') || evidence.finalHead !== head || evidence.status || evidence.trackedTranscripts) throw new Error('Home save contract failed');
+console.log('PASS: real RPC saves exact bytes in one commit, refuses malformed text/unconfirmed mandates and permits unrelated drafts, preserves existing content on failure, and retries cleanly.');

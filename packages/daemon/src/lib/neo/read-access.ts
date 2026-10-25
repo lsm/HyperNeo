@@ -41,8 +41,7 @@ export async function neoReadAccess(
     (process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? null);
   return {
     filesystem: {
-      allowWrite: [temp, ...neoReadCheckoutPaths()],
-      denyWrite: [cwd ?? neoFolderPath()],
+      allowWrite: [cwd ?? neoFolderPath(), temp, ...neoReadCheckoutPaths()],
     },
     env: {
       TMPDIR: temp,

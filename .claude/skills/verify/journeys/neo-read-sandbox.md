@@ -23,7 +23,7 @@ env -i HOME="$RUN/home" PATH="$PATH" TERM=dumb NODE_ENV=test \
 Inspect `neo-goal-cycle-sdk.json`: actual Read/Grep/Glob return synthetic code;
 Bash reads it without a permission denial. Its writes to an exact per-repository
 `<data>/worktrees/<owner>/<repo>/neo-read` leaf succeed. A worker-id sibling,
-the data directory and Neo's cwd remain unwritable. Bash returns an explicit non-zero tool error with OS-denial stderr; the SDK
+and the data directory remain unwritable. Neo's own home is writable: the actual Bash probe writes HOME_OK and appends to .git/info/exclude. Bash returns an explicit non-zero tool error with OS-denial stderr; the SDK
 records it as `is_error:true`. The temp-directory write must also succeed. Neo must not advertise a
 `HYPERNEO_HANDOFF_DIR` outside its writable roots; the Bash probe refuses a
 non-empty value. Ordinary workers retain their handoff draft directory.
