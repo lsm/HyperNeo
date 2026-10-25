@@ -71,6 +71,7 @@ beforeEach(() => {
   useNeoAttachments(root).remove(useNeoAttachments(root).files.map((file) => file.id));
   closeArtifactPreview();
   persisted.clear();
+  sessionStorage.clear();
   slowLoad = null;
   seams.event.mockImplementation(() => () => {});
   connectionState.value = 'connected';
@@ -167,6 +168,12 @@ function type(text: string) {
 }
 function value() {
   return (screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement).value;
+}
+
+function capturedDraft() {
+  return JSON.parse(
+    sessionStorage.getItem(`hyperneo_neo_draft_reload_v1.${encodeURIComponent(root)}`) ?? 'null'
+  );
 }
 
 function previewRoute(delay?: Promise<unknown>) {
@@ -552,6 +559,7 @@ describe('Neo real composer draft recovery', () => {
       };
       fireEvent.click(await screen.findByRole('button', { name: 'Edit and send again' }));
       await waitFor(() => expect(value()).toBe('Undelivered bound request'));
+      expect(capturedDraft()).toMatchObject({ text: 'Undelivered bound request', previewContext });
       expect(
         screen.getByText(/To Neo.*Preview unavailable.*Unavailable report.*aaaaaaaa/)
       ).toBeTruthy();
@@ -569,6 +577,10 @@ describe('Neo real composer draft recovery', () => {
         voice.recording = false;
         fireEvent.click(stop);
         await waitFor(() => expect(value()).toBe('Voice-bound draft\nVoice addition'));
+        expect(capturedDraft()).toMatchObject({
+          text: 'Voice-bound draft\nVoice addition',
+          previewContext,
+        });
         expect(voice.submit.mock.calls[0][0].intent).toBe('draft');
         expect(view.model.value.send).not.toHaveBeenCalled();
       }
@@ -623,7 +635,9 @@ describe('Neo real composer draft recovery', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
       await waitFor(() => expect(value()).toBe('Failed bound request'));
       expect(screen.getByText(/To Neo.*Synthetic report.*aaaaaaaa/)).toBeTruthy();
+      expect(capturedDraft()).toMatchObject({ text: 'Failed bound request', previewContext });
       if (remove) fireEvent.click(screen.getByRole('button', { name: 'Remove Preview context' }));
+      expect(capturedDraft().previewContext).toEqual(remove ? null : previewContext);
       offline = false;
       type('Edited request');
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
@@ -1170,6 +1184,10 @@ describe('Neo real composer draft recovery', () => {
     voice.recording = false;
     fireEvent.click(stop);
     await waitFor(() => expect(value()).toBe('Current fictional transcript'));
+    expect(capturedDraft()).toMatchObject({
+      text: 'Current fictional transcript',
+      previewContext: null,
+    });
     await waitFor(() => expect(persisted.get(root)).toBe('Current fictional transcript'));
   });
 
