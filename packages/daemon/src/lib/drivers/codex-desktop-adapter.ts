@@ -917,12 +917,14 @@ async function tryServerCodexSend(
   mode: 'auto' | 'steer'
 ): Promise<CodexSendGate<never>> {
   sendLog.warn('work.send route', { threadId: detail.thread.id, path: route, mode });
+  let attempted = false;
   const result = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     const turn = admitCodexSteerTurn(
       await server.call('thread/turns/list', { threadId: detail.thread.id, limit: 1 })
     );
     if ('value' in turn) {
       try {
+        attempted = true;
         return await callCodexSteer(server, detail.thread.id, turn.value, message);
       } catch (error) {
         if (mode === 'steer' || !/NoActiveTurn|no active turn/.test(String(error))) throw error;
@@ -931,10 +933,13 @@ async function tryServerCodexSend(
     try {
       await server.call('thread/resume', { threadId: detail.thread.id, excludeTurns: true });
     } catch (error) {
-      if (String(error).includes(`thread ${detail.thread.id} already has an active writer`))
+      if (String(error).includes(`thread ${detail.thread.id} already has an active writer`)) {
+        attempted = true;
         return queueCodexMessage(detail, message, deps);
+      }
       throw error;
     }
+    attempted = true;
     const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(
       await server.call('turn/start', {
         threadId: detail.thread.id,
@@ -944,7 +949,11 @@ async function tryServerCodexSend(
     return { ok: true, value: { delivered: true, startedTurnId: started.turn.id } };
   });
   sendLog.warn('work.send app-server result', { threadId: detail.thread.id, mode, result });
-  return { reason: !result.ok ? reject('not_delivered', result.detail) : result };
+  return {
+    reason: !result.ok
+      ? reject('not_delivered', result.detail, attempted ? undefined : true)
+      : result,
+  };
 }
 
 export function codexWithdrawal(queuedSubmissionId: string, withdrawn: boolean): WorkWithdrawal {

@@ -56,8 +56,6 @@ async function rpc(name: string, input: unknown) {
   receipts.push({ name, result });
   return result.reply.value ?? result.reply;
 }
-let release = () => {};
-let answer: Promise<unknown> | undefined;
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
@@ -131,8 +129,6 @@ try {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ immediate, refused, retried, uncertain, waiting, reconciled, peerInputs, receipts, todo: restartedStore.getTodo('target') }, null, 2));
   console.log('PASS: external answers deliver once, retry a definite refusal, and reconcile lost acknowledgements after restart without resending');
 } finally {
-  release();
-  await answer;
   await app.cleanup();
   await stopPeer?.();
   for (const name of ['data', 'home', 'tmp', 'bin', 'workspace', 'peer-rollout.jsonl']) rmSync(join(run, name), { recursive: true, force: true });

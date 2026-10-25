@@ -89,6 +89,8 @@ run if saving evidence fails. Keep baseline and fixed evidence in separate
 directories; the helper must close its resources in finally.
 The wrapper trims TMPDIR's trailing slash so its HOME/data paths match helpers'
 normalized run paths, including macOS's default TMPDIR.
+For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
+wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
 

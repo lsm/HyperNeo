@@ -1323,6 +1323,7 @@ describe('codex-desktop adapter status and send', () => {
       ok: false,
       reason: 'not_delivered',
       detail: error,
+      ...(phase === 'thread/resume' ? { notSent: true } : {}),
     });
     expect(spawned).toEqual([]);
   });
@@ -1380,7 +1381,12 @@ describe('codex-desktop adapter status and send', () => {
       const result = await driver.send!(ref('idle'), 'continue saved work', user);
       expect(result).toEqual(
         resumeFails
-          ? { ok: false, reason: 'not_delivered', detail: 'thread/resume: rollout unavailable' }
+          ? {
+              ok: false,
+              reason: 'not_delivered',
+              detail: 'thread/resume: rollout unavailable',
+              notSent: true,
+            }
           : { ok: true, value: { delivered: true, startedTurnId: 'resumed-turn' } }
       );
       expect(calls.map(([method]) => method)).toEqual([

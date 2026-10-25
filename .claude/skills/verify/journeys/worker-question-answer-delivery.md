@@ -47,16 +47,14 @@ commits. The card must still show accepted and the todo doing when the RPC
 returns. Keep observed.json with both transport outcomes and the final card/todo,
 plus cleanup.json and run-status.json. This helper needs no model or fixed port.
 
-External-worker delivery is intentionally deferred to lsm/HyperNeo#8824. Such
-routes stay pending and held without a transport call in this slice. That next
-PR distinguishes definite refusal from a lost acknowledgement before deciding
-whether to retry or reconcile. Unit contracts here cover HyperNeo acceptance,
-refusal/retry, scope isolation and retaining a newer unanswered hold.
+For external-worker answers, run worker-question-answer-external.md. It covers
+certainty-aware refusal retry and lost-acknowledgement reconciliation through the
+production Codex adapter. This SDK journey still covers only HyperNeo sessions.
 
 Keep evidence/button.json, observed.json, model request files, proof.log and
 cleanup.json. The helper closes its app/model, verifies both owned listening ports
 can be rebound, removes its temporary data and then exits explicitly so SDK idle
 timers cannot retain the proof process. Assertions and cleanup failures retain a
 nonzero exit status. This proves RPC, queue, SDK consumption and synthetic restart
-recovery. External-worker delivery, native external apps, GUI rendering and agent triage
-are outside this slice.
+recovery. Native external apps, GUI rendering and agent triage are outside this
+SDK journey; the companion external journey covers synthetic external delivery.
