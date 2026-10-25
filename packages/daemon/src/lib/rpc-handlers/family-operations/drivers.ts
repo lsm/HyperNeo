@@ -68,6 +68,7 @@ import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { neoFolder } from '../../neo/folder.ts';
+import { neoStartPlace } from '../../neo/start-place.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
@@ -577,6 +578,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     adapters: () => adapters,
     remote: remoteDaemons,
     daemonName: machine,
+    startPlace: neoStartPlace({
+      db: db(),
+      machine,
+      workspaceRoot: context.deps.config.workspaceRoot,
+    }),
     isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);

@@ -16,10 +16,12 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'workspace'), { recursive: true });
+const workspaceRoot = process.argv[3] === 'without-workspace' ? undefined : join(run, 'workspace');
+const expectedHome = workspaceRoot ? join(workspaceRoot, 'home') : join(run, 'data/Neo/projects/home');
 const evidence: unknown[] = [];
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
-const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), verbose: false });
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot }), verbose: false });
 try {
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
@@ -70,7 +72,7 @@ try {
   open('workspace', 'Organize my life admin');
   const workspaceReply = await add('workspace', { place: { machine: hostname(), folder: workspace, name: 'Inside workspace' }, createFolder: true });
   const checks = {
-    sharedDefault: defaultReply.ok === true && homePath === null && defaultStart?.folder === join(run, 'workspace/home') && existsSync(defaultStart.folder) && secondReply.ok === true && secondStart?.folder === defaultStart.folder,
+    sharedDefault: defaultReply.ok === true && homePath === null && defaultStart?.folder === expectedHome && existsSync(defaultStart.folder) && secondReply.ok === true && secondStart?.folder === defaultStart.folder,
     inventedRefused: !existsSync(invented) && !starts.some(start => start.title === 'invented') && /user.named|user.*path|path.*user/i.test(String(store.getTodo(inventedReply.todo?.id)?.reason ?? inventedReply.reason)),
     namedAllowed: namedReply.ok === true && existsSync(named) && starts.some(start => start.folder === named),
     differentWorkspaceRefused: !existsSync(workspace) && !starts.some(start => start.folder === workspace) && workspaceReply.todo?.state === 'failed',

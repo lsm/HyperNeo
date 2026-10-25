@@ -35,7 +35,7 @@ import { NeoReadWorkTarget } from './read-work.ts';
 const NeoStartWorkTarget = z.object({
   verb: z.literal('start'),
   adapter: z.string().min(1).max(80),
-  place: PlaceSchema,
+  place: PlaceSchema.optional(),
   createFolder: z.boolean().optional(),
   preparationParameters: z
     .record(z.string(), z.json())
