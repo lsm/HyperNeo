@@ -40,3 +40,9 @@ sockets and lock processes close in finally. Branch-reader contracts additionall
 cover aliases, partial/empty/failed coverage, retry-after, bounded contention,
 coalescing and stale observations. Other coding observation families and watch
 policy reads remain separate slices.
+
+RPC timings are retained separately: initial `work.find` discovery can still
+exceed 250 ms even when warm status/snapshot reads and main-loop responsiveness
+pass. This slice does not claim the discovery latency is fixed. Persistent-busy
+contracts require exactly three writer attempts, one upstream read and an
+explicit failure, followed by a successful later retry.

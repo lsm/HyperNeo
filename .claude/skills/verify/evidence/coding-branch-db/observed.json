@@ -7,7 +7,21 @@
       "legacy": 2,
       "reopen": 0
     },
-    "maxLoopLagMs": 22.963917000000038
+    "maxLoopLagMs": 17.528666000000158,
+    "rpcMetrics": [
+      {
+        "name": "work.find",
+        "durationMs": 1888.1392500000002
+      },
+      {
+        "name": "work.status",
+        "durationMs": 1.1904579999995804
+      },
+      {
+        "name": "neo.snapshot",
+        "durationMs": 3.5912500000004
+      }
+    ]
   },
   "bun": {
     "mainBranchSql": 0,
@@ -17,7 +31,25 @@
       "legacy": 2,
       "reopen": 0
     },
-    "maxLoopLagMs": 21.957208000000264,
+    "maxLoopLagMs": 34.46166600000015,
+    "rpcMetrics": [
+      {
+        "name": "work.find",
+        "durationMs": 2593.5105839999997
+      },
+      {
+        "name": "work.status",
+        "durationMs": 1.9110420000001795
+      },
+      {
+        "name": "neo.snapshot",
+        "durationMs": 3.024917000000187
+      },
+      {
+        "name": "system.health",
+        "durationMs": 0.44158299999980954
+      }
+    ],
     "revisionFence": {
       "observationRevision": 1,
       "urls": [
@@ -25,8 +57,8 @@
       ]
     },
     "contention": {
-      "healthMs": 0.38583400000061374,
-      "writeMs": 1206.6653749999996,
+      "healthMs": 0.4516249999996944,
+      "writeMs": 1210.186041,
       "affectedWriteUnder250ms": false
     }
   },
@@ -38,7 +70,25 @@
       "legacy": 2,
       "reopen": 0
     },
-    "maxLoopLagMs": 38.957916999999725,
+    "maxLoopLagMs": 59.52412499999991,
+    "rpcMetrics": [
+      {
+        "name": "work.find",
+        "durationMs": 2078.5731250000003
+      },
+      {
+        "name": "work.status",
+        "durationMs": 1.8987080000006245
+      },
+      {
+        "name": "neo.snapshot",
+        "durationMs": 3.018875000000662
+      },
+      {
+        "name": "system.health",
+        "durationMs": 0.8897079999997004
+      }
+    ],
     "revisionFence": {
       "observationRevision": 1,
       "urls": [
@@ -46,8 +96,8 @@
       ]
     },
     "contention": {
-      "healthMs": 0.734667000000627,
-      "writeMs": 1272.4516670000003,
+      "healthMs": 0.93487499999992,
+      "writeMs": 1230.5020840000007,
       "affectedWriteUnder250ms": false
     }
   }

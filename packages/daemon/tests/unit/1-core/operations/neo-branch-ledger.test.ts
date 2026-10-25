@@ -188,7 +188,7 @@ describe('ledger branch reader', () => {
     const fault = spyOn(f.db, 'transaction').mockImplementation(((fn, mode) => {
       const commit = transaction(fn, mode);
       return (...args) => {
-        if (failures-- > 0)
+        if (mode === 'immediate' && failures-- > 0)
           throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
         return commit(...args);
       };
@@ -206,6 +206,45 @@ describe('ledger branch reader', () => {
       f.cleanup();
     }
   });
+  test('persistent writer contention exhausts three attempts without repeating the upstream read', async () => {
+    const f = fixture();
+    const transaction = f.db.transaction.bind(f.db);
+    let attempts = 0;
+    let calls = 0;
+    const spawn: SpawnFn = () => {
+      calls++;
+      return response([{ url }]);
+    };
+    const fault = spyOn(f.db, 'transaction').mockImplementation(((fn, mode) => {
+      if (mode !== 'immediate') return transaction(fn, mode);
+      return () => {
+        attempts++;
+        throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+      };
+    }) as typeof f.db.transaction);
+    try {
+      const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+      await expect(facts.refresh('synthetic/ledger', 'feature', spawn)).rejects.toThrow(
+        'database is locked'
+      );
+      expect(attempts).toBe(3);
+      expect(calls).toBe(1);
+      expect(facts.read('synthetic/ledger', 'feature').membership).toMatchObject({
+        status: 'unknown',
+        reason: 'missing',
+      });
+      fault.mockRestore();
+      expect((await facts.refresh('synthetic/ledger', 'feature', spawn)).membership).toMatchObject({
+        status: 'known',
+        urls: [url],
+      });
+      expect(calls).toBe(2);
+    } finally {
+      fault.mockRestore();
+      f.cleanup();
+    }
+  });
+
   test('checkout HEAD discovery and invalid locations keep their existing behavior', async () => {
     const f = fixture();
     try {

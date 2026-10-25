@@ -38,7 +38,8 @@ const checkout=(name:string)=>{
 const queries=[checkout('one'),checkout('two')];
 const evidence:Record<string,any>={host,repo,mode};
 let measuring=false, maxLagMs=0, last=performance.now();
-const mainSql:string[]=[],commands:string[]=[];
+const mainSql:string[]=[],commands:string[]=[],rpcMetrics:{name:string;durationMs:number}[]=[];
+let outstanding:Promise<unknown>|undefined;
 const timer=setInterval(()=>{const t=performance.now();if(measuring)maxLagMs=Math.max(maxLagMs,t-last-10);last=t;},10);
 let lock:ReturnType<typeof spawnChild>|undefined;
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined,ws:WebSocket|undefined;
@@ -56,8 +57,9 @@ async function open(){
   await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('connect'));});
 }
 const rpc=(name:string,input:unknown={},raw=false)=>new Promise<any>((done,fail)=>{
+  const started=performance.now();
   const id=crypto.randomUUID(),timer=setTimeout(()=>fail(new Error(`RPC timed out: ${name}`)),15000);
-  ws!.onmessage=event=>{const msg=JSON.parse(String(event.data));if(msg.id!==id&&msg.requestId!==id)return;clearTimeout(timer);if(msg.error)fail(new Error(JSON.stringify(msg.error)));else done(msg.data);};
+  ws!.onmessage=event=>{const msg=JSON.parse(String(event.data));if(msg.id!==id&&msg.requestId!==id)return;clearTimeout(timer);if(measuring)rpcMetrics.push({name,durationMs:performance.now()-started});if(msg.error)fail(new Error(JSON.stringify(msg.error)));else done(msg.data);};
   ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:raw?name:'operation.invoke',data:raw?input:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));
 });
 async function watch(){
@@ -109,13 +111,13 @@ try{
   if(mode==='verify'){
     measuring=true;writeFileSync(join(run,'phase'),'fenced');
     const facts=new CodingPrLedgerRepository(app!.db.getDatabase()).branchFacts;
-    const late=facts.refresh(repo,'late');
+    const late=facts.refresh(repo,'late');outstanding=late;
     const until=Date.now()+5000;
     while(!existsSync(join(run,'late-start'))){assert(Date.now()<until,'synthetic collection started');await new Promise(done=>setTimeout(done,10));}
     const changed=url.replace('/7','/8');
     const winner=await app!.db.gateway.call(codingBranchWrites,'observe',repo,'late',0,{urls:[changed]},Date.now());
     writeFileSync(join(run,'late-release'),'release');
-    const retained=await late;
+    const retained=await late;outstanding=undefined;
     assert.deepEqual(retained.membership,winner.membership);assert.equal(retained.observationRevision,1);
     evidence.revisionFence={observationRevision:retained.observationRevision,urls:retained.membership.status==='known'?retained.membership.urls:[]};
     writeFileSync(join(run,'phase'),'held');
@@ -129,12 +131,14 @@ try{
     evidence.contention={healthMs,writeMs,affectedWriteUnder250ms:writeMs<250};assert(healthMs<250);assert(writeMs>1000);
     measuring=false;
   }
+  evidence.rpcMetrics=rpcMetrics;
   evidence.mainSql=mainSql; evidence.commands=commands;evidence.maxLagMs=maxLagMs;
   if(mode==='before')assert(mainSql.length>0,'baseline must reproduce branch SQL on main');
   else {assert.equal(mainSql.length,0,'branch snapshot and fenced persistence must leave main');assert(commands.some(name=>name==='coding.branch.observe'));assert(maxLagMs<1000);}
   evidence.verified=true;
   console.log(JSON.stringify({verified:true,counts:evidence.counts,path:join(run,'evidence/coding-branch-db.json')}));
 }finally{
+  writeFileSync(join(run,'late-release'),'release');await outstanding?.catch(()=>{});
   if (existsSync(join(run,'evidence/requests.jsonl'))) evidence.requests=readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
   writeFileSync(join(run,'evidence/coding-branch-db.json'),JSON.stringify(evidence,null,2));
   lock?.kill();clearInterval(timer);ws?.close();await app?.cleanup();globalThis.fetch=network;
