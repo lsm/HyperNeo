@@ -168,6 +168,41 @@ describe('skill default RPC writes', () => {
     expect(defaults().choices[`mcp:${server.id}`].selected).toBe(true);
     expect(defaults().choices[`skill:${skill.id}`]).toBeUndefined();
   });
+  it('uses the committed wrapper binding when a toggle follows a concurrent config edit', async () => {
+    const first = registry.create({
+      name: 'first',
+      sourceType: 'stdio',
+      command: 'synthetic',
+      enabled: false,
+    });
+    const second = registry.create({
+      name: 'second',
+      sourceType: 'stdio',
+      command: 'synthetic',
+      enabled: false,
+    });
+    const { skill } = (await call('skill.create', {
+      params: {
+        ...create(false).params,
+        sourceType: 'mcp_server',
+        config: { type: 'mcp_server', appMcpServerId: first.id },
+      },
+    })) as { skill: AppSkill };
+    await Promise.all([
+      call('skill.update', {
+        id: skill.id,
+        params: { config: { type: 'mcp_server', appMcpServerId: second.id } },
+      }),
+      call('skill.setEnabled', { id: skill.id, enabled: true }),
+    ]);
+    expect(skills.get(skill.id)).toMatchObject({
+      enabled: true,
+      config: { appMcpServerId: second.id },
+    });
+    expect(defaults().choices[`mcp:${second.id}`].selected).toBe(true);
+    expect(defaults().choices[`mcp:${first.id}`].selected).toBe(false);
+    expect(defaults(true).choices[`mcp:${second.id}`].selected).toBe(true);
+  });
   it('keeps config validation, built-in deletion and missing-id admission', async () => {
     await expect(
       call('skill.create', {
