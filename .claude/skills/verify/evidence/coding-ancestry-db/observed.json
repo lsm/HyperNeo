@@ -1,0 +1,786 @@
+{
+  "scope": "Lane A row 25: ancestry snapshots and observations",
+  "regressionCommit": "e59884ff7b3076e613a8e70d5ea3fb03f847f410",
+  "productionChangedLines": 133,
+  "focusedUnitTests": 10,
+  "focusedAssertions": 39,
+  "repositoryCheck": "passed",
+  "versions": {
+    "bun": "1.4.3",
+    "deno": "2.9.4"
+  },
+  "oneExistingCheckout": true,
+  "noNewInstall": true,
+  "runtimes": {
+    "bun": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 63,
+        "gatewayCommands": 0,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 7.385624999999891,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 257.61347579956055,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 536.4624580000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 536.3870420000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 536.3753330000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 536.3670000000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 536.4766669999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 20.07095800000002
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 95.94229199999995
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 333.786208
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 13.984333000000106
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 330.8041250000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 336.9460829999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 341.3880409999997
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 333.3497080000002
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 337.3158749999998
+          }
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 25,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 33.6200409999999,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 256.313720703125,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 602.215625
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 602.1631659999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 602.15025
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 602.1397499999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 602.139208
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 40.06654200000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 102.89300000000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 343.05554199999983
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 26.374582999999802
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 344.34725000000026
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 367.86145799999986
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 354.2358330000002
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 355.36450000000013
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 337.62379199999987
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 21.448624999999993
+          },
+          {
+            "name": "system.health",
+            "durationMs": 0.42912499999965803
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 16.335375000000568
+          }
+        ],
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "ancestry": {
+            "status": "known",
+            "comparison": "behind",
+            "contains": false,
+            "observedAt": 1792964384252,
+            "source": "github-compare"
+          }
+        },
+        "contention": {
+          "healthMs": 0.43845799999962765,
+          "writeMs": 1205.125959,
+          "affectedWriteUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.3113330000001042,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 1.1230410000000575,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.15212500000006912,
+            "argsBytes": 160,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.3672919999999067,
+            "argsBytes": 160,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.1536670000000413,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.5713749999999891,
+            "argsBytes": 199,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.20987500000001091,
+            "argsBytes": 160,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.10491700000011406,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.8958339999999225,
+            "argsBytes": 199,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.435917000000245,
+            "argsBytes": 160,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.30516700000043784,
+            "argsBytes": 200,
+            "replyBytes": 283
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.35845800000015515,
+            "argsBytes": 160,
+            "replyBytes": 283
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.3454159999996591,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.16354100000035032,
+            "argsBytes": 160,
+            "replyBytes": 291
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.33100000000013097,
+            "argsBytes": 199,
+            "replyBytes": 291
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.11041599999998652,
+            "argsBytes": 160,
+            "replyBytes": 291
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.2889580000000933,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.20983400000022812,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.17895799999951123,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.2233750000004875,
+            "argsBytes": 199,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.17199999999957072,
+            "argsBytes": 198,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.15141700000003766,
+            "argsBytes": 160,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.18479200000001583,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 886.0022920000001,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.12487500000042928,
+            "argsBytes": 160,
+            "replyBytes": 306
+          }
+        ]
+      }
+    },
+    "deno": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 63,
+        "gatewayCommands": 0,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 22.5763750000001,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 257.61046981811523,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 679.3744589999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 679.171333
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 679.1309159999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 679.1230410000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 679.1184589999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 20.52345800000012
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 203.89133300000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 341.3376659999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 20.79016700000011
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 343.1762080000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 337.8172919999997
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 344.30391599999984
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 339.36854200000016
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 341.8976249999996
+          }
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 25,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 12.798749999999927,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 256.5581398010254,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 708.6351670000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 708.4183330000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 708.3928340000002
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 708.3855410000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 708.3867500000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 17.744459000000006
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 166.86629100000027
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 334.8443749999997
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 16.853083999999853
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 333.8032079999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 333.383875
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 341.59850000000006
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 342.5614999999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 335.8971670000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 15.763333999999304
+          },
+          {
+            "name": "system.health",
+            "durationMs": 0.580417000000125
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 13.888750000000073
+          }
+        ],
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "ancestry": {
+            "status": "known",
+            "comparison": "behind",
+            "contains": false,
+            "observedAt": 1792964427941,
+            "source": "github-compare"
+          }
+        },
+        "contention": {
+          "healthMs": 0.590291999999863,
+          "writeMs": 1288.1329580000001,
+          "affectedWriteUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.3487079999999878,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.4614999999998872,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.17629200000010314,
+            "argsBytes": 160,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.40812499999992724,
+            "argsBytes": 160,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.15112500000032014,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.6382920000000922,
+            "argsBytes": 199,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.20416599999998652,
+            "argsBytes": 160,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.17829100000017206,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.33166700000037963,
+            "argsBytes": 199,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.20841699999982666,
+            "argsBytes": 160,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.5443749999999454,
+            "argsBytes": 200,
+            "replyBytes": 283
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.12766700000020137,
+            "argsBytes": 160,
+            "replyBytes": 283
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.2700419999996484,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.27512499999966167,
+            "argsBytes": 160,
+            "replyBytes": 291
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.3319579999997586,
+            "argsBytes": 199,
+            "replyBytes": 291
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.11820900000020629,
+            "argsBytes": 160,
+            "replyBytes": 291
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.36479099999996834,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.17104199999994307,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.11425000000053842,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.291667000000416,
+            "argsBytes": 199,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 0.2951249999996435,
+            "argsBytes": 198,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.17308300000058807,
+            "argsBytes": 160,
+            "replyBytes": 308
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.275749999999789,
+            "argsBytes": 160,
+            "replyBytes": 274
+          },
+          {
+            "operation": "coding.ancestry.observe",
+            "durationMs": 971.2799999999997,
+            "argsBytes": 198,
+            "replyBytes": 306
+          },
+          {
+            "operation": "coding.ancestry.snapshot",
+            "durationMs": 0.11045800000010786,
+            "argsBytes": 160,
+            "replyBytes": 306
+          }
+        ]
+      }
+    }
+  },
+  "limits": [
+    "The deliberately delayed 300 ms comparison and held 1.2-second writer exceed the 250 ms affected-operation target.",
+    "Gateway elapsed time and serialized sizes are recorded; queue, SQL and clone time are not separately attributed.",
+    "No UI, model turn, deployment or production data was exercised. Other SQL in the smoke RPC and other lane-A rows remain outside this slice."
+  ],
+  "reviewFix": {
+    "comment": "https://github.com/lsm/HyperNeo/pull/8818#discussion_r4372603060",
+    "regressionCommit": "35c066d913c85f31ba5dd5f416ecee3d2249c387",
+    "originalPreRebaseRegressionCommit": "86bca8b35",
+    "observedBeforeFix": "SQLITE_READONLY: synchronous record attempted to write the read-only main connection despite a bound writer",
+    "result": "record removed; fixture writes await observeCurrent; a separate bound writer receives the observation while main remains empty",
+    "evidence": {
+      "bun": {
+        "folder": "bun-verify-2",
+        "testedCodeCommit": "65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 25,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 12.529625000000124,
+        "contention": {
+          "healthMs": 0.6663330000001224,
+          "writeMs": 1200.6012920000003,
+          "affectedWriteUnder250ms": false
+        },
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "ancestry": {
+            "status": "known",
+            "comparison": "behind",
+            "contains": false,
+            "observedAt": 1792965535683,
+            "source": "github-compare"
+          }
+        },
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 257.4787712097168
+      },
+      "deno": {
+        "folder": "deno-verify-2",
+        "testedCodeCommit": "65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 25,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 230.3695000000007,
+        "contention": {
+          "healthMs": 0.6641659999986587,
+          "writeMs": 1219.9902920000022,
+          "affectedWriteUnder250ms": false
+        },
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "ancestry": {
+            "status": "known",
+            "comparison": "behind",
+            "contains": false,
+            "observedAt": 1792966157754,
+            "source": "github-compare"
+          }
+        },
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 257.4646873474121
+      }
+    }
+  }
+}
