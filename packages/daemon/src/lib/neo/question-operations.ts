@@ -144,6 +144,7 @@ export function createNeoWorkerQuestionWriter(
             },
             Date.now()
           );
+          store.questionAnswers.bind(card.id, todo.id, source);
           stored(card);
           return card;
         });
@@ -215,6 +216,19 @@ const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array
 
 const Get = z.object({ questionId: Text });
 
+const AnswerDelivery = z.object({
+  id: z.string(),
+  questionId: z.string(),
+  todoId: z.string(),
+  sourceSession: WorkerIdentitySchema.extend({ provider: z.string(), link: z.string().nullable() }),
+  answer: z.union([z.string(), z.array(z.string())]).nullable(),
+  answeredBy: z.enum(['button', 'chat', 'rule']).nullable(),
+  answeredAt: z.number().nullable(),
+  receipt: z.string().nullable(),
+  acceptedAt: z.number().nullable(),
+  state: z.enum(['waiting', 'pending', 'accepted']),
+});
+
 export const NeoQuestionSchema = z.object({
   sourceSession: WorkerIdentitySchema.extend({
     provider: z.string(),
@@ -262,6 +276,7 @@ const QuestionReadResult = z.union([
       sourceSession: true,
     }),
     answeredByHuman: z.boolean(),
+    answerDelivery: z.array(AnswerDelivery).optional(),
   }),
 ]);
 
@@ -714,7 +729,12 @@ export function createNeoQuestionOperations(
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },
-      execute: async (input) => readNeoQuestion(store.getQuestion(input.questionId)),
+      execute: async (input) => {
+        const { question, answerDelivery } = store.questionAnswers.snapshot(input.questionId, () =>
+          store.getQuestion(input.questionId)
+        );
+        return { ...readNeoQuestion(question), ...(question ? { answerDelivery } : {}) };
+      },
     }),
     defineOperation({
       name: 'neo.question.answer',

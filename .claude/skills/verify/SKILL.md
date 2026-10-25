@@ -91,6 +91,11 @@ only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any
 additional ports; do not also start `launch.sh` for these helpers.
 
+For disk-bounded runs, keep `evidence/` outside the disposable daemon data.
+After stopping and waiting for the owned daemon, remove its synthetic data,
+HOME and temporary files immediately; retain the evidence and cleanup receipt.
+The worker-question-answer-routes helper does this in finally, including failures.
+
 Await session creation through the daemon DB facade before inserting dependent
 synthetic SDK or task records. Session writes use the asynchronous DB writer;
 an unawaited creation can race a foreign-key insert.
