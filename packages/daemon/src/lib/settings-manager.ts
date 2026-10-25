@@ -1,4 +1,8 @@
-import { globalSettingsWrites } from '../storage/repositories/global-settings-writes.ts';
+import {
+  globalSettingsWrites,
+  type GlobalSettingsCommit,
+  type GlobalSettingsRollback,
+} from '../storage/repositories/global-settings-writes.ts';
 import { readFileSync, existsSync } from 'node:fs';
 import { readFile, mkdir, realpath, readlink, stat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -33,12 +37,12 @@ export class SettingsManager {
     this.db.saveGlobalSettings(settings);
   }
 
-  updateGlobalSettingsAsync(updates: Partial<GlobalSettings>): Promise<GlobalSettings> {
-    return this.db.gateway.call(globalSettingsWrites, 'updateGlobalSettings', updates);
+  updateGlobalSettingsAsync(updates: Partial<GlobalSettings>): Promise<GlobalSettingsCommit> {
+    return this.db.gateway.call(globalSettingsWrites, 'apply', updates);
   }
 
-  async saveGlobalSettingsAsync(settings: GlobalSettings): Promise<void> {
-    await this.db.gateway.call(globalSettingsWrites, 'saveGlobalSettings', settings);
+  async rollbackGlobalSettingsAsync(rollback: GlobalSettingsRollback): Promise<void> {
+    await this.db.gateway.call(globalSettingsWrites, 'rollback', rollback);
   }
 
   async prepareSDKOptions(): Promise<void> {

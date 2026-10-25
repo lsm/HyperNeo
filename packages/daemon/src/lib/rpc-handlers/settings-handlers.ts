@@ -99,7 +99,6 @@ export function registerSettingsHandlers(
           exaMutation
         );
         const runCredentialMutations = async () => {
-          const priorSettings = settingsManager.getGlobalSettings();
           const needsCredentialSnapshot = credentialManager
             ? Boolean(
                 voiceMutation.storeKey ||
@@ -116,7 +115,8 @@ export function registerSettingsHandlers(
             needsCredentialSnapshot && (exaMutation.storeKey || exaMutation.remove)
               ? ((await credentialManager?.getCredentials(EXA_CREDENTIAL_PROVIDER_ID)) ?? null)
               : null;
-          const result = await settingsManager.updateGlobalSettingsAsync(updates);
+          const { settings: result, ...rollback } =
+            await settingsManager.updateGlobalSettingsAsync(updates);
           try {
             await applyCredentialMutation(
               voiceMutation,
@@ -129,7 +129,7 @@ export function registerSettingsHandlers(
               EXA_CREDENTIAL_PROVIDER_ID
             );
           } catch (error) {
-            await settingsManager.saveGlobalSettingsAsync(priorSettings);
+            await settingsManager.rollbackGlobalSettingsAsync(rollback);
             await restorePriorCredential(
               priorVoiceCredential,
               credentialManager,

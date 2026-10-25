@@ -106,9 +106,13 @@ function createMockSettingsManager(): {
   return {
     settingsManager: {
       ...mocks,
-      updateGlobalSettingsAsync: (updates: Partial<GlobalSettings>) =>
-        mocks.updateGlobalSettings(keepNeoOwnedSettings(updates, mocks.getGlobalSettings())),
-      saveGlobalSettingsAsync: mocks.saveGlobalSettings,
+      updateGlobalSettingsAsync: (updates: Partial<GlobalSettings>) => {
+        const before = mocks.getGlobalSettings();
+        const settings = mocks.updateGlobalSettings(keepNeoOwnedSettings(updates, before));
+        return { settings, before, after: settings };
+      },
+      rollbackGlobalSettingsAsync: ({ before }: { before: Partial<GlobalSettings> }) =>
+        mocks.saveGlobalSettings(before),
     } as unknown as SettingsManager,
     mocks,
   };
