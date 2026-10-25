@@ -94,6 +94,58 @@ function setup(
 }
 
 describe('neo.question operations', () => {
+  test('refuses a second todo question explicitly and accepts an explicit replacement', async () => {
+    const h = setup();
+    try {
+      const first = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      const distinct = {
+        askId: 'ask',
+        kind: 'choice',
+        text: 'Which database?',
+        options: ['SQLite', 'Postgres'],
+        todoId: h.fix.id,
+      };
+      const refused = await h.call('neo.question.ask', distinct);
+      expect(refused).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/^todo_question_open:/),
+      });
+      expect(h.store.listQuestions('ask')).toHaveLength(1);
+      expect(h.store.getQuestion(first.id)).toMatchObject({
+        text: 'Which environment?',
+        state: 'open',
+      });
+      const replacement = await h.call('neo.question.ask', { ...distinct, replaces: first.id });
+      expect(replacement).toMatchObject({
+        ok: true,
+        question: { text: distinct.text, options: distinct.options, state: 'open' },
+      });
+      expect(h.store.getQuestion(first.id)?.state).toBe('retired');
+      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('concurrent distinct todo questions produce one card and one explicit refusal', async () => {
+    const h = setup();
+    try {
+      const results = await Promise.all(
+        ['Which environment?', 'Which database?'].map((text) =>
+          h.call('neo.question.ask', { askId: 'ask', kind: 'reply', text, todoId: h.fix.id })
+        )
+      );
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      expect(results.find((result) => !result.ok)).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/^todo_question_open:/),
+      });
+      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['reply', 'yesno', 'choice', 'start'] as const)(
     'refuses a %s question if its ask settles during source lookup',
     async (kind) => {

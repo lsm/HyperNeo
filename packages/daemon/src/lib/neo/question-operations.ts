@@ -22,6 +22,139 @@ import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { requireNeoOpenAsk } from './todo-operations.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
+import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+
+const ReportLine = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[^\r\n]+$/);
+const WorkerQuestion = z.strictObject({
+  todoId: z.string().min(1),
+  kind: z.enum(['question', 'blocked']),
+  title: ReportLine,
+  options: z.array(ReportLine).min(2).max(6),
+  language: z.enum(['en', 'zh-Hans']),
+  report: z
+    .string()
+    .min(1)
+    .refine((text) => text.trim().length > 0),
+});
+
+export function createNeoWorkerQuestionWriter(
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  language: () => LanguageSetting | undefined,
+  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null>
+) {
+  const write = (superpipe({})('neo.question.storeWorkerReport') as PipelineAPI)
+    .input(['ref', 'raw'])
+    .pipe(
+      (raw: unknown) => {
+        const parsed = WorkerQuestion.safeParse(raw);
+        return parsed.success
+          ? { value: parsed.data }
+          : fail('invalid_report: use a short title and 2–6 short options.');
+      },
+      'raw',
+      'result:outcome'
+    )
+    .pipe(
+      (input: z.infer<typeof WorkerQuestion>) => {
+        const configured = language();
+        const expected =
+          configured === 'system' || !configured
+            ? Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh')
+              ? 'zh-Hans'
+              : 'en'
+            : configured;
+        return input.language === expected
+          ? { value: input }
+          : fail(`report_language: provide the card in ${expected}.`);
+      },
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(
+      async (ref: WorkRef) => {
+        const source = await readSource(ref);
+        return source &&
+          source.adapter === ref.adapter &&
+          source.id === ref.id &&
+          source.daemon === ref.daemon
+          ? { value: source }
+          : fail('source_session_unavailable: no readable reporting worker.');
+      },
+      'ref',
+      'result:source'
+    )
+    .pipe(
+      (input: z.infer<typeof WorkerQuestion>, ref: WorkRef, source: NeoQuestionSource) => {
+        let rejection = 'report_assignment: choose a current todo assigned to this worker.';
+        const question = store.writeCardReply(null, crypto.randomUUID(), () => {
+          const todo = store.getTodo(input.todoId);
+          const assigned = sessions.readRef(input.todoId);
+          if (
+            !todo ||
+            !['doing', 'blocked'].includes(todo.state) ||
+            !assigned ||
+            assigned.adapter !== ref.adapter ||
+            assigned.id !== ref.id ||
+            assigned.daemon !== ref.daemon
+          )
+            return null;
+          if (store.getAsk(todo.askId)?.status !== 'open') {
+            rejection = 'ask_settled: this ask is no longer open.';
+            return null;
+          }
+          const existing = store
+            .listQuestions(todo.askId)
+            .find((q) => q.todoId === todo.id && q.state === 'open');
+          const card =
+            existing ??
+            store.askQuestion(
+              crypto.randomUUID(),
+              todo.askId,
+              {
+                text: input.title,
+                kind: 'choice',
+                options: input.options,
+                multiple: false,
+                noLabel: null,
+                yesLabel: null,
+                startTodos: null,
+                todoId: todo.id,
+                sourceSession: source,
+                document: input.report,
+              },
+              Date.now()
+            );
+          store.updateTodo(
+            todo,
+            {
+              state: 'blocked',
+              blockedBy: 'needs-human',
+              blockedReason: card.text,
+              nextAction:
+                input.language === 'zh-Hans' ? '等待人工答复。' : 'Waiting for a human answer.',
+              report: input.report,
+            },
+            Date.now()
+          );
+          return card;
+        });
+        return question
+          ? { ok: true as const, question }
+          : { ok: false as const, reason: rejection };
+      },
+      ['outcome', 'ref', 'source'],
+      'outcome'
+    )
+    .endAsync('outcome') as (ref: WorkRef, raw: unknown) => Promise<QuestionReceipt | Rejection>;
+  return write;
+}
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -43,7 +176,9 @@ const Asked = {
   focused: z.boolean().optional(),
   sourceSession: WorkRefSchema.optional(),
   artifacts: Artifacts,
-  todoId: Text.optional(),
+  todoId: Text.optional().describe(
+    'One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.'
+  ),
   askId: Text,
   text: Text,
   replyTo: z.array(z.uuid()).max(100).optional(),
@@ -422,7 +557,20 @@ export function createNeoQuestionOperations(
         plan: QuestionPlan & { replaced: NeoQuestion | null },
         reply: { context: NeoCardReplyContext | null; mutationId: string }
       ): QuestionReceipt | Rejection => {
+        let reason = 'question_closed: the question to replace is no longer open.';
         const question = store.writeCardReply(reply.context, reply.mutationId, () => {
+          const conflict =
+            plan.draft.todoId &&
+            store
+              .listQuestions(plan.ask.id)
+              .find(
+                (q) =>
+                  q.todoId === plan.draft.todoId && q.state === 'open' && q.id !== plan.replaced?.id
+              );
+          if (conflict) {
+            reason = `todo_question_open: this todo already has open question ${conflict.id}; use replaces to change it explicitly.`;
+            return null;
+          }
           if (plan.reworded) {
             const { id, startTodos } = plan.reworded;
             store.extendStartQuestion(
@@ -443,9 +591,7 @@ export function createNeoQuestionOperations(
             : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
         });
         if (question && reply.context) publicationChanged(reply.context.conversationId);
-        return question
-          ? { ok: true, question }
-          : { ok: false, reason: 'question_closed: the question to replace is no longer open.' };
+        return question ? { ok: true, question } : { ok: false, reason };
       },
       ['outcome', 'reply'],
       'outcome'

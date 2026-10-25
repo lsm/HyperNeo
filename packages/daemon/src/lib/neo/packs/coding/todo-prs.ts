@@ -104,6 +104,10 @@ export class CodingTodoPrRepository {
     return row ?? { start: null, end: null };
   }
 
+  readWindow(todoId: string): Promise<CodingTodoWindow> {
+    return gatewayFor(this.db).call(codingTodoPrReads, 'window', todoId);
+  }
+
   todosFor(urls: readonly string[]): string[] {
     return (
       this.db
@@ -505,7 +509,7 @@ export function createCodingTodoPack(
     if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url)))
       return { prs: [], observedAt: Date.now(), incomplete: true };
     const claims = repo.claimsOn(urls);
-    const window = repo.window(todo.id);
+    const window = await repo.readWindow(todo.id);
     const prs = codingTodoOwnPrs(todo, claims, read, window);
     const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
     await repo.write('record', todo.id, [...prs, ...open], observedAt);
@@ -599,4 +603,11 @@ export const codingTodoPrWrites = defineRepositoryOp(
   'write',
   CodingTodoPrRepository,
   ['claim', 'record']
+);
+
+export const codingTodoPrReads = defineRepositoryOp(
+  'coding.todoPrReads',
+  'read',
+  CodingTodoPrRepository,
+  ['window']
 );

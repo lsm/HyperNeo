@@ -31,6 +31,8 @@ function storedInputEvidence(
 }
 
 export type NeoDriverTargetCard = {
+  model: string | null;
+  effort: string | null;
   target: NeoDriverTarget | null;
   ref: WorkRef | null;
   followAnchor: number | null;
@@ -62,7 +64,8 @@ export class NeoDriverSessionRows {
   readCard(id: string): NeoDriverTargetCard | null {
     const row = this.db
       .prepare(
-        `SELECT target, ref, follow_anchor AS followAnchor, live_status AS liveStatus,
+        `SELECT target, ref, actual_model AS model, actual_effort AS effort,
+                follow_anchor AS followAnchor, live_status AS liveStatus,
                 started_at AS startedAt, retries, start_interrupted AS startInterrupted,
                 needs_you_since AS needsYouSince, claimed_at AS claimedAt
            FROM ${this.table} WHERE ${this.key} = ?`
@@ -70,6 +73,8 @@ export class NeoDriverSessionRows {
       .get(id) as
       | {
           target: string;
+          model: string | null;
+          effort: string | null;
           ref: string | null;
           followAnchor: number | null;
           liveStatus: WorkStatus | null;
@@ -84,6 +89,8 @@ export class NeoDriverSessionRows {
     if (!row) return null;
     const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
     return {
+      model: row.model,
+      effort: row.effort,
       target: target.success ? target.data : null,
       ref: row.ref ? (JSON.parse(row.ref) as WorkRef) : null,
       followAnchor: row.followAnchor,

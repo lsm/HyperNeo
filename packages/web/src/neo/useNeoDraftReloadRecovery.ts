@@ -3,7 +3,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { connectionState } from '../lib/state.ts';
-import type { NeoDraftReloadEntry, createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
+import {
+  type NeoDraftReloadEntry,
+  type createNeoDraftReloadBuffer,
+  neoDraftRecoveryInput,
+} from './neo-draft-reload-buffer.ts';
 
 type Buffer = ReturnType<typeof createNeoDraftReloadBuffer>;
 type Recovery = { ok: true } | { ok: false; reason: string };
@@ -61,11 +65,7 @@ export function useNeoDraftReloadRecovery(
     const hub = connectionManager.getHubIfConnected();
     if (!entry || !hub) return;
     attempted.current.add(sessionId);
-    void invokeOperation<unknown>(hub, 'neo.draft.recover', {
-      sessionId,
-      text: entry.text,
-      base: entry.base,
-    })
+    void invokeOperation<unknown>(hub, 'neo.draft.recover', neoDraftRecoveryInput(entry))
       .then((result) => {
         if (owner.current !== sessionId) return;
         const settlement = settleNeoDraftRecovery(result, entry, readRef.current());

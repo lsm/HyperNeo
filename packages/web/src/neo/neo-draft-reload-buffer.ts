@@ -1,29 +1,51 @@
+import type {
+  NeoPreviewContext,
+  NeoPreviewReference,
+} from '@hyperneo/shared/types/neo-preview-context';
+import { readNeoPreviewReference } from './neo-preview-context.ts';
 import { DRAFT_CHAR_LIMIT, generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-type Draft = { sessionId: string; text: string; base: string | null };
+type Draft = {
+  sessionId: string;
+  text: string;
+  base: string | null;
+  previewContext?: NeoPreviewReference | null;
+};
 export type NeoDraftReloadEntry = Draft & { id: string };
 type Refusal = { kind: 'refused' };
 const PREFIX = 'hyperneo_neo_draft_reload_v1.';
 const MAX_ENTRIES = 20;
+const MAX_SERIALIZED_CHARS = DRAFT_CHAR_LIMIT * 2 + 1024;
 
 export function admitNeoReloadEdit(
   sessionId: string,
   text: string,
-  base: string | null
+  base: string | null,
+  previewContext?: unknown
 ): { value: Draft } | { reason: Refusal } {
+  const reference =
+    previewContext == null ? previewContext : readNeoPreviewReference(previewContext);
   return sessionId.startsWith('neo:') &&
     sessionId.length > 4 &&
     sessionId.length <= 200 &&
     text.length <= DRAFT_CHAR_LIMIT &&
-    (base === null || base.length <= DRAFT_CHAR_LIMIT)
-    ? { value: { sessionId, text, base } }
+    (base === null || base.length <= DRAFT_CHAR_LIMIT) &&
+    (previewContext == null || reference !== null)
+    ? {
+        value: {
+          sessionId,
+          text,
+          base,
+          ...(reference === undefined ? {} : { previewContext: reference }),
+        },
+      }
     : { reason: { kind: 'refused' } };
 }
 
 export const planNeoReloadCapture = (superpipe({})('neo-reload-edit-capture') as PipelineAPI)
-  .input(['sessionId', 'text', 'base', 'id'])
-  .pipe(admitNeoReloadEdit, ['sessionId', 'text', 'base'], 'result:entry')
+  .input(['sessionId', 'text', 'base', 'id', 'previewContext'])
+  .pipe(admitNeoReloadEdit, ['sessionId', 'text', 'base', 'previewContext'], 'result:entry')
   .pipe(
     (draft: Draft, id: string): NeoDraftReloadEntry => ({ ...draft, id }),
     ['entry', 'id'],
@@ -33,11 +55,30 @@ export const planNeoReloadCapture = (superpipe({})('neo-reload-edit-capture') as
   sessionId: string,
   text: string,
   base: string | null,
-  id: string
+  id: string,
+  previewContext?: NeoPreviewReference | null
 ) => NeoDraftReloadEntry | Refusal;
 
+export function neoDraftRecoveryInput(entry: NeoDraftReloadEntry): Pick<
+  NeoDraftReloadEntry,
+  'sessionId' | 'text' | 'base'
+> & {
+  previewContext?: NeoPreviewContext | null;
+} {
+  const { sessionId, text, base, previewContext } = entry;
+  const context = previewContext
+    ? { artifactId: previewContext.artifactId, snapshot: previewContext.snapshot }
+    : previewContext;
+  return {
+    sessionId,
+    text,
+    base,
+    ...(context === undefined ? {} : { previewContext: context }),
+  };
+}
+
 function parseEntry(raw: string | null, sessionId: string): NeoDraftReloadEntry | null {
-  if (!raw || raw.length > DRAFT_CHAR_LIMIT * 2 + 1024) return null;
+  if (!raw || raw.length > MAX_SERIALIZED_CHARS) return null;
   try {
     const entry: unknown = JSON.parse(raw);
     if (
@@ -55,7 +96,12 @@ function parseEntry(raw: string | null, sessionId: string): NeoDraftReloadEntry 
       entry.id.length > 128
     )
       return null;
-    const admitted = admitNeoReloadEdit(sessionId, entry.text, entry.base);
+    const admitted = admitNeoReloadEdit(
+      sessionId,
+      entry.text,
+      entry.base,
+      'previewContext' in entry ? entry.previewContext : undefined
+    );
     return 'value' in admitted ? { ...admitted.value, id: entry.id } : null;
   } catch {
     return null;
@@ -73,7 +119,12 @@ export function createNeoDraftReloadBuffer(
       return null;
     }
   }
-  function remember(sessionId: string, text: string, base: string | undefined): boolean {
+  function remember(
+    sessionId: string,
+    text: string,
+    base: string | undefined,
+    previewContext?: NeoPreviewReference | null
+  ): boolean {
     try {
       const storage = getStorage();
       const target = key(sessionId);
@@ -84,9 +135,12 @@ export function createNeoDraftReloadBuffer(
         sessionId,
         text,
         base ?? prior?.base ?? null,
-        generateUUID()
+        generateUUID(),
+        previewContext
       );
       if ('kind' in planned) return false;
+      const serialized = JSON.stringify(planned);
+      if (serialized.length > MAX_SERIALIZED_CHARS) return false;
       if (raw === null) {
         let count = 0;
         for (let i = 0; i < storage.length; i++) {
@@ -94,7 +148,7 @@ export function createNeoDraftReloadBuffer(
         }
         if (count >= MAX_ENTRIES) return false;
       }
-      storage.setItem(target, JSON.stringify(planned));
+      storage.setItem(target, serialized);
       return true;
     } catch {
       return false;

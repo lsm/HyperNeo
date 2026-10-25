@@ -125,12 +125,21 @@ function parseAuthor(body: string) {
   });
   const match =
     lines.length === 1
-      ? /^(?:Agent|Author): ([^<>\n]+?) via ([^<>\n]+?)$/i.exec(lines[0].trim())
+      ? /^(?:Agent|Author): ([a-z0-9][a-z0-9./[\]-]*) \(effort: (none|off|minimal|low|medium|high|extra high|xhigh|max|ultra)\) via ([^<>\n]+?)$/i.exec(
+          lines[0].trim()
+        )
       : null;
   if (!match) return null;
   const model = normalize(match[1]),
-    harness = normalize(match[2]);
-  return model && harness && !/\bvia\b/.test(model + ' ' + harness) ? { model, harness } : null;
+    harness = normalize(match[3]);
+  const exact =
+    /^(?:openai\/)?(?:gpt|codex)-\d+(?:\.\d+)?-(?:sol|astra|luna|terra)(?:-\d{4}-?\d{2}(?:-?\d{2})?)?$/.test(
+      model
+    ) ||
+    /^(?:anthropic\/)?claude-(?:opus|sonnet|haiku|fable)-\d+[.-]\d+(?:-\d{8})?(?:\[1m\])?$/.test(
+      model
+    );
+  return exact && harness && !/\bvia\b/.test(harness) ? { model, harness } : null;
 }
 
 export const codingReviewerPolicy = (superpipe({})('coding.reviewer-provenance') as PipelineAPI)
@@ -148,7 +157,7 @@ export const codingReviewerPolicy = (superpipe({})('coding.reviewer-provenance')
           qualifies: false,
           preferred: false,
           reason:
-            'author_provenance_required: ask the author to fix missing or ambiguous Agent: <model> via <harness>',
+            'author_provenance_required: ask the author to repair the line to Agent: <exact model id> (effort: <effort>) via <harness>; use recorded actual_model and actual_effort, never a family name or a guess',
         };
       if (reviewer.kind === 'human') return { qualifies: true, preferred: true, reason: 'human' };
       const authorModel = canonicalModel(author.model),

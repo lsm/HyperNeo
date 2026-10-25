@@ -24,7 +24,7 @@ refused as independent reviewers. The public
 `pack.preferences` RPC door shows unanswered provenance stays unsaved, accepts
 a human no answer without saving anything (provenance stays on), then an explicit
 provenance-only false proposal confirmed with yes, persisted through restart. Local policy defaults
-on, reads `Agent: <model> via <harness>` or a legacy `Author:` line and prefers
+on, reads `Agent: <exact model id> (effort: <effort>) via <harness>` or an equally complete legacy `Author:` line and prefers
 another model/harness. New instructions and repair messages use `Agent:`. No merge or
 completion decisions use these facts yet. This proves the Build persistence API
 and existing preference API, not actor assignment, GitHub review ingestion, a UI
@@ -33,3 +33,18 @@ question being asked by a model, or completion gates.
 Retain `evidence/stage-facts.json`. Run the focused `neo-coding-stage-facts`
 and existing `neo-coding-pr-ledger` tests for the policy matrix and unchanged
 ledger states. The helper closes both daemon instances and sockets in finally.
+
+The signature check seeds only the synthetic worker's recorded model/effort and
+calls the real `neo.todo.continue` RPC door. A synthetic `work.send` boundary
+captures the worker inbox: it must contain
+`Agent: gpt-6.1-sol (effort: high) via Codex`. Incomplete author lines must
+produce a repair request. The preference assertion filters for coding provenance
+because migrations may seed unrelated upgrade preferences. No model compliance
+or native harness launch is claimed. Retain the workerInbox and repair entries
+in the same stage-facts evidence file.
+
+The same RPC check then uses a synthetic HyperNeo worker with each recorded
+effort `extra high` and `off`. Its captured signature must preserve that value
+verbatim and qualify for independent review rather than requesting a repair.
+The focused policy test covers every lowercased `THINKING_LEVEL_LABELS` value
+through the production brief formatter, including same-model alias refusal.

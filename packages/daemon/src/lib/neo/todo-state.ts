@@ -22,6 +22,17 @@ export interface TodoStateDecision {
 export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDecision {
   const { todo, judgement, change } = facts;
   if (todo.state === 'removed') return { patch: {}, startNext: null };
+  if (todo.blockedBy === 'needs-human' && change.state !== 'removed' && facts.askOpen)
+    return {
+      patch: {
+        ...change,
+        state: 'blocked',
+        blockedBy: 'needs-human',
+        blockedReason: todo.blockedReason,
+        nextAction: todo.nextAction,
+      },
+      startNext: null,
+    };
   let patch = { ...change };
   if (!facts.askOpen && ['todo', 'doing', 'blocked'].includes(todo.state))
     patch = { ...patch, state: 'removed', finishedAt: now };

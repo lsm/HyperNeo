@@ -1,5 +1,6 @@
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { planNudge } from '../../../../src/lib/neo/nudge.ts';
+import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,6 +65,7 @@ function setup(
     describe: 'coding',
     instructions: () => null,
     workerRules: 'Rules for this work: prove it by running it.',
+    workerBrief: withCodingWorkerProvenance,
     todos: {
       schema: () => {},
       check: async (todo: NeoTodo) => {
@@ -138,6 +140,28 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
+    const h = setup();
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr', params: {} });
+      await h.runner.start(todo.id);
+      const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
+      expect(opening).toContain('Agent: <exact model id> (effort: <effort>) via HyperNeo');
+      expect(opening).toContain('Never guess');
+      h.sessions.recordRef(todo.id, ref, 1_000, undefined, {
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+      });
+      await h.runner.proceed(todo.id, 'Write the PR body.');
+      const followup = h.calls.findLast((call) => call.name === 'work.send')!.input
+        .message as string;
+      expect(followup).toContain('Agent: gpt-6.1-sol (effort: high) via HyperNeo');
+      expect(followup).not.toContain('<effort>');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+    } finally {
+      h.db.close();
+    }
+  });
   test('refuses the external effect if accepting its durable input fails', async () => {
     const h = setup();
     try {
@@ -610,6 +634,64 @@ describe('neo todo runner', () => {
     await runner.start(todo.id);
     expect(calls.at(-1)).toBe('work.stop');
   });
+
+  test('a ref recorded while recovery reads are in flight keeps the started todo doing', async () => {
+    const { db, store, sessions, runner, told, add, setStatus } = setup();
+    try {
+      const todo = add();
+      store.claimStart(todo, 2);
+      setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1000 } });
+      const read = vi.spyOn(sessions, 'read').mockImplementationOnce((async () => {
+        const stale = sessions.unrecordedStarts();
+        sessions.recordRef(todo.id, ref, 1000);
+        return stale;
+      }) as typeof sessions.read);
+      try {
+        await runner.refresh(() => {});
+        expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', reason: null });
+        expect(sessions.readRef(todo.id)).toEqual(ref);
+        expect(told).toEqual([]);
+      } finally {
+        read.mockRestore();
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  for (const state of ['done', 'blocked', 'failed', 'removed'] as const) {
+    test(`a todo changed to ${state} during recovery keeps the recorded decision`, async () => {
+      const { db, store, sessions, runner, told, add } = setup();
+      try {
+        const todo = add();
+        store.claimStart(todo, 2);
+        const read = vi.spyOn(sessions, 'read').mockImplementationOnce((async () => {
+          const stale = sessions.unrecordedStarts();
+          store.updateTodo(
+            todo,
+            {
+              state,
+              reason: 'Human decision',
+              ...(state === 'blocked'
+                ? ({ blockedBy: 'failure', blockedReason: 'Human decision' } as const)
+                : {}),
+            },
+            3
+          );
+          return stale;
+        }) as typeof sessions.read);
+        try {
+          await runner.refresh(() => {});
+          expect(store.getTodo(todo.id)).toMatchObject({ state, reason: 'Human decision' });
+          expect(told).toEqual([]);
+        } finally {
+          read.mockRestore();
+        }
+      } finally {
+        db.close();
+      }
+    });
+  }
 
   test('a start a restart interrupted fails the todo on the next refresh', async () => {
     const { store, runner, told, add } = setup();

@@ -2,6 +2,7 @@ import type { UUID } from 'node:crypto';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
+import { createNeoWorkerQuestionWriter } from './question-operations.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
@@ -393,6 +394,15 @@ export class NeoService {
         neoSafeSessionLink(current.data.value.link, !!ref.daemon) ??
         neoSafeSessionLink(current.data.value.remoteLink, true),
     };
+  }
+
+  storeWorkerQuestion(ref: WorkRef, report: unknown) {
+    return createNeoWorkerQuestionWriter(
+      this.todos,
+      this.todoSessions,
+      () => this.db.getGlobalSettings().language,
+      (source) => this.readQuestionSource(source)
+    )(ref, report);
   }
 
   readSessionWorker(id: string) {
