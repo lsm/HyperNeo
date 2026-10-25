@@ -102,7 +102,7 @@ export function createNeoDraftRecoveryOperation(service: Recovers) {
   return defineOperation({
     name: 'neo.draft.recover',
     description:
-      'Re-save a Neo composer edit captured in this tab before a reload. Commits only when the saved draft still equals the base the edit started from and the edit is not the newest ask already sent from that session; never consumes staged voice. A refusal leaves the saved draft untouched.',
+      'Re-save a Neo composer edit captured in this tab before reload. Commits when the saved draft equals its captured base or already equals the edit text. The newest ask from that session counts as submitted only when its text matches and either Preview context was omitted (legacy) or its explicit artifactId/snapshot association matches; null means explicitly unbound. Uses a conditional write and never consumes staged voice.',
     policy: { safetyClass: 'human_only' },
     inputSchema: Input,
     resultSchema: z.union([
