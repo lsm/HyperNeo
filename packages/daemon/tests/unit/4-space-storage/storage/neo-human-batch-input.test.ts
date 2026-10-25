@@ -140,6 +140,23 @@ describe('worker batches before human intake', () => {
     );
     expect(Buffer.byteLength(JSON.stringify(bounded.content))).toBeLessThan(65536);
     expect(JSON.stringify(bounded.content)).toContain('handoffFiles');
+    const publicRows = new NeoSessionMessageRepository(db.getDatabase());
+    const [row] = publicRows.latest(conversationId, 10);
+    expect(Buffer.byteLength(row.text)).toBeLessThan(65536);
+    const publicText =
+      typeof bounded.content === 'string'
+        ? bounded.content
+        : bounded.content
+            .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+            .join('\n\n');
+    expect(row.text).toBe(publicText);
+    const retry = await boundDeliveryContent(
+      db.getDatabase(),
+      queue.getJob(batchJob.id)!,
+      sdk.getDeliveryContent(sessionId, String(batchJob.payload.messageUuid))!
+    );
+    expect(retry.content).toEqual(bounded.content);
+    expect(publicRows.latest(conversationId, 10)).toEqual([row]);
     const inline = await boundDeliveryContent(
       db.getDatabase(),
       humanJob,

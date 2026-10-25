@@ -6,6 +6,7 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
+import { ProviderService } from '../../../packages/daemon/src/lib/provider-service.ts';
 
 const run = resolve(process.argv[2] ?? '');
 assert(process.argv[2] && process.env.NODE_ENV === 'test');
@@ -19,7 +20,7 @@ process.env.PATH = `${run}/bin:${process.env.PATH}`;
 const coordinatorBodies: unknown[] = [];
 let modelTurns = 0;
 let modelRequests = 0;
-const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(req) {
+const model = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(req) {
   if (new URL(req.url).pathname !== '/v1/messages') return Response.json({ data: [], has_more: false });
   const body = await req.json();
   writeFileSync(join(run, `evidence/model-${++modelRequests}.json`), JSON.stringify(body, null, 2));
@@ -36,6 +37,14 @@ const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(req) {
   return new Response(events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
 } });
 const build = QueryOptionsBuilder.prototype.build;
+const sessionEnv = ProviderService.prototype.resolveSessionProviderEnvVars;
+const modelEnv = ProviderService.prototype.getEnvVarsForModel;
+ProviderService.prototype.resolveSessionProviderEnvVars = async function (...args) {
+  return { ...await sessionEnv.apply(this, args), ANTHROPIC_BASE_URL: `http://127.0.0.1:${model.port}` };
+};
+ProviderService.prototype.getEnvVarsForModel = async function (...args) {
+  return { ...await modelEnv.apply(this, args), ANTHROPIC_BASE_URL: `http://127.0.0.1:${model.port}` };
+};
 QueryOptionsBuilder.prototype.build = async function (...args) {
   const options = await build.apply(this, args);
   return { ...options, sandbox: { enabled: false } };
@@ -96,13 +105,14 @@ try {
     const stored = app.db.getSDKMessageRepo().getStoredPromptsByUuid(root, requestId)[0];
     assert(stored.type === 'user');
     const sameHuman = JSON.stringify(humanPrompt.content) === JSON.stringify(stored.message.content);
-    const page = await hub.request<{items:{role:string;message?:{text:string;fromName:string};ask?:{requestId:string}}[]}>('operation.invoke', { name: 'neo.conversation.read', input: { conversationId: root.slice(4), limit: 100 } });
-    const batchAt = page.items.findIndex((item) => item.role === 'session' && item.message?.text.includes(`${tag} worker note 00`));
+    const page = await hub.request<{items:{role:string;message?:{messageId:string;text:string;fromName:string};ask?:{requestId:string}}[]}>('operation.invoke', { name: 'neo.conversation.read', input: { conversationId: root.slice(4), limit: 100 } });
+    const batchAt = page.items.findIndex((item) => item.role === 'session' && item.message?.messageId === batch?.uuid);
     const humanAt = page.items.findIndex((item) => item.role === 'human' && item.ask?.requestId === requestId);
     const requests = coordinatorBodies as {messages:{role:string;content:unknown}[]}[];
     const inlineAtModel = requests.some((body) => body.messages.some((message) => message.role === 'user' && JSON.stringify(message.content).includes(human.trim().split('\n')[0])));
     let workerFileExcludesHuman = !large;
     let allWorkerNotesInFile = !large;
+    let publicReferenceMatchesModel = !large;
     if (large) {
       let reference: unknown;
       for (const request of requests) for (const message of request.messages) {
@@ -113,6 +123,7 @@ try {
         }
       }
       assert(reference, 'oversized delivery must use a handoff reference');
+      publicReferenceMatchesModel = batchAt >= 0 && page.items[batchAt].message!.text.includes(JSON.stringify(reference));
       const chunks: Buffer[] = [];
       let offset = 0;
       for (;;) {
@@ -129,6 +140,15 @@ try {
       allWorkerNotesInFile = notes.every((note) => { const at = restored.indexOf(note); const next = at > previous; previous = at; return next; });
     }
     observed.push({ size: tag, separateTranscriptInput: !!batch, humanDeliveryUnchanged: sameHuman, humanInlineAtModel: inlineAtModel, workerFileExcludesHuman, allWorkerNotesInFile, publicBatchBeforeHuman: batchAt >= 0 && batchAt < humanAt, publicSystemLabel: batchAt >= 0 && page.items[batchAt].message?.fromName === 'System-forwarded worker messages' });
+    const snapshot = await hub.request<{sessionMessages:{messageId:string;text:string}[]}>('operation.invoke', { name: 'neo.snapshot', input: {} });
+    const snapshotBatch = snapshot.sessionMessages.find((message) => message.messageId === batch?.uuid);
+    const persisted = app.db.getDatabase().prepare('SELECT text FROM neo_session_messages WHERE message_id=?').get(batch?.uuid ?? '') as {text:string} | null;
+    Object.assign(observed.at(-1)!, {
+      publicPayloadBounded: batchAt >= 0 && Buffer.byteLength(JSON.stringify(page.items[batchAt].message)) <= 65536,
+      persistedPublicTextBounded: !!persisted && Buffer.byteLength(persisted.text) <= 65536,
+      snapshotBatchBounded: !!snapshotBatch && Buffer.byteLength(JSON.stringify(snapshotBatch)) <= 65536,
+      publicReferenceMatchesModel,
+    });
     if (!large) Object.assign(observed.at(-1)!, {
       workerImageDelivered: !!batch && JSON.stringify(batch.message.content).includes(imageData) && requests.some((body) => JSON.stringify(body.messages).includes(imageData)),
       publicWorkerTextOnly: batchAt >= 0 && !page.items[batchAt].message!.text.includes(imageData) && !page.items[batchAt].message!.text.includes('"type":"image"'),
@@ -150,5 +170,7 @@ try {
   await app.cleanup();
   model.stop(true);
   QueryOptionsBuilder.prototype.build = build;
+  ProviderService.prototype.resolveSessionProviderEnvVars = sessionEnv;
+  ProviderService.prototype.getEnvVarsForModel = modelEnv;
 }
 

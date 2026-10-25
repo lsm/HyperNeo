@@ -1,10 +1,12 @@
 # Worker batches stay separate from human input
 
 Follow the shared in-process RPC setup in SKILL.md with
-`PROOF=.claude/skills/verify/neo-human-batch.ts`. Preflight port 8000, build the
+`PROOF=.claude/skills/verify/neo-human-batch.ts`. Build the
 web app first, and use a fresh run with its own HOME and data. The helper owns
 the model mock, daemon, static web listener and refusing GitHub stub. External
 MCP servers and SDK sandboxing are disabled only for this transport proof.
+Its model mock uses an ephemeral port, with session and title requests redirected
+to that owned listener; omit the shared 8000/8001 preflight.
 
 Queue two small worker messages through message.send, then send a whitespace-
 sensitive human message through neo.message.send. The first note includes a PNG;
@@ -17,6 +19,12 @@ inline at the actual model API, and the worker-only handoff read in full through
 handoff.read. Every worker note must survive in order; no human words may enter
 that file. Public neo.conversation.read must place the labelled batch before
 the unchanged human ask.
+
+For the oversized batch, persisted public text, neo.snapshot and
+neo.conversation.read must each contain a bounded disclosure referencing the
+same complete handoff file delivered to the model. Read that reference in full;
+the public row must never duplicate the unbounded worker body. Retrying delivery
+must preserve the reference and yield only one public batch entry.
 
 Use --hold-ui to keep the owned web listener alive for at most two minutes.
 For headless-only verification, run neo-human-batch-headless.mjs with the run
