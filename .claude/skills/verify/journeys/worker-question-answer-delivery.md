@@ -12,6 +12,8 @@ through `neo.question.answer` over WebSocket RPC. Before returning, the answer
 must have an accepted worker admission and the todo must be doing. Start the
 owned job processor and observe the actual worker SDK consume that receipt.
 Neo's model input must contain the answer in its durable context.
+Identify those requests by the root Neo system prompt, so worker requests cannot
+satisfy the coordinator-context assertion.
 
 Create another card and reply through `neo.message.send` with a question quote,
 using a new requestId. The free-text answer must retain chat provenance, reach

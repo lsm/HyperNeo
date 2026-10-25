@@ -26,7 +26,7 @@ const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request
   if (new URL(request.url).pathname !== '/v1/messages') return Response.json({ data: [], has_more: false });
   const body = await request.json();
   writeFileSync(join(run, `evidence/model-${++requests}.json`), JSON.stringify(body, null, 2));
-  if (body.tools?.some((tool: { name: string }) => tool.name === 'mcp__hyperneo-operations__invoke')) { modelTurns++; coordinatorBodies.push(JSON.stringify(body)); }
+  if (JSON.stringify(body.system).includes('You are Neo, the human')) { modelTurns++; coordinatorBodies.push(JSON.stringify(body)); }
   const start = { id: `msg_${requests}`, type: 'message', role: 'assistant', content: [], model: 'claude-sonnet-4-6', stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } };
   const events = [
     ['message_start', { type: 'message_start', message: start }],
@@ -144,7 +144,7 @@ try {
   const counts = delivered.map((route) => app.db.getDatabase().prepare("SELECT COUNT(*) AS count FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'").get(ref.id, route.receipt));
   assert(counts.every((row) => row.count === 1), JSON.stringify(counts));
   assert.equal(store.getTodo(todo.id)?.state, 'doing');
-  assert(coordinatorBodies.some((body) => body.includes('Staging')));
+  assert(coordinatorBodies.some((body) => body.includes('The human answered') && body.includes('Staging')));
   assert(coordinatorBodies.some((body) => body.includes('Use preview build 42.')));
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, button, chat, failed, recovered, delivered, counts, hold: store.getTodo(todo.id), modelTurns, restartRetained: true }, null, 2));
   console.log('PASS: button/chat answers consumed once by worker SDK; failed delivery stays held; restart retries and resumes; Neo sees answers');
