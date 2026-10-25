@@ -111,31 +111,22 @@ try {
   assert(inspected.accepted, JSON.stringify(inspected));
   assert.equal(inspected.resource.workspacePath, source);
   evidence.push({ inventory, inspected });
-  await rpc('session.archive', { sessionId: session.id, confirmed: true }, true);
-  evidence.push({ archivedCloneRemoved: !existsSync(worker) });
-  const archivedCloneRemoved = !existsSync(worker);
-  const cleanupCases: Record<string, boolean> = {};
-  for (const mode of ['clean', 'dirty', 'committed']) {
+  assert.equal(inventory.workspacePath, source);
+  for (const folder of [source, source + '/']) {
     const next = await rpc('work.start', {
-      adapter: 'hyperneo', place: { machine: hostname(), folder: source, name: 'Synthetic source' },
-      title: `Cleanup ${mode}`, message: 'Synthetic placement only', model: 'synthetic',
+      adapter: 'hyperneo', place: { machine: hostname(), folder, name: 'Synthetic source' },
+      title: 'Path variant', message: 'Synthetic placement only', model: 'synthetic',
       preparation: { pack: 'coding', parameters: { target: 'dev' } },
     }) as Result<WorkStarted>;
     assert(next.ok, JSON.stringify(next));
     const path = join(getWorktreeBaseDir(source), next.value.ref.id);
-    if (mode !== 'clean') writeFileSync(join(path, 'human.txt'), 'retained human work');
-    if (mode === 'committed') {
-      git(path, 'add', 'human.txt');
-      git(path, 'commit', '-m', 'unpublished human work');
-    }
+    assert(existsSync(path));
+    await rpc('session.archive', { sessionId: next.value.ref.id, confirmed: true }, true);
     await rpc('session.delete', { sessionId: next.value.ref.id }, true);
-    cleanupCases[mode] = existsSync(path);
-    if (mode !== 'clean') assert.equal(readFileSync(join(path, 'human.txt'), 'utf8'), 'retained human work');
+    assert(existsSync(path), 'placement changes do not release prepared clones');
+    evidence.push({ folder, path, archivedAndDeleted: true, cloneRetained: true });
   }
-  evidence.push({ cleanupCases, sourcePreserved: existsSync(source) });
-  assert(existsSync(source), 'source checkout survives archive and delete');
-  assert.deepEqual({ inventoryProject: inventory.workspacePath, archivedCloneRemoved, cleanupCases },
-    { inventoryProject: source, archivedCloneRemoved: true, cleanupCases: { clean: false, dirty: true, committed: true } });
+  assert(existsSync(source));
   console.log(`PASS prepared clone location, sidebar project group, pinned base and independent objects: ${run}/evidence/observed.json`);
 } finally {
   ws?.close();

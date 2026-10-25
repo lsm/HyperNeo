@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -67,7 +67,6 @@ function control(db: Database, events: string[], withdraw?: HyperneoSessionContr
 describe('hyperneo adapter send and status', () => {
   let source: string;
   let projectBase: string;
-  let oldProjectBase: string | undefined;
   let db: Database;
   let handed: Array<{
     sessionId: string;
@@ -83,8 +82,6 @@ describe('hyperneo adapter send and status', () => {
     source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
     execFileSync('git', ['init', source]);
     projectBase = join(source, 'project-storage');
-    oldProjectBase = process.env.TEST_WORKTREE_BASE_DIR;
-    process.env.TEST_WORKTREE_BASE_DIR = projectBase;
     handed = [];
     events = [];
     outcome = { kind: 'enqueued', id: 'mb1' };
@@ -134,8 +131,6 @@ describe('hyperneo adapter send and status', () => {
 
   afterEach(() => {
     db.close();
-    if (oldProjectBase === undefined) delete process.env.TEST_WORKTREE_BASE_DIR;
-    else process.env.TEST_WORKTREE_BASE_DIR = oldProjectBase;
     rmSync(source, { recursive: true, force: true });
   });
 
@@ -146,6 +141,7 @@ describe('hyperneo adapter send and status', () => {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
       prepareExecution,
+      worktreeBaseDir: () => projectBase,
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -266,6 +262,7 @@ describe('hyperneo adapter send and status', () => {
       )
     ).toMatchObject({ ok: true });
     expect(events).toEqual(['create /fresh/remote-base', 'announce new']);
+    expect(existsSync(projectBase)).toBe(false);
     expect(handed).toHaveLength(1);
   });
 
@@ -286,6 +283,7 @@ describe('hyperneo adapter send and status', () => {
         { from: 'user', caller: { source: 'rpc' } }
       )
     ).toMatchObject({ ok: false, reason: 'preparation_failed' });
+    expect(existsSync(projectBase)).toBe(false);
     expect(events).toEqual([]);
     expect(handed).toEqual([]);
   });
