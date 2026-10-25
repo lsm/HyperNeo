@@ -120,6 +120,39 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ToolsModal observed running inventory', () => {
+  it('retains the confirmed snapshot while an ordinary refresh is pending', async () => {
+    response = attached();
+    const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
+    await waitFor(() =>
+      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
+        'Attached · 1 tool'
+      )
+    );
+    let finish!: (value: GetSessionToolInventoryResponse) => void;
+    response = new Promise((done) => {
+      finish = done;
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() =>
+      expect(
+        backend.request.mock.calls.filter(([method]) => method === 'session.getToolInventory')
+          .length
+      ).toBe(2)
+    );
+    expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
+      'Attached · 1 tool'
+    );
+    await act(async () => {
+      finish(closed);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(view.getByTestId('skill-runtime-playwright').textContent).toMatch(
+        /session not running/
+      )
+    );
+  });
+
   it('does not present configured-only runtime servers as attached', async () => {
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
