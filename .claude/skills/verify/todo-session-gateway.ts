@@ -10,7 +10,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
 const [mode, directory] = process.argv.slice(2);
-assert(['before', 'verify'].includes(mode));
+assert(['before', 'verify', 'reproduce-race'].includes(mode));
 const run = resolve(directory);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -50,6 +50,18 @@ try {
   todos.addTodo('gateway-todo', 'gateway-ask', { title: 'Observe synthetic worker', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1);
   prepare("UPDATE neo_todos SET state='doing', started_at=1 WHERE id='gateway-todo'").run();
   sessions.bind('gateway-todo', { adapter: 'hyperneo', id: worker }, 1);
+  if (mode !== 'before') {
+    todos.addTodo('gateway-late', 'gateway-ask', { title: 'Late recorded worker', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1);
+    prepare("UPDATE neo_todos SET state='doing', started_at=1 WHERE id='gateway-late'").run();
+    prepare('INSERT INTO neo_todo_sessions(todo_id,target) VALUES (?,?)').run('gateway-late', '{}');
+    const call = app.db.gateway.call.bind(app.db.gateway);
+    app.db.gateway.call = (async (op, method, ...args) => {
+      const result = await call(op, method, ...args);
+      if (op.name === 'neo.todoSessionReads' && method === 'unrecordedStarts')
+        sessions.recordRef('gateway-late', { adapter: 'hyperneo', id: worker }, 1);
+      return result;
+    }) as typeof app.db.gateway.call;
+  }
   const mainQueries: string[] = [];
   db.prepare = ((sql: string) => {
     if (/SELECT s.todo_id AS todoId(?:, s.ref)? FROM neo_todo_sessions|UPDATE neo_todo_sessions\s+SET live_status|MIN\(next.started_at/i.test(sql)) mainQueries.push(sql);
@@ -76,7 +88,19 @@ try {
   report.mainQueries = mainQueries;
   report.snapshot = await rpc('operation.invoke', { name: 'neo.snapshot', input: {} });
   assert(JSON.stringify(report.snapshot).includes('Observe synthetic worker'), 'Neo snapshot returns the seeded work card');
-  if (mode === 'before') assert(mainQueries.length > 0, 'baseline reproduces main-thread SQL');
+  if (mode !== 'before') {
+    report.lateRecordedTodo = todos.getTodo('gateway-late');
+    const snapshot = report.snapshot as { todoAsks: { todos: { id: string; state: string }[] }[] };
+    const shown = snapshot.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'gateway-late');
+    assert.equal(shown?.state, mode === 'reproduce-race' ? 'failed' : 'doing');
+    if (mode === 'reproduce-race') assert.equal(todos.getTodo('gateway-late')?.state, 'failed', 'baseline falsely fails a newly bound todo');
+    else {
+      assert.equal(todos.getTodo('gateway-late')?.state, 'doing');
+      assert.equal(todos.getTodo('gateway-late')?.reason, null);
+    }
+  }
+  if (mode === 'reproduce-race') report.raceReproduced = true;
+  else if (mode === 'before') assert(mainQueries.length > 0, 'baseline reproduces main-thread SQL');
   else {
     assert.equal(mainQueries.length, 0, 'target recovery reads and live write must leave main');
     lock = spawn('/usr/bin/python3', ['-c', "import sqlite3,sys,time\ndb=sqlite3.connect(sys.argv[1]); db.execute('BEGIN IMMEDIATE'); print('locked',flush=True); time.sleep(1.2); db.rollback(); db.close()", join(run, 'data/daemon.db')], { stdio: ['ignore', 'pipe', 'pipe'] });

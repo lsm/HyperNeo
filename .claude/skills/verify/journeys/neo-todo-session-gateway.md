@@ -19,6 +19,14 @@ Main-connection instrumentation must record zero target recovery/report reads,
 PR-window reads or live-status writes. The recorded snapshot must contain the
 synthetic work card and its worker link.
 
+The helper also records a worker ref after the unrecorded-starts reader has
+captured its candidates but before its reply reaches recovery. The scheduled
+refresh must keep that todo doing and the real snapshot must not report an
+interrupted start. Run `reproduce-race` on the pre-fix PR head in another clean
+checkout/run to capture the false failure on the same job/RPC surface. Recovery
+revalidates the ref beside its interruption write; #8712 moves that whole write
+boundary together.
+
 It then holds a writer lock on the synthetic WAL database in a separate process
 for 1.2 seconds. A gateway live-status write must wait for release while the real
 `system.health` RPC responds below 250 ms and main loop lag remains below 1 s.

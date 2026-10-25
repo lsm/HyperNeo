@@ -42,12 +42,12 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 }
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
-  read<K extends (typeof neoTodoSessionReads.methods)[number]>(
-    method: K
-  ): Promise<ReturnType<NeoTodoSessionRepository[K]>> {
-    return gatewayFor(this.db).call(neoTodoSessionReads, method) as Promise<
-      ReturnType<NeoTodoSessionRepository[K]>
-    >;
+  read(
+    method: 'unrecordedStarts'
+  ): Promise<ReturnType<NeoTodoSessionRepository['unrecordedStarts']>>;
+  read(method: 'awaitingReports'): Promise<ReturnType<NeoTodoSessionRepository['awaitingReports']>>;
+  read(method: (typeof neoTodoSessionReads.methods)[number]) {
+    return gatewayFor(this.db).call(neoTodoSessionReads, method);
   }
 
   write(

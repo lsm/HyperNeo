@@ -740,7 +740,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       for (const todoId of await sessions.read('unrecordedStarts')) {
         const todo = store.getTodo(todoId);
         const ask = todo ? store.getAsk(todo.askId) : null;
-        if (!todo || !ask || starting.has(todoId)) continue;
+        if (!todo || !ask || starting.has(todoId) || sessions.readRef(todoId) !== null) continue;
         sessions.recordStartInterrupted(todoId);
         await finish(
           todo,
