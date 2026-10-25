@@ -5,6 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import { mailboxMessageIsSynthetic, type MailboxEntry } from './entry.ts';
 import { decodeUlidTimestamp } from './ulid.ts';
+import type { MailboxMessage } from './entry.ts';
 
 export type SessionMailboxEntry = MailboxEntry & {
   to: { kind: 'session'; sessionId: string };
@@ -14,6 +15,7 @@ type AdmissionMessage = SDKUserMessage & {
   uuid: NonNullable<SDKUserMessage['uuid']>;
   referenceMetadata?: ReferenceMetadata;
   taskKickoff?: boolean;
+  workerReportKind?: MailboxMessage['workerReportKind'];
 };
 
 export interface MailboxAdmissionPlan {

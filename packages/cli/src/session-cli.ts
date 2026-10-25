@@ -26,6 +26,7 @@ export function planSessionCommand(
       ? { value: { name: 'message.send', input: { to: target, text, kind } } }
       : { reason: SESSION_CLI_USAGE };
   }
+  if (command === 'send' && rest.includes('--kind')) return { reason: SESSION_CLI_USAGE };
   if (command === 'send' && target && rest.join(' ').trim())
     return {
       value: {

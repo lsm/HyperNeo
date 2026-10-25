@@ -139,7 +139,10 @@ describe('planMailboxAdmission', () => {
     expect(plan.message.taskKickoff).toBe(true);
   });
   test('admission exposes the structured worker report kind', () => {
-    const plan = planMailboxAdmission({ ...entry, message: { ...entry.message, workerReportKind: 'blocked' } });
+    const plan = planMailboxAdmission({
+      ...entry,
+      message: { ...entry.message, workerReportKind: 'blocked' },
+    });
     expect(plan.message.workerReportKind).toBe('blocked');
   });
 });

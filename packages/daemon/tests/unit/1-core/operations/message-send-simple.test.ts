@@ -73,17 +73,30 @@ describe('simple message.send worker handoff', () => {
     }
   );
 
-  test.each(['blocked', 'question'])('a remote %s report retains its structured kind', async (kind) => {
-    const remote = registry();
-    const forwarder = createRemoteSendForwarder({ invoke: async (_daemon: string, name: string, input: unknown) => {
-      const result = await invokeOperation(remote, name, input, { source: 'rpc' });
-      if (result.kind !== 'completed') throw new Error(JSON.stringify(result));
-      return result.value;
-    } } as unknown as RemoteDaemonRegistry, 'sender');
-    const local = createOperationRegistry([createSendMessageOperation(mailbox.jobQueue, () => 'active', forwarder)]);
-    await accepted({ to: 'daemon:other::session:neo:root', text: 'Ordinary words.', kind }, local);
-    expect(JSON.parse(mailbox.rows()[0].payload).message.workerReportKind).toBe(kind);
-  });
+  test.each(['blocked', 'question'])(
+    'a remote %s report retains its structured kind',
+    async (kind) => {
+      const remote = registry();
+      const forwarder = createRemoteSendForwarder(
+        {
+          invoke: async (_daemon: string, name: string, input: unknown) => {
+            const result = await invokeOperation(remote, name, input, { source: 'rpc' });
+            if (result.kind !== 'completed') throw new Error(JSON.stringify(result));
+            return result.value;
+          },
+        } as unknown as RemoteDaemonRegistry,
+        'sender'
+      );
+      const local = createOperationRegistry([
+        createSendMessageOperation(mailbox.jobQueue, () => 'active', forwarder),
+      ]);
+      await accepted(
+        { to: 'daemon:other::session:neo:root', text: 'Ordinary words.', kind },
+        local
+      );
+      expect(JSON.parse(mailbox.rows()[0].payload).message.workerReportKind).toBe(kind);
+    }
+  );
 
   test('unknown report kinds are refused rather than silently becoming free text', async () => {
     expect(await send({ to: 'neo:root', text: 'Done.', kind: 'progress' })).not.toMatchObject({

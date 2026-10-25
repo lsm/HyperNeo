@@ -41,7 +41,7 @@ export function sessionReplyCall(sessionId: string): string {
     name: 'message.send',
     input: {
       sessionId,
-      kind: 'done',
+      kind: '<kind>',
       message: { type: 'user', message: { content: '<your reply>' }, parent_tool_use_id: null },
     },
   })}`;
@@ -58,7 +58,7 @@ export function createSendMessageRedirectHook(
       hookSpecificOutput: {
         hookEventName: 'PreToolUse' as const,
         permissionDecision: 'deny' as const,
-        permissionDecisionReason: `${to} is a HyperNeo session; SendMessage cannot reach it. Send it with ${sessionReplyCall(to)}.`,
+        permissionDecisionReason: `${to} is a HyperNeo session; SendMessage cannot reach it. Send it with ${sessionReplyCall(to)}. Choose kind done, blocked, question or failed; use done for a PR milestone.`,
       },
     };
   };
