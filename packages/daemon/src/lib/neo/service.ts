@@ -651,21 +651,13 @@ export class NeoService {
     fromSessionId: string,
     kind?: 'focused_status' | 'quiet_heartbeat'
   ): Promise<void> {
-    if (kind && this.repo.getBindingBySession(sessionId)?.kind === 'neo') {
-      if (!this.hasDelivery(sessionId, messageId)) {
-        const message = {
-          type: 'user' as const,
-          uuid: messageId as UUID,
-          session_id: sessionId,
-          parent_tool_use_id: null,
-          message: { role: 'user' as const, content },
-          inputKind: 'system' as const,
-        };
-        this.db.getSDKMessageRepo().saveUserMessage(sessionId, message, 'consumed');
-      }
-      return Promise.resolve();
-    }
-    return this.deliver(sessionId, messageId, content, fromSessionId);
+    return this.deliver(
+      sessionId,
+      messageId,
+      content,
+      fromSessionId,
+      !!kind && this.repo.getBindingBySession(sessionId)?.kind === 'neo'
+    );
   }
 
   logReorganize(line: string): void {
@@ -676,13 +668,14 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    originSessionId: string
+    originSessionId: string,
+    recordOnly = false
   ): Promise<void> {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
     const delivery = Promise.resolve()
-      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId))
+      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId, recordOnly))
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
@@ -692,7 +685,8 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    originSessionId: string
+    originSessionId: string,
+    recordOnly: boolean
   ): Promise<void> {
     const queue = this.db.getJobQueueRepo();
     if (this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId)) return;
@@ -701,6 +695,18 @@ export class NeoService {
         .length
     )
       return;
+    if (recordOnly) {
+      const message = {
+        type: 'user' as const,
+        uuid: messageId as UUID,
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: { role: 'user' as const, content },
+        inputKind: 'system' as const,
+      };
+      await this.db.saveUserMessage(sessionId, message, 'consumed');
+      return;
+    }
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
