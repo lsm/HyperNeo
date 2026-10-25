@@ -34,7 +34,7 @@ function parseObject<T extends object>(raw: string | null | undefined): T | null
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as T) : null;
 }
 
-function pinnedSlotVetoes(db: Database, metadata: string | null | undefined): string[] {
+export function pinnedSlotVetoes(db: Database, metadata: string | null | undefined): string[] {
   const provenance = parseObject<{ promptProvenance?: PromptProvenanceInit }>(
     metadata
   )?.promptProvenance;

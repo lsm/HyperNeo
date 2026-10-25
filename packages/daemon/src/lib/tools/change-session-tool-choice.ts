@@ -28,6 +28,7 @@ export interface SessionToolChoiceChangeDependencies {
     patch: RuntimeSettingsPatch
   ) => Promise<'won' | 'superseded'>;
   catalog: (snapshot: SessionRuntimeSettingsSnapshot) => Omit<SessionToolChoiceInput, 'session'>;
+  pinnedSlotVetoes: (snapshot: SessionRuntimeSettingsSnapshot) => readonly string[];
 }
 type Refusal =
   | Exclude<ResolvedSessionToolChoice['reason'], 'selected'>

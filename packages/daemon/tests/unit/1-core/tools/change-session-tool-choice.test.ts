@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { AppSkill } from '@hyperneo/shared';
+import type { AppSkill, SpaceWorkflow } from '@hyperneo/shared';
+import { computeDefinitionVersion } from '../../../../src/lib/workflows/definition-version.ts';
+import { pinnedSlotVetoes } from '../../../../src/storage/repositories/session-tool-selection-migration.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
@@ -67,6 +69,7 @@ beforeEach(() => {
     capture: repo.captureSessionRuntimeSettings.bind(repo),
     commit: async (snapshot, patch) => repo.casSessionRuntimeSettings(snapshot, patch),
     catalog: () => catalog,
+    pinnedSlotVetoes: (snapshot) => pinnedSlotVetoes(db, snapshot.metadata),
   };
 });
 afterEach(() => db.close());
@@ -155,6 +158,82 @@ describe('session tool choice changes', () => {
       aliases: ['new-wrapper-name'],
     });
     expect(config().toolSelection?.choices['skill:notes']?.selected).toBe(true);
+  });
+  it('projects pinned slot vetoes before freezing a legacy session, not a later workflow version', async () => {
+    db.exec(`CREATE TABLE space_workflow_runs (id TEXT PRIMARY KEY, workflow_id TEXT, definition_version TEXT);
+      CREATE TABLE space_workflow_definition_versions (workflow_id TEXT, version_hash TEXT, space_id TEXT, payload TEXT, source TEXT, created_at INTEGER);`);
+    const workflow = {
+      id: 'workflow',
+      spaceId: 'space',
+      name: 'Pinned fixture',
+      nodes: [
+        {
+          id: 'node',
+          name: 'Build',
+          agents: [{ agentId: 'agent', name: 'Coder', disabledSkillIds: ['new-wrapper-name'] }],
+        },
+      ],
+      startNodeId: 'node',
+      tags: [],
+      completionAutonomyLevel: 3,
+      createdAt: 1,
+      updatedAt: 1,
+    } as SpaceWorkflow;
+    const pinned = computeDefinitionVersion(workflow);
+    const later = computeDefinitionVersion({
+      ...workflow,
+      nodes: [{ ...workflow.nodes[0], agents: [{ agentId: 'agent', name: 'Coder' }] }],
+    });
+    for (const [index, version] of [pinned, later].entries())
+      db.prepare('INSERT INTO space_workflow_definition_versions VALUES (?, ?, ?, ?, ?, ?)').run(
+        'workflow',
+        version.versionHash,
+        'space',
+        version.payload,
+        'create',
+        index + 1
+      );
+    db.prepare('INSERT INTO space_workflow_runs VALUES (?, ?, ?)').run(
+      'run',
+      'workflow',
+      pinned.versionHash
+    );
+    repo.updateSession(ID, {
+      config: { ...fixture().config, toolSelection: undefined },
+      metadata: {
+        ...fixture().metadata,
+        promptProvenance: {
+          source: 'fixture',
+          hash: 'fixture',
+          workflowRunId: 'run',
+          nodeId: 'node',
+          agentId: 'agent',
+          agentName: 'Coder',
+        },
+      },
+    });
+    catalog.registry = [{ ...catalog.registry[0], enabled: true }];
+    catalog.skills = [
+      { ...wrapper(), enabled: true },
+      {
+        ...wrapper('notes'),
+        sourceType: 'builtin',
+        config: { type: 'builtin', commandName: 'notes' },
+      },
+    ];
+    delete catalog.disabledSkillIds;
+    delete catalog.skillOverrides;
+    expect(
+      (await changeSessionToolChoice({ sessionId: ID, key: 'skill:notes', selected: true }, deps))
+        .ok
+    ).toBe(true);
+    expect(config().toolSelection?.choices['mcp:browser']).toEqual({
+      selected: false,
+      aliases: ['new-wrapper-name'],
+    });
+    expect(config().toolSelection?.choices['skill:notes']?.selected).toBe(true);
+    expect((await change()).ok).toBe(true);
+    expect(config().toolSelection?.choices['mcp:browser']?.selected).toBe(true);
   });
   it('keeps later catalog additions off unless that exact choice is requested', async () => {
     catalog.registry = [
