@@ -382,6 +382,17 @@ describe('QueryRunner startup gate', () => {
     expect((await runner.getToolInventory()).tools).toEqual([]);
   });
 
+  it('does not certify malformed SDK status payloads', async () => {
+    const { runner, controlled } = await startObservedRunner('malformed-tools');
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'browser', status: 'connected', tools: [{ name: 42 }] },
+    ];
+    expect((await runner.getToolInventory()).mcpServers).toEqual([
+      { name: 'browser', status: 'unverified', tools: null },
+    ]);
+    await completeQuery(controlled, waitFor);
+  });
+
   it('bounds concurrent cold-starts at the configured cap', async () => {
     process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '2';
     const runners = ['s1', 's2', 's3', 's4', 's5'].map((id) => createRunner(id));
