@@ -120,6 +120,12 @@ function commit(
         string,
         (...args: unknown[]) => unknown
       >;
+      if (
+        mutation.repository === 'skills' &&
+        mutation.method !== 'insert' &&
+        !prepared.repos.skills.get(mutation.args[0])
+      )
+        return false;
       const result = repo[mutation.method](...mutation.args);
       if (result === false || result === null) return false;
       results.push(result);
@@ -158,7 +164,10 @@ function commit(
         prepared.defaults.get(target.key.id)
       );
       if (!projection.ok) return false;
-      if (isDeepStrictEqual(projection.selection, prepared.defaults.get(target.key.id))) continue;
+      const baseline =
+        prepared.defaults.get(target.key.id) ??
+        projectLegacySessionToolSelection({ ...prepared.before, session });
+      if (isDeepStrictEqual(projection.selection, baseline)) continue;
       if (commitToolDefaultUpdate(db, target, [], projection.selection, () => true) !== 'won')
         return false;
       prepared.local.notifyChange(target.key.table);

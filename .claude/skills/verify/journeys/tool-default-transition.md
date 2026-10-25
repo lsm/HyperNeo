@@ -17,10 +17,18 @@ Pass requires:
   Seed two Space templates and a veto in one Space. Invoke one catalog transition:
   the global and inheriting Space defaults turn on despite the legacy wrapper
   gate; the explicit Space veto and existing session choices stay unchanged.
+- Create a Space after startup with no stored template, then rename a catalog
+  entry with no choice edits. Its defaults remain absent and updatedAt stays
+  unchanged; compare to its effective baseline rather than undefined storage.
+  Record absentDefaultsRemainAbsent=true. Unit fixtures cover global absence too.
 - Reject any caller-thread SQL from the transition module while the file-backed
   operation runs. It must still commit through the existing writer worker.
 - Clear the Space override through the worker. It inherits the canonical global
   default even though the old wrapper gate remains off.
+- Include a missing skill update after a registry mutation. The worker refuses
+  the batch and rolls back the earlier write without notifications. Record
+  missingSkillBatchRefused=true. Unit fixtures cover all skill update methods;
+  new inserts remain allowed, duplicate inserts roll back normally.
 - Inject a synthetic failure on a later Space default update. The earlier catalog
   mutation and global default both roll back. A batch instruction enable then
   appears in the same LiveQuery snapshot consumed by the web's skill store.
