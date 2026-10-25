@@ -93,6 +93,7 @@ for (const boot of [1, 2]) {
       assert.deepEqual(pinnedChange.selection.choices[`mcp:${pinnedServer.id}`],{selected:false,aliases:['fixture-pinned-alias']});
       const pinnedRead = (await hub.request<{session:Session}>('session.get',{sessionId:pinnedSessionId})).session;
       assert.deepEqual(pinnedRead.config.toolSelection,pinnedChange.selection);
+      assert(!app.sessionManager.getSession(pinnedSessionId)?.queryObject);
       pinnedPrior = pinnedRead.config.toolSelection;
       evidence.pinnedLegacySelection = pinnedPrior;
     } else {
@@ -103,6 +104,7 @@ for (const boot of [1, 2]) {
       evidence.restarted = restored.config.toolSelection;
       const pinnedRead = (await hub.request<{session:Session}>('session.get',{sessionId:pinnedSessionId})).session;
       assert.deepEqual(pinnedRead.config.toolSelection,pinnedPrior);
+      assert(!app.sessionManager.getSession(pinnedSessionId)?.queryObject);
       evidence.pinnedRestarted = pinnedRead.config.toolSelection;
     }
   } finally { release(); await transport.close(); await app.cleanup(); }

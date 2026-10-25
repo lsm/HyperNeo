@@ -77,6 +77,7 @@ function prepareChoice(
   catalog.disabledSkillIds = [
     ...(catalog.disabledSkillIds ?? []),
     ...(config.tools?.disabledSkills ?? []),
+    ...(!current ? deps.pinnedSlotVetoes(snapshot) : []),
   ];
   const original = current ?? projectLegacySessionToolSelection(catalog);
   const saved = original.choices[input.key];

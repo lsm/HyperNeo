@@ -10,6 +10,8 @@ This is a Build slice. The new pipeline is invoked directly inside the isolated
 daemon and commits through the real database gateway/CAS primitive. It is not
 registered as an operation or wired into SDK building, legacy setters, session
 creation or UI. Caller authorization and live application belong to later wiring.
+Legacy initialization requires an explicit pinned-slot reader using the captured
+snapshot metadata. The fixture reuses the startup migration's existing reader.
 
 Pass requires:
 
@@ -21,9 +23,13 @@ Pass requires:
 - Hold a selection write after capture. Change autoScroll through the public RPC,
   then release the stale write: it must be superseded, with no selection loss.
 - Restart the owned daemon; RPC readback retains the selection and ordinary edit.
+- Create a legacy worker with a pinned workflow veto, then remove that veto from
+  the workflow's current version. Changing an unrelated choice must keep the
+  pinned-off tool disabled in RPC readback and after restart.
 
 `evidence/session-tool-choice-change.json` must have pass=true, matching reloaded
-and restarted selections, concurrentEditWon=true, and explicit false activation
+and restarted selections, matching pinnedLegacySelection/pinnedRestarted,
+concurrentEditWon=true, and explicit false activation
 and SDK-apply flags. The helper closes all resources in finally.
 
 Focused suites: change-session-tool-choice.test.ts, session-tool-choice.test.ts,
