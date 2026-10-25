@@ -1,8 +1,3 @@
-import { existsSync } from 'node:fs';
-import { readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { simpleGit } from 'simple-git';
-import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import type {
   MessageHub,
@@ -564,24 +559,6 @@ export class SessionLifecycle {
     return outcome;
   }
 
-  private async releasePreparedClone(session: Session): Promise<void> {
-    const project = session.metadata.executionProjectPath;
-    const path = session.workspacePath;
-    if (!project || !path || path !== join(getWorktreeBaseDir(project), session.id)) return;
-    if (!existsSync(path)) return;
-    if ((await readFile(join(path, '.git/hyperneo-source-checkout'), 'utf8')).trim() !== project)
-      throw new Error('Prepared clone source does not match its session project');
-    const git = simpleGit(path);
-    if (
-      !(await git.status()).isClean() ||
-      (await git.raw(['rev-list', 'HEAD', '--not', '--remotes'])).trim()
-    ) {
-      this.logger.warn(`Retained prepared clone with unpublished work: ${path}`);
-      return;
-    }
-    await rm(path, { recursive: true, force: true });
-  }
-
   async archiveResources(sessionId: string, trigger: ArchiveResourcesTrigger): Promise<void> {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
@@ -671,8 +648,6 @@ export class SessionLifecycle {
         this.logger.error(`[SessionLifecycle] archiveResources: worktree removal failed:`, error);
       }
     }
-
-    await this.releasePreparedClone(session);
 
     try {
       const archivedWorktreeMetadata = session.worktree
@@ -794,8 +769,6 @@ export class SessionLifecycle {
           );
         }
       }
-
-      if (session) await this.releasePreparedClone(session);
 
       try {
         await this.db.deleteSession(sessionId);

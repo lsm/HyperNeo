@@ -5,7 +5,7 @@ import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { workExecutionLocation } from './execution-location.ts';
-import { basename, join, sep } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
@@ -113,6 +113,7 @@ export interface HyperneoSessionControl {
 
 export interface HyperneoAdapterDeps {
   prepareExecution?: WorkExecutionPreparer;
+  worktreeBaseDir?: (projectPath: string) => string;
   projects?: () => NonNullable<WorkspaceHistoryEntry['project']>[];
   db: () => BunDatabase;
   machine: string;
@@ -574,15 +575,20 @@ export async function createHyperneoSession(
   const identity = request.preparation
     ? {
         sessionId: crypto.randomUUID(),
-        projectPath: await gitWorktreeProject(
-          (await new WorktreeManager().detectGitSupport(folder)).gitRoot ?? folder
+        projectPath: resolve(
+          await gitWorktreeProject(
+            (await new WorktreeManager().detectGitSupport(folder)).gitRoot ?? folder
+          )
         ),
       }
     : undefined;
   const prepared = request.preparation
     ? await deps.prepareExecution!(request.preparation, {
         directory: folder,
-        destination: join(getWorktreeBaseDir(identity!.projectPath), identity!.sessionId),
+        destination: join(
+          (deps.worktreeBaseDir ?? getWorktreeBaseDir)(identity!.projectPath),
+          identity!.sessionId
+        ),
       })
     : null;
   if (prepared && !prepared.ok) return { reason: prepared };

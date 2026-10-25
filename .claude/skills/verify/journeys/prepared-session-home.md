@@ -19,10 +19,11 @@ the sidebar group equal to the source project, and no code clone under `data/Neo
 `evidence/observed.json` retains the RPC replies, session and projected group.
 The same run checks the fetched pinned base, independent object inodes and dirty
 source preservation. Inventory snapshot and session inspection must report the
-same source project. Archive and delete release only clean prepared clones at
-the session-ID-derived path with a matching source marker; dirty clones and clones
-with unpublished commits remain on disk. The journey verifies their human bytes
-survive deletion of the session record and that the source checkout survives.
+same source project. Starts from a trailing-slash repo path must use that same
+project too. Root and trailing-slash session records must archive/delete while
+retaining their clones, preserving the existing lifecycle behavior. Subdirectory
+starts are not covered: preparation currently refuses to clone a non-root folder.
+Clone release is deferred until the separate follow-up after #8642.
 The custom model catalog uses a closed loopback endpoint; queued SDK delivery may
 retry locally, but no successful model response, credentials, external GitHub
 access or browser rendering is claimed. GitHub is stubbed using shared gh-stub.sh.
