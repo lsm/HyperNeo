@@ -614,6 +614,13 @@ jobs:
         env:
           GLM_API_KEY: smoke-test
 
+      - name: Compiled CLI device commands
+        run: |
+          run=$(mktemp -d)
+          mkdir -p "$run/home"
+          env -i HOME="$run/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$run/data" \
+            bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-linux-x64 "$run" --device-commands
+
       - name: Compile daemon binary
         run: bun build --compile --compile-autoload-package-json --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
 
