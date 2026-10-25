@@ -30,6 +30,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
+import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import type { Database } from '../../storage/database.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
@@ -1654,6 +1655,13 @@ export class AgentSession
 
   async getMcpServerStatus(): Promise<Array<{ name: string; status: string; error?: string }>> {
     return this.sdkRuntimeConfig.getMcpServerStatus();
+  }
+
+  async getToolInventory(): Promise<SessionToolInventory> {
+    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner) {
+      return { state: 'unverified', tools: [], skills: [], plugins: [], mcpServers: [] };
+    }
+    return this.queryRunner.getToolInventory();
   }
 
   async updateToolsConfig(

@@ -283,6 +283,116 @@ describe('QueryRunner startup gate', () => {
     resetSdkStartupGateForTests();
   });
 
+  async function startObservedRunner(id: string) {
+    const created = createRunner(id);
+    void created.runner.start();
+    await waitFor(() => spawned.length > 0 && spawned.at(-1)!.pendingNexts.length > 0);
+    const controlled = spawned.at(-1)!;
+    controlled.pendingNexts[0].resolve({
+      value: {
+        ...sdkMessage(),
+        tools: ['Read', 'mcp__browser__navigate'],
+        skills: ['browser-instructions'],
+        plugins: [{ name: 'browser-wrapper', path: '/private/plugin' }],
+        mcp_servers: [{ name: 'browser', status: 'connected' }],
+      } as SDKMessage,
+      done: false,
+    });
+    await waitFor(() => controlled.pendingNexts.length > 1);
+    return { ...created, controlled };
+  }
+
+  it('reads observed init and live server tools without restarting a query', async () => {
+    const { runner, controlled } = await startObservedRunner('observed-tools');
+    controlled.queryObject.mcpServerStatus = async () => [
+      {
+        name: 'browser',
+        status: 'connected',
+        tools: [{ name: 'navigate' }],
+        config: { env: { PRIVATE: 'secret' } },
+        error: 'secret diagnostic',
+      },
+    ];
+    const result = await runner.getToolInventory();
+    expect(result.state).toBe('observed');
+    expect(result.tools).toEqual(['Read', 'mcp__browser__navigate']);
+    expect(result.skills).toEqual(['browser-instructions']);
+    expect(result.mcpServers).toEqual([
+      { name: 'browser', status: 'connected', tools: ['navigate'] },
+    ]);
+    expect(JSON.stringify(result)).not.toMatch(/secret|private|config|error/);
+    expect(spawned.length).toBe(1);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('reports not running without creating a query', async () => {
+    const { runner } = createRunner('stopped-tools');
+    expect((await runner.getToolInventory()).state).toBe('not_running');
+    expect(spawned.length).toBe(0);
+  });
+
+  it('drops late MCP status after its owner is invalidated', async () => {
+    const { runner, controlled } = await startObservedRunner('late-tools');
+    const status = defer<unknown[]>();
+    controlled.queryObject.mcpServerStatus = () => status.promise;
+    const pending = runner.getToolInventory();
+    runner.invalidateAttemptTokens();
+    status.resolve([{ name: 'stale', status: 'connected', tools: [{ name: 'leak' }] }]);
+    const result = await pending;
+    expect(result.state).toBe('not_running');
+    expect(result.mcpServers).toEqual([]);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('keeps a newer status read when an earlier refresh finishes later', async () => {
+    const { runner, controlled } = await startObservedRunner('status-order');
+    const first = defer<unknown[]>();
+    controlled.queryObject.mcpServerStatus = () => first.promise;
+    const earlier = runner.getToolInventory();
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'browser', status: 'disabled', tools: [] },
+    ];
+    const newer = await runner.getToolInventory();
+    expect(newer.mcpServers[0].status).toBe('disabled');
+    first.resolve([{ name: 'browser', status: 'connected', tools: [{ name: 'old' }] }]);
+    expect((await earlier).mcpServers[0].status).toBe('disabled');
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('shows unavailable status as unverified and recovers on a later read', async () => {
+    const { runner, controlled } = await startObservedRunner('failed-status');
+    controlled.queryObject.mcpServerStatus = async () => {
+      throw new Error('secret error');
+    };
+    const failed = await runner.getToolInventory();
+    expect(failed.mcpServers).toEqual([{ name: 'browser', status: 'unverified', tools: null }]);
+    expect(JSON.stringify(failed)).not.toContain('secret');
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'browser', status: 'connected', tools: [] },
+    ];
+    expect((await runner.getToolInventory()).mcpServers[0].tools).toEqual([]);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('does not retain tool attachment once the query stream finishes', async () => {
+    const { runner, controlled } = await startObservedRunner('ended-tools');
+    await completeQuery(controlled, waitFor);
+    await settle();
+    expect((await runner.getToolInventory()).state).toBe('not_running');
+    expect((await runner.getToolInventory()).tools).toEqual([]);
+  });
+
+  it('does not certify malformed SDK status payloads', async () => {
+    const { runner, controlled } = await startObservedRunner('malformed-tools');
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'browser', status: 'connected', tools: [{ name: 42 }] },
+    ];
+    expect((await runner.getToolInventory()).mcpServers).toEqual([
+      { name: 'browser', status: 'unverified', tools: null },
+    ]);
+    await completeQuery(controlled, waitFor);
+  });
+
   it('bounds concurrent cold-starts at the configured cap', async () => {
     process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '2';
     const runners = ['s1', 's2', 's3', 's4', 's5'].map((id) => createRunner(id));
