@@ -27,6 +27,13 @@ checkout/run to capture the false failure on the same job/RPC surface. Recovery
 revalidates the ref beside its interruption write; #8712 moves that whole write
 boundary together.
 
+In that same reply window, the helper completes another candidate through the
+real `neo.todo.close` RPC. Recovery must preserve its done card and completion
+evidence. Run `reproduce-state-race` on the ref-recheck-only head to capture
+the false failure after a successful close. Unit cases also cover blocked,
+failed and removed decisions arriving during the read. Both state and ref
+must still satisfy the original recovery query before marking interruption.
+
 It then holds a writer lock on the synthetic WAL database in a separate process
 for 1.2 seconds. A gateway live-status write must wait for release while the real
 `system.health` RPC responds below 250 ms and main loop lag remains below 1 s.

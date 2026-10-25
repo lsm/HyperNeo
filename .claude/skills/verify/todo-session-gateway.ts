@@ -10,7 +10,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
 const [mode, directory] = process.argv.slice(2);
-assert(['before', 'verify', 'reproduce-race'].includes(mode));
+assert(['before', 'verify', 'reproduce-race', 'reproduce-state-race'].includes(mode));
 const run = resolve(directory);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -54,11 +54,18 @@ try {
     todos.addTodo('gateway-late', 'gateway-ask', { title: 'Late recorded worker', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1);
     prepare("UPDATE neo_todos SET state='doing', started_at=1 WHERE id='gateway-late'").run();
     prepare('INSERT INTO neo_todo_sessions(todo_id,target) VALUES (?,?)').run('gateway-late', '{}');
+    todos.addTodo('gateway-edited', 'gateway-ask', { title: 'Completed during read', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1);
+    prepare("UPDATE neo_todos SET state='doing', started_at=1 WHERE id='gateway-edited'").run();
+    prepare('INSERT INTO neo_todo_sessions(todo_id,target) VALUES (?,?)').run('gateway-edited', '{}');
     const call = app.db.gateway.call.bind(app.db.gateway);
     app.db.gateway.call = (async (op, method, ...args) => {
       const result = await call(op, method, ...args);
-      if (op.name === 'neo.todoSessionReads' && method === 'unrecordedStarts')
+      if (op.name === 'neo.todoSessionReads' && method === 'unrecordedStarts') {
         sessions.recordRef('gateway-late', { adapter: 'hyperneo', id: worker }, 1);
+        report.closeReceipt = await rpc('operation.invoke', { name: 'neo.todo.close', input: { todoId: 'gateway-edited', reason: 'Human completed the synthetic step' } });
+        assert.equal((report.closeReceipt as { ok: boolean }).ok, true);
+        assert.equal((report.closeReceipt as { todo: { state: string } }).todo.state, 'done');
+      }
       return result;
     }) as typeof app.db.gateway.call;
   }
@@ -93,13 +100,17 @@ try {
     const snapshot = report.snapshot as { todoAsks: { todos: { id: string; state: string }[] }[] };
     const shown = snapshot.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'gateway-late');
     assert.equal(shown?.state, mode === 'reproduce-race' ? 'failed' : 'doing');
+    const edited = snapshot.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'gateway-edited');
+    assert.equal(edited?.state, mode === 'verify' ? 'done' : 'failed');
+    report.editedTodo = todos.getTodo('gateway-edited');
+    assert.equal((report.editedTodo as { evidence: string }).evidence, 'Human completed the synthetic step');
     if (mode === 'reproduce-race') assert.equal(todos.getTodo('gateway-late')?.state, 'failed', 'baseline falsely fails a newly bound todo');
     else {
       assert.equal(todos.getTodo('gateway-late')?.state, 'doing');
       assert.equal(todos.getTodo('gateway-late')?.reason, null);
     }
   }
-  if (mode === 'reproduce-race') report.raceReproduced = true;
+  if (mode === 'reproduce-race' || mode === 'reproduce-state-race') report.raceReproduced = true;
   else if (mode === 'before') assert(mainQueries.length > 0, 'baseline reproduces main-thread SQL');
   else {
     assert.equal(mainQueries.length, 0, 'target recovery reads and live write must leave main');
