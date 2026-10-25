@@ -1,26 +1,42 @@
-### One shared non-coding worker home
+### One visible non-coding user folder
 
 Use the shared in-process RPC proof setup in SKILL.md with
-`PROOF=.claude/skills/verify/project-start-home.ts`. No model mock, provider,
-GitHub calls or GUI are involved. The helper starts a real isolated daemon,
-stops its job consumer, and invokes the production Neo MCP operations through
-the todo runner, work.start and HyperNeo adapter. Only session creation is
-synthetic: the helper records its selected workspace in the isolated session DB.
-No model turn is claimed.
+`PROOF=.claude/skills/verify/project-start-home.ts`. No model mock, provider or
+GitHub calls are involved. The helper starts a real isolated daemon, stops its
+job consumer, and invokes the production Neo MCP operations through the todo
+runner, work.start and HyperNeo adapter. Only session creation is synthetic:
+the helper records its workspace and direct/worktree mode in the isolated DB.
+No model turn or actual worker file creation is claimed.
 
-The helper initializes a synthetic Git parent before starting workers. Both
-workers must request direct placement: a Git parent must not move a shared-home
-worker into a new worktree. The observed worker folders for two unrelated non-coding projects must both be
-`<workspace>/home`. Neither project's home_path is assigned. An invented HOME
-folder and a different folder inside the workspace are refused without creating
-them. A folder named in immutable human intake is allowed and created. The
-coordinator cwd and home-save/export root are unchanged; worker relative saves
-use the selected worker cwd. Routing neo.home.save itself is outside this change.
+Run on three fresh isolated directories, adding these arguments after the run
+path: `without-workspace`, no extra argument, and `env-workspace`. They must
+select `<temp HOME>/HyperNeo`, the exact configured workspace path, and that
+same path through HYPERNEO_WORKSPACE_PATH, respectively. No `/home` suffix.
+The selected folder must be absent before the first start and created on need.
+Two unrelated non-coding projects must share it without assigning home_path.
 
-Repeat in a second fresh isolated run, adding `without-workspace` after the run
-directory argument. Both workers must then use `<data>/Neo/projects/home`.
-The helpers close their daemon in finally and write RPC replies, chosen worker
-folders and the five Boolean checks to `evidence/project-start-home.json`.
-Keep that evidence. A missing or false check is not a pass. Focused registered
-operation tests also cover coding repo placement, existing-folder overrides,
-foreign/similar paths, paginated human intake, and rejected adapter admission.
+The helper initializes a synthetic Git parent. Shared-folder workers must run
+directly in place; a coding repo keeps its normal worktree mode. The original
+coordinator cwd stays in the data directory's Neo folder. An invented HOME
+folder and another invented workspace folder are refused without creation;
+a folder named in immutable human intake is allowed. The actual worker mailbox
+input must contain the non-coding file guidance, including keeping useful files
+in its cwd and making a subfolder only for one matter with several files.
+The helper closes its daemon in finally and writes RPC replies, worker intake,
+selected folders and eight Boolean checks to `evidence/project-start-home.json`.
+A missing or false check is not a pass.
+
+For attended header verification, build the web package, then add
+`without-workspace --show-header` after a fresh run path. The helper prints
+`HEADER: <loopback URL> PID=<its own PID>` and keeps only its isolated daemon
+and a static/websocket frontend open. Open that URL manually in a browser:
+the worker header must visibly show `<temp HOME>/HyperNeo` beside its title,
+with the full path on hover. Inspect and retain a screenshot. This exposes no
+Neo project labels. Close that temporary tab and send SIGTERM only to the
+helper PID it printed; it stops its frontend and cleans up its daemon.
+No unattended GUI test or external model/provider is part of this journey.
+
+Neo's own cwd and home-save/export root are unchanged. Worker relative saves
+use their chosen cwd; routing neo.home.save itself is outside this change.
+Focused tests also cover refusing the home root, existing-folder overrides,
+foreign/similar paths, paginated intake, config precedence and rejected adapters.

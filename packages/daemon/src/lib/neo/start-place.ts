@@ -1,3 +1,5 @@
+import { NEO_NON_CODING_FILES } from '@hyperneo/prompts';
+import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
 import { isAbsolute, join, normalize, resolve } from 'node:path';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -6,7 +8,6 @@ import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { extractTextBlockContents } from '../../storage/repositories/sdk-message-projections.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { reject, type WorkVerbDeps } from '../drivers/work-operations.ts';
-import { neoFolderPath } from './folder.ts';
 
 function namesPath(text: string, folder: string): boolean {
   return text
@@ -62,12 +63,12 @@ export function neoStartPlace(deps: {
     const ask =
       candidate?.sessionId === caller.sessionId && candidate?.status === 'open' ? candidate : null;
     const repo = new NeoRepository(deps.db);
-    const coding = !!(todo?.repo || ask?.repo || todo?.check?.pack === 'coding');
-    if (coding && input.place) return { value: { ...input, place: input.place } };
-    const home = resolve(deps.workspaceRoot ?? join(neoFolderPath(), 'projects'), 'home');
+    const repository = todo?.repo || ask?.repo;
+    if (repository && input.place) return { value: { ...input, place: input.place } };
+    const home = resolve(deps.workspaceRoot ?? join(homedir(), 'HyperNeo'));
     const place =
       input.place ??
-      (!coding && ask ? { machine: deps.machine, folder: home, name: 'Home' } : null);
+      (!repository && ask ? { machine: deps.machine, folder: home, name: 'Home' } : null);
     if (!place)
       return {
         reason: reject(
@@ -76,6 +77,13 @@ export function neoStartPlace(deps: {
         ),
       };
     const folder = place.folder;
+    if (folder === homedir())
+      return {
+        reason: reject(
+          'invalid_place',
+          'Use the HyperNeo user folder, never the home root itself.'
+        ),
+      };
     const local = !place.daemon && place.machine === deps.machine;
     if (
       input.place &&
@@ -108,6 +116,7 @@ export function neoStartPlace(deps: {
     return {
       value: {
         ...input,
+        message: create ? input.message : `${input.message}\n\n${NEO_NON_CODING_FILES}`,
         place,
         inPlace: local && folder === home,
         createFolder: !input.place || input.createFolder,

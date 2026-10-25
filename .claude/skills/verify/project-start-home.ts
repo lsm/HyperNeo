@@ -23,6 +23,7 @@ const expectedHome = workspaceRoot ?? join(run, 'home/HyperNeo');
 const evidence: unknown[] = [];
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
+let preview: ReturnType<typeof Bun.serve> | undefined;
 const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: process.argv[3] === 'env-workspace' ? undefined : workspaceRoot }), verbose: false });
 try {
   await app.jobProcessor.stop();
@@ -30,7 +31,7 @@ try {
   const db = app.db.getDatabase();
   const sender = 'neo:10000000-0000-4000-8000-000000000002';
   const insert = (id: string, folder: string, title: string) => db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, ?, ?, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(id, title, folder);
-  insert(sender, join(run, 'workspace'), 'Synthetic coordinator');
+  insert(sender, join(run, 'data/Neo'), 'Synthetic coordinator');
   const projects = new NeoRepository(db);
   projects.reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
   projects.saveProject({ id: 'project:synthetic-life', title: 'Life admin', summary: '', context: '' }, 0);
@@ -75,18 +76,53 @@ try {
   const workspace = join(run, 'workspace/inside');
   open('workspace', 'Organize my life admin');
   const workspaceReply = await add('workspace', { place: { machine: hostname(), folder: workspace, name: 'Inside workspace' }, createFolder: true });
+  const codingFolder = join(run, 'repo');
+  execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '-q', codingFolder]);
+  open('coding', 'Synthetic coding work');
+  db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('synthetic/repo', 'coding');
+  const codingReply = await add('coding', { place: { machine: hostname(), folder: codingFolder, name: 'Repo' } });
+  const codingStart = starts.find(start => start.title === 'coding');
+  const intake = db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox'").all() as { payload: string }[];
+  const workerIntake = intake.map(row => JSON.parse(row.payload)).filter(entry => entry.to?.sessionId === defaultReply.todo?.worker?.id);
   const checks = {
+    coordinatorSeparate: app.db.getSession(sender)?.workspacePath === join(run, 'data/Neo') && expectedHome !== join(run, 'data/Neo'),
+    codingUnchanged: codingReply.ok === true && codingStart?.folder === codingFolder && codingStart?.mode === 'worktree',
+    nonCodingFileGuidance: workerIntake.length === 1 && JSON.stringify(workerIntake[0]).includes('Most non-coding tasks write nothing') && JSON.stringify(workerIntake[0]).includes('旅行/2026圣诞'),
     sharedHomeInPlace: defaultStart?.mode === 'direct' && secondStart?.mode === 'direct',
     sharedDefault: defaultReply.ok === true && homePath === null && defaultStart?.folder === expectedHome && existsSync(defaultStart.folder) && secondReply.ok === true && secondStart?.folder === defaultStart.folder,
     inventedRefused: !existsSync(invented) && !starts.some(start => start.title === 'invented') && /user.named|user.*path|path.*user/i.test(String(store.getTodo(inventedReply.todo?.id)?.reason ?? inventedReply.reason)),
     namedAllowed: namedReply.ok === true && existsSync(named) && starts.some(start => start.folder === named),
     differentWorkspaceRefused: !existsSync(workspace) && !starts.some(start => start.folder === workspace) && workspaceReply.todo?.state === 'failed',
   };
-  evidence.push({ homePath, starts, checks });
+  evidence.push({ homePath, starts, checks, workerIntake });
   console.log(JSON.stringify(checks));
   assert(Object.values(checks).every(Boolean), 'Project placement regression: see evidence/project-start-home.json');
-  console.log(`PASS: actual daemon Neo MCP -> todo runner -> work.start -> HyperNeo adapter; one non-coding home shared across projects in direct mode despite a Git parent; invented and different workspace folders refused; user-named folder created; coordinator home unchanged. Worker creation is synthetic; no model or GUI. ${run}/evidence/project-start-home.json`);
+  console.log(`PASS: actual daemon Neo MCP -> todo runner -> work.start -> HyperNeo adapter; one non-coding home shared across projects in direct mode despite a Git parent; invented and different workspace folders refused; user-named folder created; coordinator home unchanged. Worker creation is synthetic; no model called. ${run}/evidence/project-start-home.json`);
+  if (process.argv.includes('--show-header')) {
+    const { Hono } = await import(Bun.resolveSync('hono', resolve(import.meta.dir, '../../../packages/cli')));
+    const { serveStatic } = await import(Bun.resolveSync('hono/bun', resolve(import.meta.dir, '../../../packages/cli')));
+    const { createWebSocketHandlers } = await import('../../../packages/daemon/src/routes/setup-websocket.ts');
+    const dist = resolve(import.meta.dir, '../../../packages/web/dist');
+    const web = new Hono();
+    web.use('/*', serveStatic({ root: dist }));
+    web.get('*', async c => c.html(await Bun.file(join(dist, 'index.html')).text()));
+    preview = Bun.serve({ hostname: '127.0.0.1', port: 0,
+      fetch: async (req, server) => {
+        const refused = app.guardRequest(req);
+        if (refused) return refused;
+        if (new URL(req.url).pathname === '/ws') {
+          const device = await app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null);
+          if (server.upgrade(req, { data: { connectionSessionId: 'global', device } })) return;
+          return new Response('Upgrade failed', { status: 500 });
+        }
+        return web.fetch(req);
+      }, websocket: createWebSocketHandlers(app.transport, app.sessionManager)
+    });
+    console.log(`HEADER: http://127.0.0.1:${preview.port}/session/${defaultReply.todo.worker.id} PID=${process.pid}`);
+    await new Promise<void>(done => process.once('SIGTERM', () => done()));
+  }
 } finally {
+  preview?.stop(true);
   globalThis.fetch = network;
   writeFileSync(join(run, 'evidence/project-start-home.json'), JSON.stringify(evidence, null, 2));
   await app.cleanup();
