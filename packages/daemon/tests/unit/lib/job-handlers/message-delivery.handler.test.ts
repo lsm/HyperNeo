@@ -112,7 +112,7 @@ function makeHarness(
   };
 }
 
-describe('createMessageDeliveryHandler', () => {
+describe('Delivery parking writer boundary', () => {
   it('the writer refuses parking without a claim token', async () => {
     const db = await createTestDb();
     try {
@@ -222,7 +222,9 @@ describe('createMessageDeliveryHandler', () => {
       db.close();
     }
   });
+});
 
+describe('createMessageDeliveryHandler', () => {
   it('keeps interrupted unconsumed input retryable without spending an attempt', async () => {
     const db = await createTestDb();
     try {
