@@ -18,11 +18,13 @@ import { projectLegacyToolDefaultUpdate } from '../../lib/tools/legacy-tool-pref
 import { projectLegacySessionToolSelection } from '../../lib/tools/session-tool-choice.ts';
 import { SkillRepository } from './skill-repository.ts';
 import { AppMcpServerRepository } from './app-mcp-server-repository.ts';
+import { McpImportPersistenceRepository } from './mcp-import-persistence.ts';
 
 type Calls<R, K extends keyof R> = {
   [M in K]: R[M] extends (...args: infer A) => unknown ? { method: M; args: A } : never;
 }[K];
 export type ToolDefaultMutation =
+  | ({ repository: 'imports' } & Calls<McpImportPersistenceRepository, 'file' | 'sources'>)
   | ({ repository: 'skills' } & Calls<
       SkillRepository,
       'insert' | 'update' | 'delete' | 'setEnabled' | 'setValidationStatus'
@@ -44,6 +46,7 @@ export type ToolDefaultTransitionResult =
     };
 
 const methods = {
+  imports: ['file', 'sources'],
   skills: ['insert', 'update', 'delete', 'setEnabled', 'setValidationStatus'],
   registry: ['create', 'update', 'delete'],
   overrides: ['setOverride', 'clearOverride'],
@@ -52,6 +55,7 @@ function capture(db: Database, request: ToolDefaultTransition) {
   const local = new ChangeRecorder();
   const changes = local as unknown as ReactiveDatabase;
   const repos = {
+    imports: new McpImportPersistenceRepository(db, changes),
     skills: new SkillRepository(db, changes),
     registry: new AppMcpServerRepository(db, changes),
     overrides: new McpEnablementRepository(db, changes),
@@ -133,6 +137,18 @@ function commit(
     }
     const after = catalog(prepared.repos);
     const requested = new Map(request.edits.map((edit) => [edit.key, edit]));
+    if (request.mutations.some((mutation) => mutation.repository === 'imports')) {
+      for (const id of new Set(
+        [...prepared.before.registry, ...after.registry].map((row) => row.id)
+      )) {
+        const previous = prepared.before.registry.find((row) => row.id === id);
+        const current = after.registry.find((row) => row.id === id);
+        if (previous?.enabled !== current?.enabled) {
+          const key: SessionToolChoiceKey = `mcp:${id}`;
+          requested.set(key, { key, selected: current?.enabled ?? false });
+        }
+      }
+    }
     for (const mutation of request.mutations) {
       if (mutation.repository !== 'skills') continue;
       const id = mutation.method === 'insert' ? mutation.args[0].id : mutation.args[0];
