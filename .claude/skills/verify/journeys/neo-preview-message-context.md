@@ -1,0 +1,29 @@
+# Neo messages retain an exact Preview context
+
+Run the native RPC proof from the worktree root:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-preview-context-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
+  bun packages/daemon/tests/helpers/neo-preview-context-proof.ts "$RUN"
+```
+
+The helper seeds only synthetic files and SQLite through the existing preview
+fixture helper, owns an ephemeral daemon and WebSocket client, and stops both in
+finally. No provider turn, HTTP model mock, credential, GUI or live daemon is used.
+
+Require `evidence/preview-context.json` to report `passed` and
+`ownedResourcesStopped`. A registered artifact ID plus exact SHA-256 snapshot is
+recorded on the accepted receipt, immutable human ask and SDK message. Both public
+conversation readers expose the same path-free reference. A mismatched hash is
+refused. Changing ownership makes the reference unavailable and reopening it
+fails through the existing artifact read operation. Retrying the accepted request
+before and after a daemon restart retains one message/job and the original
+context; removing context conflicts. Older unbound messages still work.
+
+Keep the evidence before deleting the fresh run directory. The focused operation
+suite also checks strict input rejection and immutable retry conflicts. Run web
+tests and build for shared-type compatibility. Composer binding and rendered
+clickable references belong to the subsequent frontend slice; no GUI claim is made.

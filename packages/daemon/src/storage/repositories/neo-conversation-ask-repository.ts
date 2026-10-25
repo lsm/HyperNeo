@@ -1,3 +1,4 @@
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { sdkNeoIntake } from './sdk-message-transactions.ts';
 import type {
@@ -32,6 +33,7 @@ export type NeoConversationAskImageRow = {
 type IntakePrompt = SDKUserMessage & {
   inputKind?: unknown;
   replyTo?: NeoReplyTo;
+  previewContext?: NeoPreviewReference;
   humanContent?: SDKUserMessage['message']['content'];
 };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
@@ -115,6 +117,7 @@ export function prepareNeoIntakeAsk(conversationId: string, message: IntakePromp
     askOrigin: { sessionId: message.session_id, messageId: message.uuid },
     content: message.humanContent ?? message.message.content,
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.previewContext ? { previewContext: message.previewContext } : {}),
   });
   return 'value' in admitted
     ? admitted

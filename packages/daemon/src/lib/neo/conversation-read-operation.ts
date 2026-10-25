@@ -1,3 +1,5 @@
+import type { Database } from '../../storage/sqlite-compat.ts';
+import { presentNeoPreviewAsk } from './preview-context.ts';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { NeoConversationWakeSchema } from '../../storage/repositories/neo-conversation-wake-repository.ts';
@@ -36,7 +38,8 @@ export function requireNeoConversationReader(
 export function createNeoConversationReadOperation(
   repo: NeoRepository,
   ledger: NeoConversationReader,
-  present: (message: NeoSessionMessage) => Promise<NeoSessionMessage> = async (message) => message
+  present: (message: NeoSessionMessage) => Promise<NeoSessionMessage> = async (message) => message,
+  database?: Database
 ) {
   const read = (superpipe({})('neo-conversation-read') as PipelineAPI)
     .input(['page', 'caller'])
@@ -130,7 +133,11 @@ export function createNeoConversationReadOperation(
             ...result,
             items: await Promise.all(
               result.items.map(async (item) =>
-                item.role === 'session' ? { ...item, message: await present(item.message) } : item
+                item.role === 'session'
+                  ? { ...item, message: await present(item.message) }
+                  : item.role === 'human' && database
+                    ? { ...item, ask: await presentNeoPreviewAsk(item.ask, database, caller) }
+                    : item
               )
             ),
           }

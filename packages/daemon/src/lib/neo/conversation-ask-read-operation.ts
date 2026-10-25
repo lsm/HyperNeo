@@ -1,3 +1,5 @@
+import type { Database } from '../../storage/sqlite-compat.ts';
+import { NeoPreviewReferenceSchema, presentNeoPreviewAsk } from './preview-context.ts';
 import type {
   NeoConversationAsk,
   NeoConversationAskPageItem,
@@ -87,16 +89,25 @@ export const NeoConversationAskPageSchema = z.object({
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   createdAt: z.iso.datetime(),
   replyTo: NeoReplyToSchema.optional(),
+  previewContext: NeoPreviewReferenceSchema.optional(),
   delivery: z.object({ state: z.literal('failed') }).optional(),
   messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
 });
 
 async function readAskStatus(
   result: Result,
-  presentStatus: NeoMessageStatusPresenter
+  presentStatus: NeoMessageStatusPresenter,
+  database: Database | undefined,
+  caller: OperationCaller
 ): Promise<Result> {
   if (!result.ok) return result;
-  return { ...result, items: await presentStatus(result.items) };
+  const items = await presentStatus(result.items);
+  return {
+    ...result,
+    items: database
+      ? await Promise.all(items.map((ask) => presentNeoPreviewAsk(ask, database, caller)))
+      : items,
+  };
 }
 
 export function neoConversationImageId(sequence: number, index: number): string {
@@ -157,7 +168,7 @@ function readAskImageRefs(
 }
 
 const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
-  .input(['request', 'caller', 'repo', 'ledger', 'presentStatus'])
+  .input(['request', 'caller', 'repo', 'ledger', 'presentStatus', 'database'])
   .pipe((request: AskPage): Page => request, 'request', 'page')
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
   .pipe((repo: NeoRepository) => repo.conversationId(), 'repo', 'conversation')
@@ -168,20 +179,22 @@ const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
     ['page', 'ledger'],
     'page'
   )
-  .pipe(readAskStatus, ['page', 'presentStatus'], 'page')
+  .pipe(readAskStatus, ['page', 'presentStatus', 'database', 'caller'], 'page')
   .pipe(readAskImageRefs, ['request', 'page', 'ledger'], 'page')
   .endAsync('page') as (
   request: AskPage,
   caller: OperationCaller,
   repo: NeoRepository,
   ledger: NeoConversationAskRepository,
-  presentStatus: NeoMessageStatusPresenter
+  presentStatus: NeoMessageStatusPresenter,
+  database: Database | undefined
 ) => Promise<Result>;
 
 export function createNeoConversationAskReadOperation(
   repo: NeoRepository,
   ledger: NeoConversationAskRepository,
-  presentStatus: NeoMessageStatusPresenter = (items) => [...items]
+  presentStatus: NeoMessageStatusPresenter = (items) => [...items],
+  database?: Database
 ) {
   return defineOperation({
     name: 'neo.conversation.asks.read',
@@ -198,7 +211,7 @@ export function createNeoConversationAskReadOperation(
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
-    execute: async (page, caller) => read(page, caller, repo, ledger, presentStatus),
+    execute: async (page, caller) => read(page, caller, repo, ledger, presentStatus, database),
   });
 }
 
