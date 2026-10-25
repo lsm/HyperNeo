@@ -895,7 +895,7 @@ export function NeoLive() {
               onPreferenceSaved={() => void neo.refresh()}
               draft={draft ?? ''}
               onDraft={(text) => {
-                if (text) pinPreview();
+                if (text || quote || attachments.files.length || attachments.reading) pinPreview();
                 else setRestoredPreview(null);
                 if (
                   !reloadBuffer.remember(

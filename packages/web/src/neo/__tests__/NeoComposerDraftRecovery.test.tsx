@@ -283,6 +283,91 @@ describe('Neo live preview binding', () => {
     });
     expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
   });
+  it.each(['attachment', 'reading', 'quote'] as const)(
+    'keeps the bound snapshot when cleared text leaves %s framing',
+    async (framing) => {
+      previewRoute();
+      const view = mount();
+      openPreview('report-a');
+      await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+      type('Temporary draft text');
+      let finishReading: (() => void) | undefined;
+      let reading: Promise<void> | undefined;
+      if (framing === 'quote') {
+        act(() => {
+          view.model.value = {
+            ...view.model.value,
+            viewPublicConversation: {
+              ...view.model.value.viewPublicConversation,
+              entries: [
+                {
+                  kind: 'ask',
+                  key: 'quoted-ask',
+                  ask: {
+                    conversationId: root.slice(4),
+                    requestId: 'quoted-ask',
+                    askOrigin: { sessionId: root, messageId: 'quoted-ask' },
+                    content: 'Original fictional message',
+                    sequence: 1,
+                    createdAt: '2026-10-25T12:00:00Z',
+                  },
+                },
+              ],
+            },
+          };
+        });
+        fireEvent.click(await screen.findByRole('button', { name: 'Reply to your message' }));
+      } else if (framing === 'attachment') {
+        act(() => {
+          restoreNeoImages(root, [{ data: 'YWJj', media_type: 'image/png' }]);
+        });
+      } else {
+        const file = new File(['Synthetic notes'], 'notes.txt', { type: 'text/plain' });
+        vi.spyOn(file, 'text').mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              finishReading = () => resolve('Synthetic notes');
+            })
+        );
+        act(() => {
+          reading = useNeoAttachments(root).add([file], vi.fn());
+        });
+        await waitFor(() => expect(finishReading).toBeTypeOf('function'));
+        expect(useNeoAttachments(root).reading).toBe(1);
+      }
+      openPreview('report-b');
+      await screen.findByRole('button', { name: 'Use current Preview' });
+      try {
+        type('');
+        expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+        expect(binding('report-b', 'bbbbbbbb')).toBeNull();
+      } finally {
+        if (framing === 'reading')
+          await act(async () => {
+            finishReading!();
+            await reading;
+          });
+      }
+      if (framing === 'quote') type('Reply after clearing');
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+        previewContext: { artifactId: 'report-a', snapshot: 'a'.repeat(64) },
+        ...(framing === 'quote' ? { quote: { text: 'Original fictional message' } } : {}),
+      });
+    }
+  );
+  it('allows a fully empty draft to follow the current Preview after text is cleared', async () => {
+    previewRoute();
+    mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    type('Temporary text without framing');
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    type('');
+    await waitFor(() => expect(binding('report-b', 'bbbbbbbb')).toBeTruthy());
+  });
   it('holds an attachment-only draft binding while switching previews', async () => {
     previewRoute();
     const view = mount();

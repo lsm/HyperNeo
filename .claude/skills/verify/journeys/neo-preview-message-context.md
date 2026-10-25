@@ -50,6 +50,7 @@ suite also checks strict input rejection and immutable retry conflicts. Run web
 tests and build for shared-type compatibility. Composer binding and clickable references are covered by real `NeoLive`,
 `NeoComposer`, `NeoVoice` and conversation component tests under happy-dom.
 Require draft/file switching, explicit rebind/removal, attachment-only framing,
+text clearing with retained attachments/in-flight reads/quotes, and fully empty reset,
 phone dismissal, microphone-start capture, delayed metadata/send completion and
 unavailable references. Available references reopen the canonical artifact ID;
 the existing artifact reader authorizes it again. Work/file switching must keep
