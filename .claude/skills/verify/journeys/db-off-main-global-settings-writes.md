@@ -27,3 +27,11 @@ and rollback only; provider/endpoint synchronization and legacy synchronous
 settings callers remain separate slices. It does not establish disk causation,
 large-body performance, worker-death behavior, queue/clone/SQL timing or Deno
 runtime behavior; the required Deno boot CI must pass before merge.
+
+The coexistence regression in `global-settings-write-coexistence.test.ts` uses
+two real WAL connections and injects a competing commit immediately before the
+legacy statement executes. A synchronous patch must preserve that commit; a
+SELECT followed by replacement loses it. The repository now patches top-level
+keys in one UPSERT, including explicit null values and undefined-key removal,
+while retaining shallow replacement of nested values. Full saves remain full
+replacement. No additional main-thread transaction is introduced.

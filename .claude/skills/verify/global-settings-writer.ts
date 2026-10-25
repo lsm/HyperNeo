@@ -25,7 +25,7 @@ const main = app.db.getDatabase();
 const prepare = main.prepare.bind(main);
 let targetSqlOnMain = 0;
 main.prepare = ((sql: string) => {
-  if (/INSERT OR REPLACE INTO global_settings/i.test(sql)) {
+  if (/INSERT(?: OR REPLACE)? INTO global_settings/i.test(sql)) {
     targetSqlOnMain++;
     throw new Error('global_settings write reached daemon main connection');
   }

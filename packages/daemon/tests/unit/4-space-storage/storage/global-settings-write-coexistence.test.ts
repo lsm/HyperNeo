@@ -41,4 +41,29 @@ describe('SettingsRepository concurrent patch ownership', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+  it('keeps shallow patches, explicit nulls and omitted optional settings', () => {
+    const db = new Database(':memory:');
+    db.exec(
+      'CREATE TABLE global_settings (id INTEGER PRIMARY KEY, settings TEXT NOT NULL, updated_at TEXT NOT NULL)'
+    );
+    const repository = new SettingsRepository(db);
+    try {
+      repository.updateGlobalSettings({ outputStyle: 'before', neo: { standingRules: 'before' } });
+      const result = repository.updateGlobalSettings({
+        outputStyle: undefined,
+        neo: { mutedSessions: ['synthetic-session'] },
+        attribution: null,
+      } as Parameters<SettingsRepository['updateGlobalSettings']>[0]);
+      expect(result.outputStyle).toBeUndefined();
+      expect(result.neo).toEqual({ mutedSessions: ['synthetic-session'] });
+      const row = db.prepare('SELECT settings FROM global_settings WHERE id = 1').get() as {
+        settings: string;
+      };
+      const stored = JSON.parse(row.settings);
+      expect(Object.hasOwn(stored, 'outputStyle')).toBe(false);
+      expect(stored.attribution).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
 });
