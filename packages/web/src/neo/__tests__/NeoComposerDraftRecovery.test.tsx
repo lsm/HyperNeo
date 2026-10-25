@@ -1,3 +1,5 @@
+import { testAskEntry, testTodo } from './neo-test-views.ts';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -128,11 +130,10 @@ function mount() {
     sessionInfo: { id: root, config: { model: 'haiku' }, metadata: {} },
     agentState: { status: 'idle' },
   } as never;
-  const snapshot = {
+  const snapshot: NeoSnapshot = {
     ok: true,
     sessionId: root,
     projects: [],
-    work: [],
   };
   const model = signal({
     sessionId: root,
@@ -524,6 +525,38 @@ describe('Neo live preview binding', () => {
 });
 
 describe('Neo real composer draft recovery', () => {
+  it('renders neither activity row mid-turn while another message can still be sent', async () => {
+    const { container, model, store } = mount();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message Neo' })).toBeTruthy());
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          working: [{ sessionId: root, projectId: null, title: 'Neo', status: 'processing' }],
+          todoAsks: [
+            testAskEntry('active', 'Fictional active task', {
+              state: 'doing',
+              todos: [testTodo('active', { state: 'doing' })],
+            }),
+          ],
+        },
+      };
+      store.sessionState.value = {
+        ...store.sessionState.value!,
+        agentState: { status: 'processing', phase: 'thinking' },
+      } as never;
+    });
+    expect(screen.getByRole('region', { name: 'Conversation with Neo' })).toBeTruthy();
+    expect(container.querySelector('.neo-progress-slot, .neo-progress, .neo-activity')).toBeNull();
+    expect(screen.queryByRole('note', { name: 'Neo activity' })).toBeNull();
+    expect(screen.queryByText(/Neo is working|Syncing…|Working on it/)).toBeNull();
+    type('Another human message mid-turn');
+    expect(value()).toBe('Another human message mid-turn');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(model.value.send).toHaveBeenCalled());
+  });
+
   it.each(['remove', 'rebind', 'edit'] as const)(
     'captures a delayed transcript with the latest draft and binding after %s',
     async (choice) => {

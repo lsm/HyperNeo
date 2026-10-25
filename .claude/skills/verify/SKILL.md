@@ -50,6 +50,9 @@ executable and `NODE_PATH` for existing Playwright dependencies. A cached browse
 directory may be incomplete: if launch reports missing framework files, retain
 the error and report browser proof as pending. An aborted launch is not a pass;
 do not change browser permissions or system settings to work around it.
+An installed browser that aborts with `SIGABRT` or `EPERM` is blocked too. Keep
+its launch log and use component evidence as a fallback, explicitly leaving
+screenshots and visual layout unverified.
 
 Give it a model, once per run (stored in the run's DB only):
 

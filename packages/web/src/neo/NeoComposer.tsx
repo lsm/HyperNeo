@@ -1,5 +1,4 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { ComponentChildren } from 'preact';
 import { Button } from '../components/ui/Button.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
@@ -41,7 +40,6 @@ export function NeoComposer({
   preference,
   onPreferenceSaved,
   quote,
-  activity,
   onCancelQuote,
   forSession,
   onStop,
@@ -60,7 +58,6 @@ export function NeoComposer({
   onStop?: () => void;
   preference?: NeoPreference;
   quote?: NeoQuote;
-  activity?: ComponentChildren;
   onCancelQuote?: () => void;
   onPreferenceSaved?: () => void;
   store: SessionStore;
@@ -248,7 +245,6 @@ export function NeoComposer({
       }}
       class="pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60"
     >
-      {activity}
       {boundPreview && (
         <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
           <span role="status" class="min-w-0 flex-1 break-words">

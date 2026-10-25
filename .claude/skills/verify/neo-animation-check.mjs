@@ -15,6 +15,8 @@ const rpc = (name, data = {}) => JSON.parse(execFileSync('bun', [
 ], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' })).reply;
 const opened = rpc('neo.open');
 assert(opened.ok, JSON.stringify(opened));
+assert(opened.todoAsks?.some((entry) => entry.todos.some((todo) => todo.state === 'doing')),
+  'Seed doing todos before launching this journey');
 const root = opened.sessionId;
 const sqlString = (value) => `'${value.replaceAll("'", "''")}'`;
 for (let i = 0; i < 18; i++) {
@@ -80,7 +82,9 @@ try {
         timestamp: new Date().toISOString(), version: '1.0.0',
       }));
       await page.waitForTimeout(250);
-      assert.equal(await page.locator('.neo-progress:visible').count(), active ? 1 : 0);
+      assert.equal(await page.locator('.neo-progress:visible').count(), 0);
+      assert.equal(await page.locator('.neo-progress-slot, .neo-activity').count(), 0);
+      if (active) await page.screenshot({ path: `${evidence}/neo-mid-turn-${width}.png` });
       boxes.push(await measure());
     }
     const railResizes = await page.evaluate(() => window.railResizes);
