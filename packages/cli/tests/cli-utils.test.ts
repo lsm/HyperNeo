@@ -311,3 +311,13 @@ describe('findAvailablePort', () => {
     });
   });
 });
+
+describe('getHelpText workspace contract', () => {
+  test('explains the Neo user-folder override and environment setting', () => {
+    const help = getHelpText();
+    expect(help).toContain('Neo user folder');
+    expect(help).toContain('file indexing');
+    expect(help).toContain('~/HyperNeo');
+    expect(help).toContain('HYPERNEO_WORKSPACE_PATH');
+  });
+});

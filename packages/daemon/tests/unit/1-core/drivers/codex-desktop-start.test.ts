@@ -1,7 +1,7 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
@@ -489,6 +489,39 @@ describe('codex-desktop start', () => {
     });
   }
 
+  test.each([undefined, 'unavailable'])(
+    'prepares an authorized missing folder only after configuration admission: %s',
+    async (requestedModel) => {
+      const dir = mkdtempSync(join(tmpdir(), 'codex-folder-admission-'));
+      const folder = join(dir, 'new-folder');
+      try {
+        const { instance } = adapter(
+          {
+            call: async (method) =>
+              method === 'model/list' ? { data: [model] } : { thread: { id: 'th1' } },
+          },
+          []
+        );
+        const result = await instance.start!(
+          {
+            ...request,
+            place: { ...place, folder },
+            ...(requestedModel ? { model: requestedModel } : {}),
+            prepareFolder: () => {
+              mkdirSync(folder);
+              return { value: folder };
+            },
+          },
+          user
+        );
+        expect(result).toMatchObject({ ok: !requestedModel });
+        expect(existsSync(folder)).toBe(!requestedModel);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  );
+
   test('starts a named thread in the folder and sends the first turn', async () => {
     const { instance, calls, closed } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -561,6 +594,21 @@ describe('codex-desktop start', () => {
       'thread/start',
       { ...threadAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
     ]);
+  });
+
+  test('keeps a shared non-coding home in place despite its Git parent', async () => {
+    const { instance, calls, spawned, projectFolders } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+      ['/focus/dolmen'],
+      { root: '/focus', linked: false }
+    );
+    expect(await instance.start?.({ ...request, inPlace: true }, user)).toMatchObject({
+      ok: true,
+      value: { place },
+    });
+    expect(spawned).toEqual([]);
+    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }]);
+    expect(projectFolders).toEqual(['/focus/dolmen']);
   });
 
   test('runs in place when the folder is already a linked worktree', async () => {

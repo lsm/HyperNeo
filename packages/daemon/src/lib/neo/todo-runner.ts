@@ -267,6 +267,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         pack: prepare.id,
         parameters: target.preparationParameters ?? {},
       };
+    if (target.verb === 'start') call.input.todoId = todo.id;
     const message = String(call.input.message);
     const probe =
       target.verb === 'send'

@@ -117,7 +117,8 @@ export function getConfig(overrides?: ConfigOverrides): Config {
       DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT
     ),
     nodeEnv,
-    workspaceRoot: overrides?.workspaceRoot ?? hyperneoEnv('WORKSPACE_ROOT'),
+    workspaceRoot:
+      overrides?.workspaceRoot ?? hyperneoEnv('WORKSPACE_PATH') ?? hyperneoEnv('WORKSPACE_ROOT'),
     disableWorktrees: hyperneoEnv('DISABLE_WORKTREES') === '1',
     disableGoalProcessing: hyperneoEnv('DISABLE_GOAL_PROCESSING') === '1',
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,

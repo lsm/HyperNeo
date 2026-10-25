@@ -643,6 +643,17 @@ describe('claude-desktop start', () => {
     expect(cwds).toEqual(['/focus/dolmen', '/focus/dolmen/.claude/worktrees/neo-u1']);
   });
 
+  test('keeps a shared non-coding home in place despite its Git parent', async () => {
+    expect(
+      await adapter({ checkout: { repo: '/focus', linked: false } }).start?.(
+        { ...request, inPlace: true },
+        user
+      )
+    ).toMatchObject({ ok: true });
+    expect(spawned[0]).not.toContain('--worktree');
+    expect(cwds).toEqual(['/focus/dolmen', '/focus/dolmen']);
+  });
+
   test('runs work in a folder that is already a linked worktree without making another', async () => {
     await adapter({ checkout: { repo: '/focus/main', linked: true } }).start?.(request, user);
     expect(spawned[0]).not.toContain('--worktree');

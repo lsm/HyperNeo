@@ -60,6 +60,25 @@ describe('root Neo system prompt', () => {
     }
   });
 
+  test.each([false, true])(
+    'keeps non-coding file rules in delivered guidance with packs: %s',
+    (enabled) => {
+      const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+      for (const rule of [
+        '~/HyperNeo',
+        'configured workspace',
+        'Most tasks write nothing',
+        'filled form',
+        'table',
+        '旅行/2026圣诞',
+        'home root',
+        'hidden state',
+      ])
+        expect(prompt).toContain(rule);
+      expect(prompt).toMatch(/human.{0,35}(?:named path|own message)/u);
+    }
+  );
+
   test('gives questions and publications the same concise Markdown guidance', () => {
     const prompt = neoPrompt([]);
     expect(prompt).toContain('For neo.question.ask text and publication shortText, use Markdown');
