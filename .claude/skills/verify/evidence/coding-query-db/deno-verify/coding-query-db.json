@@ -1,0 +1,1092 @@
+{
+  "mode": "verify",
+  "fanout": [
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    }
+  ],
+  "initialRequests": [
+    {
+      "phase": "initial",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    }
+  ],
+  "firstStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "value_json": "[{\"number\":3,\"title\":\"Synthetic 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Synthetic 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Synthetic 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963186792,
+    "attempted_at": 1792963186792,
+    "reason": null
+  },
+  "changed": {
+    "ok": true,
+    "kind": "list",
+    "repo": "synthetic/ledger",
+    "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+    "window": {
+      "by": "merged",
+      "since": "2026-10-15T10:00:00Z",
+      "until": "2026-10-15T12:00:00Z"
+    },
+    "items": [
+      {
+        "number": 3,
+        "title": "Changed 3",
+        "url": "https://github.com/synthetic/ledger/pull/3",
+        "state": "MERGED",
+        "createdAt": "2026-10-15T11:00:00Z",
+        "updatedAt": "2026-10-15T11:00:00Z",
+        "mergedAt": "2026-10-15T11:00:00Z",
+        "closedAt": "2026-10-15T11:00:00Z"
+      },
+      {
+        "number": 2,
+        "title": "Changed 2",
+        "url": "https://github.com/synthetic/ledger/pull/2",
+        "state": "MERGED",
+        "createdAt": "2026-10-15T11:00:00Z",
+        "updatedAt": "2026-10-15T11:00:00Z",
+        "mergedAt": "2026-10-15T11:00:00Z",
+        "closedAt": "2026-10-15T11:00:00Z"
+      }
+    ],
+    "truncated": true
+  },
+  "changedStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 2,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963187113,
+    "attempted_at": 1792963187113,
+    "reason": null
+  },
+  "failed": {
+    "ok": false,
+    "reason": "unreadable: synthetic/ledger could not be listed from GitHub just now (missing, private, or gh failed); say you cannot see it rather than guessing."
+  },
+  "failedStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 3,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963187113,
+    "attempted_at": 1792963187430,
+    "reason": "failed"
+  },
+  "malformed": {
+    "ok": false,
+    "reason": "unreadable: synthetic/ledger could not be listed from GitHub just now (missing, private, or gh failed); say you cannot see it rather than guessing."
+  },
+  "malformedStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 4,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963187113,
+    "attempted_at": 1792963187746,
+    "reason": "failed"
+  },
+  "retained": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 4,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963187113,
+    "attempted_at": 1792963187746,
+    "reason": "failed"
+  },
+  "empty": {
+    "ok": true,
+    "kind": "list",
+    "repo": "synthetic/ledger",
+    "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+    "window": {
+      "by": "merged",
+      "since": "2026-10-15T10:00:00Z",
+      "until": "2026-10-15T12:00:00Z"
+    },
+    "items": [],
+    "truncated": false
+  },
+  "emptyStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 3,
+    "observation_revision": 5,
+    "value_json": "[]",
+    "observed_at": 1792963188474,
+    "attempted_at": 1792963188474,
+    "reason": null
+  },
+  "counts": {
+    "initial": 1,
+    "changed": 1,
+    "failed": 1,
+    "malformed": 1,
+    "empty": 1
+  },
+  "relative": [
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:48.477Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:48.477Z",
+        "until": "2026-10-25T21:19:48.797Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:48.477Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:48.477Z",
+        "until": "2026-10-25T21:19:48.797Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:48.477Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:48.477Z",
+        "until": "2026-10-25T21:19:48.797Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:48.477Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:48.477Z",
+        "until": "2026-10-25T21:19:48.797Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:48.477Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:48.477Z",
+        "until": "2026-10-25T21:19:48.797Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    }
+  ],
+  "growth": [
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:48.798Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:48.798Z",
+        "until": "2026-10-25T21:19:49.118Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:49.119Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:49.119Z",
+        "until": "2026-10-25T21:19:49.441Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:19:49.442Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:19:49.442Z",
+        "until": "2026-10-25T21:19:49.783Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    }
+  ],
+  "rows": [
+    {
+      "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+      "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+      "fact_revision": 3,
+      "observation_revision": 5,
+      "value_json": "[]",
+      "observed_at": 1792963188474,
+      "attempted_at": 1792963188474,
+      "reason": null
+    },
+    {
+      "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"limit\":2,\"withinHours\":3}",
+      "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-25T18:19:49.442Z\",\"limit\":2,\"withinHours\":3}",
+      "fact_revision": 4,
+      "observation_revision": 4,
+      "value_json": "[{\"number\":3,\"title\":\"Synthetic 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Synthetic 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Synthetic 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+      "observed_at": 1792963189783,
+      "attempted_at": 1792963189783,
+      "reason": null
+    }
+  ],
+  "fence": {
+    "before": 4,
+    "after": 5,
+    "winningCoverage": {
+      "kind": "bounded-query",
+      "query": {
+        "repo": "synthetic/ledger",
+        "kind": "pr",
+        "state": "merged",
+        "by": "merged",
+        "since": "2026-10-15T11:00:00Z",
+        "limit": 2,
+        "withinHours": 3
+      }
+    }
+  },
+  "health": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 5371,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "contention": {
+    "healthMs": 0.7660420000001977,
+    "writeMs": 1210.3570420000005,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true,
+  "mainSql": [],
+  "commands": [
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.snapshot",
+    "coding.query.observe",
+    "coding.query.observe",
+    "coding.query.snapshot",
+    "coding.query.observe"
+  ],
+  "gatewayMetrics": [
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 238.51624999999967,
+      "argsBytes": 173,
+      "replyBytes": 349
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.63412500000004,
+      "argsBytes": 1084,
+      "replyBytes": 1061
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.28412500000013097,
+      "argsBytes": 173,
+      "replyBytes": 349
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.31258299999990413,
+      "argsBytes": 1078,
+      "replyBytes": 1055
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.22424999999975626,
+      "argsBytes": 173,
+      "replyBytes": 349
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.323790999999801,
+      "argsBytes": 364,
+      "replyBytes": 330
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.2023340000000644,
+      "argsBytes": 173,
+      "replyBytes": 349
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.2694579999997586,
+      "argsBytes": 364,
+      "replyBytes": 330
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 180.00645800000075,
+      "argsBytes": 173,
+      "replyBytes": 349
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.6335840000001554,
+      "argsBytes": 362,
+      "replyBytes": 340
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.4875419999998485,
+      "argsBytes": 162,
+      "replyBytes": 286
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.35170799999923474,
+      "argsBytes": 1021,
+      "replyBytes": 1050
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.3846670000002632,
+      "argsBytes": 162,
+      "replyBytes": 286
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.30958300000020245,
+      "argsBytes": 1021,
+      "replyBytes": 1050
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.20125000000007276,
+      "argsBytes": 162,
+      "replyBytes": 286
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.5944579999995767,
+      "argsBytes": 1021,
+      "replyBytes": 1050
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.27791700000034325,
+      "argsBytes": 162,
+      "replyBytes": 286
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.31212500000037835,
+      "argsBytes": 1021,
+      "replyBytes": 1050
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.1818329999996422,
+      "argsBytes": 158,
+      "replyBytes": 282
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.16537500000049477,
+      "argsBytes": 158,
+      "replyBytes": 282
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.29724999999962165,
+      "argsBytes": 295,
+      "replyBytes": 325
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 0.995665999999801,
+      "argsBytes": 1017,
+      "replyBytes": 325
+    },
+    {
+      "operation": "coding.query.snapshot",
+      "durationMs": 0.49662500000067666,
+      "argsBytes": 158,
+      "replyBytes": 282
+    },
+    {
+      "operation": "coding.query.observe",
+      "durationMs": 889.3914169999998,
+      "argsBytes": 1017,
+      "replyBytes": 1046
+    }
+  ],
+  "rpcMetrics": [
+    {
+      "name": "neo.github.read",
+      "durationMs": 717.5692920000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 717.4185000000002
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 717.4097909999996
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 716.6160829999999
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 716.54475
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 317.87966700000015
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 316.3711669999998
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 316.3030829999998
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 509.6467079999993
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 321.52225
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 299.54299999999967
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 277.8812079999998
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 256.3782089999995
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 234.91899999999987
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 321.0175420000005
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 322.7947090000007
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 341.83445800000027
+    },
+    {
+      "name": "system.health",
+      "durationMs": 0.7430420000000595
+    }
+  ],
+  "maxLagMs": 18.497292000000016,
+  "rss": {
+    "before": 215891968,
+    "after": 332251136
+  },
+  "requests": [
+    {
+      "phase": "initial",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "changed",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "failed",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "malformed",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "empty",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "relative",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:19:48.477Z"
+      ]
+    },
+    {
+      "phase": "growth",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:19:48.798Z"
+      ]
+    },
+    {
+      "phase": "growth",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:19:49.119Z"
+      ]
+    },
+    {
+      "phase": "growth",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:19:49.442Z"
+      ]
+    },
+    {
+      "phase": "late",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-15T10:00:00Z"
+      ]
+    },
+    {
+      "phase": "held",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-15T10:00:00Z"
+      ]
+    }
+  ]
+}
