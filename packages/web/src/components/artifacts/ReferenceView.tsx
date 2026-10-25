@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { t } from '../../lib/i18n/index.ts';
 import {
+  artifactPreviewStack,
   backArtifactPreview,
   pushArtifactPreview,
   replaceArtifactPreview,
@@ -20,16 +21,22 @@ export function ReferenceView({
   target,
   resolved,
   markdownClass,
+  promoteFiles = false,
+  suspended = false,
 }: {
   target: Reference;
   resolved: Map<string, ArtifactResolution>;
   markdownClass?: string;
+  promoteFiles?: boolean;
+  suspended?: boolean;
 }) {
   const key = JSON.stringify(target);
-  const [resolution, setResolution] = useState(() => resolved.get(key));
+  const [settled, setSettled] = useState(() => ({ key, value: resolved.get(key) }));
+  const resolution = settled.key === key ? settled.value : resolved.get(key);
+  const promote = promoteFiles && !target.file;
   useEffect(() => {
     const cached = resolved.get(key);
-    setResolution(cached);
+    setSettled({ key, value: cached });
     if (cached) return;
     let current = true;
     connectionManager
@@ -37,14 +44,25 @@ export function ReferenceView({
       .then((hub) => resolveArtifactReference(hub, target))
       .catch((): ArtifactResolution => ({ kind: 'state', state: 'daemon_unavailable' }))
       .then((next) => {
+        if (!current || artifactPreviewStack.peek().at(-1) !== target) return;
         if (next.kind !== 'state') resolved.set(key, next);
-        if (current) setResolution(next);
+        setSettled({ key, value: next });
       });
     return () => {
       current = false;
     };
   }, [key]);
+  useEffect(() => {
+    if (
+      promote &&
+      !suspended &&
+      resolution?.kind === 'artifact' &&
+      artifactPreviewStack.peek().at(-1) === target
+    )
+      replaceArtifactPreview({ kind: 'artifact', artifactId: resolution.artifactId });
+  }, [promote, suspended, resolution, target]);
 
+  if (promote && resolution?.kind === 'artifact') return null;
   if (resolution?.kind === 'artifact')
     return (
       <ArtifactPreview
