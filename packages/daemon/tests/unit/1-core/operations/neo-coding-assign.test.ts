@@ -34,7 +34,11 @@ function fixture(
   simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome
 ) {
   const root = mkdtempSync(join(tmpdir(), 'neo-actor-'));
-  const pr = { body: 'Agent: GPT-6 via codex-desktop', headRefOid: head, state: 'OPEN' };
+  const pr = {
+    body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
+    headRefOid: head,
+    state: 'OPEN',
+  };
   const publish = () => writeFileSync(join(root, 'pr.json'), JSON.stringify(pr));
   publish();
   writeFileSync(
@@ -189,7 +193,7 @@ describe('coding actor assignments', () => {
       ok: false,
       reason: expect.stringContaining('author_provenance_required'),
     });
-    f.pr.body = 'Agent: GPT-6 via codex-desktop';
+    f.pr.body = 'Agent: gpt-6-sol (effort: high) via codex-desktop';
     f.publish();
     expect(await f.assign({ candidates: [author] })).toMatchObject({
       ok: false,

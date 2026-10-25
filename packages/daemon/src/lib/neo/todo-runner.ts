@@ -232,6 +232,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const formatGoal = (instruction: string, goal: NeoWorkGoal | null) =>
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
+  const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
+    const pack = deps.packs().find((candidate) => candidate.id === todo.check?.pack);
+    const recorded = existing ? sessions.readCard(todo.id) : null;
+    return (
+      pack?.workerBrief?.(instruction, {
+        model: recorded?.model ?? null,
+        effort: recorded?.effort ?? null,
+        harness,
+      }) ?? instruction
+    );
+  };
   const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = async (
@@ -258,6 +269,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const dispatch = async ({ todo, ask, target }: Startable) => {
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
+    card.instruction = workerBrief(
+      todo,
+      card.instruction,
+      target.verb === 'start' ? target.adapter : target.ref.adapter,
+      target.verb === 'send'
+    );
     const call = driverWorkCall(
       target,
       card,
@@ -310,12 +327,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           Date.now()
         ),
       };
+    const recorded = target.verb === 'send' ? sessions.readCard(todo.id) : null;
     sessions.recordRef(
       todo.id,
       result.ref,
       result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
       result.link,
-      { model: result.model, effort: result.effort }
+      {
+        model: result.model ?? recorded?.model ?? undefined,
+        effort: result.effort ?? recorded?.effort ?? undefined,
+      }
     );
     const opening = messageOpening(message);
     sessions.recordSent(
@@ -654,7 +675,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const gate = requireNeoTodoContinuable(read(todoId));
     if ('reason' in gate) return gate.reason;
     const { todo, ask, ref } = gate.value;
-    const text = formatGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
+    const text = formatGoal(workerBrief(todo, message, ref.adapter), {
+      workId: todo.id,
+      goal: null,
+      doneWhen: todo.doneWhen,
+    });
     const status = await deps.invoke(caller(ask), 'work.status', { ref });
     if (readDriverLive(status)?.status === 'needs_you')
       return fail(

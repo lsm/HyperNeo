@@ -97,7 +97,7 @@ try {
       const seed = async (name: string, number: number, repo: string) => {
         const url = `https://github.com/${repo}/pull/${number}`;
         git(origin, 'update-ref', `refs/pull/${number}/head`, head);
-        metadata[url] = { body: 'Agent: GPT-6 via fixture-author', headRefOid: head, state: 'OPEN' }; publish();
+        metadata[url] = { body: 'Agent: gpt-6-sol (effort: high) via fixture-author', headRefOid: head, state: 'OPEN' }; publish();
         db.prepare('INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES (?,?,?,?,1,1)').run(`ask-${name}`, 'fixture-neo', name, name);
         db.prepare("INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES (?,?,1,?,'Merged','doing',1,1)").run(name, `ask-${name}`, name);
         const write = { adapter: 'fixture-author', id: `author-${name}` };

@@ -7,6 +7,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
 import { runCodingReview } from './review.ts';
 import { withCodingWorkGoal } from './work-goal.ts';
+import { withCodingWorkerProvenance } from './worker-provenance.ts';
 import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
 import { createCodingRefReader } from './ref-reader.ts';
@@ -188,6 +189,7 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
+    workerBrief: withCodingWorkerProvenance,
     workGoal: withCodingWorkGoal,
   };
 }

@@ -33,7 +33,7 @@ describe('coding stage target preferences', () => {
           repo,
           stage,
           candidates: [standard, preferred],
-          body: 'Agent: Claude Sonnet 5.5 via claude-code',
+          body: 'Agent: claude-sonnet-5-5 (effort: high) via claude-code',
         };
         expect(planCodingStageTarget(db, input, true)).toEqual({
           ok: true,
@@ -116,7 +116,7 @@ describe('coding stage target preferences', () => {
           repo,
           stage: 'review',
           candidates: [preferred, { ...standard, adapter: preferred.adapter }, otherHarness],
-          body: 'Agent: GPT-6 via codex-desktop',
+          body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
         },
         true
       );
@@ -130,7 +130,12 @@ describe('coding stage target preferences', () => {
       expect(
         planCodingStageTarget(
           db,
-          { repo, stage: 'review', candidates: [preferred], body: 'Agent: GPT-6 via other' },
+          {
+            repo,
+            stage: 'review',
+            candidates: [preferred],
+            body: 'Agent: gpt-6-sol (effort: high) via other',
+          },
           true
         )
       ).toMatchObject({ ok: false, reason: expect.stringContaining('same_model') });

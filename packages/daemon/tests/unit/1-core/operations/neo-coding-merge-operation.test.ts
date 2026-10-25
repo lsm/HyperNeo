@@ -37,7 +37,7 @@ function fixture(bot = true) {
   const data = {
     pr: {
       url,
-      body: 'Agent: GPT-6 via fixture',
+      body: 'Agent: gpt-6-sol (effort: high) via fixture',
       state: 'OPEN',
       headRefOid: head,
       isDraft: false,
