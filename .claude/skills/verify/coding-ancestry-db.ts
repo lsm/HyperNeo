@@ -73,13 +73,13 @@ const fixture=<T>(run:()=>T)=>{const previous=measuring;measuring=false;try{retu
 const row=(number:number)=>fixture(()=>app!.db.getDatabase().prepare('SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?').get(repo,base(number),build) as Record<string,any>);
 const requests=()=>readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
 const count=(phase:string)=>requests().filter(r=>r.phase===phase&&r.family==='ancestry').length;
-function seed(){
+async function seed(){
  const db=app!.db.getDatabase(),at=Date.now();
  db.prepare('INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES(?,?,?,?,?,?)').run('synthetic-ask','synthetic-session','Synthetic ancestry','Synthetic',at,at);
  db.prepare('INSERT INTO neo_todos(id,ask_id,position,title,done_when,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('synthetic-todo','synthetic-ask',0,'Synthetic ancestry','Synthetic containment',at,at);
  const merge=new CodingMergeFactsRepository(db),delivery=new CodingDeliveryFactsRepository(db);
  for(const number of [7,8,9,10,11]){
-  assert(merge.record(repo,number,{value:{state:'MERGED',mergeCommit:base(number)},source:'synthetic'},at,0));
+  assert((await merge.observeCurrent(repo,number,{value:{state:'MERGED',mergeCommit:base(number)},source:'synthetic'},at,0)).accepted);
   delivery.recordGate('synthetic-todo',{url:url(number),head,acceptanceContract:'synthetic containment',write,reviewer,qa,evidence:['synthetic gate']});
   const assignment={url:url(number),head,acceptanceContract:'synthetic containment',newDispatch:true,write,actor:{kind:'human',id:qa.id},ref:qa};
   db.prepare("INSERT INTO pack_facts(todo_id,pack,key,value_json) VALUES(?,'coding',?,?)").run('synthetic-todo',`assignment:${url(number)}:${head}:qa`,JSON.stringify(assignment));
@@ -87,7 +87,7 @@ function seed(){
 }
 const refused={accepted:false,reason:'running_build_must_contain_merge'};
 try{
- await open();seed();measuring=true;
+ await open();await seed();measuring=true;
  evidence.fanout=await Promise.all(Array.from({length:5},()=>read()));for(const result of evidence.fanout)assert.deepEqual(result,{accepted:true});
  assert.equal(count('initial'),1);evidence.first=row(7);assert.equal(evidence.first.status,'ahead');
  control('known');evidence.known=await read();assert.deepEqual(evidence.known,{accepted:true});assert.equal(count('known'),0);

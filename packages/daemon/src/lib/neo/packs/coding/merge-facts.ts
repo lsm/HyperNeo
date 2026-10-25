@@ -1,7 +1,9 @@
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { withBusyRetry } from '../../../../storage/busy-retry.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { callCodingBranchDb } from './branch-facts-db.ts';
+import { codingMergeReads, codingMergeWrites } from './merge-facts-db.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
@@ -104,6 +106,13 @@ export class CodingMergeFactsRepository {
     return readMergeFacts(this.db, repo, number, now, maxAgeMs);
   }
 
+  readCurrent(repo: string, number: number, at: number, maxAgeMs: number) {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingMergeReads, 'read', repo, number, at, maxAgeMs),
+      'coding.merge.db'
+    );
+  }
+
   refresh(
     repo: string,
     number: number,
@@ -111,14 +120,32 @@ export class CodingMergeFactsRepository {
     now = Date.now,
     force = false
   ) {
-    const canonical = canonicalRepo(this.db, repo),
-      current = this.read(canonical, number, now(), NEO_WORK_PR_READ_MS);
-    if (current.merge.status === 'known' && !force) return Promise.resolve(current);
     let active = pending.get(this.db);
     if (!active) {
       active = new Map();
       pending.set(this.db, active);
     }
+    const key = `request:${JSON.stringify([repo.toLowerCase(), number, force])}`;
+    const held = active.get(key);
+    if (held) return held;
+    const request = this.collectCurrent(repo, number, active, spawn, now, force).finally(() =>
+      active.delete(key)
+    );
+    active.set(key, request);
+    return request;
+  }
+
+  private async collectCurrent(
+    repo: string,
+    number: number,
+    active: Map<string, Promise<ReturnType<CodingMergeFactsRepository['read']>>>,
+    spawn: SpawnFn,
+    now: () => number,
+    force: boolean
+  ) {
+    const current = await this.readCurrent(repo, number, now(), NEO_WORK_PR_READ_MS),
+      canonical = current.repo;
+    if (current.merge.status === 'known' && !force) return current;
     const key = JSON.stringify([canonical, number]),
       held = active.get(key);
     if (held) return held;
@@ -134,47 +161,68 @@ export class CodingMergeFactsRepository {
     return request;
   }
 
-  record(
+  observeCurrent(
+    repo: string,
+    number: number,
+    observation: Observation,
+    at: number,
+    revision: number
+  ) {
+    return callCodingBranchDb(
+      () =>
+        gatewayFor(this.db).call(
+          codingMergeWrites,
+          'observe',
+          repo,
+          number,
+          observation,
+          at,
+          revision
+        ),
+      'coding.merge.db'
+    );
+  }
+
+  observe(
     repo: string,
     number: number,
     observation: Observation,
     at: number,
     expectedRevision: number
-  ): boolean {
-    return this.db.transaction(() => {
-      const canonical = canonicalRepo(this.db, repo);
-      const before = loadMergeFact(this.db, canonical, number);
-      if ((before?.observationRevision ?? 0) !== expectedRevision) return false;
-      const success = 'value' in observation;
-      const value = success
-        ? JSON.stringify({
-            state: observation.value.state,
-            mergeCommit: observation.value.mergeCommit,
-          })
-        : (before?.value ?? null);
-      const factRevision =
-        (before?.factRevision ?? 0) + (success && value !== (before?.value ?? null) ? 1 : 0);
-      this.db
-        .prepare(`INSERT INTO pack_coding_merge_facts
-        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,
-        observation_revision = excluded.observation_revision, value_json = excluded.value_json,
-        source = excluded.source, observed_at = excluded.observed_at,
-        attempted_at = excluded.attempted_at, reason = excluded.reason`)
-        .run(
-          canonical,
-          number,
-          factRevision,
-          expectedRevision + 1,
-          value,
-          success ? observation.source : (before?.source ?? null),
-          success ? at : (before?.observedAt ?? null),
-          at,
-          success ? null : observation.reason
-        );
-      return true;
-    }, 'immediate')();
+  ) {
+    const canonical = canonicalRepo(this.db, repo);
+    const before = loadMergeFact(this.db, canonical, number);
+    if ((before?.observationRevision ?? 0) !== expectedRevision)
+      return { accepted: false, facts: this.read(canonical, number, at, NEO_WORK_PR_READ_MS) };
+    const success = 'value' in observation;
+    const value = success
+      ? JSON.stringify({
+          state: observation.value.state,
+          mergeCommit: observation.value.mergeCommit,
+        })
+      : (before?.value ?? null);
+    const factRevision =
+      (before?.factRevision ?? 0) + (success && value !== (before?.value ?? null) ? 1 : 0);
+    this.db
+      .prepare(`INSERT INTO pack_coding_merge_facts
+      (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,
+      observation_revision = excluded.observation_revision, value_json = excluded.value_json,
+      source = excluded.source, observed_at = excluded.observed_at,
+      attempted_at = excluded.attempted_at, reason = excluded.reason`)
+      .run(
+        canonical,
+        number,
+        factRevision,
+        expectedRevision + 1,
+        value,
+        success ? observation.source : (before?.source ?? null),
+        success ? at : (before?.observedAt ?? null),
+        at,
+        success ? null : observation.reason
+      );
+    return { accepted: true, facts: this.read(canonical, number, at, NEO_WORK_PR_READ_MS) };
   }
 }
 
@@ -217,14 +265,11 @@ const collectMergeFacts = (superpipe({})('coding-ledger-merge-facts-refresh') as
       observation: Observation,
       now: () => number,
       revision: number
-    ) => withBusyRetry(() => facts.record(repo, number, observation, now(), revision)),
+    ) =>
+      facts
+        .observeCurrent(repo, number, observation, now(), revision)
+        .then((result) => result.facts),
     ['facts', 'repo', 'number', 'observation', 'now', 'revision'],
-    'recorded'
-  )
-  .pipe(
-    (facts: CodingMergeFactsRepository, repo: string, number: number, now: () => number) =>
-      facts.read(repo, number, now(), NEO_WORK_PR_READ_MS),
-    ['facts', 'repo', 'number', 'now'],
     'read'
   )
   .endAsync('read') as (

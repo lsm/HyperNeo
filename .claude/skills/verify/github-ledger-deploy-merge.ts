@@ -56,7 +56,7 @@ try {
   await open();
   const db = app!.db.getDatabase();
   db.prepare('INSERT INTO pack_coding_repo_aliases(alias,canonical) VALUES(?,?)').run('old/repo', repo);
-  assert(facts().record(repo, 7, { value: { state: 'MERGED', mergeCommit: merge }, source: 'synthetic-ledger' }, Date.now(), 0));
+  assert((await facts().observeCurrent(repo, 7, { value: { state: 'MERGED', mergeCommit: merge }, source: 'synthetic-ledger' }, Date.now(), 0)).accepted);
   control('known');
   const known = await read([url(7)]);
   evidence.known = known;

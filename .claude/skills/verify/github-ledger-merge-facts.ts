@@ -33,18 +33,18 @@ try {
     const ledger = new CodingPrLedgerRepository(db), facts = ledger.mergeFacts;
     if (phase === 'initial') {
       const missing = facts.read(repo, number, 100, 10); assert.equal(missing.merge.status, 'unknown');
-      assert(facts.record(repo, number, { value, source }, 100, 0));
+      assert((await facts.observeCurrent(repo, number, { value, source }, 100, 0)).accepted);
       const known = facts.read(repo, number, 100, 10); assert.equal(known.merge.status, 'known');
-      assert(facts.record(repo, number, { reason: 'failed' }, 110, known.observationRevision));
+      assert((await facts.observeCurrent(repo, number, { reason: 'failed' }, 110, known.observationRevision)).accepted);
       const failed = facts.read(repo, number, 110, 10); assert.equal(failed.merge.status, 'unknown');
-      assert(facts.record(repo, number, { value, source }, 120, failed.observationRevision));
+      assert((await facts.observeCurrent(repo, number, { value, source }, 120, failed.observationRevision)).accepted);
       const recovered = facts.read(repo, number, 120, 10); assert.equal(recovered.factRevision, known.factRevision);
       const stale = facts.read(repo, number, 131, 10); assert.equal(stale.merge.status, 'unknown');
       evidence.local = { missing, known, failed, recovered, stale };
       evidence.expected = recovered;
     } else {
       const recovered = facts.read(repo, number, 120, 10); assert.deepEqual(recovered, evidence.expected);
-      assert.equal(facts.record(repo, number, { value: { state: 'OPEN', mergeCommit: null }, source }, 140, 1), false);
+      assert.equal((await facts.observeCurrent(repo, number, { value: { state: 'OPEN', mergeCommit: null }, source }, 140, 1)).accepted, false);
       assert.deepEqual(facts.read(repo, number, 120, 10), recovered);
       const before = count(); for (let i = 0; i < 10; i++) facts.read(repo, number, 120, 10);
       assert.equal(count(), before); evidence.reopened = recovered; evidence.localReadRequests = count() - before;

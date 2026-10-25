@@ -53,7 +53,7 @@ try{
  }
  const phase=(name:string)=>writeFileSync(join(run,'phase'),name);
  if(mode!=='baseline'){
-  phase('known');ledger.mergeFacts.record('synthetic/ledger',7,{value:merged,source},Date.now(),0);
+  phase('known');(await ledger.mergeFacts.observeCurrent('synthetic/ledger',7,{value:merged,source},Date.now(),0)).accepted;
   const known=fixture(7);evidence.known=await known.complete();evidence.knownStatus=tasks.getTask(known.id)?.status;
   assert.equal(evidence.knownStatus,'done','Covered merge fact must settle the worker task while GitHub refuses');
   assert.equal(requests().length,0,'Covered merge fact must need no direct GitHub read');
@@ -70,7 +70,7 @@ try{
    phase(state);const task=fixture(9);evidence[state]=await task.complete();assert.equal(tasks.getTask(task.id)?.status,'approved');assert.match(evidence[state].detail,new RegExp(state.toUpperCase()));
   }
   phase('merged');const recovered=fixture(9);evidence.merged=await recovered.complete();assert.equal(tasks.getTask(recovered.id)?.status,'done','A newly merged PR must not be blocked by cached CLOSED state');
-  ledger.mergeFacts.record('synthetic/ledger',10,{value:merged,source},Date.now()-180_000,0);
+  (await ledger.mergeFacts.observeCurrent('synthetic/ledger',10,{value:merged,source},Date.now()-180_000,0)).accepted;
   const prior=ledger.mergeFacts.read('synthetic/ledger',10,Date.now(),Infinity);
   const priorRow=db.prepare('SELECT value_json,observed_at FROM pack_coding_merge_facts WHERE repo=? AND number=?').get('synthetic/ledger',10);
   phase('failed');const failed=fixture(10);evidence.failed=await failed.complete();assert.equal(tasks.getTask(failed.id)?.status,'approved');assert.match(evidence.failed.detail,/could not verify/);
