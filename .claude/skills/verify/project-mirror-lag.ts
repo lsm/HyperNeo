@@ -1,3 +1,4 @@
+import { recordStartedWork } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 import { mock } from 'bun:test';
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';
@@ -36,6 +37,7 @@ const app = await createDaemonApp({
 const repo = new NeoRepository(app.db.getDatabase());
 const groups: PlaceGroup[] = Array.from({ length: 40 }, (_, i) => {
   const folder = join(run, 'home', `project-${i}`);
+  recordStartedWork(app.db.getDatabase(), { adapter: 'fixture', id: `work-${i}` });
   fs.mkdirSync(folder);
   repo.saveProject({ id: `p${i}`, title: `Synthetic ${i}`, summary: '', context: '' }, 0);
   app.db
@@ -53,7 +55,8 @@ const groups: PlaceGroup[] = Array.from({ length: 40 }, (_, i) => {
     openCount: 0,
     archivedCount: 0,
     adapters: ['fixture'],
-    work: [],
+    work: [{ ref: { adapter: 'fixture', id: `work-${i}` }, title: `Synthetic ${i}`, status: 'done', lastActivityAt: i,
+      place: { machine: hostname(), folder, name: `Synthetic ${i}`, toolProject: { id: `t${i}`, name: `Synthetic ${i}` } } }],
   };
 });
 const slowPath = groups[0].place.folder!;

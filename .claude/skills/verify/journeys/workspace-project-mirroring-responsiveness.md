@@ -8,7 +8,8 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data"
 
 Use a fresh directory outside the OS temporary folder: discovery deliberately
 excludes temporary workspaces. This starts an isolated daemon and calls the real
-`operation.invoke` / `work.find` WebSocket door with 40 synthetic tool projects.
+`operation.invoke` / `work.find` WebSocket door with 40 synthetic tool projects,
+each backed by a synthetic session recorded as started by this instance.
 One controlled 1.4 s filesystem wait runs inside the production mirror worker.
 An independent child probes `system.health` during that wait; a concurrent
 synthetic project edit must complete before the wait ends and survive mirroring.
