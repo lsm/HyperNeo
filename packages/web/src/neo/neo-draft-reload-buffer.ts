@@ -1,4 +1,7 @@
-import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import type {
+  NeoPreviewContext,
+  NeoPreviewReference,
+} from '@hyperneo/shared/types/neo-preview-context';
 import { readNeoPreviewReference } from './neo-preview-context.ts';
 import { DRAFT_CHAR_LIMIT, generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -55,6 +58,24 @@ export const planNeoReloadCapture = (superpipe({})('neo-reload-edit-capture') as
   id: string,
   previewContext?: NeoPreviewReference | null
 ) => NeoDraftReloadEntry | Refusal;
+
+export function neoDraftRecoveryInput(entry: NeoDraftReloadEntry): Pick<
+  NeoDraftReloadEntry,
+  'sessionId' | 'text' | 'base'
+> & {
+  previewContext?: NeoPreviewContext | null;
+} {
+  const { sessionId, text, base, previewContext } = entry;
+  const context = previewContext
+    ? { artifactId: previewContext.artifactId, snapshot: previewContext.snapshot }
+    : previewContext;
+  return {
+    sessionId,
+    text,
+    base,
+    ...(context === undefined ? {} : { previewContext: context }),
+  };
+}
 
 function parseEntry(raw: string | null, sessionId: string): NeoDraftReloadEntry | null {
   if (!raw || raw.length > MAX_SERIALIZED_CHARS) return null;

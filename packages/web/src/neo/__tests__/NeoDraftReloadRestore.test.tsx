@@ -142,6 +142,52 @@ describe('NeoLive reload draft restore', () => {
     );
   });
 
+  it.each([
+    { label: 'legacy', stored: undefined, sent: undefined },
+    { label: 'explicitly unbound', stored: null, sent: null },
+    {
+      label: 'available',
+      stored: {
+        artifactId: 'registered-report',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Client display metadata',
+        state: 'available',
+      },
+      sent: { artifactId: 'registered-report', snapshot: 'a'.repeat(64) },
+    },
+    {
+      label: 'unavailable',
+      stored: {
+        artifactId: 'registered-report',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Client display metadata',
+        state: 'unavailable',
+      },
+      sent: { artifactId: 'registered-report', snapshot: 'a'.repeat(64) },
+    },
+  ])(
+    'projects $label capture into the strict recovery request contract',
+    async ({ stored, sent }) => {
+      sessionStorage.setItem(
+        key(root),
+        JSON.stringify({
+          sessionId: root,
+          text: 'Captured reply',
+          base: null,
+          id: 'captured-reference',
+          ...(stored === undefined ? {} : { previewContext: stored }),
+        })
+      );
+      mount();
+      await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+      expect(recover.mock.calls[0][0].input).toEqual({
+        sessionId: root,
+        text: 'Captured reply',
+        base: null,
+        ...(sent === undefined ? {} : { previewContext: sent }),
+      });
+    }
+  );
   it('restores the newest captured edit over the older saved draft', async () => {
     persisted.set(root, 'Saved baseline');
     remember('Newest visible edit', 'Saved baseline');

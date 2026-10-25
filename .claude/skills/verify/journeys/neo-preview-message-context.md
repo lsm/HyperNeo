@@ -88,3 +88,11 @@ refused before storage writes, preserving the previous recoverable capture.
 A subsequent valid edit must remain writable/readable/removable, and maximum raw
 text/base plus bounded escaping and full context must still roundtrip. Read and
 write share the same serialized-size limit; no larger read budget is introduced.
+
+
+Require `reloadRecoveryProjection` too. The existing recovery hook and owned RPC
+proof both use `neoDraftRecoveryInput` exported by the buffer module. It projects
+a full stored reference to artifactId/snapshot, preserves explicit null and legacy
+omission, and excludes displayName/state/capture id from the strict recovery
+request. Component checks cover available/unavailable/null/legacy captures. This
+transport projection does not implement later composer association restoration.

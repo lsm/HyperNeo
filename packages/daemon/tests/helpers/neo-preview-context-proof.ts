@@ -10,7 +10,10 @@ import { getConfig } from '../../src/config.ts';
 import { NeoAskTodoRepository } from '../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../src/storage/repositories/neo-repository.ts';
 import { NeoTodoSessionRepository } from '../../src/storage/repositories/neo-todo-session-repository.ts';
-import { createNeoDraftReloadBuffer } from '../../../web/src/neo/neo-draft-reload-buffer.ts';
+import {
+  createNeoDraftReloadBuffer,
+  neoDraftRecoveryInput,
+} from '../../../web/src/neo/neo-draft-reload-buffer.ts';
 import { submitNeoDraft } from '../../../web/src/neo/neo-intake.ts';
 import { presentConversationAskPage } from '../../../web/src/neo/conversation-ask-client.ts';
 import { createVoicePreviewProof } from '../../../web/src/lib/voice/__tests__/voice-preview-proof.ts';
@@ -190,36 +193,30 @@ try {
     false
   );
   assert.deepEqual(reload.read(sessionId), captured);
-  const recovery = { sessionId, text: captured.text, base: captured.base };
-  const submitted = await rpc<{ ok: boolean; reason?: string }>('neo.draft.recover', {
-    ...recovery,
-    previewContext,
-  });
+  const recovery = neoDraftRecoveryInput(captured);
+  assert.deepEqual(recovery.previewContext, previewContext);
+  const submitted = await rpc<{ ok: boolean; reason?: string }>('neo.draft.recover', recovery);
   assert(!submitted.ok && submitted.reason === 'submitted');
   assert(reload.remember(sessionId, input.content, '', null));
   const unbound = reload.read(sessionId)!;
   assert.equal(unbound.previewContext, null);
+  const unboundInput = neoDraftRecoveryInput(unbound);
+  assert((await rpc<{ ok: boolean }>('neo.draft.recover', unboundInput)).ok);
   assert(
     (
       await rpc<{ ok: boolean }>('neo.draft.recover', {
-        ...recovery,
-        previewContext: unbound.previewContext,
-      })
-    ).ok
-  );
-  assert(
-    (
-      await rpc<{ ok: boolean }>('neo.draft.recover', {
-        ...recovery,
+        ...unboundInput,
         base: 'older synthetic base',
-        previewContext: null,
       })
     ).ok
   );
-  const legacyRecovery = await rpc<{ ok: boolean; reason?: string }>('neo.draft.recover', {
-    ...recovery,
-    base: input.content,
-  });
+  assert(reload.remember(sessionId, input.content, input.content));
+  const legacyInput = neoDraftRecoveryInput(reload.read(sessionId)!);
+  assert(!('previewContext' in legacyInput));
+  const legacyRecovery = await rpc<{ ok: boolean; reason?: string }>(
+    'neo.draft.recover',
+    legacyInput
+  );
   assert(!legacyRecovery.ok && legacyRecovery.reason === 'submitted');
 
   async function readContext() {
@@ -340,6 +337,7 @@ try {
     voiceMessageNoDuplicate: true,
     syntheticIndexedDb: true,
     reloadContextContract: true,
+    reloadRecoveryProjection: true,
     reloadSizeRefusalPreserved: true,
     explicitUnboundRecovery: true,
     alreadySavedContextRestore: true,
