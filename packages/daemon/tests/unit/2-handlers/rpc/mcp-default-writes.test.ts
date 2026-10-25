@@ -251,4 +251,24 @@ describe('MCP default RPC writes', () => {
     expect(spaceDefaults()).toEqual(selection());
     expect(publish).toHaveBeenCalled();
   });
+  it.each(['mcp.enablement.clearOverride', 'space.mcp.clearOverride'])(
+    '%s inherits a known global on into an empty local template',
+    async (method) => {
+      db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+        JSON.stringify({ toolSelectionDefaults: selection(true) })
+      );
+      db.prepare("UPDATE spaces SET config=?,updated_at=777 WHERE id='space'").run(
+        JSON.stringify({ toolSelectionDefaults: { version: 1, choices: {} } })
+      );
+      await call(method, {
+        scopeType: 'space',
+        scopeId: 'space',
+        spaceId: 'space',
+        serverId: 'browser',
+      });
+      expect(spaceDefaults().choices['mcp:browser']?.selected).toBe(true);
+      expect(globalDefaults()).toEqual(selection(true));
+      expect(publish).toHaveBeenCalled();
+    }
+  );
 });

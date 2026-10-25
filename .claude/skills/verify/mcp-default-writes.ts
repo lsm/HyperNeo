@@ -67,6 +67,13 @@ try {
   evidence.contextualMissingSpace=true;
   await hub.request('mcp.registry.setEnabled',{id:server.id,enabled:true});
   assert.equal(selected(undefined),true);assert.equal(selected(fixtures[0].id),true);assert.equal(selected(fixtures[1].id),false);
+  const empty=spaces.createSpace({slug:'empty-known',name:'Empty known',workspacePath:join(run,'empty-known')});
+  for(const method of ['mcp.enablement.clearOverride','space.mcp.clearOverride']){
+    raw.prepare('UPDATE spaces SET config=?,stopped=1 WHERE id=?').run(JSON.stringify({toolSelectionDefaults:{version:1,choices:{}}}),empty.id);
+    await hub.request(method,{scopeType:'space',scopeId:empty.id,spaceId:empty.id,serverId:server.id});
+    assert.equal(readDefault(empty.id).choices[`mcp:${server.id}`]?.selected,true);
+  }
+  evidence.knownGlobalClearInherited=true;
   await hub.request('mcp.enablement.setOverride',{scopeType:'space',scopeId:fixtures[1].id,serverId:server.id,enabled:true});
   assert.equal(selected(fixtures[1].id),true);
   assert.deepEqual(await hub.request('mcp.enablement.clearOverride',{scopeType:'space',scopeId:fixtures[1].id,serverId:server.id}),{deleted:true});
