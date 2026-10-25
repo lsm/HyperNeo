@@ -60,7 +60,14 @@ test('a file merely named worker is still counted', () => {
   expect(f.run().code).toBe(1);
 });
 
-for (const source of ['db.transaction();', 'db.exec();', 'db.query();', 'db.run();', 'new Database();', 'new DatabaseSync();']) {
+for (const source of [
+  'db.transaction();',
+  'db.exec();',
+  'db.query();',
+  'db.run();',
+  'new Database();',
+  'new DatabaseSync();',
+]) {
   test(`the CI command rejects equivalent sync entrypoint: ${source}`, () => {
     const f = fixture();
     f.put('packages/daemon/src/new.ts', source);
@@ -87,4 +94,12 @@ test('lowering the baseline passes after removing calls', () => {
 
 test('missing comparison ref fails closed', () => {
   expect(fixture().run('missing-ref').code).toBe(1);
+});
+
+test('a malformed baseline cannot disable the guard', () => {
+  const f = fixture();
+  f.put('scripts/db-main-thread-baseline.json', '{}');
+  const result = f.run();
+  expect(result.output).toContain('Invalid DB main-thread baseline');
+  expect(result.code).toBe(1);
 });
