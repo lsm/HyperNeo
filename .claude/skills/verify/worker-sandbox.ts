@@ -1,3 +1,4 @@
+import { verifyConcurrentRuntimeRemoval } from './worker-sandbox-removal.ts';
 import { prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { strict as assert } from 'node:assert';
@@ -60,6 +61,7 @@ QueryOptionsBuilder.prototype.build = async function (...args) {
   return { ...options, spawnClaudeCodeProcess: (child) => spawn(child.command, child.args, { cwd: child.cwd, env: { ...child.env, ANTHROPIC_BASE_URL: sdkBaseUrl }, stdio: ['pipe', 'pipe', 'pipe'], signal: child.signal }) };
 };
 try {
+  await verifyConcurrentRuntimeRemoval(run);
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
