@@ -52,6 +52,29 @@ describe('neo.project.forget', () => {
     }
   });
 
+  test('concurrent forget requests admit only one winner', async () => {
+    const results = await Promise.all([forget(atlas), forget(atlas)]);
+    expect(results.filter((result) => (result as { ok: boolean }).ok)).toHaveLength(1);
+    expect(results).toContainEqual({ ok: false, reason: 'project_missing' });
+  });
+
+  test('an external callback failure cannot roll back a committed forget', async () => {
+    const registry = createOperationRegistry([
+      createNeoProjectForgetOperation(repo, () => {
+        expect(repo.getProject(atlas)).toBeNull();
+        throw new Error('synthetic external effect failure');
+      }),
+    ]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas },
+      human
+    );
+    expect(result).toMatchObject({ kind: 'failed', message: 'synthetic external effect failure' });
+    expect(repo.getProject(atlas)).toBeNull();
+  });
+
   test('deletes the project, so its repository leaves the list', async () => {
     expect(repo.allRepositories()).toEqual(['lsm/hyperneo', 'lsm/neo-atlas']);
     expect(await forget(atlas)).toEqual({ ok: true, repos: ['lsm/neo-atlas'] });

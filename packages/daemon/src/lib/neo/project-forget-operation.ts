@@ -25,7 +25,7 @@ const Result = z.union([
   }),
 ]);
 
-const runForget = (superpipe({})('neo.project.forget') as PipelineAPI)
+export const runNeoProjectForget = (superpipe({})('neo.project.forget') as PipelineAPI)
   .input(['projectId', 'caller', 'repo', 'forgetRepositories'])
   .pipe(
     (caller: OperationCaller, repo: ForgetRepo) =>
@@ -73,7 +73,7 @@ const runForget = (superpipe({})('neo.project.forget') as PipelineAPI)
 ) => Forgotten;
 
 export function createNeoProjectForgetOperation(
-  repo: ForgetRepo,
+  repo: Pick<NeoRepository, 'forgetProjectCommand'>,
   forgetRepositories: ForgetRepositories = () => {}
 ) {
   return defineOperation({
@@ -83,6 +83,10 @@ export function createNeoProjectForgetOperation(
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: async (input, caller) => runForget(input.projectId, caller, repo, forgetRepositories),
+    execute: async (input, caller) => {
+      const result = await repo.forgetProjectCommand(input.projectId, caller);
+      if (result.ok) forgetRepositories(result.repos);
+      return result;
+    },
   });
 }
