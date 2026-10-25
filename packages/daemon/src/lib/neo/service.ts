@@ -1,3 +1,4 @@
+import type { UUID } from 'node:crypto';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
@@ -155,12 +156,13 @@ export class NeoService {
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
-      tell: (ask, todo, note, key) => {
+      tell: (ask, todo, note, key, kind) => {
         return this.deliverForward(
           ask.sessionId,
           key ?? `neo-todo:${todo.id}:${todo.updatedAt}`,
           note,
-          ask.sessionId
+          ask.sessionId,
+          kind
         );
       },
       changed: this.notifyChanged,
@@ -646,8 +648,23 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    fromSessionId: string
+    fromSessionId: string,
+    kind?: 'focused_status' | 'quiet_heartbeat'
   ): Promise<void> {
+    if (kind && this.repo.getBindingBySession(sessionId)?.kind === 'neo') {
+      if (!this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId)) {
+        const message = {
+          type: 'user' as const,
+          uuid: messageId as UUID,
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          message: { role: 'user' as const, content },
+          inputKind: 'system' as const,
+        };
+        this.db.getSDKMessageRepo().saveUserMessage(sessionId, message, 'consumed');
+      }
+      return Promise.resolve();
+    }
     return this.deliver(sessionId, messageId, content, fromSessionId);
   }
 

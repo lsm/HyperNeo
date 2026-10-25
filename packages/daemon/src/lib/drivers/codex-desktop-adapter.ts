@@ -4,6 +4,7 @@ import {
   releaseWorkerSandbox,
   resumeWorkerSandbox,
 } from './worker-sandbox.ts';
+import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { Logger } from '../logger.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -543,7 +544,7 @@ export async function readCodexTurn(
     const openedPrs = readOpenedPrs
       ? readOpenedPrs(detail.thread.rolloutPath, lines)
       : codexOpenedPrs(lines);
-    const turnEnds = lines.flatMap((line) => {
+    const turnEnds = lines.flatMap((line, index) => {
       const entry = parseLine(line),
         payload = entry?.payload ?? {},
         at = workEntryTime(entry?.timestamp);
@@ -558,6 +559,10 @@ export async function readCodexTurn(
                   ? payload.turn_id
                   : String(at),
               at,
+              ...(codexHeartbeatQuiet(payload.last_agent_message) &&
+              !completedTurnOutcome(payload, lines, index).outcome
+                ? { notify: false as const }
+                : {}),
               message:
                 typeof payload.last_agent_message === 'string' ? payload.last_agent_message : '',
             },

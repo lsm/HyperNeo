@@ -19,13 +19,15 @@ describe('Neo daemon notes', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: ReturnType<typeof createNeoService>;
   let events: InternalEventBus<DaemonInternalEventMap>;
-  let turnEnds: { id: string; at: number; message: string }[];
+  let workerStatus: string;
+  let turnEnds: { id: string; at: number; message: string; notify?: false }[];
 
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
     await db.createSession({ ...createTestSession(rootId), workspacePath: null });
     turnEnds = [];
+    workerStatus = 'running';
     const registry = createOperationRegistry([
       defineOperation({
         name: 'work.status',
@@ -35,7 +37,7 @@ describe('Neo daemon notes', () => {
         policy: { safetyClass: 'read' },
         execute: async () => ({
           ok: true,
-          value: { status: 'running', lastActivityAt: Date.now(), turnEnds },
+          value: { status: workerStatus, lastActivityAt: Date.now(), turnEnds },
         }),
       }),
     ]);
@@ -73,49 +75,75 @@ describe('Neo daemon notes', () => {
     expect(queued('note-idle')).toEqual(['immediate']);
   });
 
-  test('focused discussion status is recorded without waking Neo', async () => {
-    const now = Date.now();
-    const ref = { adapter: 'hyperneo', id: 'discussion' };
-    const ask = service.todos.openAsk({
-      id: 'focused-ask',
-      projectId: null,
-      sessionId: rootId,
-      originMessageId: 'human-request',
-      title: 'Discuss',
-      request: 'Prepare a discussion',
-      createdAt: now,
-    });
-    service.todos.focusAsk(ask.id, ref, now);
-    const todo = service.todos.addTodo(
-      'focused-todo',
-      ask.id,
-      {
+  test.each(['focused', 'heartbeat', 'failed', 'needs_you'])(
+    '%s status uses its wake policy',
+    async (kind) => {
+      const now = Date.now();
+      const ref = { adapter: 'hyperneo', id: 'discussion' };
+      const ask = service.todos.openAsk({
+        id: 'focused-ask',
+        projectId: null,
+        sessionId: rootId,
+        originMessageId: 'human-request',
         title: 'Discuss',
-        doneWhen: 'Human decides',
-        instruction: null,
-        named: null,
-        check: null,
-      },
-      now
-    );
-    service.todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
-    service.todoSessions.bind(todo.id, ref, now);
-    const dispatch = await service.todoSessions.inputs.accept(
-      todo.id,
-      rootId,
-      { verb: 'send', ref },
-      'Prepare a discussion',
-      now
-    );
-    await service.todoSessions.inputs.recordOutcome(dispatch, { ok: true, ref }, now);
-    turnEnds = [{ id: 'discussion-turn', at: now + 1, message: 'Prepared the discussion.' }];
-    await service.todoRunner.refresh((message, error) => {
-      throw new Error(message, { cause: error });
-    });
-    const key = `neo-todo-turn:${todo.id}:${dispatch}:discussion-turn`;
-    expect(queued(key)).toEqual([]);
-    expect(db.getSDKMessageRepo().findMessageIdByUuid(rootId, key)).toBeTruthy();
-  });
+        request: 'Prepare a discussion',
+        createdAt: now,
+      });
+      if (kind !== 'heartbeat')
+        service.todos.focusAsk(
+          ask.id,
+          {
+            ...ref,
+            name: 'Discussion',
+            label: 'Discussion',
+            provider: 'Anthropic',
+            link: '/session/discussion',
+          },
+          now
+        );
+      const todo = service.todos.addTodo(
+        'focused-todo',
+        ask.id,
+        {
+          title: 'Discuss',
+          doneWhen: 'Human decides',
+          instruction: null,
+          named: null,
+          check: null,
+        },
+        now
+      );
+      service.todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
+      service.todoSessions.bind(todo.id, ref, now);
+      const dispatch = await service.todoSessions.inputs.accept(
+        todo.id,
+        rootId,
+        { verb: 'send', ref },
+        'Prepare a discussion',
+        now
+      );
+      await service.todoSessions.inputs.recordOutcome(dispatch, { ref }, now);
+      turnEnds = [
+        {
+          id: 'discussion-turn',
+          at: now + 1,
+          message: 'Prepared the discussion.',
+          ...(kind === 'heartbeat' ? { notify: false as const } : {}),
+        },
+      ];
+      if (['failed', 'needs_you'].includes(kind)) workerStatus = kind;
+      await service.todoRunner.refresh((message, error) => {
+        throw new Error(message, { cause: error });
+      });
+      const key = `neo-todo-turn:${todo.id}:${dispatch}:discussion-turn`;
+      if (['failed', 'needs_you'].includes(kind)) {
+        expect(queued(key)).toEqual(['immediate']);
+        return;
+      }
+      expect(queued(key)).toEqual([]);
+      expect(db.getSDKMessageRepo().findMessageIdByUuid(rootId, key)).toBeTruthy();
+    }
+  );
 
   test('a message to a busy ordinary chat is not deferred', async () => {
     await db.createSession(createTestSession('chat-1'));
