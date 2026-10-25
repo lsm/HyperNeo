@@ -16,6 +16,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { planNeoTodoDraft } from '../../../../src/lib/neo/todo-operations.ts';
 
 const url = 'https://github.com/synthetic/mixedcase/pull/20';
 const owner = { adapter: 'codex-desktop', id: 'synthetic-opener' };
@@ -125,6 +126,41 @@ function fixture() {
 }
 
 describe('issue todo PR owner delivery', () => {
+  test.each(['issue_closed', 'pr_merged'])(
+    'a duplicate of a %s todo gets a usable refusal remedy',
+    async (kind) => {
+      const f = fixture();
+      try {
+        const todo = f.add('original', 'synthetic/MixedCase#7', 'doing', kind);
+        const todos = createCodingTodoPack(f.claims, async () => []);
+        await todos.openedPrs!(todo, [url]);
+        const result = planNeoTodoDraft(
+          {
+            check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+            instruction: null,
+            doneWhen: 'PR merged',
+          },
+          [{ id: 'coding', describe: 'Synthetic coding', todos }],
+          [todo]
+        );
+        expect(result).toEqual({
+          reason: { ok: false, reason: expect.stringContaining('pr_already_tracked:') },
+        });
+        if (!('reason' in result)) throw new Error('Duplicate todo was accepted');
+        if (kind === 'issue_closed') {
+          expect(result.reason.reason).not.toContain('addUrls');
+          expect(result.reason.reason).toContain('Continue that todo');
+          expect(todos.addUrls!(todo, [url])).toBeNull();
+        } else {
+          expect(result.reason.reason).toContain('neo.todo.edit addUrls');
+          expect(todos.addUrls!(todo, [url])).not.toBeNull();
+        }
+        expect(f.store.listTodos('ask')).toHaveLength(1);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
   test.each([
     'Closes synthetic/MixedCase#7',
     'Fixes #7',
