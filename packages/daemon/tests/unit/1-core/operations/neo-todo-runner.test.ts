@@ -1632,6 +1632,21 @@ describe('stopped worker ladder', () => {
     }
   });
 
+  test('a failed waiting read sends no worker reminder and reports the failure', async () => {
+    const h = await stopped(null);
+    try {
+      h.packs[0].todos!.waiting = async () => {
+        throw new Error('synthetic waiting read refusal');
+      };
+      await h.at(20);
+      expect(h.sends()).toEqual([]);
+      expect(h.warnings).toEqual([expect.stringContaining('synthetic waiting read refusal')]);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test('a human-owned session gets no worker reminder', async () => {
     const h = await stopped(null, null);
     try {

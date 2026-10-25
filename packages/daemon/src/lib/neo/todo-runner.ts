@@ -593,17 +593,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .input(['todoId', 'now'])
     .pipe((todoId: string) => sessions.read('nudgeContext', todoId), 'todoId', 'snapshot')
     .pipe(
-      (snapshot: Awaited<ReturnType<typeof sessions.nudgeContext>>) =>
-        snapshot &&
-        !deps
-          .packs()
-          .some(
-            (pack) =>
+      async (snapshot: Awaited<ReturnType<typeof sessions.nudgeContext>>) => {
+        if (snapshot)
+          for (const pack of deps.packs())
+            if (
               (!snapshot.todo.check || pack.id === snapshot.todo.check.pack) &&
-              pack.todos?.waiting?.(snapshot.todo)
-          )
-          ? { value: snapshot }
-          : { reason: null },
+              (await pack.todos?.waiting?.(snapshot.todo))
+            )
+              return { reason: null };
+        return snapshot ? { value: snapshot } : { reason: null };
+      },
       'snapshot',
       'result:admission'
     )

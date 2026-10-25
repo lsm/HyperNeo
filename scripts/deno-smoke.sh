@@ -383,6 +383,13 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
     const incident = JSON.parse(db.prepare("SELECT value_json FROM pack_facts WHERE todo_id=? AND pack=? AND key=?").get(id, "core", "nudge").value_json);
     if (incident.since !== 99 || incident.nudges !== 0) Deno.exit(1);
     console.log("[deno-smoke] reminder reservation has one winner, permits release and preserves newer activity");
+    const { codingTodoPrReads } = await import(src + "/lib/neo/packs/coding/todo-prs.ts");
+    if (await gateway.call(codingTodoPrReads, "isWaiting", "missing-waiting-todo")) Deno.exit(1);
+    for (const state of ["OPEN", "CLOSED", "MERGED"]) {
+      db.prepare("INSERT OR REPLACE INTO pack_coding_todo_prs(todo_id,prs_json,read_at) VALUES(?,?,1)").run(id, JSON.stringify([{url:"https://github.com/example/synthetic/pull/1",state,checks:"none",review:"none"}]));
+      if (await gateway.call(codingTodoPrReads, "isWaiting", id) !== (state === "OPEN")) Deno.exit(1);
+    }
+    console.log("[deno-smoke] cached PR waiting reader preserves missing, open, closed and merged decisions");
   } finally { db.close(); await gateway.close(); }
 '; then
   dump_log
