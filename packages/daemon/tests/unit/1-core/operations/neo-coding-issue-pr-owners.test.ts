@@ -66,7 +66,7 @@ function fixture() {
   const ledger = new CodingPrLedgerRepository(db);
   const claims = new CodingTodoPrRepository(db);
   const told: { ref: unknown; key: string; text: string }[] = [];
-  const cycle = async (body: string, ci: string, at: number) => {
+  const cycle = async (body: string, ci: string, at: number, additional: number[] = []) => {
     const transitions = await reconcileCodingPrLedger(
       ledger,
       ['synthetic/MixedCase'],
@@ -77,30 +77,28 @@ function fixture() {
             nameWithOwner: 'synthetic/MixedCase',
             open: {
               pageInfo: { hasNextPage: false },
-              nodes: [
-                {
-                  number: 20,
-                  body,
-                  title: 'Synthetic PR',
-                  headRefName: 'unmatched-branch',
-                  headRefOid: 'exact-head',
-                  state: 'OPEN',
-                  isDraft: false,
-                  mergeable: 'MERGEABLE',
-                  reviewDecision: 'APPROVED',
-                  reviews: {
-                    nodes: [
-                      {
-                        state: 'APPROVED',
-                        commit: { oid: 'exact-head' },
-                        author: { login: 'synthetic-reviewer' },
-                      },
-                    ],
-                  },
-                  closedAt: null,
-                  commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
+              nodes: [20, ...additional].map((number) => ({
+                number,
+                body: number === 20 ? body : '',
+                title: 'Synthetic PR',
+                headRefName: 'unmatched-branch',
+                headRefOid: 'exact-head',
+                state: 'OPEN',
+                isDraft: false,
+                mergeable: 'MERGEABLE',
+                reviewDecision: 'APPROVED',
+                reviews: {
+                  nodes: [
+                    {
+                      state: 'APPROVED',
+                      commit: { oid: 'exact-head' },
+                      author: { login: 'synthetic-reviewer' },
+                    },
+                  ],
                 },
-              ],
+                closedAt: null,
+                commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
+              })),
             },
             done: { nodes: [] },
           },
@@ -126,6 +124,46 @@ function fixture() {
 }
 
 describe('issue todo PR owner delivery', () => {
+  test('closing-issue discovery preserves reported PR owners and their duplicate refusal after settlement', async () => {
+    const f = fixture();
+    try {
+      const other = 'https://github.com/synthetic/mixedcase/pull/21';
+      const original = f.add('issue-todo', 'synthetic/MixedCase#7');
+      const todo = f.store.updateTodo(original, { report: `PR opened: ${other}` }, 2);
+      const todos = createCodingTodoPack(f.claims, async () => []);
+      await todos.openedPrs!(todo, [url]);
+      await f.cycle('Closes synthetic/MixedCase#7', 'PENDING', 100, [21]);
+      expect(f.ledger.snapshot(null, 100).find((row) => row.pr.endsWith('#21'))?.ownerId).toBe(
+        owner.id
+      );
+      const duplicate = planNeoTodoDraft(
+        {
+          check: { pack: 'coding', kind: 'pr_merged', params: { urls: [other] } },
+          instruction: null,
+          doneWhen: 'PR merged',
+        },
+        [{ id: 'coding', describe: 'Synthetic coding', todos }],
+        [todo]
+      );
+      expect(duplicate).toEqual({
+        reason: { ok: false, reason: expect.stringContaining('pr_already_tracked:') },
+      });
+      await f.cycle('Closes synthetic/MixedCase#7', 'SUCCESS', 200, [21]);
+      f.store.updateTodo(todo, { state: 'done' }, 300);
+      await f.cycle('Closes synthetic/MixedCase#7', 'SUCCESS', 400, [21]);
+      expect(f.ledger.snapshot(null, 400).find((row) => row.pr.endsWith('#21'))?.ownerId).toBe(
+        owner.id
+      );
+      expect(f.told.map((event) => event.key)).toEqual(
+        [20, 21].map(
+          (number) => `neo-pr-event:synthetic/mixedcase#${number}:exact-head:approved_green`
+        )
+      );
+      expect(f.claims.todosFor([other])).toEqual([todo.id]);
+    } finally {
+      f.db.close();
+    }
+  });
   test.each(['issue_closed', 'pr_merged'])(
     'a duplicate of a %s todo gets a usable refusal remedy',
     async (kind) => {
