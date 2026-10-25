@@ -43,7 +43,7 @@ export interface NeoDriverSettleDeps {
     receipt?: DriverSent['receipt']
   ): Promise<OperationOutcome>;
   recordStartedAt(workId: string, at: number): void;
-  recordLive(workId: string, status: WorkStatus, live: DriverLive): boolean;
+  recordLive(workId: string, status: WorkStatus, live: DriverLive): boolean | Promise<boolean>;
   recordCheck(workId: string, read: boolean, now: number): boolean;
   notifyChanged(): void;
   noteUnsettled(work: NeoWork, ref: WorkRef, outcome: OperationOutcome): Promise<void>;
@@ -108,15 +108,17 @@ async function readNeoDriverSettleEvidence(
   };
 }
 
-function recordNeoDriverProgress(
+async function recordNeoDriverProgress(
   deps: NeoDriverSettleDeps,
   work: NeoWork,
   evidence: NeoDriverSettleEvidence,
   plan: NeoDriverSettlePlan
-): void {
+): Promise<void> {
   if (plan.landed !== null) deps.recordStartedAt(work.id, plan.landed);
   const live =
-    !!plan.live && !!plan.cardStatus && deps.recordLive(work.id, plan.cardStatus, plan.live);
+    !!plan.live &&
+    !!plan.cardStatus &&
+    (await deps.recordLive(work.id, plan.cardStatus, plan.live));
   const freshness = deps.recordCheck(work.id, plan.live !== null, evidence.now);
   if (live || freshness) deps.notifyChanged();
 }

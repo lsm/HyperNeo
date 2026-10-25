@@ -434,7 +434,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     recordLive: (id, status, live) => {
       if (status !== 'needs_you' && sessions.readNeedsYouSince(id) !== null)
         sessions.recordNeedsYouSince(id, null);
-      return sessions.recordLive(id, status, live.link, live.remoteLink);
+      return sessions.write('recordLive', id, status, live.link, live.remoteLink);
     },
     recordCheck: (id, read, now) => {
       sessions.recordCardCheck(id, { checkedAt: now, unchecked: !read });
@@ -582,7 +582,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         });
         await observe(todo.id, outcome, target.ref);
         const live = readDriverLive(outcome);
-        if (live) sessions.recordLive(todo.id, live.status, live.link, live.remoteLink);
+        if (live)
+          await sessions.write('recordLive', todo.id, live.status, live.link, live.remoteLink);
         await noteNeedsYou(todo.id, target.ask, live);
         sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
         if (
@@ -761,10 +762,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       }
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
-      for (const todoId of sessions.unrecordedStarts()) {
+      for (const todoId of await sessions.read('unrecordedStarts')) {
         const todo = store.getTodo(todoId);
         const ask = todo ? store.getAsk(todo.askId) : null;
-        if (!todo || !ask || starting.has(todoId)) continue;
+        if (
+          todo?.state !== 'doing' ||
+          !ask ||
+          starting.has(todoId) ||
+          sessions.readRef(todoId) !== null
+        )
+          continue;
         sessions.recordStartInterrupted(todoId);
         await finish(
           todo,
@@ -777,7 +784,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           Date.now()
         ).catch((error) => warn('Todo start recovery pending', error));
       }
-      for (const { todoId, ref } of sessions.awaitingReports())
+      for (const { todoId, ref } of await sessions.read('awaitingReports'))
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
       for (const todo of store.listCheckable()) {
         await follow(todo, Date.now()).catch((error) => warn('Todo follow pending', error));

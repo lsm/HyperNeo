@@ -295,6 +295,19 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       const journal = db.prepare("SELECT last_sequence FROM claude_desktop_bridge_instances WHERE session_id = ?").get(sid);
       if (!queued.id || reported.n !== 1 || reply.ack !== 1 || reply.command?.id !== queued.id || journal?.last_sequence !== 1) Deno.exit(1);
       console.log("[deno-smoke] Claude Desktop outbox report and bridge exchange commit on the gateway");
+      const { neoTodoSessionReads, neoTodoSessionWrites } = await import(src + "/storage/repositories/neo-todo-session-repository.ts");
+      const { codingTodoPrReads } = await import(src + "/lib/neo/packs/coding/todo-prs.ts");
+      db.prepare("INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES(?,?,?,?,1,1)").run("deno-todo-ask", "deno-root", "Synthetic todo", "Observe");
+      db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,started_at,created_at,updated_at) VALUES(?,?,0,?,?,?,1,1,1)").run("deno-todo", "deno-todo-ask", "Synthetic step", "Observed", "doing");
+      db.prepare("INSERT INTO neo_todo_sessions(todo_id,target) VALUES(?,?)").run("deno-todo", "{}");
+      const starts = await gateway.call(neoTodoSessionReads, "unrecordedStarts");
+      const reports = await gateway.call(neoTodoSessionReads, "awaitingReports");
+      const window = await gateway.call(codingTodoPrReads, "window", "deno-todo");
+      const changed = await gateway.call(neoTodoSessionWrites, "recordLive", "deno-todo", "running", undefined);
+      const unchanged = await gateway.call(neoTodoSessionWrites, "recordLive", "deno-todo", "running", undefined);
+      if (!starts.includes("deno-todo") || reports.some(row => row.todoId === "deno-todo") || window.start !== 1 || window.end !== null || !changed || unchanged) Deno.exit(1);
+      if (db.prepare("SELECT live_status AS status FROM neo_todo_sessions WHERE todo_id=?").get("deno-todo").status !== "running") Deno.exit(1);
+      console.log("[deno-smoke] todo recovery, PR window and committed live status use DB workers");
     } finally { db.close(); }
     console.log("[deno-smoke] session event ingest commit/dedupe ok");
   } finally { await gateway.close(); }

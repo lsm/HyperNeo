@@ -149,6 +149,28 @@ describe('settleNeoDriverWork', () => {
     return { deps, calls };
   };
 
+  test('status persistence finishes before notifying or settling the card', async () => {
+    const { deps, calls } = harness(status({ status: 'done', lastReply: 'Shipped.' }), null);
+    let release!: (changed: boolean) => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    deps.recordLive = () => {
+      started();
+      return new Promise<boolean>((resolve) => {
+        release = resolve;
+      });
+    };
+    const pending = settleNeoDriverWork(deps, work, ref);
+    await entered;
+    expect(calls).toEqual(['status since 150']);
+    release(true);
+    await pending;
+    expect(calls).toContain('changed');
+    expect(calls.indexOf('changed')).toBeLessThan(calls.indexOf('forget'));
+  });
+
   test('a failed status read is recorded as unchecked and tells the UI once it flips', async () => {
     const { deps, calls } = harness({ kind: 'failed', error: 'offline' } as never, null);
     const checks: Array<[string, boolean]> = [];

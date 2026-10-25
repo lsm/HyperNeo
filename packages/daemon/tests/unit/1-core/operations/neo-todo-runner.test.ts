@@ -635,6 +635,64 @@ describe('neo todo runner', () => {
     expect(calls.at(-1)).toBe('work.stop');
   });
 
+  test('a ref recorded while recovery reads are in flight keeps the started todo doing', async () => {
+    const { db, store, sessions, runner, told, add, setStatus } = setup();
+    try {
+      const todo = add();
+      store.claimStart(todo, 2);
+      setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1000 } });
+      const read = vi.spyOn(sessions, 'read').mockImplementationOnce((async () => {
+        const stale = sessions.unrecordedStarts();
+        sessions.recordRef(todo.id, ref, 1000);
+        return stale;
+      }) as typeof sessions.read);
+      try {
+        await runner.refresh(() => {});
+        expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', reason: null });
+        expect(sessions.readRef(todo.id)).toEqual(ref);
+        expect(told).toEqual([]);
+      } finally {
+        read.mockRestore();
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  for (const state of ['done', 'blocked', 'failed', 'removed'] as const) {
+    test(`a todo changed to ${state} during recovery keeps the recorded decision`, async () => {
+      const { db, store, sessions, runner, told, add } = setup();
+      try {
+        const todo = add();
+        store.claimStart(todo, 2);
+        const read = vi.spyOn(sessions, 'read').mockImplementationOnce((async () => {
+          const stale = sessions.unrecordedStarts();
+          store.updateTodo(
+            todo,
+            {
+              state,
+              reason: 'Human decision',
+              ...(state === 'blocked'
+                ? ({ blockedBy: 'failure', blockedReason: 'Human decision' } as const)
+                : {}),
+            },
+            3
+          );
+          return stale;
+        }) as typeof sessions.read);
+        try {
+          await runner.refresh(() => {});
+          expect(store.getTodo(todo.id)).toMatchObject({ state, reason: 'Human decision' });
+          expect(told).toEqual([]);
+        } finally {
+          read.mockRestore();
+        }
+      } finally {
+        db.close();
+      }
+    });
+  }
+
   test('a start a restart interrupted fails the todo on the next refresh', async () => {
     const { store, runner, told, add } = setup();
     const todo = add();
