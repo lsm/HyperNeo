@@ -599,12 +599,12 @@ async function requireHyperneoStartConfiguration(
   request: StartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<Gate<HyperneoStartRequest>> {
+  const effort =
+    request.effort === undefined ? undefined : workStartConfiguration.normalize(request.effort);
   const thinking =
-    request.effort === undefined
+    effort === undefined
       ? undefined
-      : THINKING_OPTIONS.find((entry) =>
-          [entry.value, entry.label.toLowerCase()].includes(request.effort!.toLowerCase())
-        );
+      : THINKING_OPTIONS.find((entry) => [entry.value, entry.label.toLowerCase()].includes(effort));
   if (request.effort !== undefined && !thinking)
     return { reason: reject('unsupported_effort', `Unknown HyperNeo effort ${request.effort}.`) };
   const configured = { ...request, ...(thinking ? { effort: thinking.label.toLowerCase() } : {}) };

@@ -15,6 +15,7 @@ a unique case-insensitive display name must start on that provider; a duplicate
 name must refuse with both IDs without creating a session; an exact ID must win.
 A uniquely named offer must retain its provider even when IDs are shared.
 HyperNeo effort must appear in the work receipt and session thinking readback
-before the queued input is processed. Evidence is `evidence/observed.json`.
+before the queued input is processed. Effort casing and repeated whitespace must
+normalize to the same thinking level. Evidence is `evidence/observed.json`.
 All resources close in finally. This metadata/admission proof does not assert
 model inference or provider-specific reasoning output; the endpoint is synthetic.
