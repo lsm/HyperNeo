@@ -1,0 +1,392 @@
+{
+  "mode": "before",
+  "build": "2568c9224a187373e9f7928d568d316fd0f49d21",
+  "fanout": [
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    }
+  ],
+  "first": {
+    "repo": "synthetic/ledger",
+    "base_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_oid": "2568c9224a187373e9f7928d568d316fd0f49d21",
+    "status": "ahead",
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "observed_at": 1792964463133,
+    "attempted_at": 1792964463133,
+    "reason": null
+  },
+  "known": {
+    "accepted": true
+  },
+  "reopened": {
+    "accepted": true
+  },
+  "behind": {
+    "accepted": false,
+    "reason": "running_build_must_contain_merge"
+  },
+  "failed": {
+    "accepted": false,
+    "reason": "running_build_must_contain_merge"
+  },
+  "partial": {
+    "accepted": false,
+    "reason": "running_build_must_contain_merge"
+  },
+  "recovered": {
+    "accepted": true
+  },
+  "retainedFailure": {
+    "repo": "synthetic/ledger",
+    "base_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_oid": "2568c9224a187373e9f7928d568d316fd0f49d21",
+    "status": "ahead",
+    "fact_revision": 1,
+    "observation_revision": 2,
+    "observed_at": 1792964463133,
+    "attempted_at": 1792964465108,
+    "reason": "failed"
+  },
+  "counts": {
+    "initial": 1,
+    "known": 0,
+    "reopen": 0,
+    "behind": 1,
+    "known-negative": 0,
+    "failed": 1,
+    "partial": 1,
+    "recovered": 1,
+    "retained-failure": 1,
+    "retained-recovered": 1
+  },
+  "verified": true,
+  "mainSql": [
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "INSERT INTO pack_coding_ancestry_facts\n        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET\n        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "INSERT INTO pack_coding_ancestry_facts\n        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET\n        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "INSERT INTO pack_coding_ancestry_facts\n        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET\n        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "INSERT INTO pack_coding_ancestry_facts\n        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET\n        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "INSERT INTO pack_coding_ancestry_facts\n        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET\n        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "INSERT INTO pack_coding_ancestry_facts\n        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET\n        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?",
+    "INSERT INTO pack_coding_ancestry_facts\n        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET\n        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_ancestry_facts WHERE repo=? AND base_oid=? AND head_oid=?"
+  ],
+  "commands": [],
+  "rpcMetrics": [
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 536.4624580000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 536.3870420000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 536.3753330000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 536.3670000000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 536.4766669999999
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 20.07095800000002
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 95.94229199999995
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 333.786208
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 13.984333000000106
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 330.8041250000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 336.9460829999998
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 341.3880409999997
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 333.3497080000002
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 337.3158749999998
+    }
+  ],
+  "gatewayMetrics": [],
+  "maxLagMs": 7.385624999999891,
+  "requests": [
+    {
+      "phase": "initial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "initial",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...2568c9224a187373e9f7928d568d316fd0f49d21",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "known",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "behind",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "behind",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...2568c9224a187373e9f7928d568d316fd0f49d21",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "known-negative",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/cccccccccccccccccccccccccccccccccccccccc...2568c9224a187373e9f7928d568d316fd0f49d21",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/cccccccccccccccccccccccccccccccccccccccc...2568c9224a187373e9f7928d568d316fd0f49d21",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/cccccccccccccccccccccccccccccccccccccccc...2568c9224a187373e9f7928d568d316fd0f49d21",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "retained-failure",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "retained-failure",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...2568c9224a187373e9f7928d568d316fd0f49d21",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "retained-recovered",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "retained-recovered",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...2568c9224a187373e9f7928d568d316fd0f49d21",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    }
+  ]
+}

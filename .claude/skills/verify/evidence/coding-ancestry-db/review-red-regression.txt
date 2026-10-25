@@ -1,0 +1,25 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-ancestry-writer.test.ts:
+42 |   const sleep = options.sleep ?? sleepSync;
+43 | 
+44 |   let context: Record<string, unknown> | undefined;
+45 |   for (let attempt = 1; ; attempt++) {
+46 |     try {
+47 |       const result = operation();
+                          ^
+SQLiteError: attempt to write a readonly database
+      errno: 8,
+ byteOffset: -1,
+       code: "SQLITE_READONLY"
+
+      at #runNoArgs (bun:sqlite:140:25)
+      at transaction (bun:sqlite:400:15)
+      at withBusyRetry (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/storage/busy-retry.ts:47:22)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-ancestry-writer.test.ts:207:17)
+(fail) explicit ancestry observations write only through the bound gateway connection [3.64ms]
+
+ 0 pass
+ 6 filtered out
+ 1 fail
+Ran 1 test across 1 file. [41.00ms]

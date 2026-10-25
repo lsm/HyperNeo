@@ -1,0 +1,19 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-ancestry-writer.test.ts:
+ 9 | test('ancestry acquisition and returned coverage leave the main repository', async () => {
+10 |   const db = new Database(':memory:');
+11 |   createCodingPackTables(db);
+12 |   const facts = new CodingAncestryFactsRepository(db);
+13 |   const main = spyOn(facts, 'read').mockImplementation(() => {
+14 |     throw new Error('ancestry coverage read on main repository');
+                   ^
+error: ancestry coverage read on main repository
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-ancestry-writer.test.ts:14:15)
+      at refresh (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/ancestry-facts.ts:77:26)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-ancestry-writer.test.ts:28:32)
+(fail) ancestry acquisition and returned coverage leave the main repository [2.83ms]
+
+ 0 pass
+ 1 fail
+Ran 1 test across 1 file. [26.00ms]
