@@ -155,7 +155,8 @@ export class SpaceRepository {
       values.push(params.maxConcurrentTasks);
     }
     if (params.config !== undefined) {
-      fields.push(`config = CASE WHEN json_type(config, '$.toolSelectionDefaults') IS NOT NULL
+      fields.push(`config = CASE WHEN json_valid(config)
+        AND json_type(config, '$.toolSelectionDefaults') IS NOT NULL
         THEN json_set(?, '$.toolSelectionDefaults', json_extract(config, '$.toolSelectionDefaults'))
         ELSE ? END`);
       const config = JSON.stringify({ ...params.config });
