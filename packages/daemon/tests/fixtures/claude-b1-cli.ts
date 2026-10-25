@@ -184,6 +184,8 @@ if (process.argv.includes('agents')) {
     log({ kind: 'rc-request', target: id, mode: helper.permissionMode });
   } else if (helper.title !== 'desktop-wake') {
     const current = JSON.parse(readFileSync(recordPath(helper), 'utf8'));
+    if (existsSync(join(evidence, 'live-mode')))
+      current.permissionMode = readFileSync(join(evidence, 'live-mode'), 'utf8');
     if (
       fault() === 'refused' ||
       (flag('--permission-mode') === 'bypassPermissions') !==

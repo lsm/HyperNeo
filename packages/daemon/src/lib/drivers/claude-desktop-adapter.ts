@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
-import { collectDescendantPids, listProcesses } from '../process-watchdog.ts';
+import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
+import { readClaudeReceiverMode } from './claude-receiver-mode.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import type { createClaudeDesktopModsDriver } from './claude-desktop-mods-driver.ts';
@@ -143,6 +144,7 @@ export interface ClaudeDesktopAdapterDeps {
   projectsDir: string;
   machine: string;
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
+  listProcesses?: ProcessLister;
   spawn: SpawnFn;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
@@ -1137,7 +1139,16 @@ async function sendOwnedClaudeMessage(
       'not_delivered',
       `${record.title}: receiver mode unknown; current Desktop metadata is unavailable, so no relay was sent.`
     );
-  const receiverMode = current.permissionMode ?? 'default';
+  const receiverMode =
+    (desktop
+      ? await readClaudeReceiverMode(
+          record.cliSessionId,
+          deps.liveSessions,
+          deps.listProcesses ?? listProcesses
+        )
+      : null) ??
+    current.permissionMode ??
+    'default';
   const relayRecord = desktop
     ? {
         ...record,

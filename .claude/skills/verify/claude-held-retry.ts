@@ -1,0 +1,97 @@
+import { strict as assert } from 'node:assert';
+import { createConnection, createServer } from 'node:net';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import type { Result, WorkDelivery } from '../../../packages/daemon/src/lib/drivers/types.ts';
+
+const [portText, runText] = process.argv.slice(2);
+const port = Number(portText), run = resolve(runText);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
+assert(Number.isInteger(port) && port > 0 && port < 65536 && port !== 8399);
+assert(!existsSync(join(run, 'data')));
+const home = join(run, 'home'), evidence = join(run, 'evidence'), cwd = join(run, 'workspace');
+const records = join(home, 'Library/Application Support/Claude/claude-code-sessions/synthetic/account');
+const registrations = join(home, '.claude/sessions');
+const projects = join(home, '.claude/projects', cwd.replace(/[/.]/g, '-'));
+for (const folder of [evidence, cwd, records, registrations, projects, join(run, 'bin')]) mkdirSync(folder, { recursive: true });
+chmodSync(registrations, 0o700);
+const id = crypto.randomUUID(), pid = 9001, title = 'Synthetic held receiver';
+const recordPath = join(records, `local_${id}.json`);
+writeFileSync(recordPath, JSON.stringify({ sessionId: `local_${id}`, cliSessionId: id, cwd, title, permissionMode: 'auto' }));
+const original = readFileSync(recordPath, 'utf8');
+writeFileSync(join(evidence, 'native-sessions.json'), JSON.stringify([{ id, title, cwd, permissionMode: 'bypassPermissions', pid, status: 'idle' }]));
+writeFileSync(join(evidence, 'live-mode'), 'bypassPermissions');
+const transcript = join(projects, `${id}.jsonl`);
+writeFileSync(transcript, '');
+const socketPath = join(registrations, `${pid}.sock`);
+writeFileSync(join(registrations, `${pid}.json`), JSON.stringify({ sessionId: id, pid, procStart: 1, entrypoint: 'claude-desktop', version: '2.1.302', peerProtocol: 1, peerFeatures: ['notify_idle'], messagingSocketPath: socketPath }));
+const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/claude-b1-cli.ts', import.meta.url));
+writeFileSync(join(run, 'bin/claude'), `#!/usr/bin/env bun\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+writeFileSync(join(run, 'bin/ps'), `#!/bin/sh\nprintf '%s\\n' '${pid} 1 ${pid} 00:20 claude --resume ${id} --permission-mode=bypassPermissions'\n`, { mode: 0o700 });
+const observed: unknown[] = [];
+const frames: unknown[] = [];
+const peer = createServer(socket => {
+  let buffer = '';
+  socket.setEncoding('utf8');
+  socket.on('data', chunk => {
+    buffer += chunk;
+    if (!buffer.endsWith('\n')) return;
+    const frame = JSON.parse(buffer); frames.push(frame);
+    assert(frame.message.content.includes('from-mode="prompting"'));
+    appendFileSync(transcript, JSON.stringify({ type: 'system', content: 'Peer message held: sender permission mode differs', messageId: frame.msg_id }) + '\n');
+    const reply = createConnection(frame.from.slice(4));
+    reply.on('error', error => observed.push({ receiptError: String(error) }));
+    reply.once('connect', () => reply.end(JSON.stringify({ type: 'control', action: 'peer_message_status', from: `uds:${socketPath}`, orig_msg_id: frame.msg_id, status: 'held' }) + '\n'));
+    socket.end();
+  });
+});
+await new Promise<void>(done => peer.listen(socketPath, done));
+chmodSync(socketPath, 0o600);
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+let ws: WebSocket | undefined;
+try {
+  app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+  await app.db.createSession({ id: 'synthetic-origin', title: 'Synthetic origin', workspacePath: cwd, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
+  const send = (message: string) => new Promise<Result<WorkDelivery>>((done, fail) => {
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => { ws!.removeEventListener('message', receive); fail(new Error('send timed out')); }, 120000);
+    const receive = (event: MessageEvent) => {
+      const reply = JSON.parse(String(event.data));
+      if (reply.id !== requestId && reply.requestId !== requestId) return;
+      clearTimeout(timer); ws!.removeEventListener('message', receive); observed.push({ message, reply });
+      if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
+    };
+    ws!.addEventListener('message', receive);
+    ws!.send(JSON.stringify({ id: requestId, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'work.send', input: { ref: { adapter: 'claude-desktop', id: `local_${id}` }, from: 'session:synthetic-origin', message } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  const sent = await send('STALE_MODE_DELIVERY_MARKER');
+  assert(sent.ok && sent.value.delivered && sent.value.receipt?.inputId, JSON.stringify(sent));
+  const events = () => readFileSync(join(evidence, 'native-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(events().filter(e => e.kind === 'relay').length, 1);
+  assert.equal(events().find(e => e.kind === 'target-relay')?.mode, 'bypassPermissions');
+  assert.equal(readFileSync(transcript, 'utf8').split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(e => e?.type === 'user' && e.message.content.includes('STALE_MODE_DELIVERY_MARKER')).length, 1);
+  writeFileSync(join(evidence, 'fault'), 'refused');
+  const refused = await send('STALE_MODE_DOUBLE_REFUSAL');
+  assert(!refused.ok && refused.reason === 'not_delivered', JSON.stringify(refused));
+  assert.match(refused.detail, /bypassPermissions/);
+  assert.match(refused.detail, /held/);
+  assert.equal(events().filter(e => e.kind === 'relay').length, 2, 'Exactly one relay per send; no loop');
+  assert.equal(frames.length, 2, 'Exactly one direct attempt per send');
+  assert.equal(readFileSync(recordPath, 'utf8'), original, 'Never rewrite Desktop metadata');
+  observed.push({ result: 'pass', liveMode: 'bypassPermissions', storedMode: 'auto', directAttempts: frames.length, relays: 2, received: 1 });
+  console.log('PASS: held direct send, live-mode retry delivered exactly once, second refusal surfaced without looping');
+} finally {
+  ws?.close();
+  await app?.cleanup();
+  await new Promise<void>(done => peer.close(() => done()));
+  writeFileSync(join(evidence, 'observed.json'), JSON.stringify({ observed, frames, resourcesClosed: true }, null, 2));
+}

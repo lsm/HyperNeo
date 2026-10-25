@@ -28,6 +28,7 @@ if (process.env.VERIFY_HANDOFF_TIMEOUT === '1')
   writeFileSync(join(run, 'bin/script'), '#!/bin/sh\nexec /usr/bin/script "$@"\n', { mode: 0o700 });
 else wrapper('script', "process.argv.push('--synthetic-desktop-import');");
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+writeFileSync(join(run, 'bin/ps'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
 const settings = join(run, 'home/.claude/settings.json');
 writeFileSync(settings, '{"permissions":{"defaultMode":"bypassPermissions"}}');
 const digest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');

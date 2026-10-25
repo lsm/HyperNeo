@@ -32,7 +32,10 @@ Check `evidence/observed.json` and `native-events.jsonl`:
   changes while the daemon is waiting. For auto, default and acceptEdits, the
   retry relay runs in auto; for bypassPermissions it runs in bypassPermissions.
   Each returned receipt identifies the completed target exchange. This must
-  use a fresh metadata read, not the record loaded before the first send.
+  use the verified live receiver PID's launch mode when available, with a fresh
+  metadata read as fallback, never the record loaded before the first send.
+  The [stale-mode hold journey](claude-desktop-held-retry.md) covers a record
+  that stays auto while its live process remains bypass.
 - If the relay also refuses, the returned `not_delivered` names the receiver's
   current mode and the relay reason. A mere socket write is not proven delivery.
 - Two sends to the stopped imported target run `claude -p --resume` in auto,
