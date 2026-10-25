@@ -248,6 +248,7 @@ export interface FindQuery {
 }
 
 export interface StartRequest {
+  inPlace?: boolean;
   place: Place;
   title: string;
   message: string;

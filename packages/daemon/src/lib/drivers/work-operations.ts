@@ -164,7 +164,7 @@ export const WorkAdaptersResultSchema = workResultSchema(
 );
 
 type StartDraft = z.infer<typeof StartWorkInputSchema>;
-type StartInput = StartDraft & { place: z.infer<typeof PlaceSchema> };
+type StartInput = StartDraft & { place: z.infer<typeof PlaceSchema>; inPlace?: boolean };
 type SendInput = z.infer<typeof SendWorkInputSchema>;
 type RefInput = z.infer<typeof WorkRefInputSchema>;
 type StatusInput = z.infer<typeof WorkStatusInputSchema>;

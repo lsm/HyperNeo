@@ -105,6 +105,13 @@ export function neoStartPlace(deps: {
         }
       }
     }
-    return { value: { ...input, place, createFolder: !input.place || input.createFolder } };
+    return {
+      value: {
+        ...input,
+        place,
+        inPlace: local && folder === home,
+        createFolder: !input.place || input.createFolder,
+      },
+    };
   };
 }

@@ -540,6 +540,21 @@ describe('codex-desktop start', () => {
     ]);
   });
 
+  test('keeps a shared non-coding home in place despite its Git parent', async () => {
+    const { instance, calls, spawned, projectFolders } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+      ['/focus/dolmen'],
+      { root: '/focus', linked: false }
+    );
+    expect(await instance.start?.({ ...request, inPlace: true }, user)).toMatchObject({
+      ok: true,
+      value: { place },
+    });
+    expect(spawned).toEqual([]);
+    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }]);
+    expect(projectFolders).toEqual(['/focus/dolmen']);
+  });
+
   test('runs in place when the folder is already a linked worktree', async () => {
     const { instance, calls, spawned, projectFolders } = adapter(
       { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },

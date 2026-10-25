@@ -101,9 +101,12 @@ export async function createDriverSession(
   workspacePath: string,
   title: string,
   model?: string,
-  availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels
+  availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels,
+  inPlace = false
 ): Promise<string> {
-  const { gitRoot } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
+  const gitRoot = inPlace
+    ? null
+    : (await sessionManager.getWorktreeManager().detectGitSupport(workspacePath)).gitRoot;
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
   const create = (config?: { model: string; provider?: Provider }) =>
     sessionManager.createSession({
@@ -193,8 +196,8 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
       return { ok: true, value: { archived: true } };
     },
-    create: (workspacePath, title, model) =>
-      createDriverSession(sessionManager, workspacePath, title, model),
+    create: (workspacePath, title, model, inPlace) =>
+      createDriverSession(sessionManager, workspacePath, title, model, undefined, inPlace),
     resolveModel: async (model) => {
       const { findInModels } = await import('../../model-service.ts');
       return findInModels(usableModels(await readAvailableModels()), model)?.id ?? null;

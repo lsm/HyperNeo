@@ -83,7 +83,7 @@ try {
   evidence.push({ homePath, starts, checks });
   console.log(JSON.stringify(checks));
   assert(Object.values(checks).every(Boolean), 'Project placement regression: see evidence/project-start-home.json');
-  console.log(`PASS: actual daemon Neo MCP -> todo runner -> work.start -> HyperNeo adapter; one non-coding home shared across projects; invented and different workspace folders refused; user-named folder created; coordinator home unchanged. Worker creation is synthetic; no model or GUI. ${run}/evidence/project-start-home.json`);
+  console.log(`PASS: actual daemon Neo MCP -> todo runner -> work.start -> HyperNeo adapter; one non-coding home shared across projects in direct mode despite a Git parent; invented and different workspace folders refused; user-named folder created; coordinator home unchanged. Worker creation is synthetic; no model or GUI. ${run}/evidence/project-start-home.json`);
 } finally {
   globalThis.fetch = network;
   writeFileSync(join(run, 'evidence/project-start-home.json'), JSON.stringify(evidence, null, 2));

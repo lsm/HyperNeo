@@ -89,7 +89,7 @@ export interface HyperneoSessionControl {
     queuedSubmissionId: string,
     from: string
   ) => Promise<Result<WorkWithdrawal>>;
-  create(workspacePath: string, title: string, model?: string): Promise<string>;
+  create(workspacePath: string, title: string, model?: string, inPlace?: boolean): Promise<string>;
   resolveModel(model: string): Promise<string | null>;
   model(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
@@ -567,7 +567,8 @@ export async function createHyperneoSession(
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,
-      request.model
+      request.model,
+      request.inPlace
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)

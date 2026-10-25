@@ -1065,9 +1065,12 @@ async function runGit(args: string[], repo: string, deps: CodexDesktopAdapterDep
 
 export async function prepareCodexWorkFolder(
   folder: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  inPlace = false
 ): Promise<Result<CodexWorkFolder>> {
-  const placement = planWorkPlacement(await deps.gitCheckout(folder).catch(() => null));
+  const placement = planWorkPlacement(
+    inPlace ? null : await deps.gitCheckout(folder).catch(() => null)
+  );
   if (placement.kind === 'in_place') {
     return { ok: true, value: { cwd: folder, release: async () => {} } };
   }
@@ -1130,11 +1133,13 @@ export async function startCodexThread(
         if (!prepared.ok) return prepared;
         workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
       } else {
-        const prepared = await prepareCodexWorkFolder(folder, deps);
+        const prepared = await prepareCodexWorkFolder(folder, deps, request.inPlace);
         if (!prepared.ok) return prepared;
         workFolder = prepared.value;
       }
-      const projectFolder = (await deps.gitCheckout(folder))?.repo ?? folder;
+      const projectFolder = request.inPlace
+        ? folder
+        : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
       const started = await server.call('thread/start', {
         projectId,
