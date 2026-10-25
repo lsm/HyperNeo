@@ -1,4 +1,5 @@
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
@@ -178,6 +179,12 @@ export interface NeoCardReplyContext {
 }
 
 export class NeoAskTodoRepository {
+  get questionAnswers() {
+    return new NeoQuestionAnswerRepository(this.db, (id, routes) => {
+      this.changeQuestion(id, { worker_answers_json: routes });
+    });
+  }
+
   read<K extends (typeof neoTodoReads.methods)[number]>(
     method: K,
     ...args: Parameters<NeoAskTodoRepository[K]>
@@ -787,12 +794,11 @@ export class NeoAskTodoRepository {
   ): NeoQuestion | null {
     let rulesChanged = false;
     const changed = this.db.transaction(() => {
-      const answered = this.db
-        .prepare(
-          `UPDATE neo_questions SET state = 'answered', answer = ?, answered_by = ?, answered_at = ?
-           WHERE id = ? AND state = 'open'`
-        )
-        .run(JSON.stringify(answer), by, now, question.id).changes;
+      const answered = this.changeQuestion(
+        question.id,
+        { state: 'answered', answer: JSON.stringify(answer), answered_by: by, answered_at: now },
+        'open'
+      );
       if (answered) {
         this.releaseStartTodos(question.id, now);
         if (answer === 'yes') {
@@ -816,12 +822,11 @@ export class NeoAskTodoRepository {
     now: number
   ): NeoQuestion | null {
     const changed = this.db.transaction(() => {
-      const retired = this.db
-        .prepare(
-          `UPDATE neo_questions SET state = 'retired', retired_reason = ?, replaced_by = ?
-           WHERE id = ? AND state = 'open'`
-        )
-        .run(reason, replacedBy, question.id).changes;
+      const retired = this.changeQuestion(
+        question.id,
+        { state: 'retired', retired_reason: reason, replaced_by: replacedBy },
+        'open'
+      );
       if (retired) this.releaseStartTodos(question.id, now);
       return retired;
     })();
@@ -892,6 +897,19 @@ export class NeoAskTodoRepository {
       if (todo?.state === 'blocked' && todo.blockedBy === 'question')
         this.updateTodo(todo, { state: 'todo' }, now);
     }
+  }
+
+  private changeQuestion(
+    id: string,
+    patch: Record<string, string | number | null>,
+    state?: NeoQuestion['state']
+  ): number {
+    return this.db
+      .prepare(`UPDATE neo_questions SET ${Object.keys(patch)
+        .map((key) => `${key} = ?`)
+        .join(', ')}
+      WHERE id = ?${state ? ' AND state = ?' : ''}`)
+      .run(...Object.values(patch), id, ...(state ? [state] : [])).changes;
   }
 
   private touchAsk(askId: string, now: number): void {

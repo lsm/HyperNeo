@@ -69,7 +69,7 @@ try {
   const conflict = await rpc('message.send', { ...input, text: 'A conflicting answer' });
   assert.equal(conflict.kind, 'rejected');
   assert.match(conflict.reason, /idempotency_conflict/);
-  const changedOrigin = await rpc('message.send', { ...input, from: 'other-origin' });
+  const changedOrigin = await rpc('message.send', { ...input, from: 'session:synthetic-neo' });
   assert.equal(changedOrigin.kind, 'accepted');
   assert.notEqual(changedOrigin.messageId, delivered.messageId);
   assert.equal(store.questionAnswers.accept(routeId, delivered.messageId, Date.now()), true);
