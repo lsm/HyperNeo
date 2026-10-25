@@ -65,7 +65,9 @@ try {
   write({ added: { command: 'not-executed' }, 'reject-row': { command: 'not-executed' } });
   assert.match((await refresh()).notes.join(' '), /failed/); assert.deepEqual(app.db.appMcpServers.listImported(), catalogBeforeFailure); assert.equal(notices, 0);
   raw.exec('DROP TRIGGER reject_import_row'); evidence.rowFailureRollsBackBatch = true;
-  unlinkSync(file); assert((await refresh()).removed > 0); assert.equal(readDefault().choices[`mcp:${second.id}`].selected, false);
+  await hub.request('space.mcp.setEnabled', { spaceId: space.id, serverId: second.id, enabled: true });
+  unlinkSync(file); assert((await refresh()).removed > 0); assert.equal(readDefault().choices[`mcp:${second.id}`].selected, false); assert.equal(readDefault(true).choices[`mcp:${second.id}`].selected, false);
+  evidence.retiredOverrideOff = true;
   evidence.missingSourcePruned = true;
   const { server: orphan } = await hub.request<{ server: AppMcpServer }>('mcp.registry.create', { name: 'orphan-proof', sourceType: 'stdio', command: 'not-executed', source: 'imported', sourcePath: join(run, 'unregistered/.mcp.json'), enabled: true });
   assert((await refresh(true)).removed > 0); assert.equal(app.db.appMcpServers.get(orphan.id), null); assert.equal(readDefault().choices[`mcp:${orphan.id}`].selected, false);

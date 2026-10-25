@@ -12,7 +12,7 @@ imported rows exist but their canonical global/Space choices are absent.
 After wiring require evidence/mcp-import-defaults.json pass=true and these flags:
 disabledDefaults, addUpdateRemoveAndManualIntent, malformedPreserved,
 rollbackWithoutNotice, rowFailureRollsBackBatch, missingSourcePruned,
-orphanPruned, frozenSessionPreserved and restartRetainedDefaults.
+orphanPruned, retiredOverrideOff, frozenSessionPreserved and restartRetainedDefaults.
 
 - Import two entries through the real RPC. They remain disabled in both catalog
   and global/Space defaults. Manually enable one through the registry RPC, then
@@ -21,7 +21,8 @@ orphanPruned, frozenSessionPreserved and restartRetainedDefaults.
 - A late Space default failure rolls back the entire import batch. A later row
   insertion failure also rolls back earlier additions. Neither publishes success.
 - Missing sources and unregistered orphan paths prune their imported rows and
-  retire corresponding canonical choices. Existing sessions remain frozen.
+  retire corresponding canonical choices, including a prior explicit Space on.
+  Existing sessions remain frozen.
 - Cold session.get retains choices and the native Read preset; inventory remains
   not_running. Restart only the owned daemon and read the same persisted state.
 

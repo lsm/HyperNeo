@@ -41,7 +41,7 @@ Require evidence/mcp-default-writes.json pass=true and true registryCrudAndInten
 bothSpaceApis, repeatedClear, parallelToggles, rollbackWithoutNotification,
 absentTemplatePreserved, frozenSessionPreserved and restartRetainedDefaults.
 mcpDefaultCallerWired=true and skillDefaultCallerWired=true (see skill-default-writes);
-importDefaultCallerWired,
+importDefaultCallerWired=true (see mcp-import-defaults);
 sdkConsumerWired, sdkApplyVerified and queryStarted remain false. No attachment
 or Use here UI proof is claimed. All owned resources close in finally.
 

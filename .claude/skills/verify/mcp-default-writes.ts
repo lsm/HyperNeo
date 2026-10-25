@@ -26,7 +26,7 @@ await mcp.connect(a);
 await client.connect(b);
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
 let transport:InstanceType<typeof WebSocketClientTransport>|undefined;
-const evidence:Record<string,unknown>={mcpDefaultCallerWired:true,skillDefaultCallerWired:true,importDefaultCallerWired:false,sdkConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
+const evidence:Record<string,unknown>={mcpDefaultCallerWired:true,skillDefaultCallerWired:true,importDefaultCallerWired:true,sdkConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
 let stopEvents=()=>{};
 try {
   app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
