@@ -103,6 +103,34 @@ try {
   assert.notEqual(statSync(join(source, object)).ino, statSync(join(worker, object)).ino);
   assert.equal(git(source, 'rev-parse', 'HEAD'), before);
   assert.equal(readFileSync(join(source, 'code.txt'), 'utf8'), 'human dirty bytes');
+  const snapshot = await rpc('daemon.snapshot', { limit: 50 }) as { resources: { kind: string; entries: { id: string; workspacePath: string }[] }[] };
+  const inventory = snapshot.resources.find((page) => page.kind === 'session')!.entries.find((entry) => entry.id === session.id)!;
+  evidence.push({ inventory });
+  await rpc('session.archive', { sessionId: session.id, confirmed: true }, true);
+  evidence.push({ archivedCloneRemoved: !existsSync(worker) });
+  const archivedCloneRemoved = !existsSync(worker);
+  const cleanupCases: Record<string, boolean> = {};
+  for (const mode of ['clean', 'dirty', 'committed']) {
+    const next = await rpc('work.start', {
+      adapter: 'hyperneo', place: { machine: hostname(), folder: source, name: 'Synthetic source' },
+      title: `Cleanup ${mode}`, message: 'Synthetic placement only', model: 'synthetic',
+      preparation: { pack: 'coding', parameters: { target: 'dev' } },
+    }) as Result<WorkStarted>;
+    assert(next.ok, JSON.stringify(next));
+    const path = join(getWorktreeBaseDir(source), next.value.ref.id);
+    if (mode !== 'clean') writeFileSync(join(path, 'human.txt'), 'retained human work');
+    if (mode === 'committed') {
+      git(path, 'add', 'human.txt');
+      git(path, 'commit', '-m', 'unpublished human work');
+    }
+    await rpc('session.delete', { sessionId: next.value.ref.id }, true);
+    cleanupCases[mode] = existsSync(path);
+    if (mode !== 'clean') assert.equal(readFileSync(join(path, 'human.txt'), 'utf8'), 'retained human work');
+  }
+  evidence.push({ cleanupCases, sourcePreserved: existsSync(source) });
+  assert(existsSync(source), 'source checkout survives archive and delete');
+  assert.deepEqual({ inventoryProject: inventory.workspacePath, archivedCloneRemoved, cleanupCases },
+    { inventoryProject: source, archivedCloneRemoved: true, cleanupCases: { clean: false, dirty: true, committed: true } });
   console.log(`PASS prepared clone location, sidebar project group, pinned base and independent objects: ${run}/evidence/observed.json`);
 } finally {
   ws?.close();

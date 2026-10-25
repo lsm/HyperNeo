@@ -66,6 +66,8 @@ function control(db: Database, events: string[], withdraw?: HyperneoSessionContr
 
 describe('hyperneo adapter send and status', () => {
   let source: string;
+  let projectBase: string;
+  let oldProjectBase: string | undefined;
   let db: Database;
   let handed: Array<{
     sessionId: string;
@@ -80,6 +82,8 @@ describe('hyperneo adapter send and status', () => {
   beforeEach(() => {
     source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
     execFileSync('git', ['init', source]);
+    projectBase = join(source, 'project-storage');
+    oldProjectBase = process.env.TEST_WORKTREE_BASE_DIR;
     handed = [];
     events = [];
     outcome = { kind: 'enqueued', id: 'mb1' };
@@ -129,6 +133,8 @@ describe('hyperneo adapter send and status', () => {
 
   afterEach(() => {
     db.close();
+    if (oldProjectBase === undefined) delete process.env.TEST_WORKTREE_BASE_DIR;
+    else process.env.TEST_WORKTREE_BASE_DIR = oldProjectBase;
     rmSync(source, { recursive: true, force: true });
   });
 
@@ -235,15 +241,18 @@ describe('hyperneo adapter send and status', () => {
   });
 
   test('creates the native session in the prepared directory without another worktree choice', async () => {
-    const driver = adapter(async () => ({
-      ok: true,
-      value: {
-        directory: '/fresh/remote-base',
-        release: async () => {
-          throw new Error('Live resource released');
+    const driver = adapter(async (_request, location) => {
+      expect(location.destination.startsWith(projectBase + '/')).toBe(true);
+      return {
+        ok: true,
+        value: {
+          directory: '/fresh/remote-base',
+          release: async () => {
+            throw new Error('Live resource released');
+          },
         },
-      },
-    }));
+      };
+    });
     expect(
       await driver.start!(
         {
