@@ -3,6 +3,10 @@ import { render, waitFor } from '@testing-library/preact';
 import { TaskToolsModal } from '../TaskToolsModal';
 
 const mockListRuntimeMcpServers = vi.fn();
+const mockInventoryRequest = vi.fn();
+vi.mock('../../../lib/connection-manager.ts', () => ({
+  connectionManager: { getHub: async () => ({ request: mockInventoryRequest }) },
+}));
 
 vi.mock('../../../lib/api-helpers', () => ({
   listRuntimeMcpServers: (...args: unknown[]) => mockListRuntimeMcpServers(...args),
@@ -22,6 +26,42 @@ vi.mock('../../ui/Modal', () => ({
 describe('TaskToolsModal', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+  });
+
+  it('does not show configured-only servers as observed task tools', async () => {
+    mockListRuntimeMcpServers.mockResolvedValue({ servers: [{ name: 'configured-only' }] });
+    mockInventoryRequest.mockResolvedValue({
+      state: 'not_running',
+      tools: [],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    });
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.queryByText('Loading tools...')).toBeNull());
+    expect(view.queryByText('configured-only')).toBeNull();
+    expect(mockInventoryRequest).toHaveBeenCalledWith('session.getToolInventory', {
+      sessionId: 'task-session',
+    });
+    expect(view.getByText(/session not running/)).toBeTruthy();
+  });
+
+  it('reports an unverified task provider instead of asserting no runtime tools', async () => {
+    mockListRuntimeMcpServers.mockResolvedValue({ servers: [] });
+    mockInventoryRequest.mockResolvedValue({
+      state: 'unverified',
+      tools: [],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    });
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.queryByText('Loading tools...')).toBeNull());
+    expect(view.getByText(/provider cannot confirm/)).toBeTruthy();
   });
 
   it('shows not-started message when sessionId is null', () => {
