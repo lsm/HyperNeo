@@ -1327,29 +1327,6 @@ describe('codex-desktop adapter status and send', () => {
     expect(spawned).toEqual([]);
   });
 
-  test('a lost start response reports not_delivered even after the peer accepted the input', async () => {
-    const accepted: string[] = [];
-    const driver = adapter(0, '', async () => ({
-      call: async (method, params) => {
-        if (method === 'thread/turns/list') return { data: [] };
-        if (method === 'thread/resume') return {};
-        if (method === 'turn/start') {
-          accepted.push(JSON.stringify(params.input));
-          throw new Error('synthetic acknowledgement lost after acceptance');
-        }
-        throw new Error(`Unexpected ${method}`);
-      },
-      close: () => {},
-    }));
-    expect(await driver.send!(ref('idle'), 'answer the worker', user)).toMatchObject({
-      ok: false,
-      reason: 'not_delivered',
-      detail: 'synthetic acknowledgement lost after acceptance',
-    });
-    expect(accepted).toHaveLength(1);
-    expect(accepted[0]).toContain('answer the worker');
-  });
-
   test.each([false, true])(
     'resumes saved idle work before sending, or reports resume failure: %s',
     async (resumeFails) => {

@@ -44,9 +44,9 @@ try {
   const sessions = new NeoTodoSessionRepository(app.db.getDatabase());
   store.openAsk({ id: 'synthetic-ask', sessionId: 'synthetic-neo', projectId: null, originMessageId: null, title: 'Synthetic plan', request: 'Build', createdAt: 1 });
   const write = createNeoWorkerQuestionWriter(store, sessions, () => 'en', async (ref) => ({ ...ref, name: ref.id, label: ref.id, provider: 'Synthetic', link: null }));
-  const seed = async (id: string, adapter: string, worker: string) => {
+  const seed = async (id: string, adapter: string, worker: string, daemon?: string) => {
     const todo = store.addTodo(id, 'synthetic-ask', { title: id, doneWhen: 'Done', instruction: null, check: null, named: null }, Date.now());
-    const ref = { adapter, id: worker };
+    const ref = { adapter, id: worker, ...(daemon ? { daemon } : {}) };
     sessions.bind(todo.id, ref, Date.now());
     store.updateTodo(todo, { state: 'doing', startedAt: Date.now() }, Date.now());
     const report = await write(ref, { todoId: todo.id, kind: 'blocked', title: 'Choose a destination', options: ['Staging', 'Production'], language: 'en', report: 'Need a destination' });
@@ -54,7 +54,7 @@ try {
     return report.question;
   };
   const target = await seed('target', 'hyperneo', 'synthetic-worker');
-  const unrelated = await seed('unrelated', 'codex-desktop', 'synthetic-unavailable-peer');
+  const unrelated = await seed('unrelated', 'hyperneo', 'synthetic-unavailable-peer', 'synthetic-remote');
   store.answerQuestion(unrelated, ['Staging'], 'button', Date.now());
   let started = () => {};
   const stale = new Promise<void>((resolve) => { started = resolve; });
@@ -63,8 +63,9 @@ try {
   const get = registry.get.bind(registry);
   registry.get = (name) => {
     const definition = get(name);
-    return name !== 'work.send' || !definition ? definition : { ...definition, execute: async () => {
-      started(); await barrier; return { ok: false, reason: 'not_open', detail: 'Synthetic unavailable peer' };
+    return name !== 'message.send' || !definition ? definition : { ...definition, execute: async (input, caller) => {
+      if (!String((input as { to?: string }).to).includes('synthetic-remote')) return definition.execute(input, caller);
+      started(); await barrier; return { kind: 'rejected', reason: 'Synthetic unavailable peer' };
     } };
   };
   answer = rpc('neo.question.answer', { questionId: target.id, answer: ['Staging'] });

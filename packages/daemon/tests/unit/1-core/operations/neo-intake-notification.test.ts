@@ -1,3 +1,5 @@
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -241,6 +243,47 @@ describe('accepted public ask notification', () => {
     expect(ledger.list(conversationId)).toHaveLength(1);
     const kept = writer.prepare('SELECT COUNT(*) AS c FROM sdk_messages').get() as { c: number };
     expect(kept.c).toBe(1);
+  });
+
+  test('a quoted answer notifies only its question for inline delivery', async () => {
+    runMigrations(writer, () => {});
+    const store = new NeoAskTodoRepository(writer);
+    const askId = crypto.randomUUID();
+    store.openAsk({
+      id: askId,
+      sessionId: root.sessionId,
+      projectId: null,
+      originMessageId: null,
+      title: 'Choose',
+      request: 'Choose',
+      createdAt: 1,
+    });
+    const question = store.askQuestion(
+      crypto.randomUUID(),
+      askId,
+      {
+        text: 'Where?',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      1
+    );
+    expect(
+      await receipt({
+        ...input,
+        content: 'Use staging',
+        replyTo: { kind: 'question', id: question.id },
+      })
+    ).toMatchObject({ ok: true });
+    expect(notify).toHaveBeenCalledWith(root.sessionId, question.id);
+    expect(store.getQuestion(question.id)).toMatchObject({
+      answer: 'Use staging',
+      answeredBy: 'chat',
+    });
   });
 
   test('the real service callback emits neo.changed for an accepted ask', async () => {
