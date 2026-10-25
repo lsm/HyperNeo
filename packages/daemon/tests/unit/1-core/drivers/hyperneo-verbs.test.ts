@@ -637,6 +637,15 @@ describe('hyperneo adapter start and stop', () => {
     ]);
   });
 
+  test('starts HyperNeo work with the requested effort applied before delivery', async () => {
+    const result = await adapter({ effort: () => 'high' }).start!(
+      { place: place('/focus/notes'), title: 'task', message: 'write it', effort: 'high' },
+      from
+    );
+    expect(result).toMatchObject({ ok: true, value: { effort: 'high' } });
+    expect(handed).toHaveLength(1);
+  });
+
   test.each([{ model: 'unavailable' }, { effort: 'medium' }])(
     'refuses unsupported configuration before creating a session: %j',
     async (configuration) => {

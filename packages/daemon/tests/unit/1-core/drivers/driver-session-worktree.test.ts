@@ -329,6 +329,37 @@ describe('newestAvailableModel', () => {
 });
 
 describe('createDriverSession model', () => {
+  const offers = () => [
+    { ...model('swe-2-high', '2026-09-01'), name: 'SWE-2 High', provider: 'custom:synthetic' },
+    { ...model('other-high', '2026-09-01'), name: 'Other High', provider: 'custom:other' },
+  ];
+
+  test('starts on a unique case-insensitive display name and its provider', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'sWe-2 HIGH', async () =>
+      offers()
+    );
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
+  });
+
+  test('refuses an ambiguous display name and lists both matching ids before creation', async () => {
+    const { created, manager } = sessionManager(false);
+    await expect(
+      createDriverSession(manager as never, '/notes', 'task', 'SWE-2 High', async () =>
+        offers().map((entry) => ({ ...entry, name: 'SWE-2 High' }))
+      )
+    ).rejects.toThrow(/swe-2-high.*other-high/);
+    expect(created).toEqual([]);
+  });
+
+  test('an exact id wins over another model display name', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', async () =>
+      offers().map((entry) => ({ ...entry, name: 'swe-2-high' }))
+    );
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
+  });
+
   test('opens the session on the model asked for', async () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(manager as never, '/notes', 'essay', 'glm-5.3', async () => [

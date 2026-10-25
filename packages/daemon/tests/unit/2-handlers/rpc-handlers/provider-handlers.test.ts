@@ -264,7 +264,9 @@ describe('Provider RPC handlers', () => {
         force: true,
         baseUrl: 'https://models.example/v1',
       });
-      expect(result).toEqual({ models: [{ id: 'remote-model', name: 'Remote Model' }] });
+      expect(result).toEqual({
+        models: [{ id: 'remote-model', name: 'Remote Model', provider: 'remote' }],
+      });
     });
 
     it('rejects unknown, unregistered, and unsupported providers', async () => {
