@@ -9,13 +9,16 @@ export const artifactTabIds = (id: string) => ({
   panel: `artifact-panel-${id}`,
   title: `artifact-title-${id}`,
 });
+export const artifactWorkTabId = 'artifact-preview-work-tab';
 
 export function ArtifactPreviewTabs({
   files,
   selectedId,
+  work,
 }: {
   files: readonly PreviewWorkspaceFile[];
   selectedId: string | null;
+  work?: { id: string; count: number; selected: boolean };
 }) {
   const root = useRef<HTMLDivElement>(null);
   const more = useRef<HTMLButtonElement>(null);
@@ -31,7 +34,7 @@ export function ArtifactPreviewTabs({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-  const budget = Math.max(0, available - 8);
+  const budget = Math.max(0, available - 8 - (work ? 84 : 0));
   const count =
     files.length * 92 > budget ? Math.max(1, Math.floor((budget - 40) / 92)) : files.length;
   const indices = files.slice(0, count).map((_, index) => index);
@@ -45,11 +48,16 @@ export function ArtifactPreviewTabs({
   );
   useLayoutEffect(() => {
     if (menuOpen) root.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
-    if (focusSelected.current && selectedId) {
-      document.getElementById(artifactTabIds(selectedId).tab)?.focus();
+    const focusId = selectedId
+      ? artifactTabIds(selectedId).tab
+      : work?.selected
+        ? artifactWorkTabId
+        : null;
+    if (focusSelected.current && focusId) {
+      document.getElementById(focusId)?.focus();
       focusSelected.current = false;
     }
-  }, [selectedId, menuOpen, files.length]);
+  }, [selectedId, menuOpen, files.length, work?.selected]);
   useEffect(() => {
     if (!overflow.length) setMenuOpen(false);
   }, [overflow.length]);
@@ -82,6 +90,30 @@ export function ArtifactPreviewTabs({
       }}
     >
       <div role="tablist" aria-label={t('artifact.region')} class="flex min-w-0 flex-1 gap-1">
+        {work && (
+          <button
+            type="button"
+            role="tab"
+            id={artifactWorkTabId}
+            aria-controls={work.id}
+            aria-selected={work.selected}
+            tabIndex={work.selected || (!selectedId && !files.length) ? 0 : -1}
+            class={`h-8 w-20 shrink-0 truncate rounded-full px-2 text-xs hover:bg-surface-raised hover:text-fg ${work.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
+            onClick={() => {
+              setMenuOpen(false);
+              artifactPreviewWorkspace.select(null);
+            }}
+            onKeyDown={(event) => {
+              const panel = document.getElementById(work.id);
+              if (event.key === 'Tab' && !event.shiftKey && work.selected && panel) {
+                event.preventDefault();
+                panel.focus({ preventScroll: true });
+              }
+            }}
+          >
+            {t('live.work')} · {work.count}
+          </button>
+        )}
         {shown.map((file) => (
           <div
             key={file.artifactId}
@@ -94,7 +126,9 @@ export function ArtifactPreviewTabs({
               id={artifactTabIds(file.artifactId).tab}
               aria-controls={artifactTabIds(file.artifactId).panel}
               aria-selected={file.artifactId === selectedId}
-              tabIndex={file.artifactId === (selectedId ?? shown[0]?.artifactId) ? 0 : -1}
+              tabIndex={
+                !work?.selected && file.artifactId === (selectedId ?? shown[0]?.artifactId) ? 0 : -1
+              }
               title={file.title || t('artifact.untitled')}
               class="min-w-0 flex-1 truncate rounded-full px-3 py-1.5 text-left text-xs"
               onClick={() => artifactPreviewWorkspace.select(file.artifactId)}
