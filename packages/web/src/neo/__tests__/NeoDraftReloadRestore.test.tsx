@@ -411,6 +411,28 @@ describe('NeoLive reload draft restore', () => {
     expect(value()).toBe('Newer visible draft');
     expect(screen.queryByText(/To Neo.*Original report/)).toBeNull();
   });
+  it('does not capture the dropped Preview after a fully empty reset', async () => {
+    const first = mount();
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'report-a' }));
+    await screen.findByText(/To Neo.*Original report.*aaaaaaaa/);
+    type('Reply to A');
+    act(() => closeArtifactPreview());
+    type('');
+    expect(read()).toMatchObject({ text: '', previewContext: null });
+    first.unmount();
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'report-b' }));
+    const second = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    await act(async () => {});
+    type('A new reply');
+    expect(screen.queryByText(/To Neo.*Original report/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(second.model.value.send).toHaveBeenCalledOnce());
+    expect(second.model.value.send.mock.calls[0][0].previewContext?.artifactId).not.toBe(
+      'report-a'
+    );
+  });
+
   it('restores the newest captured edit over the older saved draft', async () => {
     persisted.set(root, 'Saved baseline');
     remember('Newest visible edit', 'Saved baseline');

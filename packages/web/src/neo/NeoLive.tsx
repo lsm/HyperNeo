@@ -948,9 +948,10 @@ export function NeoLive() {
               onPreferenceSaved={() => void neo.refresh()}
               draft={draft ?? ''}
               onDraft={(text) => {
-                if (text || quote || attachments.files.length || attachments.reading) pinPreview();
+                const framed = text || quote || attachments.files.length || attachments.reading;
+                if (framed) pinPreview();
                 else setRestoredPreview(null);
-                captureDraft(text, previewContext);
+                captureDraft(text, framed ? previewContext : undefined);
               }}
               onTranscript={(text) =>
                 captureDraft([draft, text].filter(Boolean).join('\n'), previewContext)
