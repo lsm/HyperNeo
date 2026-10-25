@@ -129,6 +129,45 @@ try {
   assert.equal(session.config.toolSelection!.choices[`mcp:${removedServer.id}`]?.selected,false);
   assert.deepEqual(session.config.toolSelection!.choices[`mcp:${server.id}`]?.aliases,['frozen-fixture']);
   evidence.deletedDefinitionSaves=true;
+  const {server:siblingServer}=await hub.request<{server:{id:string}}>('mcp.registry.create',{name:'sibling-server',sourceType:'stdio',command:'not-executed',enabled:false});
+  const {sessionId:independentSession}=await hub.request<{sessionId:string}>('session.create',{workspacePath:join(run,'workspace'),config:{model:'haiku',provider:'anthropic',queryMode:'manual'}});
+  for(const method of ['mcp.enablement.setOverride','mcp.enablement.clearOverride']) {
+    const commit=app.db.casSessionToolPreferences.bind(app.db);
+    let release!:()=>void;
+    let captured!:()=>void;
+    const held=new Promise<void>(resolve=>{release=resolve;});
+    const ready=new Promise<void>(resolve=>{captured=resolve;});
+    let first=true;
+    app.db.casSessionToolPreferences=async(...args)=>{
+      if(args[0].id===sessionId&&first){first=false;captured();await held;}
+      return commit(...args);
+    };
+    const requests:Promise<unknown>[]=[];
+    try {
+      requests.push(hub.request(method,{scopeType:'session',scopeId:sessionId,serverId:server.id,enabled:true}));
+      await Promise.race([ready,requests[0].then(()=>{throw new Error('expected held commit');})]);
+      requests.push(hub.request(method,{scopeType:'session',scopeId:sessionId,serverId:siblingServer.id,enabled:true}));
+      await hub.request('mcp.enablement.setOverride',{scopeType:'session',scopeId:independentSession,serverId:server.id,enabled:true});
+      release();
+      const results=await Promise.allSettled(requests);
+      evidence[`${method}ConcurrentResults`]=results;
+      assert.deepEqual(results.map(result=>result.status),['fulfilled','fulfilled']);
+      session=await reload();
+      for(const id of [server.id,siblingServer.id]){
+        assert.equal(session.config.toolSelection!.choices[`mcp:${id}`]?.selected,method==='mcp.enablement.setOverride');
+        const override=app.db.mcpEnablement.getOverride('session',sessionId,id);
+        assert.equal(override?.enabled??null,method==='mcp.enablement.setOverride'?true:null);
+      }
+      assert.deepEqual(duplicate.getSessionData().config.toolSelection,session.config.toolSelection);
+      assert.deepEqual(duplicate.getSessionData().config.mcpServers,runtimeMcp);
+    } finally {
+      release();
+      await Promise.allSettled(requests);
+      app.db.casSessionToolPreferences=commit;
+    }
+  }
+  evidence.concurrentSessionOverrides=true;
+  evidence.independentSessionNotBlocked=true;
   evidence.selection=session.config.toolSelection;
   evidence.tools=session.config.tools;
   evidence.sessionId=sessionId;
