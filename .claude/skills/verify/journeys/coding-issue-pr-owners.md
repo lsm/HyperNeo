@@ -28,6 +28,11 @@ which only supports PR-merge checks. The public Neo snapshot, ledger, mailbox pa
 GitHub request arguments are saved. Before the fix, the closing PR lacks an
 owner; the focused regression separately isolates hidden opening evidence.
 
+A later report names another PR without a closing reference. Repeated discovery
+of the issue-closing PR must preserve that reported PR's owner, its duplicate
+refusal, and exactly one ready event. Its owner must survive the issue todo
+settling, without needing another worker report to restore a deleted claim.
+
 This proves mailbox acceptance and application reopen, not model consumption,
 OS process restart, live quota behavior or deployed delivery. No live daemon,
 real DB, human configuration, port 8399 or network request is used. The helper

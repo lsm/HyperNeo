@@ -57,8 +57,9 @@ function rpc(name: string, input: unknown) {
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
 }
-function fixture(ci: string) {
-  const nodes = [20, 21, 22].map(number => ({ number, body: number === 20 ? 'Closes Synthetic/MixedCase#7' : 'Related to Synthetic/MixedCase#7', title: `Synthetic PR ${number}`, headRefName: `unmatched-${number}`, headRefOid: `head-${number}`, state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', closedAt: null, reviews: { nodes: [{ state: 'APPROVED', commit: { oid: `head-${number}` }, author: { login: 'synthetic-reviewer' } }] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] } }));
+function fixture(ci: string, includeReported = false) {
+  const numbers = includeReported ? [20, 21, 22, 23] : [20, 21, 22];
+  const nodes = numbers.map(number => ({ number, body: number === 20 ? 'Closes Synthetic/MixedCase#7' : 'Related to Synthetic/MixedCase#7', title: `Synthetic PR ${number}`, headRefName: `unmatched-${number}`, headRefOid: `head-${number}`, state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', closedAt: null, reviews: { nodes: [{ state: 'APPROVED', commit: { oid: `head-${number}` }, author: { login: 'synthetic-reviewer' } }] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] } }));
   writeFileSync(join(run, 'fixture.json'), JSON.stringify({ data: { rateLimit: { cost: 1, remaining: 4000, resetAt: new Date(Date.now() + 3600000).toISOString() }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes }, done: { nodes: [] } } } }));
 }
 function pack() {
@@ -109,9 +110,24 @@ try {
   assert.equal(sql().prepare('SELECT count(*) AS n FROM sdk_messages').get().n, 0);
   proof.pending = pending;
   proof.accepted = { mailbox: accepted, snapshot: await rpc('neo.snapshot', {}), ledger: new CodingPrLedgerRepository(sql()).snapshot(null, now + 3000) };
+  const reportStore = new NeoAskTodoRepository(sql());
+  const reported = reportStore.updateTodo(reportStore.getTodo('todo-0')!, { report: 'Opened https://github.com/synthetic/mixedcase/pull/23' }, now + 4000);
+  await reopened.todos!.openedPrs!(reported, []);
+  fixture('PENDING', true); await reopened.sweep!(now + 4000);
+  assert.equal(new CodingPrLedgerRepository(sql()).snapshot(null, now + 4000).find(row => row.pr.endsWith('#23'))?.ownerId, workers[0]);
+  const reportedDuplicate = await rpc('neo.todo.add', { askId: 'ask', title: 'Duplicate reported PR', doneWhen: 'PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/mixedcase/pull/23'] } } });
+  assert.equal(reportedDuplicate.ok, false);
+  assert.match(String(reportedDuplicate.reason), /pr_already_tracked:/);
+  fixture('SUCCESS', true); await reopened.sweep!(now + 5000);
+  reportStore.updateTodo(reportStore.getTodo('todo-0')!, { state: 'done' }, now + 6000);
+  await reopened.sweep!(now + 7000);
+  assert.equal(new CodingPrLedgerRepository(sql()).snapshot(null, now + 7000).find(row => row.pr.endsWith('#23'))?.ownerId, workers[0]);
+  assert.equal(jobs().length, 3);
+  assert.equal(jobs().filter(job => job.messageUuid === 'neo-pr-event:synthetic/mixedcase#23:head-23:approved_green').length, 1);
+  proof.reportedClaim = { duplicate: reportedDuplicate, mailbox: jobs(), ledger: new CodingPrLedgerRepository(sql()).snapshot(null, now + 7000) };
   proof.upstreamRequests = readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').length;
   proof.verified = true;
-  console.log(JSON.stringify({ verified: true, ownerMailboxEvents: accepted.length, duplicateEvents: 0, providerTurns: 0 }));
+  console.log(JSON.stringify({ verified: true, ownerMailboxEvents: jobs().length, duplicateEvents: 0, providerTurns: 0 }));
 } finally {
   await close(); globalThis.fetch = network;
   proof.resourcesStopped = true;
