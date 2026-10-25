@@ -8,8 +8,8 @@ df -h /System/Volumes/Data
 AVAILABLE=$(df -kP /System/Volumes/Data | awk 'NR==2 {print $4}')
 [[ "$AVAILABLE" -ge 26214400 ]] || { echo 'DISK_GUARD: less than 25 GiB free'; exit 79; }
 mkdir "$EVIDENCE"
-PROOF_TMP="${TMPDIR:-/private/tmp}"
-RUN=$(mktemp -d "${PROOF_TMP%/}/hyperneo-proof-XXXXXX")
+PROOF_TMP_ROOT=${TMPDIR:-/private/tmp}
+RUN=$(mktemp -d "${PROOF_TMP_ROOT%/}/hyperneo-proof-XXXXXX")
 save_and_clean() {
   STATUS=$?
   trap - EXIT

@@ -74,7 +74,7 @@ type IntakeInput = Omit<z.infer<typeof Input>, 'replyTo'> & { replyTo?: NeoReply
 type IntakeResult = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Extract<IntakeResult, { ok: false }> };
 type Target = Pick<Session, 'id' | 'status' | 'config'>;
-type NeoIntakeNotifier = (sessionId: string) => void;
+type NeoIntakeNotifier = (sessionId: string, questionId?: string) => void;
 
 const noNotification: NeoIntakeNotifier = () => {};
 
@@ -339,11 +339,13 @@ function neoAskText(content: IntakeInput['content'], separator = ' '): string {
 function notifyNeoIntakeAcceptance(
   receipt: IntakeResult,
   notify: NeoIntakeNotifier,
-  root: IntakeTarget
+  root: IntakeTarget,
+  reply: NeoReply | null
 ): IntakeResult {
   if (receipt.ok) {
     try {
-      notify(root.target.id);
+      if (reply?.question) notify(root.target.id, reply.question.id);
+      else notify(root.target.id);
     } catch {}
   }
   return receipt;
@@ -508,7 +510,7 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     ['receipt', 'input', 'root', 'db'],
     'receipt'
   )
-  .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'root'], 'receipt')
+  .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'root', 'reply'], 'receipt')
   .endAsync('receipt') as (
   input: IntakeInput,
   caller: OperationCaller,
