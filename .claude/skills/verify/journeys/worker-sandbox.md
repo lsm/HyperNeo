@@ -140,3 +140,22 @@ before the fix. In this branch `runtime-cleanup.json` also requires a later actu
 SDK `work.start` sibling to leave the archived worker's runtime absent, preserving
 the core fix for review 9444. The later synthetic sibling is archived through RPC
 as well. Existing worker clones are retained; no placement logic changes here.
+
+## Locked runtime cleanup
+
+The real SDK Bash probe also creates a nonempty mode-000 directory in its own
+TMPDIR before archiving. `runtime-cleanup.json` must report
+`lockedNonemptyDirectoryReleased: true`, both roots absent, and the clone retained.
+On archive failure, `archive-error.json` records the RPC error, persisted status
+and whether the runtime remains; the helper restores the synthetic permission
+so the failed fixture remains recoverable. The failing reproduction is committed
+first in `41be9aa31f`.
+
+Release restores directory owner permissions before removal, without following
+symlinks, and retries transient removal errors. Focused POSIX tests cover nested
+locked directories and an outside symlink target whose permissions must stay
+unchanged. Failure-injection tests require SDK archive/delete and both Desktop
+archives to preserve their unarchived state when release still fails. Desktop
+retries must also release leftovers from previously archived sessions. The SDK
+stops its agent, releases its runtime, marks the archived barrier, then cancels
+durable deliveries; it must retain the barrier before delivery teardown.

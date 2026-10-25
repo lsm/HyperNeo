@@ -1323,7 +1323,12 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
       if ('reason' in found) return found.reason;
-      if (found.value.thread.archived) return admit() ?? { ok: true, value: { archived: false } };
+      if (found.value.thread.archived) {
+        const refused = admit();
+        if (refused) return refused;
+        await releaseWorkerSandbox(found.value.thread.folder);
+        return { ok: true, value: { archived: false } };
+      }
       return withCodexAppServer(deps, async (server) => {
         const read = z
           .object({
@@ -1339,8 +1344,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
           return reject('unreachable', 'Codex cannot confirm an idle thread.');
         const refused = admit();
         if (refused) return refused;
-        await server.call('thread/archive', { threadId: ref.id });
         await releaseWorkerSandbox(found.value.thread.folder);
+        await server.call('thread/archive', { threadId: ref.id });
         return { ok: true, value: { archived: true } };
       });
     },

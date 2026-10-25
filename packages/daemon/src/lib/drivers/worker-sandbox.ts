@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function workerSandboxPaths(root: string) {
@@ -16,8 +16,24 @@ export function workerSandboxPaths(root: string) {
   };
 }
 
+async function unlockRuntimeDirectories(path: string): Promise<void> {
+  let entry;
+  try {
+    entry = await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  if (!entry.isDirectory()) return;
+  await chmod(path, 0o700);
+  for (const name of await readdir(path)) await unlockRuntimeDirectories(join(path, name));
+}
+
 export async function releaseWorkerSandbox(root: string | null | undefined) {
-  if (root) await rm(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
+  if (!root) return;
+  const runtime = join(workerSandboxPaths(root).TMPDIR, '..');
+  await unlockRuntimeDirectories(runtime);
+  await rm(runtime, { recursive: true, force: true, maxRetries: 3 });
 }
 
 export async function prepareWorkerSandbox(root: string) {
