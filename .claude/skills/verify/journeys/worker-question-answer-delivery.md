@@ -38,6 +38,15 @@ response behind a controlled barrier. The real target answer RPC must return
 without starting that unrelated transport; the target resumes while the other
 todo stays held. evidence/observed.json records which action happened first.
 
+Use the same metadata-only wrapper with
+`PROOF=.claude/skills/verify/worker-question-answer-concurrency.ts` to overlap
+the real answer RPC with a delivery sweep for the same card. A controlled
+sender-title read pauses the real message.send after limiter admission; the
+competing sweep receives its real duplicate rejection before the first send
+commits. The card must still show accepted and the todo doing when the RPC
+returns. Keep observed.json with both transport outcomes and the final card/todo,
+plus cleanup.json and run-status.json. This helper needs no model or fixed port.
+
 External-worker delivery is intentionally deferred to lsm/HyperNeo#8824. Such
 routes stay pending and held without a transport call in this slice. That next
 PR distinguishes definite refusal from a lost acknowledgement before deciding

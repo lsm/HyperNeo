@@ -70,7 +70,7 @@ export function createNeoQuestionAnswerDelivery(
             ask.sessionId,
             'event'
           );
-        store.questionAnswers.claim(route.id, key);
+        const claimed = store.questionAnswers.claim(route.id, key);
         const to = ref.daemon
           ? renderRemoteAddress({ kind: 'remote-session', daemonId: ref.daemon, sessionId: ref.id })
           : ref.id;
@@ -79,7 +79,7 @@ export function createNeoQuestionAnswerDelivery(
           result.kind === 'completed' ? result.value : null
         );
         const receipt = sent.success && sent.data.kind === 'accepted' ? sent.data.messageId : null;
-        if (receipt === null) store.questionAnswers.retry(route.id, key);
+        if (receipt === null && claimed) store.questionAnswers.retry(route.id, key);
         return receipt !== null && store.questionAnswers.accept(route.id, receipt, Date.now(), key);
       },
       'delivery',
