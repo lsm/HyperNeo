@@ -39,6 +39,6 @@ sharedWrapperDefault, frozenSessionPreserved and restartRetainedDefaults:
 Run skills-manager, skill handlers/validation, skill-default-writes, MCP defaults
 and tool-default-transition unit suites. Cover wrapper-to-server intent, config
 and pending validation rollback, validation commit failures and built-in deletion
-admission. SDK/UI consumers and import reconciliation remain later slices;
+admission. Import reconciliation is wired in mcp-import-defaults; SDK/UI consumers remain later slices;
 sdkConsumerWired, sdkApplyVerified and queryStarted stay false. No attachment or
 Use here UI proof is claimed. All owned resources close in finally.

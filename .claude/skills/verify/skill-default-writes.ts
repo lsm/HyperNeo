@@ -15,7 +15,7 @@ const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: InstanceType<typeof WebSocketClientTransport> | undefined;
-const evidence: Record<string, unknown> = { skillDefaultCallerWired: true, importDefaultCallerWired: false, sdkConsumerWired: false, sdkApplyVerified: false, queryStarted: false };
+const evidence: Record<string, unknown> = { skillDefaultCallerWired: true, importDefaultCallerWired: true, sdkConsumerWired: false, sdkApplyVerified: false, queryStarted: false };
 let stopEvents = () => {};
 const originalFetch = globalThis.fetch;
 const installUrl = 'https://raw.githubusercontent.com/synthetic/fixture/main/SKILL.md';

@@ -3,6 +3,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -27,6 +28,7 @@ function buildTestDb(): {
   const repo = new AppMcpServerRepository(bunDb, reactiveDb);
   const workspaceHistory = new WorkspaceHistoryRepository(bunDb);
   const db = {
+    gateway: new DbGateway(':memory:', bunDb),
     appMcpServers: repo,
     getDatabase: () => bunDb,
     workspaceHistory,
@@ -62,15 +64,15 @@ describe('McpImportService', () => {
   describe('refreshFromFile', () => {
     test.each(['hyperneo-operations', 'agent-memory', 'db-query'])(
       'rejects reserved name %s before changing imported rows',
-      (name) => {
+      async (name) => {
         const file = join(tmpRoot, '.mcp.json');
         writeMcpJson(file, { mcpServers: { existing: { command: 'existing' } } });
-        service.refreshFromFile(file);
+        await service.refreshFromFile(file);
         writeMcpJson(file, {
           mcpServers: { [name]: { command: 'external' }, valid: { command: 'valid' } },
         });
 
-        const result = service.refreshFromFile(file);
+        const result = await service.refreshFromFile(file);
 
         expect(result).toMatchObject({ status: 'malformed', added: 0, updated: 0, removed: 0 });
         expect(result.error).toContain(name);
@@ -81,7 +83,7 @@ describe('McpImportService', () => {
       }
     );
 
-    test('imports new entries with source=imported and enabled=false', () => {
+    test('imports new entries with source=imported and enabled=false', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: {
@@ -89,7 +91,7 @@ describe('McpImportService', () => {
         },
       });
 
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.status).toBe('ok');
       expect(result.added).toBe(1);
@@ -105,16 +107,16 @@ describe('McpImportService', () => {
       expect(row!.args).toEqual(['test-server']);
     });
 
-    test('is idempotent when the file is unchanged (re-scan is no-op)', () => {
+    test('is idempotent when the file is unchanged (re-scan is no-op)', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: { stable: { command: 'node', args: ['server.js'] } },
       });
 
-      const first = service.refreshFromFile(file);
+      const first = await service.refreshFromFile(file);
       expect(first.added).toBe(1);
 
-      const second = service.refreshFromFile(file);
+      const second = await service.refreshFromFile(file);
       expect(second.added).toBe(0);
       expect(second.updated).toBe(0);
       expect(second.removed).toBe(0);
@@ -122,17 +124,17 @@ describe('McpImportService', () => {
       expect(repo.listBySourcePath(file)).toHaveLength(1);
     });
 
-    test('updates rows whose config drifted on disk', () => {
+    test('updates rows whose config drifted on disk', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: { drift: { command: 'node', args: ['v1.js'] } },
       });
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
 
       writeMcpJson(file, {
         mcpServers: { drift: { command: 'node', args: ['v2.js'] } },
       });
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.added).toBe(0);
       expect(result.updated).toBe(1);
@@ -142,7 +144,7 @@ describe('McpImportService', () => {
       expect(row!.args).toEqual(['v2.js']);
     });
 
-    test('removes rows whose name disappeared from the file', () => {
+    test('removes rows whose name disappeared from the file', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: {
@@ -150,28 +152,28 @@ describe('McpImportService', () => {
           drop: { command: 'b' },
         },
       });
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
       expect(repo.listBySourcePath(file)).toHaveLength(2);
 
       writeMcpJson(file, { mcpServers: { keep: { command: 'a' } } });
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.removed).toBe(1);
       expect(repo.getByName('drop')).toBeNull();
       expect(repo.getByName('keep')).not.toBeNull();
     });
 
-    test('treats rename as remove + add (new row has new name)', () => {
+    test('treats rename as remove + add (new row has new name)', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: { 'old-name': { command: 'node' } },
       });
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
 
       writeMcpJson(file, {
         mcpServers: { 'new-name': { command: 'node' } },
       });
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.added).toBe(1);
       expect(result.removed).toBe(1);
@@ -180,51 +182,51 @@ describe('McpImportService', () => {
       expect(repo.getByName('new-name')!.enabled).toBe(false);
     });
 
-    test('missing file prunes rows previously imported from that path', () => {
+    test('missing file prunes rows previously imported from that path', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, { mcpServers: { 'gone-soon': { command: 'a' } } });
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
       expect(repo.listBySourcePath(file)).toHaveLength(1);
 
       unlinkSync(file);
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.status).toBe('missing');
       expect(result.removed).toBe(1);
       expect(repo.listBySourcePath(file)).toHaveLength(0);
     });
 
-    test('malformed JSON is captured in the result and does not throw', () => {
+    test('malformed JSON is captured in the result and does not throw', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeFileSync(file, '{ not valid json', 'utf-8');
 
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
       expect(result.status).toBe('malformed');
       expect(result.error).toContain('parse failed');
       expect(result.added).toBe(0);
     });
 
-    test('missing "mcpServers" object is reported as malformed', () => {
+    test('missing "mcpServers" object is reported as malformed', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, { somethingElse: {} });
 
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
       expect(result.status).toBe('malformed');
       expect(result.error).toMatch(/mcpServers/);
     });
 
-    test('parse failure does NOT prune existing rows (safety)', () => {
+    test('parse failure does NOT prune existing rows (safety)', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, { mcpServers: { safe: { command: 'node' } } });
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
 
       writeFileSync(file, '{ broken', 'utf-8');
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
 
       expect(repo.getByName('safe')).not.toBeNull();
     });
 
-    test('skips entries with missing required fields', () => {
+    test('skips entries with missing required fields', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: {
@@ -234,25 +236,25 @@ describe('McpImportService', () => {
         },
       });
 
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
       expect(result.added).toBe(1);
       expect(repo.getByName('ok')).not.toBeNull();
       expect(repo.getByName('bad-stdio')).toBeNull();
       expect(repo.getByName('bad-http')).toBeNull();
     });
 
-    test('skips entries with unsupported explicit type', () => {
+    test('skips entries with unsupported explicit type', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: { bad: { type: 'websocket', command: 'x' } },
       });
 
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
       expect(result.added).toBe(0);
       expect(repo.getByName('bad')).toBeNull();
     });
 
-    test('imports http entries when type=http is declared', () => {
+    test('imports http entries when type=http is declared', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: {
@@ -264,31 +266,31 @@ describe('McpImportService', () => {
         },
       });
 
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
       const row = repo.getByName('web');
       expect(row!.sourceType).toBe('http');
       expect(row!.url).toBe('https://example.test/mcp');
       expect(row!.headers).toEqual({ Authorization: 'Bearer KEY' });
     });
 
-    test('imports sse entries when type=sse is declared', () => {
+    test('imports sse entries when type=sse is declared', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: { events: { type: 'sse', url: 'https://example.test/sse' } },
       });
 
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
       expect(repo.getByName('events')!.sourceType).toBe('sse');
     });
 
-    test('skips when name collides with an existing user row', () => {
+    test('skips when name collides with an existing user row', async () => {
       repo.create({ name: 'docs', sourceType: 'stdio', command: 'my-docs' });
 
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
         mcpServers: { docs: { command: 'their-docs' } },
       });
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.added).toBe(0);
       const row = repo.getByName('docs');
@@ -296,7 +298,7 @@ describe('McpImportService', () => {
       expect(row!.command).toBe('my-docs');
     });
 
-    test('skips when name collides with a builtin row', () => {
+    test('skips when name collides with a builtin row', async () => {
       repo.create({
         name: 'chrome-devtools',
         sourceType: 'stdio',
@@ -308,30 +310,30 @@ describe('McpImportService', () => {
       writeMcpJson(file, {
         mcpServers: { 'chrome-devtools': { command: 'evil' } },
       });
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.added).toBe(0);
       expect(repo.getByName('chrome-devtools')!.command).toBe('bunx');
     });
 
-    test('claimed (source=user) rows are NOT touched on re-scan', () => {
+    test('claimed (source=user) rows are NOT touched on re-scan', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, { mcpServers: { claimed: { command: 'orig' } } });
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
 
       const row = repo.getByName('claimed')!;
       repo.update(row.id, { source: 'user', sourcePath: undefined });
 
       writeMcpJson(file, { mcpServers: { claimed: { command: 'changed' } } });
-      const result = service.refreshFromFile(file);
+      const result = await service.refreshFromFile(file);
 
       expect(result.added).toBe(0);
       expect(repo.getByName('claimed')!.source).toBe('user');
       expect(repo.getByName('claimed')!.command).toBe('orig');
     });
 
-    test('throws when given a relative path (programmer error)', () => {
-      expect(() => service.refreshFromFile('./relative/.mcp.json')).toThrow(
+    test('throws when given a relative path (programmer error)', async () => {
+      await expect(service.refreshFromFile('./relative/.mcp.json')).rejects.toThrow(
         'requires absolute path'
       );
     });
@@ -340,13 +342,13 @@ describe('McpImportService', () => {
   describe('refreshAll', () => {
     test.each(['hyperneo-operations', 'agent-memory', 'db-query'])(
       'reports reserved name %s at import while preserving existing rows',
-      (name) => {
+      async (name) => {
         const file = join(tmpRoot, '.mcp.json');
         writeMcpJson(file, { mcpServers: { existing: { command: 'existing' } } });
-        service.refreshAll([]);
+        await service.refreshAll([]);
         writeMcpJson(file, { mcpServers: { [name]: { command: 'external' } } });
 
-        const { results } = service.refreshAll([]);
+        const { results } = await service.refreshAll([]);
 
         expect(results[0]).toMatchObject({ status: 'malformed', added: 0, updated: 0, removed: 0 });
         expect(results[0].error).toContain(name);
@@ -355,14 +357,14 @@ describe('McpImportService', () => {
       }
     );
 
-    test('allows workspace-qualified names that do not claim a built-in name', () => {
+    test('allows workspace-qualified names that do not claim a built-in name', async () => {
       const workspace = join(tmpRoot, 'workspace');
       mkdirSync(workspace);
       writeMcpJson(join(workspace, '.mcp.json'), {
         mcpServers: { 'hyperneo-operations': { command: 'external' } },
       });
 
-      const { results } = service.refreshAll([{ path: workspace, label: 'workspace' }], {
+      const { results } = await service.refreshAll([{ path: workspace, label: 'workspace' }], {
         includeUserConfig: false,
       });
 
@@ -371,12 +373,12 @@ describe('McpImportService', () => {
       expect(repo.getByName('hyperneo-operations')).toBeNull();
     });
 
-    test('imports user-level ~/.claude/.mcp.json in the production path (no TEST_USER_SETTINGS_DIR)', () => {
+    test('imports user-level ~/.claude/.mcp.json in the production path (no TEST_USER_SETTINGS_DIR)', async () => {
       const savedSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
       delete process.env.TEST_USER_SETTINGS_DIR;
       const fakeHome = mkdtempSync(join(tmpdir(), 'fake-home-'));
       const prodService = new McpImportService(
-        { appMcpServers: repo } as unknown as Database,
+        { appMcpServers: repo, gateway: new DbGateway(':memory:', bunDb) } as unknown as Database,
         fakeHome
       );
       try {
@@ -390,7 +392,7 @@ describe('McpImportService', () => {
           mcpServers: { 'decoy-buggy-path': { command: 'should-not-import' } },
         });
 
-        const { results } = prodService.refreshAll([]);
+        const { results } = await prodService.refreshAll([]);
         const userResult = results.find(
           (r) => r.sourcePath === join(fakeHome, '.claude', '.mcp.json')
         );
@@ -407,7 +409,7 @@ describe('McpImportService', () => {
       }
     });
 
-    test('scans each workspace plus the user-level file', () => {
+    test('scans each workspace plus the user-level file', async () => {
       const wsA = mkdtempSync(join(tmpRoot, 'ws-a-'));
       writeMcpJson(join(wsA, '.mcp.json'), {
         mcpServers: { 'a-server': { command: 'a' } },
@@ -420,7 +422,7 @@ describe('McpImportService', () => {
         mcpServers: { 'user-server': { command: 'u' } },
       });
 
-      const { results } = service.refreshAll([wsA, wsB]);
+      const { results } = await service.refreshAll([wsA, wsB]);
       expect(results).toHaveLength(3);
       expect(results.every((r) => r.status === 'ok')).toBe(true);
 
@@ -429,30 +431,30 @@ describe('McpImportService', () => {
       expect(repo.getByName('user-server')).not.toBeNull();
     });
 
-    test('prunes imported rows whose sourcePath no longer exists on disk', () => {
+    test('prunes imported rows whose sourcePath no longer exists on disk', async () => {
       const ws = mkdtempSync(join(tmpRoot, 'ws-gone-'));
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { ghost: { command: 'x' } } });
 
-      service.refreshAll([ws]);
+      await service.refreshAll([ws]);
       expect(repo.getByName('ghost')).not.toBeNull();
 
       rmSync(ws, { recursive: true, force: true });
 
-      const { results, orphanPruned } = service.refreshAll([]);
+      const { results, orphanPruned } = await service.refreshAll([]);
       expect(results.every((r) => r.removed === 0)).toBe(true);
       expect(orphanPruned).toBe(1);
       expect(repo.getByName('ghost')).toBeNull();
     });
 
-    test('missing workspace `.mcp.json` produces status=missing but does not prune unrelated rows', () => {
+    test('missing workspace `.mcp.json` produces status=missing but does not prune unrelated rows', async () => {
       const wsA = mkdtempSync(join(tmpRoot, 'ws-with-'));
       writeMcpJson(join(wsA, '.mcp.json'), {
         mcpServers: { present: { command: 'x' } },
       });
       const wsB = mkdtempSync(join(tmpRoot, 'ws-without-'));
 
-      const { results } = service.refreshAll([wsA, wsB]);
+      const { results } = await service.refreshAll([wsA, wsB]);
       const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
       expect(byStatus[join(wsA, '.mcp.json')]).toBe('ok');
       expect(byStatus[join(wsB, '.mcp.json')]).toBe('missing');
@@ -460,7 +462,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('present')).not.toBeNull();
     });
 
-    test('missing still-registered workspace `.mcp.json` prunes its previously imported rows', () => {
+    test('missing still-registered workspace `.mcp.json` prunes its previously imported rows', async () => {
       const wsA = mkdtempSync(join(tmpRoot, 'ws-still-'));
       const fileA = join(wsA, '.mcp.json');
       writeMcpJson(fileA, { mcpServers: { present: { command: 'x' } } });
@@ -469,13 +471,13 @@ describe('McpImportService', () => {
       const fileB = join(wsB, '.mcp.json');
       writeMcpJson(fileB, { mcpServers: { stale: { command: 'y' } } });
 
-      service.refreshAll([wsA, wsB]);
+      await service.refreshAll([wsA, wsB]);
       expect(repo.getByName('present')).not.toBeNull();
       expect(repo.getByName('stale')).not.toBeNull();
 
       unlinkSync(fileB);
 
-      const { results } = service.refreshAll([wsA, wsB]);
+      const { results } = await service.refreshAll([wsA, wsB]);
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
 
       expect(byPath[fileA].status).toBe('ok');
@@ -503,17 +505,17 @@ describe('McpImportService', () => {
       expect(source).not.toMatch(/\.mcp\.json/);
     });
 
-    test('deduplicates workspace paths (same path passed twice = one scan)', () => {
+    test('deduplicates workspace paths (same path passed twice = one scan)', async () => {
       const ws = mkdtempSync(join(tmpRoot, 'ws-dup-'));
       writeMcpJson(join(ws, '.mcp.json'), {
         mcpServers: { once: { command: 'x' } },
       });
-      const { results } = service.refreshAll([ws, ws]);
+      const { results } = await service.refreshAll([ws, ws]);
       expect(results).toHaveLength(2);
       expect(repo.listBySourcePath(join(ws, '.mcp.json'))).toHaveLength(1);
     });
 
-    test('continues the sweep when one workspace file is malformed and preserves its existing rows', () => {
+    test('continues the sweep when one workspace file is malformed and preserves its existing rows', async () => {
       const wsGood = mkdtempSync(join(tmpRoot, 'ws-good-'));
       const goodFile = join(wsGood, '.mcp.json');
       writeMcpJson(goodFile, { mcpServers: { good: { command: 'x' } } });
@@ -521,11 +523,11 @@ describe('McpImportService', () => {
       const wsBad = mkdtempSync(join(tmpRoot, 'ws-bad-'));
       const badFile = join(wsBad, '.mcp.json');
       writeMcpJson(badFile, { mcpServers: { stale: { command: 'y' } } });
-      service.refreshAll([wsBad]);
+      await service.refreshAll([wsBad]);
 
       writeFileSync(badFile, '{ not json', 'utf-8');
 
-      const { results } = service.refreshAll([wsBad, wsGood]);
+      const { results } = await service.refreshAll([wsBad, wsGood]);
       const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
 
       expect(byStatus[badFile]).toBe('malformed');
@@ -535,7 +537,7 @@ describe('McpImportService', () => {
       expect(repo.listBySourcePath(badFile)[0].command).toBe('y');
     });
 
-    test('namespaces colliding server names from two registered workspaces with labels', () => {
+    test('namespaces colliding server names from two registered workspaces with labels', async () => {
       const wsA = mkdtempSync(join(tmpRoot, 'ws-ns-a-'));
       const fileA = join(wsA, '.mcp.json');
       writeMcpJson(fileA, {
@@ -547,7 +549,7 @@ describe('McpImportService', () => {
         mcpServers: { fetch: { command: 'b' } },
       });
 
-      const { results } = service.refreshAll([
+      const { results } = await service.refreshAll([
         { path: wsA, label: 'repo-a' },
         { path: wsB, label: 'repo-b' },
       ]);
@@ -559,7 +561,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('repo-b:fetch')).not.toBeNull();
     });
 
-    test('appends a numeric suffix when two labeled workspaces collide on the same server name', () => {
+    test('appends a numeric suffix when two labeled workspaces collide on the same server name', async () => {
       const wsA = mkdtempSync(join(tmpRoot, 'ws-dup-a-'));
       writeMcpJson(join(wsA, '.mcp.json'), {
         mcpServers: { fetch: { command: 'a1' } },
@@ -569,7 +571,7 @@ describe('McpImportService', () => {
         mcpServers: { fetch: { command: 'a2' } },
       });
 
-      service.refreshAll([
+      await service.refreshAll([
         { path: wsA, label: 'repo-a' },
         { path: wsB, label: 'repo-a' },
       ]);
@@ -578,23 +580,23 @@ describe('McpImportService', () => {
       expect(repo.getByName('repo-a:fetch:2')).not.toBeNull();
     });
 
-    test('re-uses stored names when re-scanning a namespaced workspace (idempotent)', () => {
+    test('re-uses stored names when re-scanning a namespaced workspace (idempotent)', async () => {
       const ws = mkdtempSync(join(tmpRoot, 'ws-idem-'));
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
 
-      service.refreshAll([{ path: ws, label: 'repo-a' }]);
+      await service.refreshAll([{ path: ws, label: 'repo-a' }]);
       const first = repo.getByName('repo-a:fetch');
       expect(first).not.toBeNull();
 
-      const { results } = service.refreshAll([{ path: ws, label: 'repo-a' }]);
+      const { results } = await service.refreshAll([{ path: ws, label: 'repo-a' }]);
       const row = repo.getByName('repo-a:fetch');
       expect(row).not.toBeNull();
       expect(row!.id).toBe(first!.id);
       expect(results.every((r) => r.added === 0 && r.updated === 0 && r.removed === 0)).toBe(true);
     });
 
-    test('collects space workspace registry paths and imports with workspace labels', () => {
+    test('collects space workspace registry paths and imports with workspace labels', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -625,7 +627,7 @@ describe('McpImportService', () => {
         isPrimary: false,
       });
 
-      const { results } = service.refreshAll();
+      const { results } = await service.refreshAll();
 
       expect(
         results.some((r) => r.sourcePath === join(wsA, '.mcp.json') && r.status === 'ok')
@@ -637,7 +639,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('repo-b:fetch')).not.toBeNull();
     });
 
-    test('prunes imported rows whose source path left the space workspace registry', () => {
+    test('prunes imported rows whose source path left the space workspace registry', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -657,17 +659,17 @@ describe('McpImportService', () => {
         isPrimary: true,
       });
 
-      service.refreshAll();
+      await service.refreshAll();
       expect(repo.getByName('gone:stale')).not.toBeNull();
 
       spaceRepo.deleteSpace(space.id);
 
-      const { orphanPruned } = service.refreshAll();
+      const { orphanPruned } = await service.refreshAll();
       expect(orphanPruned).toBe(1);
       expect(repo.getByName('gone:stale')).toBeNull();
     });
 
-    test('keeps plain workspace history imports on refreshAll', () => {
+    test('keeps plain workspace history imports on refreshAll', async () => {
       const workspaceHistory = new WorkspaceHistoryRepository(bunDb);
 
       const ws = mkdtempSync(join(tmpRoot, 'ws-history-'));
@@ -675,15 +677,15 @@ describe('McpImportService', () => {
       writeMcpJson(file, { mcpServers: { plain: { command: 'x' } } });
 
       workspaceHistory.upsert(ws);
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
       expect(repo.getByName('plain')).not.toBeNull();
 
-      const { orphanPruned } = service.refreshAll();
+      const { orphanPruned } = await service.refreshAll();
       expect(orphanPruned).toBe(0);
       expect(repo.getByName('plain')).not.toBeNull();
     });
 
-    test('migrates legacy bare-name imports to the namespaced name on first sweep', () => {
+    test('migrates legacy bare-name imports to the namespaced name on first sweep', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -691,7 +693,7 @@ describe('McpImportService', () => {
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
 
-      service.refreshFromFile(file);
+      await service.refreshFromFile(file);
       const legacy = repo.getByName('fetch');
       expect(legacy).not.toBeNull();
       repo.update(legacy!.id, { enabled: true });
@@ -708,7 +710,7 @@ describe('McpImportService', () => {
         isPrimary: true,
       });
 
-      const { results } = service.refreshAll();
+      const { results } = await service.refreshAll();
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
       expect(byPath[file].updated).toBe(1);
       expect(repo.getByName('migrate:fetch')).not.toBeNull();
@@ -717,7 +719,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('fetch')).toBeNull();
     });
 
-    test('migrates suffixed legacy bare-name imports to the namespaced name on first sweep', () => {
+    test('migrates suffixed legacy bare-name imports to the namespaced name on first sweep', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -746,7 +748,7 @@ describe('McpImportService', () => {
         isPrimary: true,
       });
 
-      const { results } = service.refreshAll();
+      const { results } = await service.refreshAll();
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
       expect(byPath[file].updated).toBe(1);
       expect(repo.getByName('migrate:fetch')).not.toBeNull();
@@ -755,7 +757,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('fetch:2')).toBeNull();
     });
 
-    test('skips invalid entries before reserving the resolved name', () => {
+    test('skips invalid entries before reserving the resolved name', async () => {
       const wsA = join(tmpRoot, 'a');
       const wsB = join(tmpRoot, 'b');
       mkdirSync(wsA, { recursive: true });
@@ -775,7 +777,7 @@ describe('McpImportService', () => {
         },
       });
 
-      service.refreshAll([
+      await service.refreshAll([
         { path: wsA, label: 'repo' },
         { path: wsB, label: 'repo' },
       ]);
@@ -786,7 +788,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('repo:foo')!.sourcePath).toBe(fileB);
     });
 
-    test('keeps the user config unlabeled when it is also a Space workspace', () => {
+    test('keeps the user config unlabeled when it is also a Space workspace', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
 
       spaceRepo.createSpace({
@@ -798,7 +800,7 @@ describe('McpImportService', () => {
         mcpServers: { global: { command: 'g' } },
       });
 
-      const { results } = service.refreshAll();
+      const { results } = await service.refreshAll();
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
 
       expect(byPath[join(tmpRoot, '.mcp.json')].status).toBe('ok');
@@ -806,7 +808,7 @@ describe('McpImportService', () => {
       expect(repo.listBySourcePath(join(tmpRoot, '.mcp.json'))).toHaveLength(1);
     });
 
-    test('preserves row identity when a workspace label changes', () => {
+    test('preserves row identity when a workspace label changes', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -826,13 +828,13 @@ describe('McpImportService', () => {
         isPrimary: true,
       });
 
-      service.refreshAll();
+      await service.refreshAll();
       const legacy = repo.getByName('old:fetch');
       expect(legacy).not.toBeNull();
       repo.update(legacy!.id, { enabled: true });
 
       workspaceRepo.updateLabel(space.id, workspace.id, 'new');
-      service.refreshAll();
+      await service.refreshAll();
 
       expect(repo.getByName('new:fetch')).not.toBeNull();
       expect(repo.getByName('new:fetch')!.id).toBe(legacy!.id);
@@ -840,7 +842,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('old:fetch')).toBeNull();
     });
 
-    test('preserves exact ownership when a suffix-shaped raw name is added later', () => {
+    test('preserves exact ownership when a suffix-shaped raw name is added later', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -862,7 +864,7 @@ describe('McpImportService', () => {
         isPrimary: true,
       });
 
-      service.refreshAll();
+      await service.refreshAll();
       const existing = repo.getByName('repo:fetch:2');
       expect(existing).not.toBeNull();
 
@@ -873,7 +875,7 @@ describe('McpImportService', () => {
         },
       });
 
-      const { results } = service.refreshAll();
+      const { results } = await service.refreshAll();
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
 
       expect(repo.getByName('repo:fetch')).not.toBeNull();
@@ -884,18 +886,18 @@ describe('McpImportService', () => {
       expect(byPath[file].added).toBe(1);
     });
 
-    test('skips re-importing a server claimed by a user-owned row', () => {
+    test('skips re-importing a server claimed by a user-owned row', async () => {
       const ws = mkdtempSync(join(tmpRoot, 'ws-claimed-'));
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
 
-      service.refreshAll([ws]);
+      await service.refreshAll([ws]);
       const imported = repo.getByName('fetch');
       expect(imported).not.toBeNull();
       repo.update(imported!.id, { source: 'user', sourcePath: undefined });
 
       writeMcpJson(file, { mcpServers: { fetch: { command: 'y' } } });
-      service.refreshAll([ws]);
+      await service.refreshAll([ws]);
 
       const row = repo.getByName('fetch');
       expect(row).not.toBeNull();
@@ -904,7 +906,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('fetch:2')).toBeNull();
     });
 
-    test('refreshAllForPath returns failed when workspace registry cannot be read', () => {
+    test('refreshAllForPath returns failed when workspace registry cannot be read', async () => {
       const ws = mkdtempSync(join(tmpRoot, 'ws-registry-fail-'));
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
@@ -915,7 +917,7 @@ describe('McpImportService', () => {
         throw new Error('db locked');
       };
 
-      const result = service.refreshAllForPath(ws);
+      const result = await service.refreshAllForPath(ws);
       svc.db.getDatabase = original;
 
       expect(result.status).toBe('failed');
@@ -924,7 +926,7 @@ describe('McpImportService', () => {
       expect(repo.listBySourcePath(file)).toHaveLength(0);
     });
 
-    test('claimed suffixed name blocks the same-base re-import', () => {
+    test('claimed suffixed name blocks the same-base re-import', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -944,13 +946,13 @@ describe('McpImportService', () => {
         isPrimary: true,
       });
 
-      service.refreshAll();
+      await service.refreshAll();
       const imported = repo.getByName('repo:fetch');
       expect(imported).not.toBeNull();
       repo.update(imported!.id, { name: 'repo:fetch:2', source: 'user', sourcePath: undefined });
 
       writeMcpJson(file, { mcpServers: { fetch: { command: 'y' } } });
-      service.refreshAll();
+      await service.refreshAll();
 
       const row = repo.getByName('repo:fetch:2');
       expect(row).not.toBeNull();
@@ -960,7 +962,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('repo:fetch:3')).toBeNull();
     });
 
-    test('legacy rows are consumed by the correct raw when the label changes', () => {
+    test('legacy rows are consumed by the correct raw when the label changes', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -980,14 +982,14 @@ describe('McpImportService', () => {
         isPrimary: true,
       });
 
-      service.refreshAll();
+      await service.refreshAll();
       const first = repo.getByName('repo:old:foo');
       expect(first).not.toBeNull();
       repo.update(first!.id, { enabled: true });
 
       workspaceRepo.updateLabel(space.id, workspace.id, 'new');
       writeMcpJson(file, { mcpServers: { 'old:foo': { command: 'x' }, foo: { command: 'y' } } });
-      const { results } = service.refreshAll();
+      const { results } = await service.refreshAll();
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
 
       expect(byPath[file].updated).toBe(1);
@@ -999,7 +1001,7 @@ describe('McpImportService', () => {
       expect(repo.getByName('repo:old:foo')).toBeNull();
     });
 
-    test('does not swap rows when a new label matches a raw-name prefix', () => {
+    test('does not swap rows when a new label matches a raw-name prefix', async () => {
       const spaceRepo = new SpaceRepository(bunDb);
       const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
@@ -1007,7 +1009,7 @@ describe('McpImportService', () => {
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { foo: { command: 'a' }, 'repo:foo': { command: 'b' } } });
 
-      service.refreshAll([ws]);
+      await service.refreshAll([ws]);
       const fooRow = repo.getByName('foo');
       const prefixedRow = repo.getByName('repo:foo');
       expect(fooRow).not.toBeNull();
@@ -1027,7 +1029,7 @@ describe('McpImportService', () => {
       });
 
       writeMcpJson(file, { mcpServers: { foo: { command: 'c' }, 'repo:foo': { command: 'd' } } });
-      const { results } = service.refreshAll();
+      const { results } = await service.refreshAll();
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
 
       expect(byPath[file].updated).toBe(2);

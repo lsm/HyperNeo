@@ -93,7 +93,7 @@ export function setupSpaceMcpHandlers(
     }
 
     if (workspacePath && typeof workspacePath === 'string') {
-      const result: ImportResult = mcpImportService.refreshAllForPath(resolve(workspacePath));
+      const result: ImportResult = await mcpImportService.refreshAllForPath(resolve(workspacePath));
       added = result.added;
       updated = result.updated;
       removed = result.removed;
@@ -105,7 +105,7 @@ export function setupSpaceMcpHandlers(
         notes.push(`${result.sourcePath}: import failed — ${result.error ?? 'unknown error'}`);
       }
     } else {
-      const result = mcpImportService.refreshAll();
+      const result = await mcpImportService.refreshAll();
       for (const r of result.results) {
         if (r.status === 'malformed') {
           notes.push(`${r.sourcePath}: invalid MCP configuration — ${r.error ?? 'invalid file'}`);
