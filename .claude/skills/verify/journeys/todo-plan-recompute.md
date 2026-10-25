@@ -3,7 +3,8 @@
 Read the shared isolation rules in SKILL.md. This journey needs no provider,
 model, HTTP mock or GUI. It owns a real test daemon on an ephemeral non-8399
 port, a fresh SQLite database/home, a refusing GitHub PR fixture executable,
-and a synthetic Codex app-server Unix socket. Nothing uses a real app or DB.
+and a synthetic Codex app-server Unix socket. Its local `ps` stub reports no
+running Desktop app so host GUI state cannot divert sends to native IPC. Nothing uses a real app or DB.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-todo-plan-XXXXXX)
@@ -17,7 +18,11 @@ The helper seeds an ordered ask with a merged first PR and an open next PR,
 then runs the actual driver-refresh job. Observe `first: done`, `next: doing`
 in stored state and `neo.snapshot`, and exactly one `turn/start` received by
 the synthetic worker through the real start/send path. Repeating refresh must
-send nothing again. Completing the final todo through `neo.todo.close` sends
+send nothing again. The captured first worker input (`workerRuleDelivered` in
+`evidence/observed.json`) must include rule 10's 30-second PR/issue guidance,
+the full-report-to-Neo boundary, public-repo privacy rule and concise issue
+contract. This proves delivery to new worker context, not model compliance or
+rewriting existing PRs. Completing the final todo through `neo.todo.close` sends
 no further work.
 
 With a non-start ask question open, the dispatched worker stays doing and its

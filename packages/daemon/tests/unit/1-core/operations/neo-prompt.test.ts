@@ -2,6 +2,7 @@ import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   NEO_PACK_CODING_INSTRUCTIONS,
+  NEO_PACK_CODING_WORKER_RULES,
   NEO_GOAL_CYCLE,
   NEO_ROOT_PROMPT,
   NEO_FOCUSED_DISCUSSION,
@@ -110,5 +111,19 @@ describe('root Neo system prompt', () => {
   test('teaches no holder, consultation, forwarding or dispatch', () => {
     expect(NEO_ROOT_PROMPT).not.toMatch(/holder|consult|forward|dispatch/i);
     expect(NEO_ROOT_PROMPT).not.toMatch(/neo\.project\.(consult|respond)|neo\.projects\.dispatch/);
+  });
+});
+
+describe('coding worker rules', () => {
+  test('requires concise public PR descriptions and issues while retaining full reports to Neo', () => {
+    expect(
+      NEO_PACK_CODING_WORKER_RULES
+    ).toContain(`10. Write PR descriptions and issues for a person to read in 30 seconds.
+    - First, 2–3 sentences: what this is (bug fix, feature, cleanup) and why. For a bug, say what was wrong as a user sees it. Link the issue if there is one (keep \`Closes #N\`).
+    - Then how, in a few short bullets: the change, not the search that found it.
+    - Then \`Verified:\` in one or two lines: what you ran and what you saw.
+    - Nothing else: no file-by-file audits, test counts, lists of what you didn't touch, or merge instructions. Your full report (rule 9) goes to Neo, not into the PR.
+    - In a public repo: no local paths, machine names, session ids or private repo names.
+    An issue states the problem and what done looks like, in a few sentences.`);
   });
 });
