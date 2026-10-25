@@ -610,8 +610,13 @@ export function createCodingTodoPack(
         const duplicate = [...named, ...repo.urls(peer.id)].find(
           (url) => typeof url === 'string' && keys.has(codingPrKey(url) ?? '')
         );
-        if (duplicate)
-          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}"; use neo.todo.edit addUrls on that todo.`;
+        if (duplicate) {
+          const next =
+            peer.check?.kind === 'pr_merged'
+              ? 'Use neo.todo.edit addUrls on that todo.'
+              : 'Continue that todo instead.';
+          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}". ${next}`;
+        }
       }
       return null;
     },
