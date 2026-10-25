@@ -52,7 +52,14 @@ function captureNeoDraft<T extends NeoDraft>(draft: T): T {
   return {
     ...draft,
     images: draft.images?.map((image) => ({ ...image })),
-    ...(draft.quote ? { quote: { ...draft.quote } } : {}),
+    ...(draft.quote
+      ? {
+          quote: {
+            ...draft.quote,
+            ...(draft.quote.replyTo ? { replyTo: { ...draft.quote.replyTo } } : {}),
+          },
+        }
+      : {}),
     ...(draft.previewContext ? { previewContext: { ...draft.previewContext } } : {}),
   };
 }
@@ -262,6 +269,10 @@ function sameDraft(submission: Submission, draft: NeoDraft): boolean {
     submission.quote?.anchor === draft.quote?.anchor &&
     submission.quote?.text === draft.quote?.text &&
     submission.quote?.author === draft.quote?.author &&
+    submission.quote?.replyTo?.kind === draft.quote?.replyTo?.kind &&
+    submission.quote?.replyTo?.id === draft.quote?.replyTo?.id &&
+    submission.quote?.replyTo?.author === draft.quote?.replyTo?.author &&
+    submission.quote?.replyTo?.excerpt === draft.quote?.replyTo?.excerpt &&
     prior.length === current.length &&
     prior.every(
       (image, index) =>
@@ -289,13 +300,14 @@ export function createNeoIntakeClient(
   const pending = new Map<string, Set<PendingSubmission>>();
   const shown = new Map<string, NeoPendingAsk>();
   function show(submission: Submission, state: NeoPendingAsk['state'], reason?: string) {
+    const { sessionId, text, images, quote, previewContext } = captureNeoDraft(submission);
     shown.set(submission.requestId, {
       requestId: submission.requestId,
-      sessionId: submission.sessionId,
-      text: submission.text,
-      images: submission.images ?? [],
-      ...(submission.quote ? { quote: submission.quote } : {}),
-      ...(submission.previewContext ? { previewContext: submission.previewContext } : {}),
+      sessionId,
+      text,
+      images: images ?? [],
+      ...(quote ? { quote } : {}),
+      ...(previewContext ? { previewContext } : {}),
       createdAt: shown.get(submission.requestId)?.createdAt ?? new Date().toISOString(),
       state,
       ...(reason ? { reason } : {}),

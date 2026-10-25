@@ -113,3 +113,12 @@ New text and attachments added during that handoff must survive its completion.
 The original browser
 capture remains until acceptance or explicit discard. Pending immutable request
 identity persistence remains in #8707; handoff alone does not complete it.
+
+Pending intake quote checks additionally require `intakeQuoteSnapshotRetry` and
+`intakeDisplaySnapshotIsolation`. The actual intake client sends a synthetic
+quoted, bound reply through the owned RPC door, then loses its accepted receipt.
+Mutating the original nested target and pending display target/snapshot must not
+change the retained retry: one message and delivery keep the original target and
+exact Preview reference. Lifecycle tests also distinguish changed nested quote
+targets from equal-value retries. This checks capture isolation; durable pending
+request restoration remains a later #8707 rung.

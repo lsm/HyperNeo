@@ -14,7 +14,11 @@ import {
   createNeoDraftReloadBuffer,
   neoDraftRecoveryInput,
 } from '../../../web/src/neo/neo-draft-reload-buffer.ts';
-import { submitNeoDraft } from '../../../web/src/neo/neo-intake.ts';
+import {
+  createNeoIntakeClient,
+  type NeoPendingAsk,
+  submitNeoDraft,
+} from '../../../web/src/neo/neo-intake.ts';
 import { presentConversationAskPage } from '../../../web/src/neo/conversation-ask-client.ts';
 import { createVoicePreviewProof } from '../../../web/src/lib/voice/__tests__/voice-preview-proof.ts';
 
@@ -288,6 +292,57 @@ try {
   assert.deepEqual(prompt.previewContext, reference);
   assert(JSON.stringify(prompt.message.content).includes(artifactId));
   assert(JSON.stringify(prompt.message.content).includes(previewContext.snapshot));
+  let lostReceipt = true;
+  let pendingAsks: readonly NeoPendingAsk[] = [];
+  const intake = createNeoIntakeClient(
+    async () =>
+      ({
+        request: async (...args: Parameters<MessageHub['request']>) => {
+          const result = await hub.request<{ ok: boolean }>(...args);
+          if (lostReceipt) {
+            lostReceipt = false;
+            assert.equal(result.ok, true);
+            throw new Error('Synthetic lost intake receipt');
+          }
+          return result;
+        },
+      }) as unknown as MessageHub,
+    (asks) => {
+      pendingAsks = asks;
+    }
+  );
+  const quote = {
+    author: 'You' as const,
+    text: input.content,
+    anchor: 'synthetic-original-message',
+    replyTo: { kind: 'message' as const, id: requestId },
+  };
+  const quotedSend = intake.send({
+    sessionId,
+    text: 'Reply to the original exact snapshot.',
+    quote,
+    previewContext: reference,
+  });
+  quote.replyTo.id = 'different-message';
+  await assert.rejects(quotedSend, /Synthetic lost intake receipt/);
+  const quotedId = pendingAsks[0].requestId;
+  pendingAsks[0].quote!.replyTo!.id = 'changed-display-target';
+  Object.assign(pendingAsks[0].previewContext!, { snapshot: 'b'.repeat(64) });
+  const quotedRetry = await intake.retry(quotedId);
+  assert(quotedRetry?.ok && !quotedRetry.created);
+  const quotedRows = database()
+    .getDatabase()
+    .prepare('SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?')
+    .all(quotedId) as { sdk_message: string }[];
+  assert.equal(quotedRows.length, 1);
+  const quotedPrompt = JSON.parse(quotedRows[0].sdk_message);
+  assert.equal(quotedPrompt.replyTo.id, requestId);
+  assert.deepEqual(quotedPrompt.previewContext, reference);
+  const quotedJobs = database()
+    .getDatabase()
+    .prepare("SELECT COUNT(*) AS n FROM job_queue WHERE json_extract(payload,'$.messageUuid') = ?")
+    .get(quotedId) as { n: number };
+  assert.equal(quotedJobs.n, 1);
   const wrong = await rpc<{ ok: boolean }>('neo.message.send', {
     ...input,
     requestId: '20000000-0000-4000-8000-000000000002',
@@ -383,6 +438,8 @@ try {
     explicitUnboundRecovery: true,
     alreadySavedContextRestore: true,
     legacyRecoveryDedup: true,
+    intakeQuoteSnapshotRetry: true,
+    intakeDisplaySnapshotIsolation: true,
   });
 } finally {
   try {
