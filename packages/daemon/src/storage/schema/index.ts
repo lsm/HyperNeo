@@ -1,4 +1,3 @@
-import { runMigration457 } from './m457-neo-question-answers.ts';
 import { runMigration456 } from './m456-neo-todo-query-indexes.ts';
 import { runMigration447 } from './m447-neo-todo-removed-index.ts';
 import { runMigration445 } from './m445-job-queue-message-lookup-index.ts';
@@ -1117,7 +1116,6 @@ function createIndexes(db: BunDatabase): void {
   runMigration445(db);
   runMigration447(db);
   runMigration456(db);
-  runMigration457(db);
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
   );

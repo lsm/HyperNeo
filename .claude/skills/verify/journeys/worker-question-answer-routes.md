@@ -10,6 +10,14 @@ GitHub stub. It seeds a validated, assigned worker report through the existing
 storage helper, then reads `neo.question.get` through WebSocket RPC. Repeating
 the report must leave exactly one answerDelivery route in waiting state.
 
+Replace a worker card with a later manual question through `neo.question.ask`,
+keeping todoId and sourceSession on the manual card. Read it before and after
+restarting only the fixture daemon: its answerDelivery must remain empty while
+the todo retains its needs-human hold. Historical route recovery runs only
+behind the one-time migration marker; ordinary startup must not synthesize routes.
+`evidence/manual-restart.json` retains both RPC reads. Retire this fixture-only
+manual card and send a new validated worker report before continuing below.
+
 Answer the card through the real `neo.question.answer` RPC. The same read must
 show the human's immutable answer, button provenance and a pending delivery.
 The todo must retain its needs-human hold: this build slice stores the answer;
