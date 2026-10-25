@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from 'bun:test';
 import {
   createNeoWorkerQuestionWriter,
@@ -9,8 +12,8 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { runMigration457 } from '../../../../src/storage/schema/m457-neo-question-answers.ts';
 
-async function fixture() {
-  const db = new Database(':memory:');
+async function fixture(path = ':memory:') {
+  const db = new Database(path);
   runMigrations(db, () => {});
   createTables(db);
   const store = new NeoAskTodoRepository(db);
@@ -44,7 +47,7 @@ async function fixture() {
     store,
     sessions,
     () => 'en',
-    async () => source
+    async (ref) => ({ ...source, ...ref })
   );
   const report = {
     todoId: todo.id,
@@ -217,5 +220,109 @@ test('startup does not turn a later manual replacement into a worker report', as
     expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'waiting' }] });
   } finally {
     f.db.close();
+  }
+});
+
+test('a validated replacement worker receives the existing card answer route', async () => {
+  const f = await fixture();
+  try {
+    const replacement = { ...f.source, id: 'replacement' };
+    new NeoTodoSessionRepository(f.db).bind('todo', replacement, 3);
+    const reported = await f.write(replacement, f.report);
+    expect(reported).toMatchObject({ ok: true, question: { id: f.question.id } });
+    expect(await f.read()).toMatchObject({
+      answerDelivery: [{ sourceSession: replacement, state: 'waiting' }],
+    });
+    f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+    const [route] = f.store.questionAnswers.pending();
+    f.store.questionAnswers.accept(route.id, 'accepted-by-replacement', 5);
+    f.store.questionAnswers.bind(f.question.id, 'todo', f.source);
+    expect(await f.read()).toMatchObject({
+      answerDelivery: [
+        { sourceSession: replacement, receipt: 'accepted-by-replacement', acceptedAt: 5 },
+      ],
+    });
+  } finally {
+    f.db.close();
+  }
+});
+
+test('question reads stay coherent when a peer connection tries to answer between projections', async () => {
+  const run = mkdtempSync(join(tmpdir(), 'answer-read-race-'));
+  const f = await fixture(join(run, 'daemon.db'));
+  const peer = new Database(join(run, 'daemon.db'));
+  peer.exec('PRAGMA busy_timeout = 0');
+  const other = new NeoAskTodoRepository(peer);
+  const read = f.store.getQuestion.bind(f.store);
+  let attempted = false;
+  let deferred = false;
+  f.store.getQuestion = (id) => {
+    const question = read(id);
+    if (!attempted && id === f.question.id) {
+      attempted = true;
+      try {
+        other.answerQuestion(f.question, ['Staging'], 'button', 4);
+      } catch (error) {
+        if (!/busy|locked/i.test(String(error))) throw error;
+        deferred = true;
+      }
+    }
+    return question;
+  };
+  try {
+    expect(await f.read()).toMatchObject({
+      question: { state: 'open', answer: null },
+      answeredByHuman: false,
+      answerDelivery: [{ state: 'waiting', answer: null }],
+    });
+    f.store.getQuestion = read;
+    if (deferred) other.answerQuestion(f.question, ['Staging'], 'button', 4);
+    expect(await f.read()).toMatchObject({
+      question: { state: 'answered', answer: ['Staging'] },
+      answeredByHuman: true,
+      answerDelivery: [{ state: 'pending', answer: ['Staging'] }],
+    });
+  } finally {
+    peer.close();
+    f.db.close();
+    rmSync(run, { recursive: true, force: true });
+  }
+});
+
+test('competing delivery acknowledgements cannot replace an already accepted receipt', async () => {
+  const run = mkdtempSync(join(tmpdir(), 'answer-accept-race-'));
+  const f = await fixture(join(run, 'daemon.db'));
+  const peer = new Database(join(run, 'daemon.db'));
+  peer.exec('PRAGMA busy_timeout = 0');
+  const other = new NeoAskTodoRepository(peer);
+  try {
+    f.store.answerQuestion(f.question, ['Staging'], 'button', 3);
+    const answers = f.store.questionAnswers;
+    const [route] = answers.pending();
+    const pending = answers.pending.bind(answers);
+    let peerAccepted = false;
+    let deferred = false;
+    answers.pending = () => {
+      const routes = pending();
+      try {
+        peerAccepted = other.questionAnswers.accept(route.id, 'peer-receipt', 4);
+      } catch (error) {
+        if (!/busy|locked/i.test(String(error))) throw error;
+        deferred = true;
+      }
+      return routes;
+    };
+    const accepted = answers.accept(route.id, 'first-receipt', 5);
+    if (deferred) peerAccepted = other.questionAnswers.accept(route.id, 'peer-receipt', 6);
+    expect(Number(accepted) + Number(peerAccepted)).toBe(1);
+    expect(await f.read()).toMatchObject({
+      answerDelivery: [
+        { state: 'accepted', receipt: peerAccepted ? 'peer-receipt' : 'first-receipt' },
+      ],
+    });
+  } finally {
+    peer.close();
+    f.db.close();
+    rmSync(run, { recursive: true, force: true });
   }
 });

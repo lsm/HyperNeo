@@ -34,7 +34,7 @@ async function rpc(name: string, input: unknown) {
 try {
   await app.spaceRuntimeService.ready();
   const db = app.db.getDatabase();
-  for (const id of ['synthetic-neo', 'synthetic-worker'])
+  for (const id of ['synthetic-neo', 'synthetic-worker', 'synthetic-worker-b'])
     db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, ?, ?, '2026-10-25T00:00:00Z', '2026-10-25T00:00:00Z', 'active', '{}', '{}')`).run(id, id, join(run, 'workspace'));
   new NeoRepository(db).reserveBinding({ sessionId: 'synthetic-neo', projectId: null, kind: 'neo' });
   const store = new NeoAskTodoRepository(db);
@@ -70,6 +70,15 @@ try {
   reopenedStore.retireQuestion(reopenedStore.getQuestion(manual.question.id)!, 'Synthetic fixture complete', null, Date.now());
   const again = await createNeoWorkerQuestionWriter(reopenedStore, new NeoTodoSessionRepository(app.db.getDatabase()), () => 'zh-Hans', async () => source)(ref, report);
   assert(again.ok, JSON.stringify(again));
+  const replacementRef = { adapter: 'hyperneo', id: 'synthetic-worker-b' };
+  const rebound = await rpc('neo.todo.bind', { todoId: todo.id, ref: replacementRef });
+  assert.equal(rebound.ok, true, JSON.stringify(rebound));
+  const reportedAgain = await createNeoWorkerQuestionWriter(reopenedStore, new NeoTodoSessionRepository(app.db.getDatabase()), () => 'zh-Hans', async () => ({ ...source, ...replacementRef }))(replacementRef, report);
+  assert(reportedAgain.ok, JSON.stringify(reportedAgain));
+  assert.equal(reportedAgain.question.id, again.question.id);
+  const afterRebind = await rpc('neo.question.get', { questionId: again.question.id });
+  writeFileSync(join(run, 'evidence/rebind.json'), JSON.stringify({ afterRebind, expectedWorker: replacementRef.id }, null, 2));
+  assert.equal(afterRebind.answerDelivery[0].sourceSession.id, replacementRef.id, 'the existing card must route its answer to the validated replacement worker');
   first.question = again.question;
   const activeStore = reopenedStore;
   const routeId = (await rpc('neo.question.get', { questionId: first.question.id })).answerDelivery[0].id;
@@ -81,7 +90,7 @@ try {
   assert.equal(pending.answerDelivery[0].answeredBy, 'button');
   assert.equal(activeStore.getTodo(todo.id)?.blockedBy, 'needs-human');
   const text = `Answer to "${first.question.text}": ${report.options[0]}`;
-  const input = { to: ref.id, text, idempotencyKey: routeId };
+  const input = { to: replacementRef.id, text, idempotencyKey: routeId };
   const delivered = await rpc('message.send', input);
   assert.equal(delivered.kind, 'accepted');
   for (let i = 0; i < 5; i++) assert.deepEqual(await rpc('message.send', input), delivered);
