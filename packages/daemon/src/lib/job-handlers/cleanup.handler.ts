@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { jobEnqueueWrites } from '../../storage/repositories/job-enqueue-writes.ts';
 import type {
   Job,
   JobCleanup,
@@ -36,10 +38,13 @@ export function createCleanupHandler(
 
     const nextRunAt = now + NEXT_RUN_DELAY_MS;
 
-    const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 1 });
-    if (pending.length === 0) {
-      jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: nextRunAt });
-    }
+    await gatewayFor(jobQueue.db).call(jobEnqueueWrites, 'enqueueUniquePending', {
+      queue: JOB_QUEUE_CLEANUP,
+      payload: {},
+      runAt: nextRunAt,
+      matchPayload: {},
+      activeStatuses: ['pending'],
+    });
 
     return { deletedJobs, nextRunAt };
   };

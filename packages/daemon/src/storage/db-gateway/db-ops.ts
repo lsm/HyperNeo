@@ -1,3 +1,4 @@
+import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
 import {
   neoTodoSessionReads,
   neoTodoSessionWrites,
@@ -102,5 +103,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     recordNeoSessionMessage,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
+    jobEnqueueWrites,
   ].map((op) => [op.name, op])
 );
