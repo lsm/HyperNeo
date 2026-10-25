@@ -306,19 +306,33 @@ describe('Neo preview Work layout', () => {
     expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'File a' }));
   });
 
-  it('keeps empty Work meaningful and falls back to a single preview below 720px', async () => {
-    viewport = 900;
-    const { container } = mount(true);
-    await open('a');
-    fireEvent.click(screen.getByRole('tab', { name: 'Your work · 0' }));
-    expect(screen.getByText('No work yet.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
-    resize(719);
-    await waitFor(() => expect(screen.queryByRole('tablist')).toBeNull());
-    expect(container.querySelector('.neo-preview-focus')).toBeNull();
-    await screen.findByRole('heading', { name: 'Document a' });
-    resize(720);
-    await screen.findByRole('tab', { name: 'Your work · 0' });
-    expect(container.querySelector('.neo-preview-focus')).toBeTruthy();
-  });
+  it.each([false, true])(
+    'keeps a mobile surface visible when crossing 720px with Work selected=%s',
+    async (work) => {
+      viewport = 900;
+      const { container } = mount(true);
+      const draft = screen.getByRole('textbox', { name: 'Draft' });
+      draft.focus();
+      await open('a');
+      const oldFocus = vi.spyOn(draft, 'focus');
+      fireEvent.click(screen.getByRole('tab', { name: 'Your work · 0' }));
+      expect(screen.getByText('No work yet.')).toBeTruthy();
+      if (!work) fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
+      resize(719);
+      await waitFor(() => expect(screen.queryByRole('tablist')).toBeNull());
+      expect(container.querySelector('.neo-preview-focus')).toBeNull();
+      expect(oldFocus).not.toHaveBeenCalled();
+      if (work) {
+        expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
+        expect(artifactPreviewWorkspace.state.value.open).toBe(false);
+        fireEvent.click(screen.getByRole('button', { name: 'Close work list' }));
+        expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
+        return;
+      }
+      await screen.findByRole('heading', { name: 'Document a' });
+      resize(720);
+      await screen.findByRole('tab', { name: 'Your work · 0' });
+      expect(container.querySelector('.neo-preview-focus')).toBeTruthy();
+    }
+  );
 });

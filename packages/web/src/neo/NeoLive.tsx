@@ -43,6 +43,8 @@ import { ArtifactPreviewPanel } from '../components/artifacts/ArtifactPreviewPan
 import {
   artifactPreviewStack,
   artifactPreviewWorkspace,
+  closeArtifactPreview,
+  takeArtifactPreviewOpener,
   type ArtifactPreviewTarget,
 } from '../lib/artifact-preview-store.ts';
 import { artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
@@ -228,6 +230,15 @@ export function NeoLive() {
     const selectScroll = () => {
       const desktop = window.matchMedia('(min-width: 1120px)').matches;
       const previewWidth = window.matchMedia('(min-width: 720px)').matches;
+      if (
+        !previewWidth &&
+        artifactPreviewWorkspace.state.value.open &&
+        !artifactPreviewStack.value.length
+      ) {
+        takeArtifactPreviewOpener();
+        setScenesOpenState(true);
+        closeArtifactPreview();
+      }
       setNarrow(!desktop);
       setPreviewDesktop(previewWidth);
       setRoomy(window.matchMedia('(min-width: 1440px)').matches);
