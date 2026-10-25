@@ -103,3 +103,16 @@ test('a malformed baseline cannot disable the guard', () => {
   expect(result.output).toContain('Invalid DB main-thread baseline');
   expect(result.code).toBe(1);
 });
+
+test('the CLI fixtures work when invoked from the daemon package', () => {
+  const f = fixture();
+  const original = process.cwd();
+  try {
+    process.chdir(join(import.meta.dir, '../packages/daemon'));
+    const result = f.run();
+    expect(result.output).toContain('prepare: 1 (baseline 1)');
+    expect(result.code).toBe(0);
+  } finally {
+    process.chdir(original);
+  }
+});
