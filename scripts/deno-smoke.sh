@@ -387,4 +387,10 @@ env -i HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CLEANUP_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-cleanup-enqueue.ts" "$CLEANUP_ENQUEUE_RUN"
 
+MAILBOX_ADMISSION_RUN="$WORK_DIR/mailbox-admission"
+mkdir -p "$MAILBOX_ADMISSION_RUN/home"
+env -i HOME="$MAILBOX_ADMISSION_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$MAILBOX_ADMISSION_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-mailbox-admission.ts" "$MAILBOX_ADMISSION_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
