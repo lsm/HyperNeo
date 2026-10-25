@@ -8,6 +8,7 @@ directory if the host default is unavailable.
 ```bash
 bun run check:db-main-thread
 bun run test:db-main-thread
+(cd packages/daemon && bun test ../../scripts/check-db-main-thread.test.ts)
 ```
 
 The first command must exit zero and print each current count and ceiling. The
@@ -15,6 +16,8 @@ second invokes that same CLI in disposable Git repositories: adding two prepares
 prints `prepare: 3 > baseline 1` and exits one; unchanged source passes; increasing
 the baseline fails even without new source calls; removing calls permits lowering
 it. Equivalent sync entrypoints and invalid comparison refs must also fail.
+The daemon-package invocation must also pass: fixtures locate the CLI relative
+to their test file, independent of the caller's working directory.
 
 For a full-source proof, add a disposable `.ts` file beneath
 `packages/daemon/src` containing `db.prepare('SELECT 1');`, run

@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -31,7 +31,7 @@ function fixture() {
   git('commit', '-qm', 'baseline');
   const run = (ref = 'HEAD') => {
     const result = Bun.spawnSync(
-      [process.execPath, resolve('scripts/check-db-main-thread.ts'), root, ref],
+      [process.execPath, join(import.meta.dir, 'check-db-main-thread.ts'), root, ref],
       { stdout: 'pipe', stderr: 'pipe' }
     );
     return { code: result.exitCode, output: result.stdout.toString() + result.stderr.toString() };
