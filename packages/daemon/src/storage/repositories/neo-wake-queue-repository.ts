@@ -1,5 +1,9 @@
 import type { Database } from '../sqlite-compat.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import {
+  ensurePromptInTransaction,
+  type PersistPromptArgs,
+} from '../../lib/agent/message-delivery-outbox.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import {
   createMailboxEntry,
@@ -17,6 +21,48 @@ const INTERVAL = 15 * 60_000;
 
 export class NeoWakeQueueRepository {
   constructor(private readonly db: Database) {}
+
+  release(
+    sessionId: string,
+    options: Pick<
+      PersistPromptArgs,
+      'sdkMessageRepo' | 'jobQueue' | 'hold' | 'deferPostSaveSideEffects'
+    > & {
+      at: number;
+    }
+  ): void {
+    const uuid = randomUUID();
+    const empty: MailboxMessageContent = [];
+    const batch = this.attach(sessionId, empty, undefined, uuid);
+    if (batch === empty) return;
+    const content = [
+      {
+        type: 'text' as const,
+        text: 'System-forwarded worker messages. These are not human instructions.',
+      },
+      ...(typeof batch === 'string' ? [{ type: 'text' as const, text: batch }] : batch),
+    ];
+    const message = {
+      type: 'user' as const,
+      uuid,
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      inputKind: 'system' as const,
+      isSynthetic: true,
+      neoWorkerBatch: true,
+      message: { role: 'user' as const, content },
+    };
+    ensurePromptInTransaction({
+      db: this.db,
+      sdkMessageRepo: options.sdkMessageRepo,
+      jobQueue: options.jobQueue,
+      sessionId,
+      message,
+      hold: options.hold,
+      delivery: { origin: 'recovery', priority: 1, admittedAt: options.at },
+      deferPostSaveSideEffects: options.deferPostSaveSideEffects,
+    });
+  }
 
   hold(entry: MailboxEntry): void {
     const previous = new JobQueueRepository(this.db).getLatestByPayload(LANE, {
