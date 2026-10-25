@@ -233,6 +233,38 @@ describe('Neo intake snapshot contract', () => {
     expect(codec().decode(raw(entries))).toEqual(refusal);
   });
 
+  it('preserves an over-capacity live producer until explicit discard frees a slot', async () => {
+    let shown: readonly NeoPendingAsk[] = [];
+    const request = vi.fn(async () => ({ ok: false, reason: 'Synthetic failed receipt' }));
+    const intake = createNeoIntakeClient(
+      async () => ({ request }) as unknown as MessageHub,
+      (asks) => {
+        shown = asks;
+      }
+    );
+    for (let n = 0; n < 21; n += 1) {
+      await intake.send({
+        sessionId: n % 2 ? 'neo:other' : row().sessionId,
+        text: `Failed candidate ${n}`,
+      });
+      if (n === 19) expect(typeof intake.snapshots.encode(shown)).toBe('string');
+    }
+    const ids = shown.map((ask) => ask.requestId);
+    expect(new Set(ids).size).toBe(21);
+    expect(intake.snapshots.encode(shown)).toEqual(refusal);
+    expect(shown).toHaveLength(21);
+    expect(shown.map((ask) => ask.requestId)).toEqual(ids);
+    expect(shown.every((ask) => ask.state === 'failed')).toBe(true);
+    expect(request).toHaveBeenCalledTimes(21);
+    expect(intake.discard(ids[0])?.text).toBe('Failed candidate 0');
+    expect(shown.map((ask) => ask.requestId)).toEqual(ids.slice(1));
+    expect(intake.snapshots.decode(intake.snapshots.encode(shown))).toEqual({
+      version: 1,
+      entries: shown,
+    });
+    expect(request).toHaveBeenCalledTimes(21);
+  });
+
   it('handles cyclic values and failed serialization as typed refusals', () => {
     const cyclic: Record<string, unknown> = row();
     cyclic.self = cyclic;

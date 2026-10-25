@@ -141,3 +141,19 @@ Both pending records must roundtrip exactly and manually replay with created=fal
 one SDK message/job each. Snapshot free-form text uses the existing16MiB aggregate
 JSON budget; the100,000-character unsent editor bound must not reject already
 composed attachment bodies or quoted ask text. No live send limit is changed.
+
+Capacity activation is owned by the existing createNeoIntakeClient resource in
+the later storage/admission rung, tracked by #8839. The Build codec does not cap
+the current in-memory shown map: a characterization creates21 real failed intake
+entries across sessions, verifies whole-batch refusal with all IDs retained and
+no codec-triggered RPC, then explicitly discards one to roundtrip the remaining20.
+This is not evidence of an activated21st-send transport gate.
+
+Before enabling durable recovery, the resource must encode and persist its full
+candidate set before transport. A capacity/size/validation/storage refusal must
+preserve known entries and the last good stored snapshot and prevent that candidate
+from dispatching. No UI/caller slicing, FIFO eviction, hidden cross-session pruning,
+empty recovery fallback or replacement ID. Pre-existing overflow stays visible;
+only explicit durable discard or authoritative ledger settlement may free a slot.
+The activation rung must add failing-before-fix tests for the transport/storage
+gate and failed-write/removal recovery before it is wired into the application.
