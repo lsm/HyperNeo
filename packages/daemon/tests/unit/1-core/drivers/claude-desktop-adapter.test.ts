@@ -1,5 +1,3 @@
-import { prepareWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
-import { existsSync } from 'node:fs';
 import { requireClaudeReplyDestination } from '../../../../src/lib/drivers/claude-inbox-submit';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -519,22 +517,12 @@ describe('claude-desktop adapter against the app session records', () => {
 
   test('archives only the selected session and preserves its full app record', async () => {
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
-    const root = join(dir, 'prepared');
-    mkdirSync(join(root, '.git'), { recursive: true });
-    const env = await prepareWorkerSandbox(root);
-    const before = {
-      ...JSON.parse(readFileSync(path, 'utf8')),
-      cwd: root,
-      appMetadata: { keep: true },
-    };
+    const before = { ...JSON.parse(readFileSync(path, 'utf8')), appMetadata: { keep: true } };
     writeFileSync(path, JSON.stringify(before));
     const driver = adapter([]);
     const ref = { adapter: driver.id, id: 'local_a1' };
     expect(await driver.archive!(ref, () => null)).toEqual({ ok: true, value: { archived: true } });
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ ...before, isArchived: true });
-    expect(existsSync(env.TMPDIR)).toBe(false);
-    expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
-    expect(existsSync(root)).toBe(true);
     expect(await driver.archive!(ref, () => null)).toEqual({
       ok: true,
       value: { archived: false },

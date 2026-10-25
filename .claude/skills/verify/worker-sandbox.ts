@@ -1,3 +1,4 @@
+import { releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
@@ -89,6 +90,20 @@ try {
   const proof = spawnSync('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, worker], { encoding: 'utf8', timeout: 120000 });
   evidence.push({ stdout: proof.stdout, stderr: proof.stderr, status: proof.status });
   assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+  const originalPolicy = JSON.parse(readFileSync(join(worker, '.claude/settings.local.json'), 'utf8'));
+  const runtime = join(originalPolicy.env.TMPDIR, '..');
+  await releaseWorkerSandbox(worker);
+  const next = await rpc('work.start', { ...request, title: 'Sibling after runtime release' }) as Result<WorkStarted>;
+  assert(next.ok, JSON.stringify(next));
+  assert(!existsSync(runtime), 'Sibling start must not resurrect a released runtime');
+  writeFileSync(runtime, 'synthetic unusable runtime');
+  const another = await rpc('work.start', { ...request, title: 'Sibling with unrelated unusable runtime' }) as Result<WorkStarted>;
+  assert(another.ok, JSON.stringify(another));
+  const preserved = JSON.parse(readFileSync(join(worker, '.claude/settings.local.json'), 'utf8'));
+  assert.deepEqual(preserved.env, originalPolicy.env);
+  assert.deepEqual(preserved.sandbox, originalPolicy.sandbox);
+  await releaseWorkerSandbox(worker);
+  writeFileSync(join(run, 'evidence/sibling-runtime.json'), JSON.stringify({ releasedRuntimeNotResurrected: true, unusableSiblingRuntimeIgnored: true, existingEnvAndSandboxPreserved: true }, null, 2));
   const codexWorker = join(run, 'codex-worker');
   git(run, 'clone', '--no-hardlinks', remote, codexWorker);
   const codex = createCodexDesktopAdapter({
@@ -168,12 +183,6 @@ try {
   writeFileSync(join(run, 'sdk-finish'), 'done');
   await new Promise<void>(resolve => sdkModel!.once('exit', () => resolve()));
   sdkModel = undefined;
-  const archived = await rpc('rpc:session.archive', { sessionId: sdk.value.ref.id, confirmed: true });
-  assert.equal(app.db.getSession(sdk.value.ref.id)?.status, 'archived');
-  assert(!existsSync(sdkSettings.env.TMPDIR), 'Archive must release private temp root');
-  assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'Archive must release private cache root');
-  assert(existsSync(sdkWorker), 'Archive must preserve the private clone');
-  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, tempReleased: true, cacheReleased: true, cloneRetained: true }, null, 2));
   console.log(`PASS Codex Desktop, Claude Desktop and real HyperNeo SDK outside refusal + inside/Git/temp/cache/network: ${run}/evidence`);
 
 

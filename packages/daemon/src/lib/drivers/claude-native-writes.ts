@@ -71,13 +71,12 @@ async function install(root: string, roots: string[]) {
   await appendFile(join(root, '.git/info/exclude'), '\n/.claude/settings.local.json\n');
   await writeFile(markerPath(root), JSON.stringify({ roots }), { flag: 'wx', mode: 0o600 });
   for (const worker of workers) {
-    await prepareWorkerSandbox(worker.root);
     if (!(await lstat(join(worker.root, '.claude'))).isDirectory())
       throw new Error('Native write policy requires an in-clone .claude directory');
     const temporary = `${settingsPath(worker.root)}.hyperneo-tmp`;
-    await writeFile(temporary, JSON.stringify(policy(worker.root, worker.roots, siblings)), {
-      mode: 0o600,
-    });
+    const existing = JSON.parse(await readFile(settingsPath(worker.root), 'utf8'));
+    const permissions = policy(worker.root, worker.roots, siblings).permissions;
+    await writeFile(temporary, JSON.stringify({ ...existing, permissions }), { mode: 0o600 });
     await rename(temporary, settingsPath(worker.root));
   }
 }

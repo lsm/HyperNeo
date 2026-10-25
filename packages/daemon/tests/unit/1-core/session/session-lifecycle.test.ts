@@ -1,10 +1,3 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import {
-  prepareWorkerSandbox,
-  releaseWorkerSandbox,
-} from '../../../../src/lib/drivers/worker-sandbox';
 import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
@@ -1116,31 +1109,6 @@ describe('SessionLifecycle', () => {
       );
     });
   });
-
-  it.each(['archive', 'delete'] as const)(
-    'releases prepared-worker runtime roots on %s',
-    async (action) => {
-      const root = mkdtempSync(join(tmpdir(), 'worker-lifecycle-'));
-      mkdirSync(join(root, '.git'));
-      const env = await prepareWorkerSandbox(root);
-      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
-        id: 'owned-worker',
-        workspacePath: root,
-        metadata: {},
-      });
-      try {
-        if (action === 'archive')
-          await lifecycle.archiveResources('owned-worker', 'ui_session_archive');
-        else await lifecycle.deleteResources('owned-worker', 'ui_session_delete');
-        expect(existsSync(env.TMPDIR)).toBe(false);
-        expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
-        expect(existsSync(root)).toBe(true);
-      } finally {
-        await releaseWorkerSandbox(root);
-        rmSync(root, { recursive: true, force: true });
-      }
-    }
-  );
 
   describe('deleteResources (UI-only: session.delete)', () => {
     it('should delete session from database', async () => {

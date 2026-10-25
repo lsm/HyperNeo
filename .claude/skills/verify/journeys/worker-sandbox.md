@@ -40,8 +40,9 @@ HTTP proxy. This proves HTTP network access, not real GitHub push/authentication
 Claude allows HTTP(S) hosts explicitly but grants no SSH-agent/Unix sockets; HTTPS
 repository-token remotes are the supported path. SSH push is not verified.
 
-Focused tests remove runtime roots before creating a sibling and before resuming
-a Claude worker or building SDK options; each path must recreate the private dirs.
+Focused tests remove runtime roots before resuming a Claude worker or building SDK options; those paths must recreate
+their own private dirs. Creating a sibling must preserve existing env/sandbox
+configuration and must never prepare that sibling's released or unusable runtime.
 Codex sends re-ensure only clones carrying the prepared-worker marker.
 
 Commit `ab59e77f7d` contains the failing reproduction before enforcement: real
@@ -52,7 +53,7 @@ and Desktop UI behavior are not proven here. Codex `workspaceWrite` exposes no
 per-path read deny; secret-read isolation is tracked separately in #8630.
 Copy evidence to a persistent location before deleting the synthetic run/worktree.
 
-## Policy self-protection, report publication and lifecycle cleanup
+## Policy self-protection and report publication
 
 The Bash probes also attempt to unlink `.git/hyperneo-native-writes.json`,
 `.git/hyperneo-worker-sandbox` and `.claude/settings.local.json`. Both Claude
@@ -68,12 +69,21 @@ The SDK Bash turn writes `sandbox-report.txt` in its actual
 report. This proves the exported draft path matches the daemon reader and is
 writable without granting the surrounding data directory.
 
-Finally, the real isolated `session.archive` RPC must remove the SDK worker's
-private temp/cache dirs and retain its clone. `runtime-cleanup.json` records that
-result. Focused adapter tests verify the same release for both Desktop archives;
-SDK lifecycle tests cover archive and delete, including uncached sessions.
-
 Failing reproductions for review run 9434 were committed first in `04bebfb404`:
 real Bash deleted its policy, report env pointed at the wrong directory, and
 archive/delete retained runtime roots. No production clone-placement change is
 part of this fix; the policy always takes its root from the prepared directory.
+
+## Sibling runtime independence (review 9444)
+
+The actual daemon proof releases the first worker's synthetic runtime, starts a
+sibling through `work.start`, and requires the released root to stay absent. It
+then puts an unusable regular file at that same owned runtime path; another
+sibling start must still succeed. `sibling-runtime.json` records both results
+and preservation of the original worker's env/sandbox. Native file permission
+denies still refresh to include the new siblings. Unit regressions were committed
+first in `c8ed6ebffe` and fail on the reviewed head.
+
+Successful archive/delete runtime release is verified in the stacked lifecycle
+follow-up, not in #8632. Failure cleanup and own-session runtime recreation remain
+part of this core journey. The final stacked PR closes #8627 after both merge.
