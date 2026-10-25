@@ -130,7 +130,11 @@ function target(
           path: checked.value.relativePath,
         };
   }
-  const commit = binding.revision.kind === 'commit' && !candidate.path.startsWith('/');
+  if (candidate.path.startsWith('~') && !candidate.path.startsWith('~/')) return refuse();
+  const path = candidate.path.startsWith('~/')
+    ? `${deps.home}/${candidate.path.slice(2)}`
+    : candidate.path;
+  const commit = binding.revision.kind === 'commit' && !path.startsWith('/');
   if (commit && !repository) return refuse('ambiguous_context');
   if (binding.revision.kind === 'commit' && !immutable(binding.revision.sha)) return refuse();
   if (
@@ -141,7 +145,7 @@ function target(
     return refuse();
   const checked = resolveArtifactSource(
     commit ? { ...binding, workspacePath: '/repository', approvedEvidenceRoots: [] } : binding,
-    candidate.path,
+    path,
     { ...deps, loadBinding: () => binding }
   );
   if ('reason' in checked) return checked.reason;

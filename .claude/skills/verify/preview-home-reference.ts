@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, realpathSync, renameSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  realpathSync,
+  renameSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
@@ -15,12 +22,15 @@ const home = join(root, 'home');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, home);
 mkdirSync(join(root, 'tmp'), { recursive: true });
-const child = Bun.spawn([
-  process.execPath,
-  fileURLToPath(new URL('./preview-register.ts', import.meta.url)),
-  root,
-  'seed',
-], { env: { ...process.env, TMPDIR: join(root, 'tmp') }, stdout: 'pipe', stderr: 'inherit' });
+const child = Bun.spawn(
+  [
+    process.execPath,
+    fileURLToPath(new URL('./preview-register.ts', import.meta.url)),
+    root,
+    'seed',
+  ],
+  { env: { ...process.env, TMPDIR: join(root, 'tmp') }, stdout: 'pipe', stderr: 'inherit' }
+);
 const seeded = await new Response(child.stdout).text();
 assert.equal(await child.exited, 0, seeded);
 const workspace = join(home, 'HyperNeo');
@@ -49,8 +59,9 @@ try {
     ['~other/report.html', 'unavailable'],
     ['~', 'unavailable'],
     ['~/outside.html', 'outside_roots'],
-    ['~/HyperNeo/../outside.html', 'unavailable'],
-    ['~/HyperNeo/%2e%2e/outside.html', 'unavailable'],
+    ['~/HyperNeo/../outside.html', 'unsafe_path'],
+    ['~/HyperNeo/引用配色/../引用配色/quote-colour-options.html', 'unsafe_path'],
+    ['~/HyperNeo/%2e%2e/outside.html', 'unsafe_path'],
     ['~/HyperNeo/linked.html', 'unavailable'],
     ['~/HyperNeo/.ssh/secret.html', 'sensitive_path'],
     ['~/HyperNeo/binary.html', 'unsupported_type'],
@@ -58,13 +69,19 @@ try {
   ];
   const publicationId = randomUUID();
   const origin = { sessionId: 'neo', messageId: 'm' };
-  assert(new NeoPublicationRepository(db).append({
-    conversationId: randomUUID(), publicationId,
-    producerInput: origin, askOrigin: origin,
-    shortText: `Read \`${reference}\``,
-    fullText: [absolute, ...denied.map(([path]) => path)].map((path) => `\`${path}\``).join('\n\n'),
-    links: [],
-  }).accepted);
+  assert(
+    new NeoPublicationRepository(db).append({
+      conversationId: randomUUID(),
+      publicationId,
+      producerInput: origin,
+      askOrigin: origin,
+      shortText: `Read \`${reference}\``,
+      fullText: [absolute, ...denied.map(([path]) => path)]
+        .map((path) => `\`${path}\``)
+        .join('\n\n'),
+      links: [],
+    }).accepted
+  );
   const registry = createOperationRegistry([
     createArtifactReferenceResolve(() => db, data, home),
     ...createArtifactReadOperations(() => db, data),
@@ -73,26 +90,45 @@ try {
   async function call(name: string, input: unknown) {
     const result = await invokeOperation(registry, name, input, human);
     assert.equal(result.kind, 'completed', JSON.stringify(result));
-    return (result as { kind: 'completed'; value: {
-      accepted: boolean; reason?: string; artifact: { artifactId: string };
-      data: string; metadata: { sha256: string };
-    } }).value;
+    return (
+      result as {
+        kind: 'completed';
+        value: {
+          accepted: boolean;
+          reason?: string;
+          artifact: { artifactId: string };
+          data: string;
+          document: string;
+          metadata: { sha256: string };
+        };
+      }
+    ).value;
   }
-  const tap = (path: string) => call('artifact.reference.resolve', {
-    sourceMessageOrCard: { kind: 'publication', id: publicationId },
-    reference: path, requestId: randomUUID(),
-  });
-  const count = () => (db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n;
+  const tap = (path: string) =>
+    call('artifact.reference.resolve', {
+      sourceMessageOrCard: { kind: 'publication', id: publicationId },
+      reference: path,
+      requestId: randomUUID(),
+    });
+  const count = () =>
+    (db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n;
   assert.equal(count(), 0);
   const receipt = await tap(reference);
   assert.equal(receipt.accepted, true, JSON.stringify(receipt));
   assert.equal(count(), 1);
   const id = { artifactId: receipt.artifact.artifactId };
   assert.equal(Buffer.from((await call('artifact.file.read', id)).data, 'base64').toString(), html);
+  const preview = await call('artifact.file.html', id);
+  assert(preview.accepted);
+  assert(preview.document.includes(html));
   const absoluteReceipt = await tap(absolute);
   assert(absoluteReceipt.accepted);
   const metadata = (await call('artifact.file.get', id)).metadata;
-  assert.equal((await call('artifact.file.get', { artifactId: absoluteReceipt.artifact.artifactId })).metadata.sha256, metadata.sha256);
+  assert.equal(
+    (await call('artifact.file.get', { artifactId: absoluteReceipt.artifact.artifactId })).metadata
+      .sha256,
+    metadata.sha256
+  );
   for (const [path, reason] of denied) {
     const before = count();
     assert.equal((await tap(path)).reason, reason, path);
@@ -101,9 +137,15 @@ try {
   assert.equal((await tap('~/HyperNeo/not-in-message.html')).reason, 'unavailable');
   db.prepare('UPDATE neo_asks SET session_id = ? WHERE id = ?').run('replacement', 'ask');
   assert.equal((await tap(reference)).reason, 'unavailable');
-  assert.equal((await call('artifact.file.read', id)).reason, 'unavailable');
-  const evidence = { passed: true, unregisteredHtmlContent: html, sameAbsoluteSnapshot: true,
-    denials: denied.map(([path, reason]) => ({ path, reason })), sourceBound: true, ownershipRechecked: true };
+  const evidence = {
+    passed: true,
+    unregisteredHtmlContent: html,
+    previewDocumentServed: true,
+    sameAbsoluteSnapshot: true,
+    denials: denied.map(([path, reason]) => ({ path, reason })),
+    sourceBound: true,
+    ownershipRechecked: true,
+  };
   mkdirSync(join(root, 'evidence'), { recursive: true });
   writeFileSync(join(root, 'evidence', 'home-reference.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
