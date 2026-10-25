@@ -48,7 +48,7 @@ export interface NeoTodoPack {
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   openedPrs?(todo: NeoTodo, urls: readonly string[]): Promise<void>;
   repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
-  waiting?(todo: NeoTodo): boolean;
+  waiting?(todo: NeoTodo): boolean | Promise<boolean>;
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(

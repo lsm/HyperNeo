@@ -462,15 +462,15 @@ describe('planCodingTodoClaims', () => {
   });
 });
 
-describe('coding todo pack waiting', () => {
-  test('a todo with an open PR of its own is waiting on that PR, not idle', () => {
+describe('coding todo pack waiting', async () => {
+  test('a todo with an open PR of its own is waiting on that PR, not idle', async () => {
     const { db, pack, repo, todo } = setup(async () => []);
     const row = todo({ pack: 'coding', kind: 'pr_merged', params: {} });
-    expect(pack.waiting!(row)).toBe(false);
+    expect(await pack.waiting!(row)).toBe(false);
     repo.record(row.id, [pr(1, 'OPEN')], 2);
-    expect(pack.waiting!(row)).toBe(true);
+    expect(await pack.waiting!(row)).toBe(true);
     repo.record(row.id, [pr(1, 'MERGED')], 3);
-    expect(pack.waiting!(row)).toBe(false);
+    expect(await pack.waiting!(row)).toBe(false);
     db.close();
   });
   test('a todo whose reported PRs merged still waits on a later PR its branch opened, even when a retry claims it too', async () => {
@@ -489,11 +489,11 @@ describe('coding todo pack waiting', () => {
     await pack.openedPrs!(row, [pr(3, 'OPEN').url]);
     await pack.openedPrs!(todo(null), [pr(3, 'OPEN').url]);
     await pack.check(row);
-    expect(pack.waiting!(row)).toBe(true);
+    expect(await pack.waiting!(row)).toBe(true);
     expect(pack.statusLine(row)?.status).toContain('#3 open');
     later = 'MERGED';
     await pack.check(row);
-    expect(pack.waiting!(row)).toBe(false);
+    expect(await pack.waiting!(row)).toBe(false);
     db.close();
   });
 });

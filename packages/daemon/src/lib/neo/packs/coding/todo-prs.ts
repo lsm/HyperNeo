@@ -127,6 +127,14 @@ export class CodingTodoPrRepository {
     return row ? (JSON.parse(row.prs) as NeoWorkPr[]) : [];
   }
 
+  isWaiting(todoId: string): boolean {
+    return this.prs(todoId).some((pr) => pr.state === 'OPEN');
+  }
+
+  readWaiting(todoId: string): Promise<boolean> {
+    return gatewayFor(this.db).call(codingTodoPrReads, 'isWaiting', todoId);
+  }
+
   prsForTodos(ids: readonly string[]): Map<string, NeoWorkPr[]> {
     const rows = this.db
       .prepare(
@@ -557,7 +565,7 @@ export function createCodingTodoPack(
       return checked(todo, facts);
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
-    waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),
+    waiting: (todo) => repo.readWaiting(todo.id),
     doneWhen: codingTodoDoneWhen,
     addUrls: (todo, urls) =>
       todo.check?.kind === 'pr_merged'
@@ -609,5 +617,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['window']
+  ['window', 'isWaiting']
 );
