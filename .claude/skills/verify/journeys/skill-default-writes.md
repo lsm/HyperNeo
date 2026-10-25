@@ -1,0 +1,29 @@
+# Skill default writers (Tools 6d.3c)
+
+Use shared in-process setup in SKILL.md with
+`PROOF=.claude/skills/verify/skill-default-writes.ts`. No fixed HTTP port,
+provider registration or GUI is required. The helper owns a fresh file-backed
+daemon, two boots and sockets. Its one synthetic GitHub download is intercepted
+in process; it does not fetch skill files from the network.
+
+Before wiring, skill.create succeeds but its canonical default is absent. Preserve
+that failing reproduction. With wiring, require evidence/skill-default-writes.json
+pass=true, skillCrudAndIntent, rollbackBeforeEnqueueOrNotice,
+syntheticInstallAndIdempotence, frozenSessionPreserved and restartRetainedDefaults:
+
+- Real skill create/update/enable/delete RPCs change catalog and global/Space
+  defaults together. Inspect the synthetic DB alongside RPC replies.
+- Inject a later Space write failure. The catalog row and global defaults roll
+  back, with no validation job or skills.changed success notice.
+- Install a synthetic SKILL.md, read the saved file, repeat the RPC and require
+  the same ID without a second fetch. Invalid config still fails admission.
+- Cold session.get preserves its frozen choices and native Read preset. The
+  inventory remains not_running. Restart only the owned daemon and confirm the
+  same defaults and frozen session.
+
+Run skills-manager, skill handlers/validation, skill-default-writes, MCP defaults
+and tool-default-transition unit suites. Cover wrapper-to-server intent, config
+and pending validation rollback, validation commit failures and built-in deletion
+admission. SDK/UI consumers and import reconciliation remain later slices;
+sdkConsumerWired, sdkApplyVerified and queryStarted stay false. No attachment or
+Use here UI proof is claimed. All owned resources close in finally.
