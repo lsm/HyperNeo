@@ -1,4 +1,4 @@
-import { DRAFT_CHAR_LIMIT, type MessageImage } from '@hyperneo/shared';
+import type { MessageImage } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoPendingAsk, NeoQuote, neoDraftThumbnails } from './neo-intake.ts';
 import { readNeoPreviewReference } from './neo-preview-context.ts';
@@ -53,7 +53,7 @@ function quote(value: unknown): value is NeoQuote {
   return (
     shape(value, 'author,text,anchor,replyTo') &&
     (value.author === 'You' || value.author === 'Neo') &&
-    text(value.text, DRAFT_CHAR_LIMIT) &&
+    text(value.text, MAX_JSON) &&
     text(value.anchor, 2048, true) &&
     (value.replyTo === undefined || reply(value.replyTo))
   );
@@ -92,7 +92,7 @@ function entry(value: unknown): value is Entry {
     text(value.sessionId, 200, true) &&
     value.sessionId.startsWith('neo:') &&
     value.sessionId.length > 4 &&
-    text(value.text, DRAFT_CHAR_LIMIT) &&
+    text(value.text, MAX_JSON) &&
     Array.isArray(value.images) &&
     value.images.length <= 6 &&
     value.images.every(image) &&
@@ -106,7 +106,7 @@ function entry(value: unknown): value is Entry {
     new Date(value.createdAt).toISOString() === value.createdAt &&
     typeof value.state === 'string' &&
     ['sending', 'accepted', 'failed'].includes(value.state) &&
-    (value.reason === undefined || text(value.reason, DRAFT_CHAR_LIMIT)) &&
+    (value.reason === undefined || text(value.reason, MAX_JSON)) &&
     (value.thumbnails === undefined ||
       (Array.isArray(value.thumbnails) &&
         value.thumbnails.length <= value.images.length &&

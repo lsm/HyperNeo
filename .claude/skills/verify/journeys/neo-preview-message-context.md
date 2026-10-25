@@ -132,3 +132,12 @@ effects; reject a corrupt batch as one typed refusal rather than an empty recove
 Prepared thumbnail bytes, exact original timestamps/states and absent legacy
 context roundtrip. This is the Build contract only; storage, map hydration and
 application recovery activation remain subsequent #8707 children.
+
+Require `intakeSnapshotInlineTextAttachments` and `intakeSnapshotLongQuote` too.
+Read two valid text files through readNeoAttachment, compose them with the actual
+attachmentMessage formatter and send the resulting body above100,000 characters
+through the actual intake/RPC door. Quote that accepted ask with its full text.
+Both pending records must roundtrip exactly and manually replay with created=false,
+one SDK message/job each. Snapshot free-form text uses the existing16MiB aggregate
+JSON budget; the100,000-character unsent editor bound must not reject already
+composed attachment bodies or quoted ask text. No live send limit is changed.

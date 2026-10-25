@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DRAFT_CHAR_LIMIT } from '@hyperneo/shared';
-import { createNeoIntakeClient } from '../neo-intake.ts';
+import type { MessageHub } from '@hyperneo/shared';
+import { createNeoIntakeClient, type NeoPendingAsk } from '../neo-intake.ts';
+import { attachmentMessage, readNeoAttachment } from '../neo-attachments.ts';
+import { publicAskText } from '../NeoPublicConversation.tsx';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const codec = () =>
@@ -38,6 +41,58 @@ const raw = (entries: unknown[]) => JSON.stringify({ version: 1, entries });
 const refusal = { kind: 'invalid_snapshot' };
 
 describe('Neo intake snapshot contract', () => {
+  it.each([
+    ['text', 2, 'a'],
+    ['text', 6, 'a'],
+    ['quote', 2, 'a'],
+    ['quote', 6, 'a'],
+    ['text', 6, '`'],
+  ] as const)(
+    'roundtrips composed text attachments in %s with %i files and %j content',
+    async (field, count, character) => {
+      const files = await Promise.all(
+        Array.from({ length: count }, (_, n) =>
+          readNeoAttachment(
+            new File([character.repeat(128 * 1024)], `notes-${n}.md`, {
+              type: 'text/markdown',
+            })
+          )
+        )
+      );
+      const attachments = files.flatMap((file) => (typeof file === 'string' ? [] : [file]));
+      expect(attachments).toHaveLength(count);
+      const composed = attachmentMessage('x'.repeat(DRAFT_CHAR_LIMIT), attachments);
+      expect(composed.length).toBeGreaterThan(DRAFT_CHAR_LIMIT);
+      let shown: readonly NeoPendingAsk[] = [];
+      const request = vi.fn(async () => ({ ok: false, reason: 'Synthetic pending receipt' }));
+      const intake = createNeoIntakeClient(
+        async () => ({ request }) as unknown as MessageHub,
+        (asks) => {
+          shown = asks;
+        }
+      );
+      await intake.send({
+        sessionId: row().sessionId,
+        text: field === 'text' ? composed : 'Reply to the attached text',
+        ...(field === 'quote'
+          ? ({
+              quote: {
+                author: 'You',
+                text: publicAskText(composed),
+                anchor: 'source',
+                replyTo: { kind: 'message', id: 'original-message' },
+              },
+            } as const)
+          : {}),
+      });
+      expect(request).toHaveBeenCalledOnce();
+      const entries = [row(), ...shown];
+      const encoded = intake.snapshots.encode(entries);
+      expect(typeof encoded).toBe('string');
+      expect(intake.snapshots.decode(encoded)).toEqual({ version: 1, entries });
+    }
+  );
+
   it('roundtrips identity, framing, original state/time and prepared thumbnails without transport', () => {
     const getHub = vi.fn(async () => {
       throw new Error('No transport');
@@ -126,7 +181,6 @@ describe('Neo intake snapshot contract', () => {
     { sessionId: 'neo:' },
     { sessionId: 'other:session' },
     { text: 1 },
-    { text: 'x'.repeat(DRAFT_CHAR_LIMIT + 1) },
     { text: '', images: [] },
     { text: '  ', images: [] },
     { images: null },
@@ -232,5 +286,30 @@ describe('Neo intake snapshot contract', () => {
       codec().encode([original, { ...original, requestId: '00000000-0000-4000-8000-000000000002' }])
     ).toEqual(refusal);
     expect(codec().decode(' '.repeat(16 * 1024 * 1024 + 1))).toEqual(refusal);
+  });
+
+  it.each(['text', 'quote', 'reason'])(
+    'allows %s above the composer edit limit within the snapshot budget',
+    (field) => {
+      const original = row();
+      const content = 'x'.repeat(DRAFT_CHAR_LIMIT + 1);
+      if (field === 'quote') original.quote.text = content;
+      else if (field === 'text') original.text = content;
+      else original.reason = content;
+      const encoded = codec().encode([original]);
+      expect(typeof encoded).toBe('string');
+      expect(codec().decode(encoded)).toEqual({ version: 1, entries: [original] });
+    }
+  );
+
+  it('refuses oversized text and quotes with the same aggregate JSON budget', () => {
+    const oversized = 'x'.repeat(16 * 1024 * 1024 + 1);
+    for (const original of [
+      { ...row(), text: oversized },
+      { ...row(), quote: { ...row().quote, text: oversized } },
+    ]) {
+      expect(codec().encode([original])).toEqual(refusal);
+      expect(codec().decode(raw([original]))).toEqual(refusal);
+    }
   });
 });
