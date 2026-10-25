@@ -601,6 +601,83 @@ describe('useNeoDraftReloadRecovery', () => {
     expect(recoveryCalls()).toHaveLength(1);
   });
 
+  it.each([false, true])(
+    'releases the original send handoff after edits in another session, reconnect: %s',
+    async (reconnect) => {
+      const clear = deferred();
+      const auth = deferred();
+      let clearCount = 0;
+      seams.request.mockImplementation(async (method, input) => {
+        if (method === 'session.clearInputDraftIf') {
+          clearCount += 1;
+          return clearCount === 1 ? clear.promise : { cleared: true };
+        }
+        return input.name === 'artifact.file.get' ? auth.promise : { ok: true };
+      });
+      const view = mount(reference);
+      await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+      const captured = view.buffer.read(scope);
+      const pending = view.handoff();
+      await waitFor(() => expect(clearCount).toBe(1));
+      view.select('neo:other');
+      view.edit();
+      view.setVisible('Another session edit');
+      view.select('neo:other');
+      view.select(scope);
+      await act(async () => {
+        clear.resolve({ cleared: true });
+        await pending;
+      });
+      if (reconnect) {
+        await act(async () => {
+          connectionState.value = 'disconnected';
+        });
+        await act(async () => {
+          connectionState.value = 'connected';
+        });
+      }
+      await waitFor(() => expect(ready()).toBe('true'));
+      expect(view.buffer.read(scope)).toEqual(captured);
+      expect(view.write).not.toHaveBeenCalled();
+      expect(clearCount).toBe(1);
+      expect(recoveryCalls()).toHaveLength(1);
+    }
+  );
+
+  it('keeps a failed local capture guarded after editing another session and returning', async () => {
+    const clear = deferred();
+    const auth = deferred();
+    seams.request.mockImplementation(async (method, input) =>
+      method === 'session.clearInputDraftIf'
+        ? clear.promise
+        : input.name === 'artifact.file.get'
+          ? auth.promise
+          : { ok: true }
+    );
+    const view = mount(reference);
+    await waitFor(() => expect(seams.request).toHaveBeenCalledTimes(2));
+    const pending = view.handoff();
+    await waitFor(() =>
+      expect(
+        seams.request.mock.calls.some(([method]) => method === 'session.clearInputDraftIf')
+      ).toBe(true)
+    );
+    view.refuseWrites();
+    view.edit();
+    expect(view.buffer.remember(scope, 'New local edit', undefined, null)).toBe(false);
+    view.rerender();
+    view.select('neo:other');
+    view.edit();
+    view.select('neo:other');
+    view.select(scope);
+    await act(async () => {
+      clear.resolve({ cleared: true });
+      await pending;
+    });
+    expect(ready()).toBe('false');
+    expect(view.write).not.toHaveBeenCalled();
+  });
+
   it('does not start another recovery for ordinary edits after initial recovery settled', async () => {
     const view = mount(reference);
     await waitFor(() => expect(ready()).toBe('true'));

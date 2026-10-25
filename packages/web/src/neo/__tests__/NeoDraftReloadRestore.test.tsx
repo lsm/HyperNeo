@@ -572,6 +572,51 @@ describe('NeoLive reload draft restore', () => {
     }
   );
 
+  it('resumes adoption after returning from another edited session before send cleanup finishes', async () => {
+    remember('Original reload capture', null, root, reference);
+    metadataGate = new Promise(() => {});
+    let finishClear!: (value: unknown) => void;
+    const clear = new Promise((resolve) => {
+      finishClear = resolve;
+    });
+    const request = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') {
+        await clear;
+        return request(method, input);
+      }
+      return request(method, input);
+    });
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type('Submitted before visiting another session');
+    view.model.value.send.mockResolvedValueOnce({ ok: false, reason: 'Synthetic refusal' });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    act(() => {
+      view.store.activeSessionId.value = holder;
+      view.model.value = { ...view.model.value, sessionId: holder };
+    });
+    type('Only the other session was edited');
+    type('');
+    act(() => {
+      view.store.activeSessionId.value = root;
+      view.model.value = { ...view.model.value, sessionId: root };
+    });
+    await act(async () => finishClear({}));
+    persisted.set(root, 'Dictation after returning');
+    for (const [name, callback] of seams.event.mock.calls) {
+      if (name === 'session.voiceLanded')
+        await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+    }
+    await waitFor(() => expect(value()).toBe('Dictation after returning'));
+    expect(read()?.text).toBe('Submitted before visiting another session');
+  });
+
   it('does not show an old send handoff failure in a different session', async () => {
     remember('Original reload capture', null, root, reference);
     let release!: (value: unknown) => void;

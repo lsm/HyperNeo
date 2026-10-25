@@ -104,6 +104,8 @@ proof conditionally clears the previously recovered draft, preserves independent
 staged dictation and refuses a stale clear over newer manual text. Resource-hook
 and real-composer tests cover send refusal/storage cleanup failure, delayed
 metadata, ordered recovery RPC completion, same-text rebinds during cleanup,
-failed durable captures, reconnect and scope changes. The original browser
+failed durable captures, reconnect and scope changes. Returning during pending
+cleanup after editing another session must release adoption, while a failed
+local edit remains guarded across the same round trip. The original browser
 capture remains until acceptance or explicit discard. Pending immutable request
 identity persistence remains in #8707; handoff alone does not complete it.
