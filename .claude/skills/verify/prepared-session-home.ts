@@ -74,6 +74,11 @@ try {
     preparation: { pack: 'coding', parameters: { target: 'dev', prerequisiteCommits: [before] } },
   }) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
+  const unprepared = await rpc('work.start', {
+    adapter: 'hyperneo', place: { machine: hostname(), folder: source, name: 'Synthetic source' },
+    title: 'Ordinary project session', message: 'Synthetic placement only', model: 'synthetic',
+  }) as Result<WorkStarted>;
+  assert(unprepared.ok, JSON.stringify(unprepared));
   const listed = await rpc('session.list', {}, true) as { sessions: Session[] };
   const session = listed.sessions.find((s) => s.id === started.value.ref.id)!;
   assert(session);
@@ -85,6 +90,10 @@ try {
   assert.equal(worker, expected, 'prepared clone belongs in its repo project and is named by session ID');
   assert.equal(group, source, 'sidebar session.list grouping uses the original project');
   assert.equal(started.value.place.folder, source, 'work discovery uses the original project');
+  const ordinary = listed.sessions.find((s) => s.id === unprepared.value.ref.id)!;
+  assert.equal(projectRootOf(ordinary), source);
+  assert.equal(ordinary.workspacePath, join(getWorktreeBaseDir(source), ordinary.id));
+  evidence.push({ ordinary, sameParent: true });
   assert(!existsSync(join(run, 'data/Neo/worktrees')));
   assert(statSync(join(worker, '.git')).isDirectory());
   assert.equal(git(worker, 'rev-parse', 'HEAD'), latest);

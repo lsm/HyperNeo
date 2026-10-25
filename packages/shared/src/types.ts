@@ -352,6 +352,7 @@ export interface PendingModelSwitch {
 }
 
 export interface SessionMetadata {
+  executionProjectPath?: string;
   pendingAutoCompactPercent?: number | null;
   messageCount: number;
   progress?: SessionProgress;

@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
@@ -61,6 +65,7 @@ function control(db: Database, events: string[], withdraw?: HyperneoSessionContr
 }
 
 describe('hyperneo adapter send and status', () => {
+  let source: string;
   let db: Database;
   let handed: Array<{
     sessionId: string;
@@ -73,11 +78,13 @@ describe('hyperneo adapter send and status', () => {
   let events: string[];
 
   beforeEach(() => {
+    source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
+    execFileSync('git', ['init', source]);
     handed = [];
     events = [];
     outcome = { kind: 'enqueued', id: 'mb1' };
     db = new Database(':memory:');
-    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT, metadata TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT,
       worktree_branch TEXT, git_branch TEXT, worktree_path TEXT)`);
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
@@ -120,7 +127,10 @@ describe('hyperneo adapter send and status', () => {
     );
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    db.close();
+    rmSync(source, { recursive: true, force: true });
+  });
 
   function adapter(
     prepareExecution?: WorkExecutionPreparer,
@@ -237,7 +247,7 @@ describe('hyperneo adapter send and status', () => {
     expect(
       await driver.start!(
         {
-          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+          place: { machine: 'imac', folder: source, name: 'repo' },
           title: 't',
           message: 'm',
           preparation: { pack: 'coding', parameters: {} },
@@ -258,7 +268,7 @@ describe('hyperneo adapter send and status', () => {
     expect(
       await driver.start!(
         {
-          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+          place: { machine: 'imac', folder: source, name: 'repo' },
           title: 't',
           message: 'm',
           preparation: { pack: 'coding', parameters: {} },
@@ -573,7 +583,7 @@ describe('hyperneo adapter start and stop', () => {
     handed = [];
     uuids = [];
     db = new Database(':memory:');
-    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT, metadata TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT,
       worktree_branch TEXT, git_branch TEXT, worktree_path TEXT)`);
     db.exec(`INSERT INTO sessions (id, title, workspace_path, status, last_active_at, processing_state, type)

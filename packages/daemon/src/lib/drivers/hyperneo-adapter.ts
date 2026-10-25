@@ -1,3 +1,6 @@
+import { WorktreeManager } from '../worktree-manager.ts';
+import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
@@ -46,7 +49,8 @@ import { reject } from './work-operations.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
-const FOLDER = 'COALESCE(main_repo_path, workspace_path)';
+const FOLDER =
+  "COALESCE(main_repo_path, json_extract(metadata, '$.executionProjectPath'), workspace_path)";
 const PROCESSING = `CASE WHEN json_valid(processing_state) THEN CASE
   WHEN json_extract(processing_state, '$.status') = 'interrupted'
     AND json_extract(processing_state, '$.reason') = 'restart' THEN 'interrupted_by_restart'
@@ -96,7 +100,8 @@ export interface HyperneoSessionControl {
     model?: string,
     provider?: string,
     effort?: string,
-    inPlace?: boolean
+    inPlace?: boolean,
+    prepared?: { sessionId: string; projectPath: string }
   ): Promise<string>;
   resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
   effort?(sessionId: string): string | null;
@@ -566,10 +571,18 @@ export async function createHyperneoSession(
   request: HyperneoStartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<Gate<string>> {
+  const identity = request.preparation
+    ? {
+        sessionId: crypto.randomUUID(),
+        projectPath: await gitWorktreeProject(
+          (await new WorktreeManager().detectGitSupport(folder)).gitRoot ?? folder
+        ),
+      }
+    : undefined;
   const prepared = request.preparation
     ? await deps.prepareExecution!(request.preparation, {
         directory: folder,
-        destination: join(deps.neoFolder(), 'worktrees', crypto.randomUUID()),
+        destination: join(getWorktreeBaseDir(identity!.projectPath), identity!.sessionId),
       })
     : null;
   if (prepared && !prepared.ok) return { reason: prepared };
@@ -581,7 +594,8 @@ export async function createHyperneoSession(
       request.model,
       request.provider,
       request.effort,
-      request.inPlace
+      request.inPlace,
+      identity
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)
