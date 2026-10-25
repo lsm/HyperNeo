@@ -19,7 +19,7 @@ const port = probe.port;
 assert.notEqual(port, 8399);
 await probe.stop(true);
 const child = Bun.spawn([resolve(binaryPath), '--host', '127.0.0.1', '--port', String(port), '--db-path', join(run, 'data/daemon.db'), '--workspace', join(run, 'workspace')], {
-  env: { HOME: join(run, 'home'), PATH: process.platform === 'win32' ? join(run, 'bin') : `${join(run, 'bin')}:/usr/bin:/bin:/usr/sbin`, USERPROFILE: join(run, 'home'), SystemRoot: process.env.SystemRoot, TEMP: join(run, 'tmp'), TMP: join(run, 'tmp'), HYPERNEO_DATA_DIR: join(run, 'data'), NODE_ENV: 'test', LOG_LEVEL: 'info', HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' },
+  env: { HOME: join(run, 'home'), PATH: process.platform === 'win32' ? join(run, 'bin') : `${join(run, 'bin')}:/usr/bin:/bin:/usr/sbin`, USERPROFILE: join(run, 'home'), SystemRoot: process.env.SystemRoot, TMPDIR: join(run, 'tmp'), TEMP: join(run, 'tmp'), TMP: join(run, 'tmp'), HYPERNEO_DATA_DIR: join(run, 'data'), NODE_ENV: 'test', LOG_LEVEL: 'info', HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' },
   stdout: 'pipe', stderr: 'pipe',
 });
 const stdout = new Response(child.stdout).text();

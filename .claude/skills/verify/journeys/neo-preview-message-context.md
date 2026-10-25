@@ -69,3 +69,30 @@ Also run the compiled-worker-startup journey when changing these schema import
 boundaries. Source-mode RPC can pass while a schema-to-runtime dependency cycle
 causes Bun to emit invalid compiled initializers. Require the actual compiled
 binary to start and answer `system.build`, using the pinned release runtime.
+
+
+Reload contract proof also requires `reloadContextContract`,
+`explicitUnboundRecovery`, `alreadySavedContextRestore` and `legacyRecoveryDedup`.
+The actual web reload buffer preserves a validated original reference or explicit
+null; the owned RPC door refuses an exact submitted association, accepts a newly
+unbound same-text draft and a draft already saved before reload, while legacy
+requests without context retain text-only submitted detection. Malformed or
+path-bearing stored references are refused without an unbound fallback.
+Composer capture/recovery wiring remains #8721 and pending identity #8707; these
+contract checks alone do not claim completed refresh recovery.
+
+
+Reload capture checks also require `reloadSizeRefusalPreserved`: encoded text or
+reference escaping that exceeds the existing serialized read budget must be
+refused before storage writes, preserving the previous recoverable capture.
+A subsequent valid edit must remain writable/readable/removable, and maximum raw
+text/base plus bounded escaping and full context must still roundtrip. Read and
+write share the same serialized-size limit; no larger read budget is introduced.
+
+
+Require `reloadRecoveryProjection` too. The existing recovery hook and owned RPC
+proof both use `neoDraftRecoveryInput` exported by the buffer module. It projects
+a full stored reference to artifactId/snapshot, preserves explicit null and legacy
+omission, and excludes displayName/state/capture id from the strict recovery
+request. Component checks cover available/unavailable/null/legacy captures. This
+transport projection does not implement later composer association restoration.
