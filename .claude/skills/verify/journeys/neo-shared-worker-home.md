@@ -6,7 +6,10 @@ GitHub calls are involved. The helper starts a real isolated daemon, stops its
 job consumer, and invokes the production Neo MCP operations through the todo
 runner, work.start and HyperNeo adapter. Only session creation is synthetic:
 the helper records its workspace and direct/worktree mode in the isolated DB.
-No model turn or actual worker file creation is claimed.
+The real local-user neo.open operation also aligns the stored coordinator prompt.
+The evidence must contain that actual prompt, its folder rules, and root/discussion
+word counts below the existing 260/250 limits. No model turn or actual worker
+file creation is claimed.
 
 Run on three fresh isolated directories, adding these arguments after the run
 path: `without-workspace`, no extra argument, and `env-workspace`. They must
@@ -23,7 +26,7 @@ a folder named in immutable human intake is allowed. The actual worker mailbox
 input must contain the non-coding file guidance, including keeping useful files
 in its cwd and making a subfolder only for one matter with several files.
 The helper closes its daemon in finally and writes RPC replies, worker intake,
-selected folders and eight Boolean checks to `evidence/project-start-home.json`.
+selected folders and nine Boolean checks to `evidence/project-start-home.json`.
 A missing or false check is not a pass.
 
 For attended header verification, build the web package, then add

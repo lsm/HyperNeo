@@ -5,6 +5,8 @@ import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { NEO_ROOT_PROMPT, NEO_FOCUSED_DISCUSSION } from '../../../packages/prompts/src/mod.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
@@ -47,6 +49,10 @@ try {
     return id;
   };
   const registry = app.sessionManager.getOperationRegistry();
+  const openedNeo = await invokeOperation(registry, 'neo.open', {}, { source: 'rpc', principal: 'local' });
+  assert(openedNeo.kind === 'completed' && typeof openedNeo.value === 'object' && openedNeo.value !== null && 'ok' in openedNeo.value && openedNeo.value.ok === true, JSON.stringify(openedNeo));
+  const coordinatorPrompt = String(app.db.getSession(sender)?.config.systemPrompt ?? '');
+  evidence.push({ openedNeo, coordinatorPrompt, rootWords: NEO_ROOT_PROMPT.split(/\s+/).length, discussionWords: NEO_FOCUSED_DISCUSSION.split(/\s+/).length });
   const handler = createOperationMcpHandler(() => registry, () => ({ sessionId: sender, role: 'neo' }));
   const invoke = async (name: string, input: unknown) => {
     const reply = await handler({ name, input });
@@ -85,6 +91,7 @@ try {
   const intake = db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox'").all() as { payload: string }[];
   const workerIntake = intake.map(row => JSON.parse(row.payload)).filter(entry => entry.to?.sessionId === defaultReply.todo?.worker?.id);
   const checks = {
+    coordinatorGuidance: coordinatorPrompt.includes(NEO_ROOT_PROMPT) && coordinatorPrompt.includes(NEO_FOCUSED_DISCUSSION) && coordinatorPrompt.includes('~/HyperNeo') && coordinatorPrompt.includes('旅行/2026圣诞') && NEO_ROOT_PROMPT.split(/\s+/).length < 260 && NEO_FOCUSED_DISCUSSION.split(/\s+/).length < 250,
     coordinatorSeparate: app.db.getSession(sender)?.workspacePath === join(run, 'data/Neo') && expectedHome !== join(run, 'data/Neo'),
     codingUnchanged: codingReply.ok === true && codingStart?.folder === codingFolder && codingStart?.mode === 'worktree',
     nonCodingFileGuidance: workerIntake.length === 1 && JSON.stringify(workerIntake[0]).includes('Most non-coding tasks write nothing') && JSON.stringify(workerIntake[0]).includes('旅行/2026圣诞'),
