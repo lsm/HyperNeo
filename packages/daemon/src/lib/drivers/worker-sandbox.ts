@@ -22,28 +22,32 @@ async function clearRuntimeFlags(path: string, recursive = false) {
     ['/usr/bin/chflags', recursive ? '-RP' : '-h', 'nouchg,nouappnd', path],
     { env: {}, stdout: 'ignore', stderr: 'ignore' }
   );
-  if ((await process.exited) !== 0)
-    throw new Error('Cannot clear worker runtime user flags; clear them before retrying archive.');
-}
-
-async function unlockRuntimeDirectories(path: string): Promise<void> {
-  let entry;
+  if ((await process.exited) === 0) return;
   try {
-    entry = await lstat(path);
+    await lstat(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  if (!entry.isDirectory()) return;
+  throw new Error('Cannot clear worker runtime user flags; clear them before retrying archive.');
+}
+
+async function unlockRuntimeDirectories(path: string): Promise<void> {
   try {
-    await chmod(path, 0o700);
+    const entry = await lstat(path);
+    if (!entry.isDirectory()) return;
+    try {
+      await chmod(path, 0o700);
+    } catch (error) {
+      if (process.platform !== 'darwin' || (error as NodeJS.ErrnoException).code !== 'EPERM')
+        throw error;
+      await clearRuntimeFlags(path);
+      await chmod(path, 0o700);
+    }
+    for (const name of await readdir(path)) await unlockRuntimeDirectories(join(path, name));
   } catch (error) {
-    if (process.platform !== 'darwin' || (error as NodeJS.ErrnoException).code !== 'EPERM')
-      throw error;
-    await clearRuntimeFlags(path);
-    await chmod(path, 0o700);
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  for (const name of await readdir(path)) await unlockRuntimeDirectories(join(path, name));
 }
 
 export async function releaseWorkerSandbox(root: string | null | undefined) {

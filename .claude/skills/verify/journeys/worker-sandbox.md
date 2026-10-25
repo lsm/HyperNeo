@@ -179,3 +179,26 @@ Actual `neo.session.archive` must answer `archived: false` and remove both roots
 intact. `VERIFY_IMMUTABLE_RUNTIME=0` disables only the macOS flag step when isolating
 this retry regression; the normal run proves both together. Test-first commit
 `16bb6305c9` reproduces both failures, including real SDK Bash and RPC evidence.
+
+## Concurrent runtime removal (review 9523)
+
+The main helper first runs `worker-sandbox-removal.ts` against real synthetic
+runtime directories. Six waves race production release with an independent
+recursive removal of the private temp tree. `concurrent-runtime-removal.json`
+must show both actors succeeding, both roots absent, and the clone retained.
+It can also run standalone:
+
+```bash
+bun .claude/skills/verify/worker-sandbox-removal.ts "$RUN"
+```
+
+This is a filesystem concurrency proof; a concurrent archive/delete RPC
+race was not reproduced. The rest of the main journey still proves actual
+archive and archive-retry RPC results with the real worker policies.
+
+Deterministic filesystem regressions remove the whole runtime or one child
+immediately before chmod/readdir, plus removal before macOS flag recovery. A
+removed child must not prevent release of a surviving locked sibling. Missing
+paths count as already removed throughout traversal and flag recovery; other
+errors still propagate. Test-first commit `8fbb27f84b` contains the five failing
+regressions and the unmocked filesystem proof (six ENOENT failures before the fix).

@@ -83,8 +83,10 @@ test.skipIf(process.platform !== 'darwin')(
     writeFileSync(join(gone, 'synthetic'), 'worker bytes');
     try {
       expect(spawnSync('/usr/bin/chflags', ['uchg', gone]).status).toBe(0);
+      let removed = false;
       afterFailedChmod.mockImplementation(async (path) => {
-        if (String(path) === gone) {
+        if (String(path) === gone && !removed) {
+          removed = true;
           expect(spawnSync('/usr/bin/chflags', ['-h', 'nouchg', gone]).status).toBe(0);
           await rm(gone, { recursive: true, force: true });
         }
