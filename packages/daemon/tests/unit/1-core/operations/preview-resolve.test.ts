@@ -7,6 +7,39 @@ import { fileURLToPath } from 'node:url';
 import { createArtifactReferenceResolve } from '../../../../src/lib/artifacts/resolve-operation.ts';
 
 describe('human stored reference capture', () => {
+  test('opens unregistered home-relative publication HTML through the existing capture checks', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-home-reference-')));
+    mkdirSync(join(root, 'home'));
+    try {
+      const output = execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL(
+              '../../../../../../.claude/skills/verify/preview-home-reference.ts',
+              import.meta.url
+            )
+          ),
+          root,
+        ],
+        {
+          cwd: root,
+          env: { PATH: process.env.PATH, HOME: join(root, 'home'), TMPDIR: root, NODE_ENV: 'test' },
+          encoding: 'utf8',
+          timeout: 30000,
+        }
+      );
+      expect(JSON.parse(output)).toMatchObject({
+        passed: true,
+        sameAbsoluteSnapshot: true,
+        unregisteredHtmlContent: '<h1>Home-relative HTML content</h1>',
+        sourceBound: true,
+        ownershipRechecked: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test('discovery and non-human calls do not touch SQLite or capture', async () => {
     const operation = createArtifactReferenceResolve(() => {
       throw new Error('SQLite touched');
