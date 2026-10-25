@@ -23,7 +23,13 @@ same source project. Starts from a trailing-slash repo path must use that same
 project too. Root and trailing-slash session records must archive/delete while
 retaining their clones, preserving the existing lifecycle behavior. Subdirectory
 starts are not covered: preparation currently refuses to clone a non-root folder.
-Clone release is deferred until the separate follow-up after #8642.
+This journey proves clone retention, not clone release. Release remains a separate
+follow-up after #8642, including normalization of the source marker comparison.
+
+The companion prepared-start unit tests inject a pure `worktreeBaseDir` function
+and assert that no project directory is created. They do not call the production
+mkdir/sentinel helper or rely on `TEST_WORKTREE_BASE_DIR` for isolation.
+
 The custom model catalog uses a closed loopback endpoint; queued SDK delivery may
 retry locally, but no successful model response, credentials, external GitHub
 access or browser rendering is claimed. GitHub is stubbed using shared gh-stub.sh.
