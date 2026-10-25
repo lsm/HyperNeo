@@ -202,3 +202,31 @@ removed child must not prevent release of a surviving locked sibling. Missing
 paths count as already removed throughout traversal and flag recovery; other
 errors still propagate. Test-first commit `8fbb27f84b` contains the five failing
 regressions and the unmocked filesystem proof (six ENOENT failures before the fix).
+
+## Cleanup write boundary against symlink swaps (review 9532)
+
+Test-first commit `f9ff5b0255` reproduces the daemon changing an unlisted synthetic
+outside directory from 0755 to 0700 after a worker swaps a checked temp directory
+for a symlink. A path-only permission walk is therefore insufficient even when
+ordinary symlinks are skipped.
+
+Cleanup permission/flag repair and recursive removal now run in a child with OS
+writes limited to the private runtime. macOS uses Seatbelt; Linux uses bubblewrap
+with the host filesystem read-only and only that runtime bound writable. The
+runtime container is outside worker writable roots, so a worker can swap its
+contents but cannot replace the cleanup bind source. The daemon only removes the
+empty container afterward, without a recursive privileged walk. Missing cleanup
+enforcement fails closed. No unconfined permission-repair fallback is allowed.
+
+The main journey runs `worker-sandbox-cleanup.ts` before starting its daemon.
+It deliberately runs a flawed check/swap/chmod sequence inside the production
+cleanup write policy. `cleanup-write-boundary.json` must show an inside write
+allowed, both outside chmods refused with nonzero statuses, and outside modes
+unchanged. The stderr artifact must contain actual OS denials. This is a real
+cleanup-policy proof with deliberately substituted code, not a claim to have
+reproduced detached Desktop process timing. The normal daemon journey then
+proves actual cleanup with locked and immutable directories and archive retries.
+
+The permission-walk timing mocks are replaced by helper launch/removal and
+missing-enforcement tests; the unmocked concurrent removal proof remains. Read
+restriction is not claimed here; secret-read isolation remains #8630.

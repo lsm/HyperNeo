@@ -34,11 +34,10 @@
 # daemon/web path filters (docs-only PRs included) — it guards the Bun/Deno
 # dual-support migration and is non-blocking until flipped to required.
 #
-# NOTE: Sandbox apt packages (bubblewrap/socat/ripgrep) are intentionally not
-# installed on test/build jobs — no CI-executed test there runs a real sandbox
-# (online jobs set HYPERNEO_TEST_DISABLE_SANDBOX=1; tests/online/sandbox is
-# matrix-exempt/manual-only; the build smoke test passes without them).
-# real-api-tests.yml installs them for its real-session shards.
+# NOTE: Daemon test jobs install bubblewrap for OS-confined worker runtime
+# cleanup. SDK turns in online jobs still use HYPERNEO_TEST_DISABLE_SANDBOX=1;
+# actual worker sandbox sessions remain in the manual real-API workflow.
+# Web/build jobs do not need these sandbox packages.
 #
 # Release is handled separately in release.yml (triggered by version tags).
 
@@ -351,6 +350,9 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/setup-devproxy
 
+      - name: Install cleanup sandbox
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -430,6 +432,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+
+      - name: Install cleanup sandbox
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

@@ -1,8 +1,9 @@
+import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function workerSandboxPaths(root: string) {
@@ -17,55 +18,38 @@ export function workerSandboxPaths(root: string) {
   };
 }
 
-async function clearRuntimeFlags(path: string, recursive = false) {
-  const process = spawnProcess(
-    ['/usr/bin/chflags', recursive ? '-RP' : '-h', 'nouchg,nouappnd', path],
-    { env: {}, stdout: 'ignore', stderr: 'ignore' }
-  );
-  if ((await process.exited) === 0) return;
-  try {
-    await lstat(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw error;
-  }
-  throw new Error('Cannot clear worker runtime user flags; clear them before retrying archive.');
-}
-
-async function unlockRuntimeDirectories(path: string): Promise<void> {
-  try {
-    const entry = await lstat(path);
-    if (!entry.isDirectory()) return;
-    try {
-      await chmod(path, 0o700);
-    } catch (error) {
-      if (process.platform !== 'darwin' || (error as NodeJS.ErrnoException).code !== 'EPERM')
-        throw error;
-      await clearRuntimeFlags(path);
-      await chmod(path, 0o700);
-    }
-    for (const name of await readdir(path)) await unlockRuntimeDirectories(join(path, name));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-}
-
 export async function releaseWorkerSandbox(root: string | null | undefined) {
   if (!root) return;
   const runtime = join(workerSandboxPaths(root).TMPDIR, '..');
-  await unlockRuntimeDirectories(runtime);
-  const remove = () =>
-    rm(runtime, { recursive: true, force: true, maxRetries: process.platform === 'win32' ? 3 : 0 });
   try {
-    await remove();
+    const entry = await lstat(runtime);
+    if (!entry.isDirectory()) {
+      await unlink(runtime);
+      return;
+    }
+    if (process.platform === 'win32') {
+      await rm(runtime, { recursive: true, force: true, maxRetries: 3 });
+      return;
+    }
+    const child = spawnProcess(await workerRuntimeCleanupCommand(runtime), {
+      env: { PATH: '/usr/bin:/bin' },
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    if ((await child.exited) !== 0) {
+      await lstat(runtime);
+      throw new Error('Worker cleanup sandbox failed; runtime retained.');
+    }
+    await rmdir(runtime);
   } catch (error) {
-    if (
-      process.platform !== 'darwin' ||
-      !['EPERM', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')
-    )
-      throw error;
-    await clearRuntimeFlags(runtime, true);
-    await remove();
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    try {
+      await lstat(runtime);
+    } catch (missing) {
+      if ((missing as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw missing;
+    }
+    throw error;
   }
 }
 
