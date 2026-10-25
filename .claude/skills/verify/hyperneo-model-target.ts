@@ -98,6 +98,11 @@ try {
     assert.equal((await rpc('session.thinking.get', { sessionId: id })).thinkingLevel, 'think24k');
     assert(result.value.receipt.inputId);
   });
+  await check('effort whitespace is normalized through the real start operation', async () => {
+    const result = await start('swe-2-high', ' Extra  High '); assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.value.effort, 'extra high');
+    assert.equal(app.sessionManager.getSessionFromDB(result.value.ref.id)!.config.thinkingLevel, 'think32k');
+  });
   assert(cases.every((item) => item.passed), JSON.stringify(cases));
 } finally {
   socket?.close();

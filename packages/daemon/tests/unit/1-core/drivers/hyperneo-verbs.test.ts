@@ -650,6 +650,19 @@ describe('hyperneo adapter start and stop', () => {
     expect(handed).toHaveLength(1);
   });
 
+  test.each([
+    [' high ', 'high'],
+    ['extra  high', 'extra high'],
+    [' THINK24K ', 'high'],
+  ])('normalizes effort %s before applying it', async (effort, confirmed) => {
+    const result = await adapter({ effort: () => confirmed }).start!(
+      { place: place('/focus/notes'), title: 'task', message: 'write it', effort },
+      from
+    );
+    expect(result).toMatchObject({ ok: true, value: { effort: confirmed } });
+    expect(handed).toHaveLength(1);
+  });
+
   test('keeps input unsent when the session does not confirm the requested effort', async () => {
     const result = await adapter({ effort: () => 'low' }).start!(
       { place: place('/focus/notes'), title: 'task', message: 'write it', effort: 'high' },
