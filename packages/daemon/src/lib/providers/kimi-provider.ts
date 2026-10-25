@@ -552,7 +552,11 @@ export class KimiProvider implements Provider {
       this.discoveryCache.set(fingerprint, discovered);
     }
     if (options.discoveryOnly) return discovered;
-    return this.mergeCuratedModels(discovered);
+    return KimiProvider.gateK31ModelsForRegion(
+      this.mergeCuratedModels(discovered),
+      this.resolveEffectiveRegion(),
+      new Set(discovered.map((model) => model.id))
+    );
   }
 
   ownsModel(modelId: string): boolean {
