@@ -24,6 +24,11 @@ cold session.get returns the old canonical choice. With the fix:
 - Set and clear the session MCP override through its existing RPC. Clearing
   inherits canonical global defaults, retaining the frozen alias. Inspect the
   matching legacy override absence and both actor configs.
+- Disable then delete synthetic instruction skills. tools.save and session.update
+  must both remove the stale disabled ID and still save valid settings. A removed
+  MCP server with a surviving wrapper must behave the same way. Missing choices
+  stay unbound, frozen aliases survive, and neither cache retains the stale list.
+  Record deletedDefinitionSaves=true. New unknown disabled IDs still refuse.
 - Restart only the owned daemon and read the same preferences through session.get.
   Inventory remains not_running; the synthetic MCP server lists navigate.
 
