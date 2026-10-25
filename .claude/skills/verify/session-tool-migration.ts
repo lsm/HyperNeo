@@ -61,6 +61,15 @@ for (const boot of [1, 2]) {
       prior = snapshots;
       await assert.rejects(hub.request('session.update', { sessionId: ids[0], config: { toolSelection: { version: 1, choices: {} } } }), /does not accept config field\(s\): toolSelection/);
       evidence.ordinarySettingsCannotReplaceSelection = true;
+      const updatedSpace = await hub.request<{ config: { toolSelectionDefaults?: unknown }; maxConcurrentTasks: number }>('space.update', { id: spaceId, config: { maxConcurrentTasks: 5 } });
+      assert.deepEqual(updatedSpace.config.toolSelectionDefaults, spaceDefaults);
+      assert.equal(updatedSpace.maxConcurrentTasks, 5);
+      for (const [method, params] of [
+        ['space.update', { id: spaceId, config: { toolSelectionDefaults: { version: 1, choices: {} } } }],
+        ['space.create', { name: 'Injected', workspacePath: join(run, 'injected'), config: { toolSelectionDefaults: { version: 1, choices: {} } } }],
+        ['settings.global.update', { updates: { toolSelectionDefaults: { version: 1, choices: {} } } }],
+      ] as const) await assert.rejects(hub.request(method, params), /toolSelectionDefaults.*daemon/);
+      evidence.ordinarySettingsPreserveDefaults = true;
       await hub.request('skill.setEnabled', { id: skillId, enabled: false });
       await hub.request('mcp.registry.setEnabled', { id: serverId, enabled: false });
     } else assert.deepEqual(snapshots, prior);
