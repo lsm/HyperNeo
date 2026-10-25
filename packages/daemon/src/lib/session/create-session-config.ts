@@ -1,4 +1,5 @@
 import type { SessionConfig } from '@hyperneo/shared';
+import { isDeepStrictEqual } from 'node:util';
 
 export type CreateSessionConfigFieldPolicy = 'derived' | 'carried' | 'rejected';
 
@@ -121,11 +122,19 @@ export function admitCreateSessionConfig(
 
 export function admitUpdateSessionConfig(
   requested: Partial<SessionConfig> | undefined,
-  _currentSelection?: SessionConfig['toolSelection']
+  currentSelection?: SessionConfig['toolSelection']
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
 
-  const rejected = REJECTED_FIELDS.filter((field) => requested[field] !== undefined);
+  const rejected = REJECTED_FIELDS.filter(
+    (field) =>
+      requested[field] !== undefined &&
+      !(
+        field === 'toolSelection' &&
+        currentSelection !== undefined &&
+        isDeepStrictEqual(requested.toolSelection, currentSelection)
+      )
+  );
   if (rejected.length > 0) {
     throw new UnsupportedSessionConfigFieldsError(rejected, 'Session update');
   }

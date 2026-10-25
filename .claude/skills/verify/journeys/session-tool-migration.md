@@ -13,7 +13,9 @@ original wrapper alias and native tool preset. Global and Space new-session
 default snapshots preserve their different effective preferences.
 
 After the first boot, public settings RPCs disable the synthetic skill and server.
-The ordinary session update RPC must refuse caller-supplied canonical selections.
+The ordinary session update RPC accepts a full config echo with the unchanged
+canonical selection, strips that owned field from the write, and preserves the
+snapshot while applying the ordinary edit. Changed or new selections are refused.
 An ordinary Space config replacement changes the concurrency limit while retaining
 the frozen defaults. Space creation/update and global settings RPCs must refuse
 caller-supplied defaults, including empty snapshots, before any settings change.
@@ -32,3 +34,10 @@ This slice persists choices only. Existing SDK tool building and settings setter
 still own active behavior; canonical activation, new-session creation from these
 defaults, compatibility setters, migration UI and one-click enable are not claimed.
 Those are follow-up wiring slices. Native tool profiles are preserved verbatim.
+
+For full-config echo compatibility, also run the existing
+`tests/online/convo/neo-publication-sdk.test.ts` with `vitest.online.config.ts`
+from packages/daemon under the shared isolated HOME/data environment and
+`HYPERNEO_TEST_DISABLE_SANDBOX=1`. It owns its loopback model API and synthetic
+GitHub command. Both store and daemon-gh cases must pass with the real SDK;
+this is transport proof, not proof of OS sandbox enforcement.

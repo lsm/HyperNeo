@@ -335,7 +335,14 @@ export function setupSessionHandlers(
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
 
-    const configUpdate = admitUpdateSessionConfig(updates.config);
+    const currentSelection =
+      updates.config?.toolSelection === undefined
+        ? undefined
+        : (
+            agentSessionForUpdate?.getSessionData().config ??
+            sessionManager.getSessionFromDB(targetSessionId)?.config
+          )?.toolSelection;
+    const configUpdate = admitUpdateSessionConfig(updates.config, currentSelection);
     if (configUpdate) {
       updates.config = configUpdate;
     }
