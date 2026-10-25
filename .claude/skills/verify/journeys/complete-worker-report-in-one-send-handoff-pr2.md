@@ -20,7 +20,8 @@ synthetic mailbox row; retrying with the same `idempotencyKey` must return the
 same receipt without another job. The actual CLI must also deliver all 8,192
 bytes through its Unix HTTP door using the simple shape.
 
-The Neo SDK prompt is taken from the durable mailbox payload. This checks the
+The Neo SDK system prompt uses an explicit empty pack list with the current
+neoPrompt API. The Neo SDK prompt is taken from the durable mailbox payload. This checks the
 send/receipt/read interfaces; it does not run the daemon's automatic mailbox
 consumer or a GUI. It closes SDK streams, the socket and mock server in `finally`.
 Preserve evidence outside the worktree, then remove only the synthetic run before
