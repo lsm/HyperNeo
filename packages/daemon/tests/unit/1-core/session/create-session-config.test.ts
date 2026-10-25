@@ -147,6 +147,40 @@ describe('admitCreateSessionConfig', () => {
 });
 
 describe('admitUpdateSessionConfig', () => {
+  it('allows an unchanged owned selection echoed with an ordinary update without writing it', () => {
+    const current = {
+      version: 1 as const,
+      choices: { 'mcp:browser': { selected: false, aliases: ['browser-alias'] } },
+    };
+    const echoed = {
+      choices: { 'mcp:browser': { aliases: ['browser-alias'], selected: false } },
+      version: 1 as const,
+    };
+    expect(admitUpdateSessionConfig({ autoScroll: false, toolSelection: echoed }, current)).toEqual(
+      { autoScroll: false }
+    );
+    expect(current.choices['mcp:browser'].selected).toBe(false);
+  });
+
+  it('refuses edits, additions and version changes to an owned selection', () => {
+    const current = {
+      version: 1 as const,
+      choices: { 'mcp:browser': { selected: false, aliases: ['browser-alias'] } },
+    };
+    for (const toolSelection of [
+      { ...current, choices: {} },
+      { ...current, choices: { 'mcp:browser': { selected: true, aliases: ['browser-alias'] } } },
+      { ...current, choices: { 'mcp:browser': { selected: false, aliases: ['renamed'] } } },
+      { ...current, choices: { ...current.choices, 'skill:added': { selected: true } } },
+      { ...current, version: 2 as 1 },
+    ])
+      expect(() => admitUpdateSessionConfig({ toolSelection }, current)).toThrow(/toolSelection/);
+    expect(() => admitUpdateSessionConfig({ toolSelection: current })).toThrow(/toolSelection/);
+    expect(() => admitUpdateSessionConfig({ toolSelection: current, env: {} }, current)).toThrow(
+      /env/
+    );
+  });
+
   it('refuses exactly the fields session creation refuses', () => {
     const rejected = Object.entries(CREATE_SESSION_CONFIG_FIELD_POLICY)
       .filter(([, policy]) => policy === 'rejected')

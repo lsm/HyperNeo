@@ -8,6 +8,7 @@ import type {
   UpdateSpaceParams,
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types.ts';
+import { assertNoToolSelectionDefaults } from '../../lib/tools/session-tool-choice.ts';
 
 export class SpaceRepository {
   constructor(private db: BunDatabase) {}
@@ -35,6 +36,7 @@ export class SpaceRepository {
   }
 
   createSpace(params: CreateSpaceParams & { slug: string }): Space {
+    assertNoToolSelectionDefaults(params.config);
     const id = generateUUID();
     const now = Date.now();
 
@@ -116,6 +118,7 @@ export class SpaceRepository {
   }
 
   updateSpace(id: string, params: UpdateSpaceParams): Space | null {
+    assertNoToolSelectionDefaults(params.config);
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -152,8 +155,12 @@ export class SpaceRepository {
       values.push(params.maxConcurrentTasks);
     }
     if (params.config !== undefined) {
-      fields.push('config = ?');
-      values.push(JSON.stringify(params.config));
+      fields.push(`config = CASE WHEN json_valid(config)
+        AND json_type(config, '$.toolSelectionDefaults') IS NOT NULL
+        THEN json_set(?, '$.toolSelectionDefaults', json_extract(config, '$.toolSelectionDefaults'))
+        ELSE ? END`);
+      const config = JSON.stringify({ ...params.config });
+      values.push(config, config);
       if (
         params.maxConcurrentTasks === undefined &&
         params.config?.maxConcurrentTasks !== undefined

@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from '../types.ts';
 import type { CustomEndpointConfig } from './custom-endpoint.ts';
+import type { SessionToolSelection } from './session-tool-choice.ts';
 
 export const MAX_GITHUB_POLLING_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
 
@@ -152,6 +153,8 @@ export type ChatDisplayMode = 'full' | 'compact' | 'minimal';
 export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
 
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
+  toolSelectionDefaults?: SessionToolSelection;
+
   settingSources: SettingSource[];
 
   language?: LanguageSetting;

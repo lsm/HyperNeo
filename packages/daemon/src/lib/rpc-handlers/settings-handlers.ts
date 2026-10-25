@@ -7,6 +7,7 @@ import type { Database } from '../../storage/database.ts';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 import { EXA_CREDENTIAL_PROVIDER_ID } from '../agent/exa-web-tools.ts';
+import { assertNoToolSelectionDefaults } from '../tools/session-tool-choice.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 export { EXA_CREDENTIAL_PROVIDER_ID };
@@ -70,6 +71,7 @@ export function registerSettingsHandlers(
   messageHub.onRequest(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {
+      assertNoToolSelectionDefaults(data.updates);
       const touchesCustomEndpoints = data.updates.customEndpoints !== undefined;
       const run = async () => {
         if (touchesCustomEndpoints) {

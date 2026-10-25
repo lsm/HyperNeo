@@ -230,6 +230,18 @@ describe('Settings RPC Handlers', () => {
   });
 
   describe('settings.global.update', () => {
+    it('refuses caller-supplied tool defaults before changing any settings', async () => {
+      const handler = messageHubData.handlers.get('settings.global.update')!;
+      await expect(
+        handler(
+          { updates: { model: 'changed', toolSelectionDefaults: { version: 1, choices: {} } } },
+          {}
+        )
+      ).rejects.toThrow(/toolSelectionDefaults.*daemon/);
+      expect(settingsManagerData.mocks.updateGlobalSettings).not.toHaveBeenCalled();
+      expect(settingsManagerData.mocks.saveGlobalSettings).not.toHaveBeenCalled();
+    });
+
     it('updates global settings partially', async () => {
       const handler = messageHubData.handlers.get('settings.global.update');
       expect(handler).toBeDefined();

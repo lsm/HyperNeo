@@ -137,6 +137,65 @@ describe('SpaceRepository', () => {
   });
 
   describe('updateSpace', () => {
+    it('can replace malformed stored config with a valid ordinary config', () => {
+      const space = repo.createSpace({
+        workspacePath: '/workspace/corrupt',
+        slug: 'corrupt',
+        name: 'Corrupt config',
+      });
+      for (const raw of ['{broken', '']) {
+        db.prepare('UPDATE spaces SET config=? WHERE id=?').run(raw, space.id);
+        const updated = repo.updateSpace(space.id, { config: { maxConcurrentTasks: 5 } });
+        expect(updated?.config).toEqual({ maxConcurrentTasks: 5 });
+        expect(updated?.maxConcurrentTasks).toBe(5);
+        expect(repo.getSpace(space.id)?.config).toEqual({ maxConcurrentTasks: 5 });
+      }
+    });
+
+    it('preserves daemon-owned defaults while replacing ordinary config', () => {
+      const space = repo.createSpace({
+        workspacePath: '/workspace/frozen',
+        slug: 'frozen',
+        name: 'Frozen',
+      });
+      const defaults = {
+        version: 1,
+        choices: { 'mcp:browser': { selected: false, aliases: ['browser-alias'] } },
+      };
+      db.prepare('UPDATE spaces SET config=? WHERE id=?').run(
+        JSON.stringify({ toolSelectionDefaults: defaults, taskTimeoutMs: 1000 }),
+        space.id
+      );
+      const updated = repo.updateSpace(space.id, { config: { maxConcurrentTasks: 5 } });
+      expect(updated?.config).toEqual({ maxConcurrentTasks: 5, toolSelectionDefaults: defaults });
+      expect(updated?.maxConcurrentTasks).toBe(5);
+      expect(repo.updateSpace(space.id, { config: {} })?.config).toEqual({
+        toolSelectionDefaults: defaults,
+      });
+    });
+
+    it('refuses caller-supplied defaults on Space creation and update', () => {
+      const toolSelectionDefaults = { version: 1 as const, choices: {} };
+      expect(() =>
+        repo.createSpace({
+          workspacePath: '/workspace/injected',
+          slug: 'injected',
+          name: 'Injected',
+          config: { toolSelectionDefaults },
+        })
+      ).toThrow(/toolSelectionDefaults.*daemon/);
+      expect(repo.getSpaceByPath('/workspace/injected')).toBeNull();
+      const space = repo.createSpace({
+        workspacePath: '/workspace/normal',
+        slug: 'normal',
+        name: 'Normal',
+      });
+      expect(() =>
+        repo.updateSpace(space.id, { name: 'Changed', config: { toolSelectionDefaults } })
+      ).toThrow(/toolSelectionDefaults.*daemon/);
+      expect(repo.getSpace(space.id)?.name).toBe('Normal');
+    });
+
     it('updates name and description', () => {
       const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
       const updated = repo.updateSpace(space.id, { name: 'A Updated', description: 'New desc' });
