@@ -412,12 +412,12 @@ export class NeoService {
   async todoWorkers<T extends NeoTodo>(todos: readonly T[]): Promise<T[]> {
     const links = await this.todos.read(
       'todoLinks',
-      todos.map((todo) => todo.id)
+      todos.filter((todo) => todo.worker === undefined).map((todo) => todo.id)
     );
     const reads = new Map<string, ReturnType<typeof this.readWorker>>();
     return Promise.all(
       todos.map(async (todo) => {
-        const ref = links.get(todo.id)?.worker;
+        const ref = todo.worker === undefined ? links.get(todo.id)?.worker : todo.worker;
         const key = JSON.stringify(ref);
         if (ref && !reads.has(key)) reads.set(key, this.readWorker(ref));
         return { ...todo, worker: ref ? await reads.get(key)! : null };

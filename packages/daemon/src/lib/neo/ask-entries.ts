@@ -124,7 +124,7 @@ function projectNeoTodoEntries(
       todos,
       packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
     ),
-    ...(links.get(todo.id) ?? { link: null, remoteLink: null }),
+    ...(links.get(todo.id) ?? { worker: null, link: null, remoteLink: null }),
   }));
 }
 
