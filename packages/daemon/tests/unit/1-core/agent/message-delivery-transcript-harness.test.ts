@@ -1,3 +1,4 @@
+import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { MessageContent, Provider, Session } from '@hyperneo/shared';
@@ -223,6 +224,21 @@ function instrumentDeliveryTranscript(
     });
   };
 
+  const originalGatewayRun = db.gateway.run.bind(db.gateway);
+  db.gateway.run = <A, R>(operation: DbOp<A, R>, args: A): Promise<R> => {
+    if (operation.name === 'jobs.parkDelivery') {
+      const call = args as {
+        method: string;
+        args: Parameters<JobQueueRepository['requeueParked']>;
+      };
+      if (call.method === 'park') {
+        const [jobId, runAt, claimToken] = call.args;
+        transcript.push({ op: 'job:requeueParked', jobId, runAt, claimToken: claimToken ?? null });
+      }
+    }
+    return originalGatewayRun(operation, args);
+  };
+
   const jobOriginals = {
     requeue: jobRepo.requeue.bind(jobRepo),
     requeueParked: jobRepo.requeueParked.bind(jobRepo),
@@ -301,6 +317,7 @@ function instrumentDeliveryTranscript(
       db.writeSDKMessage = originalWrite;
       db.updateMessageStatus = dbOriginals.updateMessageStatus;
       db.updateMessageTimestamp = dbOriginals.updateMessageTimestamp;
+      db.gateway.run = originalGatewayRun;
       jobRepo.requeue = jobOriginals.requeue;
       jobRepo.requeueParked = jobOriginals.requeueParked;
       jobRepo.isClaimCurrent = jobOriginals.isClaimCurrent;

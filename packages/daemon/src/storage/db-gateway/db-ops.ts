@@ -38,6 +38,7 @@ import {
   jobQueueWrites,
 } from '../repositories/job-queue-repository.ts';
 import { submitSessionEvent } from '../repositories/session-event-submission.ts';
+import { parkDeliveryJob } from '../repositories/job-delivery-parking.ts';
 import { recordClaudeInboxRoute } from '../repositories/claude-inbox-route-repository.ts';
 import { replaceNeoSessionSeen } from '../repositories/neo-session-seen-repository.ts';
 import {
@@ -89,6 +90,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobQueueWrites,
     submitSessionEvent,
     jobQueueReads,
+    parkDeliveryJob,
     externalEventSweeps,
     messageSearchIndexWrites,
     cleanupJobs,
