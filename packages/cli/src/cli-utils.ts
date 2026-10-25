@@ -1,3 +1,4 @@
+import { SESSION_CLI_HELP } from './session-cli-commands.ts';
 export interface CliOptions {
   port?: number;
   host?: string;
@@ -68,9 +69,7 @@ Options:
   -h, --help                Show this help message
 
 Session commands:
-  hyperneo send <session-id> <text>   Message another session from inside a session
-  hyperneo question <question-id>     Read a Neo question and whether the human answered it
-  hyperneo build                      Read daemon build and health through the owner-only session socket
+${SESSION_CLI_HELP}
 
 Examples:
   hyperneo                      Start server (database at ~/.hyperneo/data/daemon.db)

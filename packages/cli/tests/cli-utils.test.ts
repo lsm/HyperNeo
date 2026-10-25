@@ -123,6 +123,10 @@ describe('parseArgs', () => {
 });
 
 describe('getHelpText', () => {
+  test('lists the pairing and device-management commands', () => {
+    expect(getHelpText()).toContain('hyperneo pair');
+    expect(getHelpText()).toContain('hyperneo devices');
+  });
   test('documents the loopback default', () => {
     expect(getHelpText()).toContain('Host to bind to (default: 127.0.0.1)');
   });
