@@ -3,24 +3,19 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
-import { SkillRepository } from '../../../../src/storage/repositories/skill-repository.ts';
-import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository.ts';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
-import { readSessionToolPreferences } from '../../../../src/storage/repositories/session-tool-preference-read.ts';
-import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTestSession } from '../../../helpers/database.ts';
 import {
   createSessionToolPreferenceWriter,
   type PreferenceDatabase,
-  type PreferenceCaptureDatabase,
   type SessionToolPreferenceWriter,
 } from '../../../../src/lib/tools/write-session-tool-preferences.ts';
 
 let db: Database;
 let repo: SessionRepository;
-let captureGateway: DbGateway;
-let data: PreferenceDatabase & PreferenceCaptureDatabase;
+let data: PreferenceDatabase & { mcpEnablement: McpEnablementRepository };
 let write: SessionToolPreferenceWriter;
 let notices: string[];
 const ID = 'writer-fixture';
@@ -57,15 +52,9 @@ beforeEach(() => {
     db.prepare(
       "INSERT INTO skills (id,name,display_name,description,source_type,config,enabled,created_at) VALUES (?,?,?,'',?,?,0,1)"
     ).run(id, id, id, type, JSON.stringify(config));
-  captureGateway = new DbGateway(':memory:', db);
   data = {
-    captureSessionToolPreferences: (id, request, tools) =>
-      captureGateway.call(readSessionToolPreferences, 'capture', id, request, tools),
-    getDatabase: () => db,
-    captureSessionRuntimeSettings: (id) => repo.captureSessionRuntimeSettings(id),
+    gateway: gatewayFor(db),
     casSessionToolPreferences: async (...args) => repo.casSessionToolPreferences(...args),
-    skills: new SkillRepository(db, changes),
-    appMcpServers: new AppMcpServerRepository(db, changes),
     mcpEnablement: new McpEnablementRepository(db, changes),
   };
   notices = [];
@@ -322,21 +311,5 @@ describe('disabled-skill request authority', () => {
     ).toBe(true);
     expect(current().tools).toEqual({ disabledSkills: before, useClaudeCodePreset: false });
     expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(false);
-  });
-});
-
-describe('preference capture lane', () => {
-  it('captures through the worker read adapter without touching a caller-thread connection', async () => {
-    const reader = {
-      ...data,
-      getDatabase: () => {
-        throw new Error('caller-thread SQLite capture');
-      },
-    };
-    const offThread = createSessionToolPreferenceWriter(reader, async () => {});
-    expect(
-      (await offThread(ID, { kind: 'skills', disabledSkills: [] }, { disabledSkills: [] })).ok
-    ).toBe(true);
-    expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(true);
   });
 });

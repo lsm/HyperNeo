@@ -16,6 +16,10 @@ Pass requires:
   disabled IDs and a canonical off fixture. Invoke the coordinator to remove both
   vetoes; canonical choices and legacy tools persist together. Frozen MCP aliases
   and the native Read preset survive cold session.get readback.
+- Reject any main-connection prepare or transaction called by the preference
+  coordinator or its reader during that save. Unrelated daemon startup SQL may
+  continue. Require captureAndCommitOffMain=true: the file-backed daemon uses the
+  registered reader operation and the existing atomic writer commit.
 - Disable and re-enable the instruction with skills requests that omit optional
   tools. Cold RPC reads must show both the canonical choice and matching legacy
   disabled IDs changing, while advanced settings are preserved. Record
@@ -35,8 +39,9 @@ all coordinator/clear/race/rollback/notification/restart flags true, and false
 sdkConsumerWired/sdkApplyVerified/queryStarted flags, with coordinatorInvokedDirectly=true. All resources close in
 finally; the held commit is released even if the concurrent RPC fixture fails.
 
-The coordinator captures session/catalog/override/default facts in the gateway worker's read-only
-transaction, then passes complete source guards to the atomic worker commit.
+The coordinator captures session/catalog/override/default facts in one reader-worker
+transaction supplied by the existing gateway, then passes complete source guards
+to the atomic worker commit. It awaits capture before planning or committing.
 It reuses the legacy adapter and choice-change pipeline. Skills request IDs are
 also the authoritative legacy disabled list; optional settings cannot replace it.
 MCP requests retain captured skill vetoes even if optional settings differs. Corrupt stored defaults
@@ -49,3 +54,6 @@ change-session-tool-choice.test.ts and tool-preference-commit.test.ts. Fixtures 
 cover matching Space defaults, concurrent definition/default edits, missing/closed
 sessions and no notification on rejected writes. No active RPC save, SDK attachment
 or one-click Use here UI is claimed by this foundation proof.
+
+Run `bun run check:db-main-thread` too. Transactions must be 158 or lower against
+the unchanged ceiling; do not raise the baseline or exempt the reader module.

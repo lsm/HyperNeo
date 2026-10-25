@@ -1,6 +1,3 @@
-import { readSessionToolPreferences } from './repositories/session-tool-preference-read.ts';
-import type { LegacyToolPreference } from '../lib/tools/legacy-tool-preferences.ts';
-import type { ToolsConfig } from '@hyperneo/shared';
 import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
 import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
@@ -324,10 +321,6 @@ export class Database {
     text: string | null
   ): Promise<'won' | 'superseded' | 'invalid'> {
     return this.gateway.call(sessionWrites, 'casSessionInputDraft', snapshot, text);
-  }
-
-  captureSessionToolPreferences(id: string, request: LegacyToolPreference, tools?: ToolsConfig) {
-    return this.gateway.call(readSessionToolPreferences, 'capture', id, request, tools);
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
