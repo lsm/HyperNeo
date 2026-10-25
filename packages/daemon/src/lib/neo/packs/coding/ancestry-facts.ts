@@ -1,6 +1,9 @@
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { callCodingBranchDb } from './branch-facts-db.ts';
+import { codingAncestryReads, codingAncestryWrites } from './ancestry-facts-db.ts';
 import { withBusyRetry } from '../../../../storage/busy-retry.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
@@ -74,14 +77,33 @@ export class CodingAncestryFactsRepository {
   }
 
   refresh(input: Subject, spawn: SpawnFn = spawnProcess, now = Date.now) {
-    const current = this.read(input),
-      subject = current.subject;
-    if (current.ancestry.status === 'known') return Promise.resolve(current);
     let active = pending.get(this.db);
     if (!active) {
       active = new Map();
       pending.set(this.db, active);
     }
+    const key = `request:${JSON.stringify([input.repo.toLowerCase(), input.baseOid, input.headOid])}`;
+    const held = active.get(key);
+    if (held) return held;
+    const request = this.collectCurrent(input, active, spawn, now).finally(() =>
+      active.delete(key)
+    );
+    active.set(key, request);
+    return request;
+  }
+
+  private async collectCurrent(
+    input: Subject,
+    active: Map<string, Promise<ReturnType<CodingAncestryFactsRepository['read']>>>,
+    spawn: SpawnFn,
+    now: () => number
+  ) {
+    const current = await callCodingBranchDb(
+        () => gatewayFor(this.db).call(codingAncestryReads, 'read', input),
+        'coding.ancestry.db'
+      ),
+      subject = current.subject;
+    if (current.ancestry.status === 'known') return current;
     const key = JSON.stringify(subject),
       held = active.get(key);
     if (held) return held;
@@ -92,34 +114,49 @@ export class CodingAncestryFactsRepository {
     return request;
   }
 
+  observe(input: Subject, observation: Observation, at: number, revision: number) {
+    this.persist(input, observation, at, revision);
+    return this.read(input);
+  }
+
+  observeCurrent(input: Subject, observation: Observation, at: number, revision: number) {
+    return callCodingBranchDb(
+      () =>
+        gatewayFor(this.db).call(codingAncestryWrites, 'observe', input, observation, at, revision),
+      'coding.ancestry.db'
+    );
+  }
+
   record(input: Subject, observation: Observation, at: number, revision: number) {
     return withBusyRetry(
-      this.db.transaction(() => {
-        const subject = this.canonical(input),
-          before = this.row(subject);
-        if ((before?.observation_revision ?? 0) !== revision) return false;
-        const success = 'status' in observation;
-        const status = success ? observation.status : (before?.status ?? null);
-        this.db
-          .prepare(`INSERT INTO pack_coding_ancestry_facts
-        (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)
-        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET
-        status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,
-        observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason`)
-          .run(
-            subject.repo,
-            subject.baseOid,
-            subject.headOid,
-            status,
-            (before?.fact_revision ?? 0) + (success && status !== before?.status ? 1 : 0),
-            revision + 1,
-            success ? at : (before?.observed_at ?? null),
-            at,
-            success ? null : observation.reason
-          );
-        return true;
-      }, 'immediate')
+      this.db.transaction(() => this.persist(input, observation, at, revision), 'immediate')
     );
+  }
+
+  private persist(input: Subject, observation: Observation, at: number, revision: number) {
+    const subject = this.canonical(input),
+      before = this.row(subject);
+    if ((before?.observation_revision ?? 0) !== revision) return false;
+    const success = 'status' in observation;
+    const status = success ? observation.status : (before?.status ?? null);
+    this.db
+      .prepare(`INSERT INTO pack_coding_ancestry_facts
+    (repo,base_oid,head_oid,status,fact_revision,observation_revision,observed_at,attempted_at,reason)
+    VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(repo,base_oid,head_oid) DO UPDATE SET
+    status=excluded.status,fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,
+    observed_at=excluded.observed_at,attempted_at=excluded.attempted_at,reason=excluded.reason`)
+      .run(
+        subject.repo,
+        subject.baseOid,
+        subject.headOid,
+        status,
+        (before?.fact_revision ?? 0) + (success && status !== before?.status ? 1 : 0),
+        revision + 1,
+        success ? at : (before?.observed_at ?? null),
+        at,
+        success ? null : observation.reason
+      );
+    return true;
   }
 }
 
@@ -162,13 +199,8 @@ const collectAncestry = (superpipe({})('coding-ledger-ancestry-refresh') as Pipe
       observation: Observation,
       now: () => number,
       revision: number
-    ) => facts.record(subject, observation, now(), revision),
+    ) => facts.observeCurrent(subject, observation, now(), revision),
     ['facts', 'subject', 'observation', 'now', 'revision'],
-    'recorded'
-  )
-  .pipe(
-    (facts: CodingAncestryFactsRepository, subject: Subject) => facts.read(subject),
-    ['facts', 'subject'],
     'read'
   )
   .endAsync('read') as (
