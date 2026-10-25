@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,6 +74,23 @@ afterEach(async () => {
 });
 
 describe('Neo home setup', () => {
+  test('reserves project paths without running project SQL through the main repository', async () => {
+    repo.saveProject({ id: 'synthetic-home', title: 'Synthetic', summary: '', context: '' }, 0);
+    const list = spyOn(repo, 'listProjects').mockImplementation(() => {
+      throw new Error('project reservation used the main repository');
+    });
+    try {
+      const result = await init();
+      expect(result.ok).toBe(true);
+      expect(result.projects).toHaveLength(1);
+      const reserved = result.projects![0];
+      expect(reserved.id).toBe('synthetic-home');
+      expect(repo.getProject(reserved.id)?.homePath).toBe(reserved.homePath);
+      expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('');
+    } finally {
+      list.mockRestore();
+    }
+  });
   test('initializes a local repository once and keeps coordinator transcripts untracked', async () => {
     await mkdir(join(root, '.coordinators', 'neo'), { recursive: true });
     await writeFile(join(root, '.coordinators', 'neo', 'transcript.md'), 'Private conversation.');

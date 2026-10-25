@@ -1,0 +1,38 @@
+{
+  "fixture": "fresh synthetic daemon, 40 projects, real WebSocket RPC",
+  "baseline": {
+    "mainReservationSql": 243,
+    "coldRpcMs": 100.29683399999999
+  },
+  "limits": [
+    "Writer contention misses 250 ms affected-write target",
+    "Concurrent local validation cold RPC measurements slightly exceed 250 ms; no full latency pass claimed",
+    "Standalone test typecheck fails with existing cross-package errors; production typecheck and targeted Vitest pass"
+  ],
+  "fixed": {
+    "bun": {
+      "mainReservationSql": 0,
+      "wholeWriterCommands": 4,
+      "coldRpcMs": 256.3834999999999,
+      "coldRpcUnder250ms": false,
+      "maxLoopLagMs": 12.70770900000025,
+      "contention": {
+        "healthMs": 1.5887499999998909,
+        "writeMs": 1252.155167,
+        "affectedWriteUnder250ms": false
+      }
+    },
+    "deno": {
+      "mainReservationSql": 0,
+      "wholeWriterCommands": 4,
+      "coldRpcMs": 256.0236249999998,
+      "coldRpcUnder250ms": false,
+      "maxLoopLagMs": 17.112499999999272,
+      "contention": {
+        "healthMs": 0.9828749999996944,
+        "writeMs": 1239.1782919999987,
+        "affectedWriteUnder250ms": false
+      }
+    }
+  }
+}
