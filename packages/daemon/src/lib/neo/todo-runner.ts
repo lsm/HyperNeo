@@ -757,7 +757,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       todoIds: readonly string[],
       warn: (message: string, error: unknown) => void
     ): Promise<void> {
-      for (const todo of store.listCheckable().filter((item) => todoIds.includes(item.id))) {
+      for (const todo of (await store.read('listCheckable')).filter((item) =>
+        todoIds.includes(item.id)
+      )) {
         await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
       }
     },
@@ -786,7 +788,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       }
       for (const { todoId, ref } of await sessions.read('awaitingReports'))
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
-      for (const todo of store.listCheckable()) {
+      for (const todo of await store.read('listCheckable')) {
         await follow(todo, Date.now()).catch((error) => warn('Todo follow pending', error));
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
@@ -795,8 +797,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           warn('Todo nudge pending', error)
         );
       }
-      for (const ask of store.listOpenAsks()) {
-        const completed = store.listTodos(ask.id).find((todo) => todo.state === 'done');
+      const asks = await store.read('listOpenAsks');
+      const todos = await store.read(
+        'listTodosForAsks',
+        asks.map((ask) => ask.id)
+      );
+      for (const ask of asks) {
+        const completed = todos.find((todo) => todo.askId === ask.id && todo.state === 'done');
         if (completed)
           await recompute(completed).catch((error) => warn('Todo plan advancement pending', error));
       }

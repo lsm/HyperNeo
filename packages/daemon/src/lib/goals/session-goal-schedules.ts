@@ -60,8 +60,12 @@ export class SessionGoalSchedules implements ScheduleSource {
   async facts(id: string) {
     const goal = this.goals.get(id);
     if (!goal || goal.status === 'completed' || goal.status === 'archived') return null;
-    const asks = this.asks.listGoalAsks(id);
-    const todos = asks.flatMap((ask) => this.asks.listTodos(ask.id));
+    const asks = await this.asks.read('listGoalAsks', id);
+    const rows = await this.asks.read(
+      'listTodosForAsks',
+      asks.map((ask) => ask.id)
+    );
+    const todos = asks.flatMap((ask) => rows.filter((todo) => todo.askId === ask.id));
     const todoIds = todos.map((todo) => todo.id);
     const packs = this.packs();
     const state = this.goals.factState(id);

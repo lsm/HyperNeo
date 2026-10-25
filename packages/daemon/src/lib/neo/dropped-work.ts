@@ -11,10 +11,11 @@ import type { NeoService } from './service.ts';
 const WAITING_AFTER_MS = 2 * 60 * 60 * 1000;
 const log = new Logger('neo-dropped-work');
 
-function readCounts(service: NeoService, now: number) {
-  const todos = service.todos.listCheckable();
+async function readCounts(service: NeoService, now: number) {
+  const todos = await service.todos.read('listCheckable');
   return {
-    'stalled asks': service.todos.listStalledAsks(now - STALLED_ASK_AFTER_MS).length,
+    'stalled asks': (await service.todos.read('listStalledAsks', now - STALLED_ASK_AFTER_MS))
+      .length,
     'todos waiting >2h': todos.filter(
       (todo) => todo.state === 'todo' && todo.updatedAt <= now - WAITING_AFTER_MS
     ).length,
@@ -58,10 +59,10 @@ export const publishDroppedWork = (superpipe({})('neo-daily-dropped-work') as Pi
     'result:result'
   )
   .pipe(
-    (service: NeoService, now: number, day: string) =>
+    async (service: NeoService, now: number, day: string) =>
       [
         `Daily dropped work ${day} (UTC)`,
-        `Core: ${format(readCounts(service, now))}`,
+        `Core: ${format(await readCounts(service, now))}`,
         ...service
           .packs()
           .filter((pack) => pack.stats)
@@ -98,8 +99,8 @@ export const publishDroppedWork = (superpipe({})('neo-daily-dropped-work') as Pi
     ['service', 'result', 'text', 'append'],
     'result'
   )
-  .end('result') as (
+  .endAsync('result') as (
   service: NeoService,
   now: number,
   append: (input: NeoPublicationInput) => NeoPublicationAppendResult
-) => void;
+) => Promise<void>;

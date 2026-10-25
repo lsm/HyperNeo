@@ -308,6 +308,12 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       if (!starts.includes("deno-todo") || reports.some(row => row.todoId === "deno-todo") || window.start !== 1 || window.end !== null || !changed || unchanged) Deno.exit(1);
       if (db.prepare("SELECT live_status AS status FROM neo_todo_sessions WHERE todo_id=?").get("deno-todo").status !== "running") Deno.exit(1);
       console.log("[deno-smoke] todo recovery, PR window and committed live status use DB workers");
+      const { neoTodoReads } = await import(src + "/storage/repositories/neo-ask-todo-repository.ts");
+      const cards = await gateway.call(neoTodoReads, "snapshot", undefined, 50);
+      const page = await gateway.call(neoTodoReads, "doneTodoFacts", "deno-read-missing");
+      const checks = await gateway.call(neoTodoReads, "listCheckable");
+      if (!Array.isArray(cards.asks) || !(cards.facts.links instanceof Map) || page.ask !== null || page.todos.length || !Array.isArray(checks)) Deno.exit(1);
+      console.log("[deno-smoke] Neo card, done-page and check-list reader commands preserve snapshots");
     } finally { db.close(); }
     console.log("[deno-smoke] session event ingest commit/dedupe ok");
   } finally { await gateway.close(); }
