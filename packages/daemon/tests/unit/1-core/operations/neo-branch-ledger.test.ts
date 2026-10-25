@@ -362,12 +362,17 @@ describe('branch coverage', () => {
       const facts = new CodingPrLedgerRepository(f.db).branchFacts;
       let finish!: (code: number) => void,
         calls = 0;
+      let started!: () => void;
+      const collecting = new Promise<void>((done) => {
+        started = done;
+      });
       const slow: SpawnFn = () => {
         calls++;
         return {
           ...response([{ url }]),
           exited: new Promise<number>((done) => {
             finish = done;
+            started();
           }),
         };
       };
@@ -378,6 +383,7 @@ describe('branch coverage', () => {
         slow,
         () => 100
       );
+      await collecting;
       expect(calls).toBe(1);
       other = new Database(join(f.root, 'facts.db'));
       const newer = new CodingPrLedgerRepository(other).branchFacts;

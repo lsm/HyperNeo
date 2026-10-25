@@ -1,0 +1,54 @@
+{
+  "baseline": {
+    "mainBranchSql": 21,
+    "completedGatewayCommands": 0,
+    "lookupCounts": {
+      "watch": 1,
+      "legacy": 2,
+      "reopen": 0
+    },
+    "maxLoopLagMs": 22.963917000000038
+  },
+  "bun": {
+    "mainBranchSql": 0,
+    "completedGatewayCommands": 11,
+    "lookupCounts": {
+      "watch": 1,
+      "legacy": 2,
+      "reopen": 0
+    },
+    "maxLoopLagMs": 21.957208000000264,
+    "revisionFence": {
+      "observationRevision": 1,
+      "urls": [
+        "https://github.com/synthetic/ledger/pull/8"
+      ]
+    },
+    "contention": {
+      "healthMs": 0.38583400000061374,
+      "writeMs": 1206.6653749999996,
+      "affectedWriteUnder250ms": false
+    }
+  },
+  "deno": {
+    "mainBranchSql": 0,
+    "completedGatewayCommands": 11,
+    "lookupCounts": {
+      "watch": 1,
+      "legacy": 2,
+      "reopen": 0
+    },
+    "maxLoopLagMs": 38.957916999999725,
+    "revisionFence": {
+      "observationRevision": 1,
+      "urls": [
+        "https://github.com/synthetic/ledger/pull/8"
+      ]
+    },
+    "contention": {
+      "healthMs": 0.734667000000627,
+      "writeMs": 1272.4516670000003,
+      "affectedWriteUnder250ms": false
+    }
+  }
+}
