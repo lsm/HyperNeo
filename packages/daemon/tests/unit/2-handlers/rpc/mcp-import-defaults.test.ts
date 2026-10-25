@@ -9,6 +9,7 @@ import { createTables } from '../../../../src/storage/schema/index.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository.ts';
+import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service.ts';
 import { setupSpaceMcpHandlers } from '../../../../src/lib/rpc-handlers/space-mcp-handlers.ts';
@@ -136,7 +137,7 @@ describe('import default RPC writes', () => {
     expect(registry.listImported()).toEqual([]);
     expect(publish).not.toHaveBeenCalled();
   });
-  it.each(['remove', 'missing', 'orphan'])(
+  it.each(['remove', 'missing', 'orphan', 'override'])(
     '%s retires imported defaults atomically',
     async (action) => {
       write(['first']);
@@ -152,7 +153,14 @@ describe('import default RPC writes', () => {
       raw
         .prepare("UPDATE spaces SET config=? WHERE id='space'")
         .run(JSON.stringify({ toolSelectionDefaults: on }));
-      if (action === 'remove') write([]);
+      if (action === 'override')
+        new McpEnablementRepository(raw, noOpReactiveDb).setOverride(
+          'space',
+          'space',
+          row.id,
+          true
+        );
+      if (action === 'remove' || action === 'override') write([]);
       else if (action === 'missing') unlinkSync(file);
       else registry.update(row.id, { sourcePath: join(root, 'orphan', '.mcp.json') });
       await call(action === 'orphan' ? {} : { workspacePath: workspace });
