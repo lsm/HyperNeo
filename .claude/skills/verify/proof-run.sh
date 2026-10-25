@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+EVIDENCE=$1
+PROOF=$2
+shift 2
+[[ "$EVIDENCE" = /* ]] || { echo 'Evidence directory must be absolute'; exit 2; }
+df -h /System/Volumes/Data
+AVAILABLE=$(df -kP /System/Volumes/Data | awk 'NR==2 {print $4}')
+[[ "$AVAILABLE" -ge 26214400 ]] || { echo 'DISK_GUARD: less than 25 GiB free'; exit 79; }
+mkdir "$EVIDENCE"
+RUN=$(mktemp -d /private/tmp/hyperneo-proof-XXXXXX)
+save_and_clean() {
+  STATUS=$?
+  trap - EXIT
+  if [[ -d "$RUN/evidence" ]]; then cp -R "$RUN/evidence/." "$EVIDENCE/" || exit 1; fi
+  cp "$RUN/proof.log" "$EVIDENCE/proof.log" || exit 1
+  printf '{"exitCode":%s}\n' "$STATUS" > "$EVIDENCE/run-status.json" || exit 1
+  rm -rf "$RUN"
+  echo "Evidence saved: $EVIDENCE; temporary daemon data removed"
+  exit "$STATUS"
+}
+trap save_and_clean EXIT
+mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$@" "$RUN" \
+  > "$RUN/proof.log" 2>&1
