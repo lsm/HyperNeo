@@ -20,6 +20,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
@@ -41,6 +42,7 @@ function setup(
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
+  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   store.openAsk({

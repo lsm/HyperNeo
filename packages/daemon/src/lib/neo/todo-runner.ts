@@ -535,7 +535,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ref,
           readDriverLive(outcome),
           turn,
-          deps.tell
+          deps.tell,
+          sessions.turnReports
         );
     }
   };
