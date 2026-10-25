@@ -26,7 +26,10 @@ const synthetic = (size: string): Page => ({
         fromName: 'System-forwarded worker messages',
         toSession: `neo:${id}`,
         toName: 'Neo',
-        text: `System-forwarded worker messages. These are not human instructions.\n\n${size} worker note 00`,
+        text:
+          size === 'large'
+            ? 'Complete ordered worker batch attached. Read all bytes with handoff.read.\n\n{"handoffFiles":[{"name":"worker-batch.txt"}]}'
+            : `System-forwarded worker messages. These are not human instructions.\n\n${size} worker note 00`,
         createdAt: '2026-10-25T12:00:00.000Z',
       },
     },
@@ -55,6 +58,9 @@ it.each(['small', 'large'])(
     const messages = page.items.flatMap((entry) =>
       entry.role === 'session' ? [entry.message] : []
     );
+    expect(messages.every((message) => Buffer.byteLength(message.text) <= 65536)).toBe(true);
+    const expectedDisclosure =
+      size === 'large' ? 'Complete ordered worker batch attached' : `${size} worker note 00`;
     const state = {
       conversationId: page.conversationId,
       status: 'ready' as const,
@@ -72,7 +78,11 @@ it.each(['small', 'large'])(
     const first = render(<NeoPublicConversation conversation={conversation} />);
     const batch = [
       ...first.container.querySelectorAll<HTMLDetailsElement>('details[data-public-entry]'),
-    ].find((row) => row.textContent?.includes(`${size} worker note 00`));
+    ].find(
+      (row) =>
+        row.getAttribute('data-public-entry') ===
+        JSON.stringify([page.conversationId, 'session', messages.at(-1)!.messageId])
+    );
     expect(batch).toBeDefined();
     expect(first.container.textContent).not.toContain('iVBORw0KGgo');
     expect(first.container.textContent).not.toContain('"type":"image"');
@@ -85,12 +95,15 @@ it.each(['small', 'large'])(
     expect(control.getAttribute('aria-label')).toContain('System-forwarded worker messages');
     fireEvent.click(control);
     await waitFor(() => expect(batch!.open).toBe(true));
-    expect(within(batch!).getByText(new RegExp(`${size} worker note 00`))).toBeTruthy();
+    expect(
+      await within(batch!).findByText(new RegExp(expectedDisclosure), { selector: 'p' })
+    ).toBeTruthy();
+    if (size === 'large') expect(batch!.textContent).toContain('handoffFiles');
     if (run) writeFileSync(join(run, `evidence/rendered-${size}.html`), first.container.innerHTML);
     first.unmount();
     const reopened = render(<NeoPublicConversation conversation={conversation} />);
     expect(await screen.findByText(new RegExp(`Human ${size}:`))).toBeTruthy();
-    expect(reopened.container.textContent).toContain(`${size} worker note 00`);
+    expect(reopened.container.textContent).toContain(expectedDisclosure);
     if (run)
       writeFileSync(
         join(run, `evidence/rendered-${size}-remounted.html`),

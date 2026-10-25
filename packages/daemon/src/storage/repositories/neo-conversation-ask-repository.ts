@@ -1,7 +1,6 @@
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { NeoWakeQueueRepository } from './neo-wake-queue-repository.ts';
-import { ChangeRecorder } from '../db-gateway/db-op.ts';
 import { sdkNeoIntake } from './sdk-message-transactions.ts';
 import type {
   NeoConversationAsk,
@@ -134,8 +133,7 @@ export function persistNeoIntakeTransaction(
   ledger: NeoConversationAskRepository,
   sdkMessageRepo: SDKMessageRepository,
   jobQueue: JobQueueRepository,
-  deferPostSaveSideEffects: (effect: () => void) => void,
-  changes = new ChangeRecorder()
+  deferPostSaveSideEffects: (effect: () => void) => void
 ): NeoConversationAskAppendResult {
   return db.transaction(() => {
     const stored = ledger.append(ask);
@@ -153,7 +151,6 @@ export function persistNeoIntakeTransaction(
         jobQueue,
         hold,
         deferPostSaveSideEffects,
-        changes,
       });
     const prompt = ensurePromptInTransaction({
       db,

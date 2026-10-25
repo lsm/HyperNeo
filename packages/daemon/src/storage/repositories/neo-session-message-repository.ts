@@ -1,6 +1,6 @@
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { type ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
+import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 const SELECT = `SELECT message_id AS messageId, conversation_id AS conversationId, sequence,
@@ -13,31 +13,25 @@ export const VISIBLE_IN_NEO = `(${SENT_BY_NEO} OR from_session = '${WORKER_BATCH
 
 export type NeoSessionMessageDraft = Omit<NeoSessionMessage, 'sequence'>;
 
-export const persistNeoSessionMessage = (
-  db: Database,
-  message: NeoSessionMessageDraft,
-  changes: ChangeRecorder
-): void => {
-  db.prepare(
-    `INSERT OR IGNORE INTO neo_session_messages (conversation_id, message_id, from_session,
-         from_name, to_session, to_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    message.conversationId,
-    message.messageId,
-    message.fromSession,
-    message.fromName,
-    message.toSession,
-    message.toName,
-    message.text,
-    message.createdAt
-  );
-  changes.notifyChange('neo_session_messages');
-};
-
 export const recordNeoSessionMessage = defineDbOp({
   name: 'neo.sessionMessage.record',
   mode: 'write',
-  run: persistNeoSessionMessage,
+  run: (db: Database, message: NeoSessionMessageDraft, changes): void => {
+    db.prepare(
+      `INSERT OR IGNORE INTO neo_session_messages (conversation_id, message_id, from_session,
+         from_name, to_session, to_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      message.conversationId,
+      message.messageId,
+      message.fromSession,
+      message.fromName,
+      message.toSession,
+      message.toName,
+      message.text,
+      message.createdAt
+    );
+    changes.notifyChange('neo_session_messages');
+  },
 });
 
 export class NeoSessionMessageRepository {

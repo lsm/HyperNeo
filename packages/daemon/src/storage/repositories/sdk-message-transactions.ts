@@ -105,8 +105,7 @@ export const sdkNeoIntake = sdkOp(
       new NeoConversationAskRepository(deps.db),
       deps.sdkMessageRepo,
       deps.jobQueue,
-      (publish) => publish(),
-      deps.changes
+      (publish) => publish()
     )
 );
 export const sdkDeliveryTeardown = sdkOp(

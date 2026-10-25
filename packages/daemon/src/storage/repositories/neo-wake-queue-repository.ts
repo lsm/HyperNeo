@@ -1,10 +1,9 @@
 import type { Database } from '../sqlite-compat.ts';
-import { ChangeRecorder, defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import {
   ensurePromptInTransaction,
   type PersistPromptArgs,
 } from '../../lib/agent/message-delivery-outbox.ts';
-import { persistNeoSessionMessage, WORKER_BATCH_SENDER } from './neo-session-message-repository.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import {
   createMailboxEntry,
@@ -30,7 +29,6 @@ export class NeoWakeQueueRepository {
       'sdkMessageRepo' | 'jobQueue' | 'hold' | 'deferPostSaveSideEffects'
     > & {
       at: number;
-      changes: ChangeRecorder;
     }
   ): void {
     const uuid = randomUUID();
@@ -64,20 +62,6 @@ export class NeoWakeQueueRepository {
       delivery: { origin: 'recovery', priority: 1, admittedAt: options.at },
       deferPostSaveSideEffects: options.deferPostSaveSideEffects,
     });
-    persistNeoSessionMessage(
-      this.db,
-      {
-        messageId: uuid,
-        conversationId: sessionId.slice(4),
-        fromSession: WORKER_BATCH_SENDER,
-        fromName: 'System-forwarded worker messages',
-        toSession: sessionId,
-        toName: 'Neo',
-        text: content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n\n'),
-        createdAt: new Date(options.at).toISOString(),
-      },
-      options.changes
-    );
   }
 
   hold(entry: MailboxEntry): void {

@@ -62,7 +62,7 @@ describe('worker batches before human intake', () => {
     return { prompt, ledger };
   };
 
-  test('a separately labelled input precedes the byte-identical human prompt and retries once', () => {
+  test('a separately labelled input precedes the byte-identical human prompt and retries once', async () => {
     hold('Worker note A');
     hold('Worker note B');
     const human = '  Keep my words inline, exactly.\n第二行。  ';
@@ -82,6 +82,7 @@ describe('worker batches before human intake', () => {
     expect(JSON.stringify(batch.content)).toContain('Worker note A');
     expect(JSON.stringify(batch.content)).toContain('Worker note B');
     expect(JSON.stringify(batch.content)).not.toContain(human);
+    await boundDeliveryContent(db.getDatabase(), batchJob, batch);
     db.getSDKMessageRepo().markDeliveryConsumedByUuid(
       sessionId,
       String(batchJob.payload.messageUuid)
@@ -101,7 +102,7 @@ describe('worker batches before human intake', () => {
     expect(db.getSDKMessageRepo().getSDKMessages(sessionId, 100).messages).toHaveLength(2);
   });
 
-  test('worker images reach Neo without leaking base64 or raw block JSON into public text', () => {
+  test('worker images reach Neo without leaking base64 or raw block JSON into public text', async () => {
     const image = {
       type: 'image' as const,
       source: {
@@ -117,6 +118,7 @@ describe('worker batches before human intake', () => {
       .getSDKMessageRepo()
       .getDeliveryContent(sessionId, String(job.payload.messageUuid))!;
     expect(delivered.content).toContainEqual(image);
+    await boundDeliveryContent(db.getDatabase(), job, delivered);
     const [row] = new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10);
     expect(row.text).toContain('Worker image context');
     expect(row.text).not.toContain(image.source.data);
