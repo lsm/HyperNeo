@@ -1,4 +1,5 @@
 import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
+import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -31,14 +32,21 @@ export async function releaseWorkerSandbox(root: string | null | undefined) {
       await rm(runtime, { recursive: true, force: true, maxRetries: 3 });
       return;
     }
-    const child = spawnProcess(await workerRuntimeCleanupCommand(runtime), {
+    const command = await workerRuntimeCleanupCommand(runtime);
+    const child = spawnProcess(command, {
       env: { PATH: '/usr/bin:/bin' },
       stdout: 'ignore',
-      stderr: 'ignore',
+      stderr: 'pipe',
     });
-    if ((await child.exited) !== 0) {
+    const [code, diagnostic] = await Promise.all([
+      child.exited,
+      collectWithMaxBuffer(child.stderr, 4096),
+    ]);
+    if (code !== 0) {
       await lstat(runtime);
-      throw new Error('Worker cleanup sandbox failed; runtime retained.');
+      throw new Error(
+        `Worker cleanup ${command[0]} exited ${code}: ${diagnostic.text.trim() || 'no stderr received'}. Runtime retained.`
+      );
     }
     await rmdir(runtime);
   } catch (error) {

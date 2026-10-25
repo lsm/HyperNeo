@@ -230,3 +230,28 @@ proves actual cleanup with locked and immutable directories and archive retries.
 The permission-walk timing mocks are replaced by helper launch/removal and
 missing-enforcement tests; the unmocked concurrent removal proof remains. Read
 restriction is not claimed here; secret-read isolation remains #8630.
+
+## Cleanup failure diagnostics (review 9545)
+
+Run `worker-sandbox-diagnostic.ts` with the shared metadata-only isolated-daemon
+setup in `../SKILL.md`. It needs no model server or credentials. Its synthetic
+session has real prepared runtime roots; only the cleanup child command body is
+replaced with a fixed diagnostic and exit 23, keeping the OS write policy intact.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-cleanup-diagnostic-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn \
+  bun .claude/skills/verify/worker-sandbox-diagnostic.ts "$RUN"
+```
+
+`cleanup-diagnostic-rpc.json` must show the actual `session.archive` RPC error
+preserving the synthetic helper stderr and exit status, with session unarchived
+and both runtime roots retained. After restoring the real child command, retry
+must archive successfully and release both roots; its reply is retained separately.
+This is injected helper-failure diagnosis, not a claim to reproduce a missing
+bubblewrap installation on a native Linux host. Test-first commit `72efec8b96`
+records the old opaque RPC failure. Focused real-child tests additionally cover
+missing executables and output larger than a pipe buffer: diagnostics identify the
+executable and exit status, retain at most 4 KiB of stderr, and drain the rest.
