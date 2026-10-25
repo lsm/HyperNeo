@@ -1,4 +1,5 @@
 import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write.ts';
+import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
 import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
 import { reserveNeoHomeProjects } from '../repositories/neo-home-reservation.ts';
 import {
@@ -108,5 +109,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     recordNeoSessionMessage,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
+    jobEnqueueWrites,
   ].map((op) => [op.name, op])
 );
