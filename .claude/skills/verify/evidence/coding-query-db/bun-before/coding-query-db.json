@@ -1,0 +1,911 @@
+{
+  "mode": "before",
+  "fanout": [
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-15T10:00:00Z",
+        "until": "2026-10-15T12:00:00Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    }
+  ],
+  "initialRequests": [
+    {
+      "phase": "initial",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    }
+  ],
+  "firstStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "value_json": "[{\"number\":3,\"title\":\"Synthetic 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Synthetic 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Synthetic 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963234356,
+    "attempted_at": 1792963234356,
+    "reason": null
+  },
+  "changed": {
+    "ok": true,
+    "kind": "list",
+    "repo": "synthetic/ledger",
+    "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+    "window": {
+      "by": "merged",
+      "since": "2026-10-15T10:00:00Z",
+      "until": "2026-10-15T12:00:00Z"
+    },
+    "items": [
+      {
+        "number": 3,
+        "title": "Changed 3",
+        "url": "https://github.com/synthetic/ledger/pull/3",
+        "state": "MERGED",
+        "createdAt": "2026-10-15T11:00:00Z",
+        "updatedAt": "2026-10-15T11:00:00Z",
+        "mergedAt": "2026-10-15T11:00:00Z",
+        "closedAt": "2026-10-15T11:00:00Z"
+      },
+      {
+        "number": 2,
+        "title": "Changed 2",
+        "url": "https://github.com/synthetic/ledger/pull/2",
+        "state": "MERGED",
+        "createdAt": "2026-10-15T11:00:00Z",
+        "updatedAt": "2026-10-15T11:00:00Z",
+        "mergedAt": "2026-10-15T11:00:00Z",
+        "closedAt": "2026-10-15T11:00:00Z"
+      }
+    ],
+    "truncated": true
+  },
+  "changedStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 2,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963234676,
+    "attempted_at": 1792963234676,
+    "reason": null
+  },
+  "failed": {
+    "ok": false,
+    "reason": "unreadable: synthetic/ledger could not be listed from GitHub just now (missing, private, or gh failed); say you cannot see it rather than guessing."
+  },
+  "failedStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 3,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963234676,
+    "attempted_at": 1792963234993,
+    "reason": "failed"
+  },
+  "malformed": {
+    "ok": false,
+    "reason": "unreadable: synthetic/ledger could not be listed from GitHub just now (missing, private, or gh failed); say you cannot see it rather than guessing."
+  },
+  "malformedStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 4,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963234676,
+    "attempted_at": 1792963235309,
+    "reason": "failed"
+  },
+  "retained": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 2,
+    "observation_revision": 4,
+    "value_json": "[{\"number\":3,\"title\":\"Changed 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Changed 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Changed 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+    "observed_at": 1792963234676,
+    "attempted_at": 1792963235309,
+    "reason": "failed"
+  },
+  "empty": {
+    "ok": true,
+    "kind": "list",
+    "repo": "synthetic/ledger",
+    "search": "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z",
+    "window": {
+      "by": "merged",
+      "since": "2026-10-15T10:00:00Z",
+      "until": "2026-10-15T12:00:00Z"
+    },
+    "items": [],
+    "truncated": false
+  },
+  "emptyStored": {
+    "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+    "fact_revision": 3,
+    "observation_revision": 5,
+    "value_json": "[]",
+    "observed_at": 1792963235770,
+    "attempted_at": 1792963235770,
+    "reason": null
+  },
+  "counts": {
+    "initial": 1,
+    "changed": 1,
+    "failed": 1,
+    "malformed": 1,
+    "empty": 1
+  },
+  "relative": [
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:35.771Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:35.771Z",
+        "until": "2026-10-25T21:20:36.087Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:35.771Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:35.771Z",
+        "until": "2026-10-25T21:20:36.087Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:35.771Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:35.771Z",
+        "until": "2026-10-25T21:20:36.087Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:35.771Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:35.771Z",
+        "until": "2026-10-25T21:20:36.087Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:35.771Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:35.771Z",
+        "until": "2026-10-25T21:20:36.087Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    }
+  ],
+  "growth": [
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:36.088Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:36.088Z",
+        "until": "2026-10-25T21:20:36.405Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:36.406Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:36.406Z",
+        "until": "2026-10-25T21:20:36.725Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    },
+    {
+      "ok": true,
+      "kind": "list",
+      "repo": "synthetic/ledger",
+      "search": "merged:>=2026-10-25T18:20:36.725Z",
+      "window": {
+        "by": "merged",
+        "since": "2026-10-25T18:20:36.725Z",
+        "until": "2026-10-25T21:20:37.046Z"
+      },
+      "items": [
+        {
+          "number": 3,
+          "title": "Synthetic 3",
+          "url": "https://github.com/synthetic/ledger/pull/3",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        },
+        {
+          "number": 2,
+          "title": "Synthetic 2",
+          "url": "https://github.com/synthetic/ledger/pull/2",
+          "state": "MERGED",
+          "createdAt": "2026-10-15T11:00:00Z",
+          "updatedAt": "2026-10-15T11:00:00Z",
+          "mergedAt": "2026-10-15T11:00:00Z",
+          "closedAt": "2026-10-15T11:00:00Z"
+        }
+      ],
+      "truncated": true
+    }
+  ],
+  "rows": [
+    {
+      "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+      "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-15T10:00:00Z\",\"until\":\"2026-10-15T12:00:00Z\",\"limit\":2}",
+      "fact_revision": 3,
+      "observation_revision": 5,
+      "value_json": "[]",
+      "observed_at": 1792963235770,
+      "attempted_at": 1792963235770,
+      "reason": null
+    },
+    {
+      "subject": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"limit\":2,\"withinHours\":3}",
+      "coverage_json": "{\"repo\":\"synthetic/ledger\",\"kind\":\"pr\",\"state\":\"merged\",\"by\":\"merged\",\"since\":\"2026-10-25T18:20:36.725Z\",\"limit\":2,\"withinHours\":3}",
+      "fact_revision": 4,
+      "observation_revision": 4,
+      "value_json": "[{\"number\":3,\"title\":\"Synthetic 3\",\"url\":\"https://github.com/synthetic/ledger/pull/3\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":2,\"title\":\"Synthetic 2\",\"url\":\"https://github.com/synthetic/ledger/pull/2\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"},{\"number\":1,\"title\":\"Synthetic 1\",\"url\":\"https://github.com/synthetic/ledger/pull/1\",\"state\":\"MERGED\",\"createdAt\":\"2026-10-15T11:00:00Z\",\"updatedAt\":\"2026-10-15T11:00:00Z\",\"mergedAt\":\"2026-10-15T11:00:00Z\",\"closedAt\":\"2026-10-15T11:00:00Z\"}]",
+      "observed_at": 1792963237046,
+      "attempted_at": 1792963237046,
+      "reason": null
+    }
+  ],
+  "verified": true,
+  "mainSql": [
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?",
+    "INSERT INTO pack_coding_query_facts\n        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)\n        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        coverage_json=excluded.coverage_json,\n        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json,observed_at=excluded.observed_at,\n        attempted_at=excluded.attempted_at,reason=excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?",
+    "SELECT * FROM pack_coding_query_facts WHERE subject=?"
+  ],
+  "commands": [],
+  "gatewayMetrics": [],
+  "rpcMetrics": [
+    {
+      "name": "neo.github.read",
+      "durationMs": 456.6387920000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 456.617084
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 456.61012500000004
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 456.60908300000006
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 456.605
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 318.6589999999999
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 316.5915
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 316.15945799999986
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 317.3098749999999
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 316.78125
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 295.9789579999997
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 275.92029100000036
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 255.29037500000004
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 233.25279199999977
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 317.58183299999973
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 319.5195840000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 321.1215420000003
+    }
+  ],
+  "maxLagMs": 11.711291000000074,
+  "rss": {
+    "before": 95978432,
+    "after": 130581560
+  },
+  "requests": [
+    {
+      "phase": "initial",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "changed",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "failed",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "malformed",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "empty",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:2026-10-15T10:00:00Z..2026-10-15T12:00:00Z"
+      ]
+    },
+    {
+      "phase": "relative",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:20:35.771Z"
+      ]
+    },
+    {
+      "phase": "growth",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:20:36.088Z"
+      ]
+    },
+    {
+      "phase": "growth",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:20:36.406Z"
+      ]
+    },
+    {
+      "phase": "growth",
+      "args": [
+        "pr",
+        "list",
+        "--repo",
+        "synthetic/ledger",
+        "--state",
+        "merged",
+        "--limit",
+        "3",
+        "--json",
+        "number,title,url,state,createdAt,updatedAt,mergedAt,closedAt",
+        "--search",
+        "merged:>=2026-10-25T18:20:36.725Z"
+      ]
+    }
+  ]
+}

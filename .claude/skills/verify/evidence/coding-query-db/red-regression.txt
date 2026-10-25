@@ -1,0 +1,18 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-query-writer.test.ts:
+16 | test('query acquisition and returned coverage leave the main repository', async () => {
+17 |   const db = new Database(':memory:');
+18 |   createCodingPackTables(db);
+19 |   const facts = new CodingQueryFactsRepository(db);
+20 |   const main = spyOn(facts, 'read').mockImplementation(() => {
+21 |     throw new Error('query coverage read on main repository');
+                   ^
+error: query coverage read on main repository
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-query-writer.test.ts:21:15)
+      at collect (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/query-facts.ts:166:17)
+(fail) query acquisition and returned coverage leave the main repository [3.47ms]
+
+ 0 pass
+ 1 fail
+Ran 1 test across 1 file. [27.00ms]
