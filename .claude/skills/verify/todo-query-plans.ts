@@ -49,15 +49,18 @@ if (import.meta.main) {
   const db = syntheticTodoDb();
   const bindings = { list: ['a0'], recovery: [], window: ['t48'], live: ['running', null, 't48', null] };
   const report = Object.entries({ ...todoQueries, window: CODING_TODO_WINDOW_QUERY }).map(([name, sql]) => {
+    const measured = syntheticTodoDb();
     const args = bindings[name as keyof typeof bindings];
-    const statement = db.prepare(sql);
+    const statement = measured.prepare(sql);
     const samples = Array.from({ length: 100 }, () => {
       const start = performance.now();
       if (name === 'live') statement.run(...args);
       else statement.all(...args);
       return performance.now() - start;
     });
-    return { name, plan: todoPlan(db, sql, args), meanMs: samples.reduce((a, b) => a + b) / samples.length, maxMs: Math.max(...samples) };
+    const plan = todoPlan(measured, sql, args);
+    measured.close();
+    return { name, plan, meanMs: samples.reduce((a, b) => a + b) / samples.length, maxMs: Math.max(...samples) };
   });
   const repo = new CodingTodoPrRepository(db);
   console.log(JSON.stringify({ counts: { asks: 376, todos: 1213, sessions: 989 }, report, windows: ['t0', 't48', 't49', 't1000', 'missing'].map((id) => ({ id, ...repo.window(id) })) }, null, 2));

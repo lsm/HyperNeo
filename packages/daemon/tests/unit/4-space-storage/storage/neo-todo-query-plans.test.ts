@@ -18,6 +18,11 @@ describe('Neo todo query plans at observed row counts', () => {
     const db = new Database(':memory:');
     try {
       createTables(db);
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'sessions'").get()).toEqual({
+        name: 'sessions',
+      });
+      runMigrations(db, () => {});
+      createTables(db);
       expect(
         db.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_neo_todo_sessions_ref'").get()
       ).toEqual({ name: 'idx_neo_todo_sessions_ref' });
