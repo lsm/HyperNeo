@@ -198,6 +198,9 @@ describe('neo todo runner', () => {
       const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
       expect(opening).toContain('Agent: <exact model id> (effort: <effort>) via HyperNeo');
       expect(opening).toContain('Never guess');
+      expect(opening).toContain('Even when told to stay quiet');
+      expect(opening).toContain(`todoId: "${todo.id}"`);
+      expect(opening).toContain('2–6 short options');
       h.sessions.recordRef(todo.id, ref, 1_000, undefined, {
         model: 'gpt-6.1-sol',
         effort: 'high',

@@ -47,7 +47,8 @@ export function createNeoWorkerQuestionWriter(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   language: () => LanguageSetting | undefined,
-  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null>
+  readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null>,
+  stored: (question: NeoQuestion) => void = () => {}
 ) {
   const write = (superpipe({})('neo.question.storeWorkerReport') as PipelineAPI)
     .input(['ref', 'raw'])
@@ -143,6 +144,7 @@ export function createNeoWorkerQuestionWriter(
             },
             Date.now()
           );
+          stored(card);
           return card;
         });
         return question

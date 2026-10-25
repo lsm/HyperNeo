@@ -26,8 +26,8 @@ the approved design: answering a card is not acknowledgement that its worker
 received the answer. Slice 1 builds storage only; slice 2 wires reports and
 nudges; #8732 (slice 3) adds retry-safe answer delivery and releases the hold
 only after accepted delivery and dependency checks. Missing/open/retired card
-state alone must never release it. The internal storage entry point has no
-production caller until the later wiring slices land.
+state alone must never release it. This journey exercises the storage helper;
+worker-question-wire.md covers its production message.send caller in slice 2.
 
 `evidence/observed.json` retains the replies and persisted hold;
 `evidence/cleanup.json` confirms owned daemon cleanup. This proves storage and
