@@ -525,9 +525,9 @@ export function createNeoOperations(service: NeoService) {
       'result:track'
     )
     .pipe(
-      async (notice: NeoSessionNotice, now: number) =>
-        requireNeoTrackableSession(notice, await service.followedCardRefs(now)),
-      ['track', 'now'],
+      (notice: NeoSessionNotice) =>
+        requireNeoTrackableSession(notice, service.todos.followedRefs()),
+      'track',
       'result:track'
     )
     .pipe(
