@@ -23,6 +23,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expireMailboxEntries } from '../../../../src/lib/mailbox/expire.ts';
+import { MAX_IMAGE_BASE64_SIZE } from '../../../../src/lib/session/message-persistence.ts';
+import { vi } from 'vitest';
 
 async function setup() {
   const db = await createTestDb();
@@ -103,6 +105,94 @@ const input = {
     language: 'en',
   },
 };
+
+test('oversized images are rejected by input projection before either handled or ordinary delivery', async () => {
+  const { db, service, send } = await setup();
+  try {
+    const message = {
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/png',
+              data: 'a'.repeat(MAX_IMAGE_BASE64_SIZE + 1),
+            },
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    };
+    for (const sessionId of ['neo', 'ordinary'])
+      expect(await send({ sessionId, kind: 'blocked', message })).toMatchObject({
+        kind: 'failed',
+        code: 'invalid_input',
+      });
+    expect(service.todos.listQuestions('ask')).toHaveLength(0);
+    expect(service.todos.getTodo('todo')?.state).toBe('doing');
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+    ).toHaveLength(0);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test.each([false, true])(
+  'consumed report recurrence keeps card-bound=%s semantics after cleanup',
+  async (cardBound) => {
+    const { db, service, send } = await setup();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      db.getDatabase()
+        .prepare(
+          "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('neo','Neo','/synthetic','2026-10-25','2026-10-25','active','{}','{}')"
+        )
+        .run();
+      const { question: _question, ...legacy } = input;
+      const report = cardBound ? input : legacy;
+      const first = await send(report);
+      if (first.kind !== 'completed' || first.value.kind !== 'accepted')
+        throw new Error(JSON.stringify(first));
+      const job = db.getJobQueueRepo().dequeue('mailbox')[0];
+      await db.saveUserMessage(
+        'neo',
+        {
+          type: 'user',
+          uuid: first.value.messageId,
+          session_id: 'neo',
+          parent_tool_use_id: null,
+          message: { role: 'user', content: input.text },
+        },
+        'consumed'
+      );
+      db.getJobQueueRepo().complete(job.id, {});
+      clock.mockReturnValue(now + 9 * 60_000);
+      expect(await send(report)).toEqual(first);
+      db.getJobQueueRepo().cleanup(Date.now());
+      expect(await send(report)).toEqual(first);
+      clock.mockReturnValue(now + 11 * 60_000);
+      const repeated = await send(report);
+      if (cardBound) expect(repeated).toEqual(first);
+      else {
+        expect(repeated).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+        expect(repeated).not.toEqual(first);
+        expect(await send(report)).toEqual(repeated);
+        expect(
+          db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+        ).toHaveLength(1);
+      }
+    } finally {
+      clock.mockRestore();
+      service.dispose();
+      db.close();
+    }
+  }
+);
 
 test.each(['dead', 'expired', 'cleaned'] as const)(
   'an undelivered %s incident wake can recover without another card',

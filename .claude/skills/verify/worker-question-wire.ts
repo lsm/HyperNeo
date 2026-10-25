@@ -21,6 +21,7 @@ mkdirSync(join(run, 'bin'), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
 let modelTurns = 0;
+const realNow = Date.now;
 const coordinatorBodies: string[] = [];
 let requests = 0;
 const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request) {
@@ -155,7 +156,7 @@ try {
     assert.equal(timeline?.text, input.text, 'card report remains in the conversation timeline');
     expectedTurns = 3;
   }
-  if (process.argv[3] === 'triage') {
+  if (['triage', 'recur'].includes(process.argv[3])) {
     const legacy = { to: root, from: input.from, kind: 'blocked', text: 'Original ambiguous blocker\n'.repeat(300) };
     const triage = await workerSend(legacy);
     assert.equal(triage.kind, 'accepted');
@@ -175,6 +176,23 @@ try {
     assert.deepEqual(await workerSend(legacy), triage);
     assert.equal(wakes().length, 0);
     expectedTurns = 2;
+    if (process.argv[3] === 'recur') {
+      app.db.getJobQueueRepo().cleanup(Date.now() + 1);
+      assert.deepEqual(await workerSend(legacy), triage);
+      Date.now = () => realNow() + 11 * 60_000;
+      const recurring = await workerSend(legacy);
+      assert.notDeepEqual(recurring, triage, 'a consumed cardless incident can recur after the dedupe window');
+      assert.deepEqual(await workerSend(legacy), recurring);
+      assert.equal(wakes().length, 1);
+      app.jobProcessor.start();
+      const recurrenceDeadline = Date.now() + 45000;
+      while ((modelTurns < 3 || wakes().length) && Date.now() < recurrenceDeadline) await Bun.sleep(100);
+      assert.equal(modelTurns, 3);
+      await Bun.sleep(1000);
+      await app.jobProcessor.stop();
+      assert.deepEqual(await workerSend(legacy), recurring);
+      expectedTurns = 3;
+    }
   }
   await app.cleanup();
   app = await createDaemonApp({ config, verbose: false });
@@ -203,5 +221,6 @@ try {
   await app.cleanup();
   model.stop(true);
   QueryOptionsBuilder.prototype.build = build;
+  Date.now = realNow;
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true }));
 }
