@@ -42,6 +42,7 @@ export function ArtifactPreviewPanel({
     return () => window.removeEventListener('resize', update);
   }, [fileTabs, desktopQuery]);
   const tabbed = fileTabs && desktop;
+  const phone = fileTabs && !desktop;
   const files = artifactPreviewWorkspace.state.value.files;
   const selectedId = top?.kind === 'artifact' ? top.artifactId : null;
   const workActive = tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top;
@@ -53,6 +54,9 @@ export function ArtifactPreviewPanel({
   const resolved = useRef(new Map<string, ArtifactResolution>());
   const visible = useRef(!suspended);
   visible.current = !suspended;
+  useLayoutEffect(() => {
+    touch.current = null;
+  }, [top, phone, suspended]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -126,10 +130,19 @@ export function ArtifactPreviewPanel({
         }
         aria-owns={workActive ? work?.id : undefined}
         tabIndex={-1}
-        class="artifact-preview-panel flex min-h-0 flex-col bg-surface focus:outline-none"
+        class={`artifact-preview-panel flex min-h-0 flex-col bg-surface focus:outline-none${phone ? ' artifact-preview-phone' : ''}`}
         onTouchStart={(event) => {
           touch.current = null;
+          if (phone) {
+            event.stopPropagation();
+            if (
+              !(event.target instanceof Element) ||
+              !event.target.closest('.artifact-preview-handle')
+            )
+              return;
+          }
           if (
+            suspended ||
             tabbed ||
             window.matchMedia('(min-width: 1120px)').matches ||
             event.touches.length !== 1
@@ -143,8 +156,26 @@ export function ArtifactPreviewPanel({
           touch.current = { x: event.touches[0].clientX, y: event.touches[0].clientY };
         }}
         onTouchMove={(event) => {
+          if (phone) {
+            event.stopPropagation();
+            if (event.touches.length !== 1) {
+              touch.current = null;
+              return;
+            }
+          }
           const start = touch.current;
           const current = event.touches[0];
+          if (
+            phone &&
+            start &&
+            current &&
+            (current.clientY - start.y < -10 ||
+              (Math.abs(current.clientX - start.x) > 10 &&
+                Math.abs(current.clientX - start.x) > Math.abs(current.clientY - start.y) * 1.5))
+          ) {
+            touch.current = null;
+            return;
+          }
           if (
             start &&
             current &&
@@ -154,32 +185,38 @@ export function ArtifactPreviewPanel({
             event.preventDefault();
         }}
         onTouchEnd={(event) => {
+          if (phone) event.stopPropagation();
           const start = touch.current;
           touch.current = null;
           const end = event.changedTouches[0];
           if (
+            visible.current &&
             start &&
             end &&
+            (!phone || event.touches.length === 0) &&
             end.clientY - start.y > 80 &&
             end.clientY - start.y > Math.abs(end.clientX - start.x) * 1.5
           )
             closeArtifactPreview();
         }}
-        onTouchCancel={() => {
+        onTouchCancel={(event) => {
+          if (phone) event.stopPropagation();
           touch.current = null;
         }}
       >
         <div class="artifact-preview-handle" aria-hidden="true">
           <span />
         </div>
-        <button
-          type="button"
-          aria-label={t('artifact.close')}
-          onClick={closeArtifactPreview}
-          class="absolute right-1 top-1 z-10 h-11 w-11 rounded-md text-fg-muted hover:bg-fill-soft hover:text-fg"
-        >
-          ×
-        </button>
+        {!phone && (
+          <button
+            type="button"
+            aria-label={t('artifact.close')}
+            onClick={closeArtifactPreview}
+            class="absolute right-1 top-1 z-10 h-11 w-11 rounded-md text-fg-muted hover:bg-fill-soft hover:text-fg"
+          >
+            ×
+          </button>
+        )}
         {tabbed && expansion && (
           <button
             type="button"
