@@ -1,0 +1,636 @@
+{
+  "mode": "verify",
+  "build": "65e40331b004c208e90143008b7d8b05bb48fa2f",
+  "fanout": [
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    }
+  ],
+  "first": {
+    "repo": "synthetic/ledger",
+    "base_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_oid": "65e40331b004c208e90143008b7d8b05bb48fa2f",
+    "status": "ahead",
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "observed_at": 1792965746662,
+    "attempted_at": 1792965746662,
+    "reason": null
+  },
+  "known": {
+    "accepted": true
+  },
+  "reopened": {
+    "accepted": true
+  },
+  "behind": {
+    "accepted": false,
+    "reason": "running_build_must_contain_merge"
+  },
+  "failed": {
+    "accepted": false,
+    "reason": "running_build_must_contain_merge"
+  },
+  "partial": {
+    "accepted": false,
+    "reason": "running_build_must_contain_merge"
+  },
+  "recovered": {
+    "accepted": true
+  },
+  "retainedFailure": {
+    "repo": "synthetic/ledger",
+    "base_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_oid": "65e40331b004c208e90143008b7d8b05bb48fa2f",
+    "status": "ahead",
+    "fact_revision": 1,
+    "observation_revision": 2,
+    "observed_at": 1792965746662,
+    "attempted_at": 1792966157343,
+    "reason": "failed"
+  },
+  "counts": {
+    "initial": 1,
+    "known": 0,
+    "reopen": 0,
+    "behind": 1,
+    "known-negative": 0,
+    "failed": 1,
+    "partial": 1,
+    "recovered": 1,
+    "retained-failure": 1,
+    "retained-recovered": 1
+  },
+  "fence": {
+    "before": 0,
+    "after": 1,
+    "ancestry": {
+      "status": "known",
+      "comparison": "behind",
+      "contains": false,
+      "observedAt": 1792966157754,
+      "source": "github-compare"
+    }
+  },
+  "health": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 417013,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "contention": {
+    "healthMs": 0.6641659999986587,
+    "writeMs": 1219.9902920000022,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true,
+  "mainSql": [],
+  "commands": [
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.snapshot",
+    "coding.ancestry.observe",
+    "coding.ancestry.snapshot"
+  ],
+  "rpcMetrics": [
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 1793.4450420000012
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 1792.6518750000014
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 1792.5275419999998
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 1791.7043329999997
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 1791.648541999999
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 20.286458000000493
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 175.71016699999927
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 334.57604100000026
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 18.731415999998717
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 338.7999579999996
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 470.20058399999834
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 488.8020830000023
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 392.29662499999904
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 352.4775410000002
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 29.435750000000553
+    },
+    {
+      "name": "system.health",
+      "durationMs": 0.6442920000008598
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 59.338707999999315
+    }
+  ],
+  "gatewayMetrics": [
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 3.757459000000381,
+      "argsBytes": 160,
+      "replyBytes": 274
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.5378749999999854,
+      "argsBytes": 198,
+      "replyBytes": 306
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.20633400000042457,
+      "argsBytes": 160,
+      "replyBytes": 306
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.2269589999996242,
+      "argsBytes": 160,
+      "replyBytes": 306
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.15120799999931478,
+      "argsBytes": 160,
+      "replyBytes": 274
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.6915829999998095,
+      "argsBytes": 199,
+      "replyBytes": 308
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.18612500000017462,
+      "argsBytes": 160,
+      "replyBytes": 308
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.21983300000283634,
+      "argsBytes": 160,
+      "replyBytes": 274
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.36958400000003166,
+      "argsBytes": 199,
+      "replyBytes": 282
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.24100000000180444,
+      "argsBytes": 160,
+      "replyBytes": 282
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 1.215875000001688,
+      "argsBytes": 200,
+      "replyBytes": 283
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.6567910000012489,
+      "argsBytes": 160,
+      "replyBytes": 283
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.4228750000002037,
+      "argsBytes": 198,
+      "replyBytes": 306
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.34620799999902374,
+      "argsBytes": 160,
+      "replyBytes": 291
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.45479100000011385,
+      "argsBytes": 199,
+      "replyBytes": 291
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.1964159999988624,
+      "argsBytes": 160,
+      "replyBytes": 291
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.5403750000004948,
+      "argsBytes": 198,
+      "replyBytes": 306
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.3177080000023125,
+      "argsBytes": 160,
+      "replyBytes": 274
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.1808340000025055,
+      "argsBytes": 160,
+      "replyBytes": 274
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.6008330000004207,
+      "argsBytes": 199,
+      "replyBytes": 308
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 0.2561249999998836,
+      "argsBytes": 198,
+      "replyBytes": 308
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.21754199999850243,
+      "argsBytes": 160,
+      "replyBytes": 308
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.2589169999992009,
+      "argsBytes": 160,
+      "replyBytes": 274
+    },
+    {
+      "operation": "coding.ancestry.observe",
+      "durationMs": 903.3184170000022,
+      "argsBytes": 198,
+      "replyBytes": 306
+    },
+    {
+      "operation": "coding.ancestry.snapshot",
+      "durationMs": 0.3091659999990952,
+      "argsBytes": 160,
+      "replyBytes": 306
+    }
+  ],
+  "maxLagMs": 230.3695000000007,
+  "requests": [
+    {
+      "phase": "initial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "initial",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "known",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "behind",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "behind",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "known-negative",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/cccccccccccccccccccccccccccccccccccccccc...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/cccccccccccccccccccccccccccccccccccccccc...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/cccccccccccccccccccccccccccccccccccccccc...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "retained-failure",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "retained-failure",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "retained-failure",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "retained-recovered",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "retained-recovered",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/dddddddddddddddddddddddddddddddddddddddd...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/10",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/10",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "ancestry",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/compare/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee...65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "--hostname",
+        "github.com",
+        "--include"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/11",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/11",
+        "--json",
+        "state,mergeCommit"
+      ]
+    }
+  ]
+}

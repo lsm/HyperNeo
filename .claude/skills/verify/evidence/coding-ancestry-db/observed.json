@@ -1,9 +1,9 @@
 {
   "scope": "Lane A row 25: ancestry snapshots and observations",
-  "regressionCommit": "2568c9224a187373e9f7928d568d316fd0f49d21",
-  "productionChangedLines": 134,
-  "focusedUnitTests": 9,
-  "focusedAssertions": 37,
+  "regressionCommit": "e59884ff7b3076e613a8e70d5ea3fb03f847f410",
+  "productionChangedLines": 133,
+  "focusedUnitTests": 10,
+  "focusedAssertions": 39,
   "repositoryCheck": "passed",
   "versions": {
     "bun": "1.4.3",
@@ -697,5 +697,90 @@
     "The deliberately delayed 300 ms comparison and held 1.2-second writer exceed the 250 ms affected-operation target.",
     "Gateway elapsed time and serialized sizes are recorded; queue, SQL and clone time are not separately attributed.",
     "No UI, model turn, deployment or production data was exercised. Other SQL in the smoke RPC and other lane-A rows remain outside this slice."
-  ]
+  ],
+  "reviewFix": {
+    "comment": "https://github.com/lsm/HyperNeo/pull/8818#discussion_r4372603060",
+    "regressionCommit": "35c066d913c85f31ba5dd5f416ecee3d2249c387",
+    "originalPreRebaseRegressionCommit": "86bca8b35",
+    "observedBeforeFix": "SQLITE_READONLY: synchronous record attempted to write the read-only main connection despite a bound writer",
+    "result": "record removed; fixture writes await observeCurrent; a separate bound writer receives the observation while main remains empty",
+    "evidence": {
+      "bun": {
+        "folder": "bun-verify-2",
+        "testedCodeCommit": "65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 25,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 12.529625000000124,
+        "contention": {
+          "healthMs": 0.6663330000001224,
+          "writeMs": 1200.6012920000003,
+          "affectedWriteUnder250ms": false
+        },
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "ancestry": {
+            "status": "known",
+            "comparison": "behind",
+            "contains": false,
+            "observedAt": 1792965535683,
+            "source": "github-compare"
+          }
+        },
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 257.4787712097168
+      },
+      "deno": {
+        "folder": "deno-verify-2",
+        "testedCodeCommit": "65e40331b004c208e90143008b7d8b05bb48fa2f",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 25,
+        "comparisonCounts": {
+          "initial": 1,
+          "known": 0,
+          "reopen": 0,
+          "behind": 1,
+          "known-negative": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "retained-failure": 1,
+          "retained-recovered": 1
+        },
+        "maxLoopLagMs": 230.3695000000007,
+        "contention": {
+          "healthMs": 0.6641659999986587,
+          "writeMs": 1219.9902920000022,
+          "affectedWriteUnder250ms": false
+        },
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "ancestry": {
+            "status": "known",
+            "comparison": "behind",
+            "contains": false,
+            "observedAt": 1792966157754,
+            "source": "github-compare"
+          }
+        },
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 257.4646873474121
+      }
+    }
+  }
 }
