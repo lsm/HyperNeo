@@ -2,6 +2,7 @@ import type { UUID } from 'node:crypto';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
+import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
 import { createNeoWorkerQuestionWriter } from './question-operations.ts';
 import {
   sessionSender,
@@ -458,7 +459,9 @@ export class NeoService {
               .getUserSendStatus(input.sessionId, prior.messageId);
             const job = jobs.getLatestByPayload('mailbox', { id: prior.mailboxId });
             const live = job && ['pending', 'processing', 'completed'].includes(job.status);
-            if (status === 'consumed' || (status !== 'failed' && live)) break;
+            const recent =
+              !!input.question || Date.now() - decodeUlidTimestamp(prior.mailboxId) < 10 * 60_000;
+            if (status === 'consumed' ? recent : status !== 'failed' && live) break;
             key = `worker-question:${incident}:${prior.mailboxId}`;
           }
           const submit = () =>

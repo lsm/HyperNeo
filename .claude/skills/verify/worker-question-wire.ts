@@ -184,6 +184,8 @@ try {
       assert.notDeepEqual(recurring, triage, 'a consumed cardless incident can recur after the dedupe window');
       assert.deepEqual(await workerSend(legacy), recurring);
       assert.equal(wakes().length, 1);
+      Date.now = realNow;
+      app.db.getDatabase().prepare('UPDATE job_queue SET run_at = ? WHERE id = ?').run(realNow(), wakes()[0].id);
       app.jobProcessor.start();
       const recurrenceDeadline = Date.now() + 45000;
       while ((modelTurns < 3 || wakes().length) && Date.now() < recurrenceDeadline) await Bun.sleep(100);

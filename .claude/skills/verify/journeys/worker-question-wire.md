@@ -54,6 +54,20 @@ deliver exactly one Neo turn. The fixture then cleans completed jobs and restart
 the consumed SDK input must still prevent redelivery. Operation contracts also
 cover repeated failures, dead-job cleanup before recovery, and cardless triage.
 
+The `recur` mode consumes a cardless triage report, cleans completed jobs and
+advances only the synthetic daemon's clock by eleven minutes. An identical new
+report must wake triage once again, then immediate repeats must reuse its new
+receipt. It restores the admission clock and makes only that owned synthetic
+job due immediately, since the separate queue worker retains its real clock.
+The card-backed report remains deduplicated through the same time jump
+and restart. This run has three turns: the card and two triage episodes. Cardless
+consumed-report deduplication lasts ten minutes, matching the ordinary send
+dedupe interval; live pending work remains deduplicated regardless of age.
+
+Operation contracts also pin oversized-image input rejection: both ordinary
+and handled destinations reject over-5-MiB images as invalid_input through the
+existing toMailboxMessage projection before the report handler runs.
+
 Keep evidence/observed.json, the model request files, cleanup.json and the proof
 log. This proves RPC, durable queue, SDK wake and synthetic runner behavior.
 GUI rendering, real-worker language compliance, answer delivery and hold release
