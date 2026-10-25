@@ -1,3 +1,6 @@
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import { readNeoPreviewReference } from '../../neo/neo-preview-context.ts';
+
 export interface VoiceRecordEntry {
   id: string;
   sessionId: string;
@@ -10,6 +13,8 @@ export interface VoiceRecordEntry {
   sendDraft?: string;
   sendText?: string;
   door?: 'session';
+  previewContext?: NeoPreviewReference;
+  sendRefusal?: string;
 }
 
 const DB_NAME = 'hyperneo-voice-audio';
@@ -123,7 +128,10 @@ function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
     Number.isFinite(entry.createdAt) &&
     (entry.intent === undefined || entry.intent === 'draft' || entry.intent === 'send') &&
     (entry.sendDraft === undefined || typeof entry.sendDraft === 'string') &&
-    (entry.sendText === undefined || typeof entry.sendText === 'string')
+    (entry.sendText === undefined || typeof entry.sendText === 'string') &&
+    (entry.sendRefusal === undefined || typeof entry.sendRefusal === 'string') &&
+    (entry.previewContext === undefined ||
+      (entry.door !== 'session' && !!readNeoPreviewReference(entry.previewContext)))
   );
 }
 
@@ -198,6 +206,10 @@ function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
 }
 
 export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
+  entry = {
+    ...entry,
+    ...(entry.previewContext ? { previewContext: { ...entry.previewContext } } : {}),
+  };
   return serializeMutation(async () => {
     if (!isVoiceRecordEntry(entry)) return false;
     mirror.set(entry.id, entry);

@@ -76,6 +76,8 @@ export function NeoComposer({
   const attachments = useNeoAttachments(sessionId);
   const hasAttachments = attachments.files.length > 0 || attachments.reading > 0;
   const boundPreview = forSession ? undefined : previewContext;
+  const currentPreview = useRef(boundPreview);
+  currentPreview.current = boundPreview;
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
   const draftContext = t(
     boundPreview
@@ -191,9 +193,10 @@ export function NeoComposer({
     record: VoiceRecordEntry,
     transcript: string
   ): Promise<VoiceSendOutcome> {
-    if (boundPreview || (record.sendText === undefined && needsDraft))
+    if (record.intent !== 'send' && record.sendText === undefined && needsDraft)
       return { kind: 'unconfirmed' };
-    const composed = record.sendText ?? combineVoiceSubmission(draft, transcript);
+    const composed =
+      record.sendText ?? combineVoiceSubmission(record.sendDraft ?? draft, transcript);
     if (!composed.trim() || inFlight.current || sending || !connected)
       return { kind: 'unconfirmed' };
     inFlight.current = true;
@@ -213,6 +216,8 @@ export function NeoComposer({
         currentSession.current === sessionId &&
         currentDraft.current === draft &&
         draft === record.sendDraft &&
+        currentPreview.current?.artifactId === record.previewContext?.artifactId &&
+        currentPreview.current?.snapshot === record.previewContext?.snapshot &&
         !currentQuote.current
       )
         onDraft('');
@@ -396,6 +401,7 @@ export function NeoComposer({
         <div class={`flex gap-2 ${voiceBusy ? 'min-w-0 flex-1' : 'ml-auto shrink-0'}`}>
           <NeoVoice
             door={forSession ? 'session' : undefined}
+            previewContext={boundPreview}
             sessionId={sessionId}
             connected={connected}
             draftText={draft}

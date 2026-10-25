@@ -4,8 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import type { NeoQuote } from '../neo-intake.ts';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 
-type IntakeInput = { sessionId: string; requestId: string; content: unknown };
+type IntakeInput = {
+  sessionId: string;
+  requestId: string;
+  content: unknown;
+  previewContext?: { artifactId: string; snapshot: string };
+};
 
 const voice = vi.hoisted(() => ({ recording: true, stop: vi.fn() }));
 vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => true }));
@@ -47,7 +53,21 @@ const hubRequest = vi.fn(
       if (invocation.name !== 'neo.message.send')
         throw new Error(`Unknown operation: ${invocation.name}`);
       const { requestId } = invocation.input;
-      return { ok: true, requestId, messageId: requestId, created: true };
+      return {
+        ok: true,
+        requestId,
+        messageId: requestId,
+        created: true,
+        ...(invocation.input.previewContext
+          ? {
+              previewContext: {
+                ...invocation.input.previewContext,
+                displayName: 'Saved A',
+                state: 'available',
+              },
+            }
+          : {}),
+      };
     }
     if (method === 'voice.transcribe') return { text: 'spoken second' };
     throw new Error(`No handler for method: ${method}`);
@@ -99,7 +119,11 @@ function makeStore(): SessionStore {
   } as unknown as SessionStore;
 }
 
-function renderComposer(draft = 'typed first', quote?: NeoQuote) {
+function renderComposer(
+  draft = 'typed first',
+  quote?: NeoQuote,
+  previewContext?: NeoPreviewReference
+) {
   const current = signal(draft);
   const onDraft = vi.fn((value: string) => {
     current.value = value;
@@ -123,6 +147,7 @@ function renderComposer(draft = 'typed first', quote?: NeoQuote) {
       onTranscript={onTranscript}
       onSend={onSend}
       quote={selectedQuote}
+      previewContext={previewContext}
       onCancelQuote={onCancelQuote}
     />
   );
@@ -177,6 +202,63 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('NeoComposer and NeoVoice send integration', () => {
+  it.each([false, true])(
+    'retries the saved Preview rather than current binding, refused first: %s',
+    async (refused) => {
+      voice.recording = false;
+      const original: NeoPreviewReference = {
+        artifactId: 'report-a',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Saved A',
+        state: 'available',
+      };
+      store.records.set('saved-preview', {
+        id: 'saved-preview',
+        sessionId: 'neo-1',
+        audioBase64: 'aGk=',
+        mimeType: 'audio/wav',
+        peakLevel: 0.5,
+        createdAt: Date.now(),
+        intent: 'send',
+        sendDraft: 'typed first',
+        sendText: 'typed first\nspoken second',
+        previewContext: original,
+      });
+      const { current, onDraft } = renderComposer('typed first', undefined, {
+        ...original,
+        artifactId: 'report-b',
+        snapshot: 'b'.repeat(64),
+        displayName: 'Current B',
+      });
+      if (refused) hubRequest.mockResolvedValueOnce({ ok: false, reason: 'Preview unavailable' });
+      fireEvent.click(await screen.findByTestId('resend-voice-audio'));
+      if (refused) {
+        await waitFor(() =>
+          expect(store.records.get('saved-preview')?.sendRefusal).toBe('Preview unavailable')
+        );
+        expect(parked.entries).toEqual([]);
+        await waitFor(() => expect(screen.getByText(/Saved A.*Preview unavailable/)).toBeTruthy());
+        await waitFor(() =>
+          expect((screen.getByTestId('resend-voice-audio') as HTMLButtonElement).disabled).toBe(
+            false
+          )
+        );
+        hubRequest.mockImplementation(defaultHub);
+        fireEvent.click(screen.getByTestId('resend-voice-audio'));
+      }
+      await waitFor(() => expect(store.records.size).toBe(0));
+      for (const call of asks())
+        expect(call[1].input).toMatchObject({
+          requestId: 'saved-preview',
+          content: 'typed first\nspoken second',
+          previewContext: { artifactId: original.artifactId, snapshot: original.snapshot },
+        });
+      expect(asks()).toHaveLength(refused ? 2 : 1);
+      expect(current.value).toBe('typed first');
+      expect(onDraft).not.toHaveBeenCalledWith('');
+      expect(screen.getByText(/To Neo.*Current B/)).toBeTruthy();
+    }
+  );
   it('sends the typed draft and transcript with the selected quote only through normal send', async () => {
     const quote: NeoQuote = { author: 'Neo', text: 'Earlier answer', anchor: 'source' };
     const { current, onTranscript, onSend, rerender } = renderComposer('typed first', quote);

@@ -29,6 +29,14 @@ The initial bound send and post-restart retry use the actual web
 `webClientContext` and `webProjectionContext` in the evidence too. This proves the
 client-to-daemon contract without a mock transport or a rendered binding control.
 
+The voice proof uses the actual recording snapshot, durable send and receipt
+functions with synthetic audio/transcript dependencies and in-memory IndexedDB.
+Require `voiceSnapshotPersisted`, `voiceRetryAfterRestart`, `voiceRefusalRetained`
+and `voiceMessageNoDuplicate`. A revoked snapshot retains its bound recording and
+refusal rather than falling back to unbound text. The accepted voice request has
+one SDK message/job after retry across daemon restart. This does not exercise a
+microphone, real ASR or browser/device persistence; no default daemon is contacted.
+
 Keep the evidence before deleting the fresh run directory. The focused operation
 suite also checks strict input rejection and immutable retry conflicts. Run web
 tests and build for shared-type compatibility. Composer binding and rendered

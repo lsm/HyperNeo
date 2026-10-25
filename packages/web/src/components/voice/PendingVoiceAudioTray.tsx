@@ -42,7 +42,14 @@ export function PendingVoiceAudioTray({
               </span>
               <p class="min-w-0 flex-1 truncate text-xs leading-5 text-fg-soft">
                 Unsent recording from {formatRecordedAt(entry.createdAt)}
-                {silent ? ' — no signal detected' : ''}
+                {entry.previewContext
+                  ? ` · ${entry.previewContext.displayName} · ${entry.previewContext.snapshot.slice(0, 8)}`
+                  : ''}
+                {entry.sendRefusal
+                  ? ` — ${entry.sendRefusal}`
+                  : silent
+                    ? ' — no signal detected'
+                    : ''}
               </p>
               <div class="flex shrink-0 items-center gap-1">
                 <button
