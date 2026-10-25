@@ -1,3 +1,4 @@
+import { writeSpaceMcpDefault } from '../tools/write-tool-defaults.ts';
 import type {
   MessageHub,
   SpaceMcpSetEnabledRequest,
@@ -54,7 +55,7 @@ export function setupSpaceMcpHandlers(
       throw new Error(`MCP server not found: ${serverId}`);
     }
 
-    db.mcpEnablement.setOverride('space', spaceId, serverId, enabled);
+    await writeSpaceMcpDefault(db, spaceId, serverId, enabled);
     emitChanged(internalEventBus);
     log.info(
       `space.mcp.setEnabled: space=${spaceId} server=${serverId} (${server.name}) enabled=${enabled}`
@@ -72,8 +73,8 @@ export function setupSpaceMcpHandlers(
     }
     await assertSpaceExists(spaceManager, spaceId);
 
-    const cleared = db.mcpEnablement.clearOverride('space', spaceId, serverId);
-    if (cleared) {
+    const cleared = await writeSpaceMcpDefault(db, spaceId, serverId, null);
+    if (cleared.deleted || cleared.changed) {
       emitChanged(internalEventBus);
       log.info(`space.mcp.clearOverride: space=${spaceId} server=${serverId}`);
     }
