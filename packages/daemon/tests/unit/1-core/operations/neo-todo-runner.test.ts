@@ -37,7 +37,8 @@ const completed = (value: unknown): OperationOutcome =>
 function setup(
   packDone: boolean | null = null,
   dbPath = ':memory:',
-  beforeInvoke?: (name: string) => void
+  beforeInvoke?: (name: string) => void | Promise<void>,
+  beforeTell?: () => void
 ) {
   const db = new Database(dbPath);
   runMigrations(db, () => {});
@@ -83,7 +84,7 @@ function setup(
     store,
     sessions,
     invoke: async (_caller, name, input) => {
-      beforeInvoke?.(name);
+      await beforeInvoke?.(name);
       calls.push({ name, input });
       if (name === 'work.start')
         return completed({
@@ -96,6 +97,7 @@ function setup(
     },
     packs: () => [pack],
     tell: async (_ask, _todo, note, key) => {
+      beforeTell?.();
       told.push(note);
       toldKeys.push(key);
     },
@@ -1385,9 +1387,11 @@ describe('stopped worker ladder', () => {
 
   async function stopped(
     check: NeoTodo['check'] = { pack: 'coding', kind: 'pr_merged', params: {} },
-    instruction: string | null = 'Build the rows.'
+    instruction: string | null = 'Build the rows.',
+    beforeInvoke?: (name: string) => void | Promise<void>,
+    beforeTell?: () => void
   ) {
-    const harness = setup();
+    const harness = setup(null, ':memory:', beforeInvoke, beforeTell);
     const todo = harness.add(check, instruction);
     if (instruction) await harness.runner.start(todo.id);
     else {
@@ -1409,27 +1413,136 @@ describe('stopped worker ladder', () => {
     await harness.runner.refresh(() => {});
     const base = Date.now();
     const clock = vi.spyOn(Date, 'now');
+    const warnings: string[] = [];
     const at = async (minutes: number) => {
       clock.mockReturnValue(base + minutes * MIN);
-      await harness.runner.refresh(() => {});
+      await harness.runner.refresh((message, error) => warnings.push(`${message}: ${error}`));
     };
     const sends = () =>
       harness.calls
         .filter((call) => call.name === 'work.send')
         .map((call) => String(call.input.message));
-    return { ...harness, todo, at, sends, clock };
+    return { ...harness, todo, at, sends, clock, warnings };
   }
+
+  test('overlapping refreshes send one reminder while delivery is pending', async () => {
+    let entered = 0;
+    let release!: () => void;
+    let firstSend!: () => void;
+    let secondSend!: () => void;
+    const delivery = new Promise<void>((done) => {
+      release = done;
+    });
+    const firstEntered = new Promise<void>((done) => {
+      firstSend = done;
+    });
+    const secondEntered = new Promise<void>((done) => {
+      secondSend = done;
+    });
+    const h = await stopped(null, 'Build the rows.', async (name) => {
+      if (name !== 'work.send') return;
+      if (++entered === 1) firstSend();
+      else secondSend();
+      await delivery;
+    });
+    try {
+      const first = h.at(20);
+      await firstEntered;
+      const second = h.at(20);
+      await Promise.race([second, secondEntered]);
+      release();
+      await Promise.all([first, second]);
+      expect(h.sends()).toHaveLength(1);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
+    } finally {
+      release();
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a late reminder completion preserves a newer activity incident', async () => {
+    let release!: () => void;
+    let sending!: () => void;
+    const delivery = new Promise<void>((done) => {
+      release = done;
+    });
+    const entered = new Promise<void>((done) => {
+      sending = done;
+    });
+    const h = await stopped(null, 'Build the rows.', async (name) => {
+      if (name !== 'work.send') return;
+      sending();
+      await delivery;
+    });
+    try {
+      const pending = h.at(20);
+      await entered;
+      const newer = { since: Date.now(), nudges: 0 };
+      h.sessions.recordNudge(h.todo.id, newer);
+      release();
+      await pending;
+      expect(h.sends()).toHaveLength(1);
+      expect(h.sessions.readNudge(h.todo.id)).toEqual(newer);
+    } finally {
+      release();
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a refused escalation releases its reservation so notification can retry', async () => {
+    let refused = true;
+    const h = await stopped(null, 'Build the rows.', undefined, () => {
+      if (refused) throw new Error('synthetic notification refusal');
+    });
+    try {
+      await h.at(60);
+      expect(h.told).toEqual([]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(0);
+      refused = false;
+      await h.at(60);
+      await h.at(60);
+      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed')]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(3);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
 
   test('a stopped worker is reminded at 20 and 40, escalated at 60, and never blocked', async () => {
     const h = await stopped();
     try {
       for (const minutes of [19, 20, 39, 40, 59, 60, 90]) await h.at(minutes);
+      expect(h.warnings).toEqual([]);
       expect(h.sends()).toEqual([
         expect.stringContaining('stopped for 20 min'),
         expect.stringContaining('stopped for 40 min'),
       ]);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
       expect(h.told).toEqual([expect.stringContaining('reminder window elapsed without progress')]);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a refused completion stamp does not replay the delivered reminder or notice', async () => {
+    const h = await stopped(null);
+    try {
+      h.setSend({ ok: false, reason: 'not_open' });
+      h.db.exec(
+        "CREATE TRIGGER reject_nudge_completion BEFORE INSERT ON pack_facts WHEN NEW.pack='core' AND NEW.key='nudge' AND json_extract(NEW.value_json,'$.nudges')=3 BEGIN SELECT RAISE(ABORT, 'synthetic completion refusal'); END"
+      );
+      await h.at(20);
+      await h.at(20);
+      expect(h.sends()).toHaveLength(1);
+      expect(h.told.filter((note) => note.includes('has made no progress'))).toEqual([
+        expect.stringContaining('its worker could not be reached'),
+      ]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
+      expect(h.warnings).toEqual([expect.stringContaining('synthetic completion refusal')]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
