@@ -10,7 +10,7 @@ import {
   takeArtifactPreviewOpener,
 } from '../../lib/artifact-preview-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
-import { testAskEntry } from './neo-test-views.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 const { useNeoMock, request } = vi.hoisted(() => ({ useNeoMock: vi.fn(), request: vi.fn() }));
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -26,6 +26,11 @@ vi.mock('../NeoComposer.tsx', () => ({
   ),
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+vi.mock('../NeoSessionPane.tsx', () => ({
+  NeoSessionPane: ({ onClose }: { onClose: () => void }) => (
+    <button onClick={onClose}>Close worker chat</button>
+  ),
+}));
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: { getHub: async () => ({ request }), getHubIfConnected: () => null },
 }));
@@ -39,14 +44,27 @@ const open = async (id: string) => {
   act(() => openArtifactPreview({ kind: 'artifact', artifactId: id }, `File ${id}`));
   await screen.findByRole('heading', { name: `Document ${id}` });
 };
-function mount(empty = false) {
+function mount(empty = false, worker = false) {
   const model = signal({
     sessionId: rootSession,
     snapshot: {
       sessionId: rootSession,
       projects: [],
       work: [],
-      todoAsks: empty ? [] : [testAskEntry('first', 'Existing task')],
+      todoAsks: empty
+        ? []
+        : [
+            testAskEntry(
+              'first',
+              'Existing task',
+              worker
+                ? {
+                    state: 'done',
+                    todos: [testTodo('worker', { state: 'done', link: '/session/worker' })],
+                  }
+                : {}
+            ),
+          ],
     },
     viewPublicConversation: {
       conversationId: rootSession.slice(4),
@@ -143,6 +161,31 @@ afterEach(() => {
 });
 
 describe('Neo preview Work layout', () => {
+  it('retains a Work workspace across worker chat without history cleanup or refocus', async () => {
+    mount(false, true);
+    const pushed = vi.spyOn(history, 'pushState');
+    await open('a');
+    fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
+    const preview = screen.getByRole('dialog');
+    const opens = pushed.mock.calls.length;
+    const backs = vi.mocked(history.back).mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
+    const chat = screen.getByRole('button', { name: 'Close worker chat' });
+    chat.focus();
+    expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(artifactPreviewWorkspace.state.value.open).toBe(true);
+    fireEvent.click(chat);
+    expect(screen.getByRole('dialog')).toBe(preview);
+    expect(pushed.mock.calls.length).toBe(opens);
+    expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
+    expect(document.activeElement).not.toBe(preview);
+    expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
+  });
+
   it.each([false, true])('keeps reference navigation intact with existingFile=%s', async (file) => {
     viewport = 900;
     mount();

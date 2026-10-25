@@ -21,10 +21,12 @@ export function ArtifactPreviewPanel({
   markdownClass,
   fileTabs = false,
   work,
+  suspended = false,
 }: {
   markdownClass?: string;
   fileTabs?: boolean;
   work?: { id: string; showTab: boolean; count: number };
+  suspended?: boolean;
 } = {}) {
   const stack = artifactPreviewStack.value;
   const top = stack.at(-1);
@@ -47,6 +49,8 @@ export function ArtifactPreviewPanel({
   const dialog = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const resolved = useRef(new Map<string, ArtifactResolution>());
+  const visible = useRef(!suspended);
+  visible.current = !suspended;
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -56,6 +60,7 @@ export function ArtifactPreviewPanel({
     let foregroundEscape: KeyboardEvent | undefined;
     const onCapture = (event: KeyboardEvent) => {
       if (
+        visible.current &&
         event.key === 'Escape' &&
         document.querySelector(
           '[role="menu"], [aria-modal="true"], .markdown-image-overlay, #neo-preferences, #neo-preferences-session'
@@ -64,6 +69,7 @@ export function ArtifactPreviewPanel({
         foregroundEscape = event;
     };
     const onKey = (event: KeyboardEvent) => {
+      if (!visible.current) return;
       if (
         event.key === 'Escape' &&
         !event.isComposing &&
@@ -87,6 +93,7 @@ export function ArtifactPreviewPanel({
   }, [open]);
 
   useLayoutEffect(() => {
+    if (!visible.current) return;
     if (tabbed && document.activeElement?.getAttribute('role') === 'tab') return;
     dialog.current?.focus({ preventScroll: true });
   }, [focusEntry]);
@@ -98,10 +105,13 @@ export function ArtifactPreviewPanel({
         type="button"
         aria-label={t('artifact.dismiss')}
         class="artifact-preview-backdrop"
+        hidden={suspended}
         onClick={closeArtifactPreview}
       />
       <div
         ref={dialog}
+        hidden={suspended}
+        style={suspended ? { display: 'none' } : undefined}
         role="dialog"
         aria-labelledby={
           workActive

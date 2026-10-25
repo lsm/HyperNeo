@@ -40,7 +40,11 @@ import './neo.css';
 import type { NeoQuote } from './neo-intake.ts';
 import { t } from '../lib/i18n/index.ts';
 import { ArtifactPreviewPanel } from '../components/artifacts/ArtifactPreviewPanel.tsx';
-import { artifactPreviewStack, artifactPreviewWorkspace } from '../lib/artifact-preview-store.ts';
+import {
+  artifactPreviewStack,
+  artifactPreviewWorkspace,
+  type ArtifactPreviewTarget,
+} from '../lib/artifact-preview-store.ts';
 import { artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
@@ -50,6 +54,7 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpenState] = useState(false);
+  const [workReference, setWorkReference] = useState<ArtifactPreviewTarget | null>(null);
   const [previewDesktop, setPreviewDesktop] = useState(
     () => window.matchMedia('(min-width: 720px)').matches
   );
@@ -153,7 +158,13 @@ export function NeoLive() {
   const columns = !!publicConversation;
   const previewOpen =
     artifactPreviewStack.value.length > 0 || artifactPreviewWorkspace.state.value.open;
-  const focusPreview = columns && !chat && previewDesktop && previewOpen;
+  const referenceWork =
+    scenesOpen &&
+    !roomy &&
+    previewDesktop &&
+    workReference?.kind === 'reference' &&
+    workReference === artifactPreviewStack.value.at(-1);
+  const focusPreview = columns && !chat && previewDesktop && previewOpen && !referenceWork;
   const previewWork = focusPreview && artifactPreviewStack.value.length === 0;
   const workHidden = focusPreview && !roomy && !previewWork;
   useLayoutEffect(() => {
@@ -161,12 +172,14 @@ export function NeoLive() {
   }, [workHidden]);
   const setScenesOpen = useCallback(
     (open: boolean) => {
-      if (open && focusPreview) artifactPreviewWorkspace.select(null);
+      setWorkReference(open ? (artifactPreviewStack.value.at(-1) ?? null) : null);
+      if (open && focusPreview && !roomy && artifactPreviewStack.value.at(-1)?.kind === 'artifact')
+        artifactPreviewWorkspace.select(null);
       setScenesOpenState(open);
     },
-    [focusPreview]
+    [focusPreview, roomy]
   );
-  const sheet = !!publicConversation && narrow && !focusPreview;
+  const sheet = !!publicConversation && ((narrow && !focusPreview) || referenceWork);
   useNeoSheetSwipe({
     enabled: sheet && !chat,
     open: scenesOpen,
@@ -220,7 +233,7 @@ export function NeoLive() {
       setRoomy(window.matchMedia('(min-width: 1440px)').matches);
       const previous = scroll.current;
       scroll.current =
-        columns && (desktop || (previewWidth && previewOpen && !chat))
+        columns && (desktop || (previewWidth && previewOpen && !chat && !referenceWork))
           ? rail.current
           : mainScroll.current;
       if (nearBottom.current && scroll.current)
@@ -234,7 +247,7 @@ export function NeoLive() {
     selectScroll();
     window.addEventListener('resize', selectScroll);
     return () => window.removeEventListener('resize', selectScroll);
-  }, [columns, previewOpen, chat]);
+  }, [columns, previewOpen, chat, referenceWork]);
 
   const earlierAnchor = useRef<{ key: string; top: number } | null>(null);
   const publicEntryAt = (element: HTMLElement, test: (entry: Element) => boolean) =>
@@ -842,8 +855,9 @@ export function NeoLive() {
       <ToastContainer />
       <ArtifactPreviewPanel
         fileTabs
+        suspended={!!chat || referenceWork}
         work={
-          columns && !chat
+          columns
             ? { id: 'neo-preview-work-panel', showTab: !roomy || previewWork, count: workCount }
             : undefined
         }

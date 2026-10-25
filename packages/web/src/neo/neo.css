@@ -618,6 +618,9 @@
 .artifact-preview-panel section > header {
   padding-right: 44px;
 }
+.neo-shell:has(> .artifact-preview-panel[hidden]) {
+  --artifact-preview-width: 0px;
+}
 .artifact-preview-backdrop {
   position: fixed;
   inset: 0;

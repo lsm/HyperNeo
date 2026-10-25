@@ -9,7 +9,11 @@ import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
-import { closeArtifactPreview, openArtifactPreview } from '../../lib/artifact-preview-store.ts';
+import {
+  artifactPreviewStack,
+  closeArtifactPreview,
+  openArtifactPreview,
+} from '../../lib/artifact-preview-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { testAskEntry } from './neo-test-views.ts';
 
@@ -230,31 +234,52 @@ function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = fals
 }
 
 describe('card reply notice navigation', () => {
-  it('selects compact preview Work before focusing a card from chat', async () => {
-    vi.stubGlobal('matchMedia', (media: string) => ({
-      matches: 900 >= Number(media.match(/min-width:\s*(\d+)/)?.[1] ?? 99999),
-    }));
-    const hub = vi.spyOn(connectionManager, 'getHub').mockRejectedValue(new Error('offline'));
-    try {
-      const { container } = mountCard();
-      const work = container.querySelector<HTMLElement>('.neo-scene-list')!;
-      act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'synthetic' }, 'Document'));
-      await screen.findByRole('tab', { name: 'Document' });
-      expect(work.hidden).toBe(true);
-      fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
-      await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
-      expect(work.hidden).toBe(false);
-      expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
-        'true'
-      );
-      expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
-      fireEvent.click(screen.getByRole('button', { name: 'Back to chat' }));
-      expect(container.querySelector('[data-card-reply-focus]')).toBeNull();
-    } finally {
-      act(() => closeArtifactPreview());
-      hub.mockRestore();
+  it.each([
+    [900, false],
+    [900, true],
+    [1500, false],
+    [1500, true],
+  ] as const)(
+    'opens a card without discarding preview at %s reference=%s',
+    async (width, reference) => {
+      vi.stubGlobal('matchMedia', (media: string) => ({
+        matches: width >= Number(media.match(/min-width:\s*(\d+)/)?.[1] ?? 99999),
+      }));
+      const hub = vi.spyOn(connectionManager, 'getHub').mockRejectedValue(new Error('offline'));
+      try {
+        const { container } = mountCard();
+        const work = container.querySelector<HTMLElement>('.neo-scene-list')!;
+        act(() =>
+          openArtifactPreview(
+            reference
+              ? { kind: 'reference', source: { kind: 'todo', id: 'todo' }, reference: 'report.md' }
+              : { kind: 'artifact', artifactId: 'synthetic' },
+            'Document'
+          )
+        );
+        const preview = screen.getByRole('dialog');
+        expect(work.hidden).toBe(width < 1440);
+        fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+        await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+        expect(work.hidden).toBe(false);
+        if (reference || width >= 1440)
+          expect(artifactPreviewStack.value.at(-1)?.kind).toBe(
+            reference ? 'reference' : 'artifact'
+          );
+        else
+          expect(
+            screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')
+          ).toBe('true');
+        expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Back to chat' }));
+        expect(container.querySelector('[data-card-reply-focus]')).toBeNull();
+        expect(screen.getByRole('dialog')).toBe(preview);
+      } finally {
+        act(() => closeArtifactPreview());
+        hub.mockRestore();
+      }
     }
-  });
+  );
 
   it.each([true, false])('opens and returns to chat position on desktop=%s', async (desktop) => {
     vi.stubGlobal('matchMedia', () => ({ matches: desktop }));
