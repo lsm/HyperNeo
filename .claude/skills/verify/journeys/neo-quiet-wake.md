@@ -12,6 +12,8 @@ writer and start no model request. Restore the main connection, then submit
 human input to drain the two queued notices as a separate worker batch before
 the unchanged human input. This establishes two model requests/results.
 
+First seed 20 historical turn ends before the persisted first-run cutoff.
+Neither those reports nor a later status change may add a model request.
 The actual Codex adapter then reads a synthetic task_complete heartbeat and
 exposes notify:false. The actual todo runner must nevertheless deliver this first
 turn report immediately: the third model request contains its unchanged text.
@@ -20,21 +22,22 @@ instruction not to act, forward, reply or treat it as approval.
 
 An exact report repeat with a different transport turn ID/time produces no new
 request, including after recreating NeoService against the same SQLite DB.
-Changed text under a reused transport ID, changed worker status, a changed
-structured waiting reason, and another todo's identical report must each
-produce one new request, reaching eight.
+Changed text under a reused transport ID adds the fifth request. Changed current
+status and waiting reason on that same historical turn add none. A new turn
+ending after the persisted cutoff adds the sixth request; another todo's report
+adds the seventh.
 The unit contracts also distinguish whitespace and empty text from the literal
 fallback sentence. Preserve observed.json and the model request JSON files.
 
 Finally pause only this daemon's job processor. Deliver two urgent notes and
 retry each with a quiet kind while pending or queued. Each must retain one
 mailbox job and no premature history row. Resume the owned processor; the two
-reports add exactly two requests and history rows, reaching ten results.
+reports add exactly two requests and history rows, reaching nine results.
 Retain overlaps.json and readonly-quiet.json. Ordinary quiet notices remain
 queued; only structured worker turn reports use the immediate report path.
 
-Run the helper unchanged against pre-fix code for a failing reproduction: after
-the two baseline requests, firstNotifyFalseReport observes two instead of three.
+Run the helper unchanged against pre-fix code for a failing reproduction:
+the historical reports enter the mailbox and inflate subsequent model requests.
 This proves the real daemon/SDK path with synthetic worker status and model
 responses, not real worker automation, real-model reasoning or browser behavior.
 Also follow neo-worker-turn-reports.md and run the adapter, todo-runner,

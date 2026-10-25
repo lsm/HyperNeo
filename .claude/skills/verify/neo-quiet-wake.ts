@@ -128,6 +128,7 @@ try {
   const firstNewTurn = turnEnds;
   turnEnds = Array.from({ length: 20 }, (_, i) => ({ id: `old-${i}`, at: now - 50_000 + i, message: `Previously handled ${i}` }));
   await expectTurns('upgradeHistoryDoesNotReplay', 2);
+  assert.equal(app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': root }).length, 0, 'historical reports must not enter the mailbox');
   workerStatus = 'done';
   await expectTurns('oldHistoryStatusChangeDoesNotReplay', 2);
   workerStatus = 'running';
@@ -156,7 +157,10 @@ try {
   waitingFor = 'A different owner decision.';
   await expectTurns('changedStructuredReasonDoesNotReplay', 5);
   turnEnds = [{ id: 'new-turn-after-cutoff', at: Date.now() + 1, message: 'New report after the cutoff.' }];
-  await expectTurns('newTurnAfterCutoff', 6);
+  await Bun.sleep(20);
+  service.dispose();
+  service = createNeoService(app.db, { getOperationRegistry: () => registry } as unknown as SessionManager, app.messageHub, app.internalEventBus);
+  await expectTurns('newTurnAfterCutoffSurvivesRestart', 6);
   assert(latestInput().includes('Waiting for: A different owner decision.'));
   const second = service.todos.addTodo('other-todo', ask.id, { title: 'Other', doneWhen: 'Human decides', instruction: null, named: null, check: null }, now);
   service.todos.updateTodo(second, { state: 'doing', startedAt: now }, now);

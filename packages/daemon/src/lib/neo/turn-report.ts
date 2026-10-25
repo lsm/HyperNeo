@@ -2,14 +2,27 @@ import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoRunnerDeps } from './todo-runner.ts';
-import { neoDerivedId } from './derived-id.ts';
+import type { NeoTurnReportReceipts } from './turn-report-receipts.ts';
 
 type Live = { status: string; waitingFor?: string } | null;
-type Turn = { message: string };
+type Turn = { id: string; at: number; message: string };
 type Tell = NeoTodoRunnerDeps['tell'];
 
 export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as PipelineAPI)
-  .input(['ask', 'todo', 'dispatchId', 'ref', 'live', 'turn', 'tell'])
+  .input(['ask', 'todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'tell', 'receipts'])
+  .pipe(
+    (
+      todo: NeoTodo,
+      dispatchId: string,
+      ref: WorkRef,
+      live: Live,
+      turn: Turn,
+      receipts: NeoTurnReportReceipts
+    ) => receipts.observe(todo.id, dispatchId, ref, live, turn),
+    ['todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'receipts'],
+    'observation'
+  )
+  .pipe((observation: { live: Live }) => observation.live, ['observation'], 'live')
   .pipe(
     (ask: NeoAsk, todo: NeoTodo, dispatchId: string, ref: WorkRef, live: Live, turn: Turn) => {
       const focused = ask.focusedSession;
@@ -31,28 +44,19 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
     'text'
   )
   .pipe(
-    (todo: NeoTodo, dispatchId: string, ref: WorkRef, live: Live, turn: Turn, text: string) =>
-      neoDerivedId(
-        JSON.stringify([
-          'neo-todo-turn',
-          todo.id,
-          dispatchId,
-          ref.adapter,
-          ref.id,
-          ref.daemon ?? null,
-          live?.status ?? null,
-          live?.waitingFor ?? null,
-          turn.message,
-          text,
-        ])
-      ),
-    ['todo', 'dispatchId', 'ref', 'live', 'turn', 'text'],
-    'messageId'
-  )
-  .pipe(
-    (ask: NeoAsk, todo: NeoTodo, text: string, messageId: string, tell: Tell) =>
-      tell(ask, todo, text, messageId, 'event'),
-    ['ask', 'todo', 'text', 'messageId', 'tell'],
+    async (
+      ask: NeoAsk,
+      todo: NeoTodo,
+      text: string,
+      observation: { messageId: string; skip: boolean },
+      tell: Tell,
+      receipts: NeoTurnReportReceipts
+    ) => {
+      if (observation.skip) return;
+      await tell(ask, todo, text, observation.messageId, 'event');
+      receipts.acknowledge(observation.messageId);
+    },
+    ['ask', 'todo', 'text', 'observation', 'tell', 'receipts'],
     'delivered'
   )
   .endAsync('delivered') as (
@@ -62,5 +66,6 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
   ref: WorkRef,
   live: Live,
   turn: Turn,
-  tell: Tell
+  tell: Tell,
+  receipts: NeoTurnReportReceipts
 ) => Promise<void>;

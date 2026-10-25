@@ -1,3 +1,4 @@
+import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -85,9 +86,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   readonly inputs: WorkDeliveryInputRepository;
+  readonly turnReports: NeoTurnReportReceipts;
   constructor(db: Database) {
     super(db, 'neo_todo_sessions', 'todo_id');
     this.inputs = new WorkDeliveryInputRepository(db);
+    this.turnReports = new NeoTurnReportReceipts(db);
   }
 
   readNudge(todoId: string): { since: number; nudges: number } | null {

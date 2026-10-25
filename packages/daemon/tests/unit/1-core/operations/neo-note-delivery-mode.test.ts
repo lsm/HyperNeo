@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
+import { vi } from 'vitest';
 import {
   createOperationRegistry,
   defineOperation,
@@ -228,31 +229,61 @@ describe('Neo daemon notes', () => {
     const before = now - 60_000;
     const ref = { adapter: 'hyperneo', id: 'replayed-worker' };
     const ask = service.todos.openAsk({
-      id: 'upgrade-ask', projectId: null, sessionId: rootId,
-      originMessageId: 'upgrade-human', title: 'Upgrade', request: 'Keep working', createdAt: before,
+      id: 'upgrade-ask',
+      projectId: null,
+      sessionId: rootId,
+      originMessageId: 'upgrade-human',
+      title: 'Upgrade',
+      request: 'Keep working',
+      createdAt: before,
     });
-    const todo = service.todos.addTodo('upgrade-todo', ask.id, {
-      title: 'Upgrade', doneWhen: 'New work arrives', instruction: null, named: null, check: null,
-    }, before);
+    const todo = service.todos.addTodo(
+      'upgrade-todo',
+      ask.id,
+      {
+        title: 'Upgrade',
+        doneWhen: 'New work arrives',
+        instruction: null,
+        named: null,
+        check: null,
+      },
+      before
+    );
     service.todos.updateTodo(todo, { state: 'doing', startedAt: before }, before);
     service.todoSessions.bind(todo.id, ref, before);
     const dispatch = await service.todoSessions.inputs.accept(
-      todo.id, rootId, { verb: 'send', ref }, 'Keep working', before
+      todo.id,
+      rootId,
+      { verb: 'send', ref },
+      'Keep working',
+      before
     );
     await service.todoSessions.inputs.recordOutcome(dispatch, { ref }, before);
     turnEnds = Array.from({ length: 20 }, (_, i) => ({
-      id: `historical-${i}`, at: before + i + 1, message: `Previously handled ${i}`,
+      id: `historical-${i}`,
+      at: before + i + 1,
+      message: `Previously handled ${i}`,
     }));
-    const jobs = () => db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': rootId });
-    const refresh = () => service.todoRunner.refresh((message, error) => {
-      throw new Error(message, { cause: error });
-    });
+    const jobs = () =>
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': rootId });
+    const refresh = () =>
+      service.todoRunner.refresh((message, error) => {
+        throw new Error(message, { cause: error });
+      });
     await refresh();
     expect(jobs()).toHaveLength(0);
     workerStatus = 'done';
-    service.todos.focusAsk(ask.id, {
-      ...ref, name: 'Worker', label: 'Worker', provider: 'Synthetic', link: '/session/replayed-worker',
-    }, now);
+    service.todos.focusAsk(
+      ask.id,
+      {
+        ...ref,
+        name: 'Worker',
+        label: 'Worker',
+        provider: 'Synthetic',
+        link: '/session/replayed-worker',
+      },
+      now
+    );
     await refresh();
     expect(jobs()).toHaveLength(0);
     turnEnds.push({ id: 'after-cutoff', at: now + 1, message: 'A new question after the upgrade' });
@@ -275,6 +306,17 @@ describe('Neo daemon notes', () => {
     workerStatus = 'done';
     await refresh();
     expect(jobs()).toHaveLength(2);
+    turnEnds.push({ id: 'retry-after-failure', at: now + 3, message: 'Keep this new report' });
+    const delivery = vi
+      .spyOn(service, 'deliverForward')
+      .mockRejectedValueOnce(new Error('Synthetic admission failure'));
+    await expect(refresh()).rejects.toThrow('Todo session refresh pending');
+    expect(jobs()).toHaveLength(2);
+    delivery.mockRestore();
+    workerStatus = 'failed';
+    await refresh();
+    expect(jobs()).toHaveLength(3);
+    expect(JSON.stringify(jobs()[2].payload.message)).toContain('Keep this new report');
   });
 
   const storedCount = (messageId: string) =>
