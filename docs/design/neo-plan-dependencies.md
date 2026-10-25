@@ -9,9 +9,9 @@ done.** Add discoveries there using `added_after_start`. Workers may change.
 
 Add `neo_todos.depends_on` / `dependsOn`. Reuse Space’s `TaskDependencyNode` and
 `planTaskDependencies`: same-ask prerequisites, no self-links, duplicates or cycles;
-only `done` satisfies an edge. Position is display order. Independent steps may
-run together within existing approvals/capacity. Resolve request-local step keys
-and save the graph atomically; retain the twenty-step create limit.
+only `done` satisfies edges. Position is display order. Independent steps share
+existing approvals/capacity. Resolve step keys and save atomically; keep the
+twenty-step limit.
 
 Close three existing loopholes:
 
@@ -27,73 +27,86 @@ Close three existing loopholes:
 The ask is the owner. Preserve historical `parent_id`; `goal_id` / `neo_goals`
 remain optional standing-outcome grouping. No successor-at-settle field.
 
-## Blockers reach the human
+## Worker questions become cards
 
-A reported incident left three todos doing: a worker wrote a plain-text blocker,
-received 66 nudges over 7.5 hours, and produced 171 turn reports without a human card.
+Today card creation is Neo-only; structured blockers wake Neo without changing
+todo state. Reported incidents include 26 and ten blocker repeats in six hours,
+one against a day-old card; silence for 7.5 hours; and three doing todos receiving
+66 nudges and 171 routine reports.
 
-Use #8663’s structured `blocked` kind, correlated with current assignment and
-explicit affected-todo references added to the reporting contract. Ambiguous
-reports wake Neo once for triage; never guess across a worker’s todos.
-Persist `state=blocked`, reason, next action and a needs-human marker. Recompute,
-restart, worker activity and routine reports cannot clear it.
+Extend `message.send` kinds `question` / `blocked` with todo, short title and
+options. Validate current assignment; derive `sourceSession`, never trust claimed
+identity. Multi-todo workers name affected todos; ambiguous reports wake Neo once
+for triage. Require these reports even when routine messaging is suppressed.
 
-Recheck the hold before nudging; cancel pending reminders. Commit one deduplicated
-Neo wake per blocker incident with the transition. Neo creates the human card;
-replays and “Ending without messaging” reports cannot wake again. Human answer
-plus explicit resume clears the hold and rechecks dependencies.
+Reuse `neo_questions`, source/todo links and answer controls through an internal
+`question-operations.ts` helper. Atomically create/reuse one open card per todo,
+persist `state=blocked` with a needs-human hold, and enqueue one incident-keyed Neo
+wake. Repeats reuse even an older open card and restore its hold without re-waking.
+Enforce a short title, 2–6 options and the human’s configured language; retain
+free-text reply and the original report.
+
+Neo may answer from a cited standing rule/prior answer and retire the card, merge
+duplicates preserving answer routes/holds, or leave it. Agent resolution never
+counts as human approval.
+
+Persist human answers once and deliver directly to the bound worker with a retry
+key; include answers in Neo’s durable turn context. Accepted delivery clears the
+hold and returns doing after dependency checks; failed delivery stays waiting.
+Neo resolutions use the same path. Recompute, restart, activity and routine reports
+cannot clear holds. Recheck before nudging; cancel pending reminders. Unchanged
+reports remain evidence without new wakes.
 
 ## Coding pack mirrors the plan
 
-Core stores plans/dependencies/blockers without GitHub. Coding-pack tables bind
-ask ↔ epic and todo ↔ sub-issue, created with the plan and extended for later
-todos. Cross-repository work keeps one epic and ask.
+Core works without GitHub. Coding-pack tables bind ask ↔ epic and todo ↔ sub-issue
+at creation, extended for later todos. Cross-repository work keeps one epic/ask.
 
-Use existing seams: `todos.schema` (bindings), `sweep` (reconciliation),
-`snapshotRows` (status), `todos.openedPrs` (PR links), `readFacts`/`judge` or
-`todos.check` (evidence). Add an after-commit plan-change hook; sweep repairs missed
-hooks. Persist creation markers/bindings; reconcile uncertain retries before
-creating duplicates. `prepareExecution` holds starts until mirrors exist. Surface
-failures; keep network calls outside core transactions. Epic/issue closure cannot
-override unfinished todos or Verify. Retry epic closure after core completion.
+Use `todos.schema` for bindings, `sweep` for reconciliation, `snapshotRows` for
+status, `todos.openedPrs` for PRs, `readFacts`/`judge` or `todos.check` for evidence.
+Add an after-commit plan-change hook; sweep repairs missed hooks. Persist creation
+markers/bindings to reconcile uncertain retries without duplicates.
+`prepareExecution` holds starts until mirrors exist. Keep network calls outside
+core transactions. Epic closure cannot override pending todos/Verify; retry failed
+closure after core completion.
 
 ## Context and migration
 
-Each turn, including after compaction, rehydrates open asks, todo states/edges,
-unmet prerequisites, human blockers and next startable todos. Share the projection
-with `neo.snapshot`, removing its ten-ask gap. Retain every owner’s summary under
-budget pressure; identify omitted graph detail to read before acting. Pack rows
-append mirror status.
+Each turn rehydrates open asks, states/edges, unmet prerequisites, blockers, answers
+and startable todos after compaction. Share `neo.snapshot`’s projection, removing
+its ten-ask gap. Under budget pressure retain every owner’s summary and identify
+omitted detail to read before acting. Pack rows add mirror status.
 
-Default new dependency arrays to empty. For existing open asks, backfill a
-conservative position chain among retained steps to preserve serial behavior for
-new starts; leave running work alone. Neo can edit these explicit edges. Preserve
-closed asks, outcomes, timestamps and historical links. Reconcile fragmented
-unfinished work explicitly into one open ask; never reopen or rewrite history.
+Default dependencies to empty. Backfill existing open asks with a conservative
+position chain, preserving serial new starts; leave running work alone. Neo may
+edit edges. Preserve closed asks/outcomes/timestamps/links; explicitly reconcile
+fragmented unfinished work into one open ask without rewriting history.
 
 ## Small PRs, in shipping order
 
 Target 100–200 production lines each; measure and split, never pad. Tests accompany
 each slice:
 
-1. Persist blocked reports: named todos block; ambiguous assignments request triage.
-2. Wire holds/nudges/wakes: replay, restart and routine reports yield one human
-   card without reminder loops.
-3. Store/validate dependencies: atomic creation rejects bad edges; migration
+1. Build report/card storage: validated attribution, one card, language/format
+   limits and needs-human holds.
+2. Wire reports/nudges/wakes: repeats, old cards and restart yield one card/wake;
+   quiet workers still report blockers.
+3. Wire answers/triage: retry-safe delivery/resume, duplicate routes and truthful
+   human/agent provenance survive restart.
+4. Store/validate dependencies: atomic creation rejects bad edges; migration
    preserves serial starts and history.
-4. Remove split/settle bypasses: one multi-repository ask; RPC and concurrent
+5. Remove split/settle bypasses: one multi-repository ask; RPC and concurrent
    additions cannot evade pending steps.
-5. Gate dispatch/advance: independent branches run; joins and every start path
+6. Gate dispatch/advance: independent branches run; joins and every start path
    wait for prerequisites.
-6. Rehydrate context: compaction retains more than ten asks; non-coding plans
-   work without GitHub.
-7. Build pack reconciliation: partial creation and late steps recover without
+7. Rehydrate context: compaction retains over ten asks; non-coding needs no GitHub.
+8. Build pack reconciliation: partial creation and late steps recover without
    duplicate issues.
-8. Wire pack hooks/holds/evidence: missing mirrors hold starts; premature issue
+9. Wire pack hooks/holds/evidence: missing mirrors hold starts; premature issue
    closure cannot finish plans.
 
-Follow the repository verify skill with isolated synthetic RPC/UI journeys for
-these proofs. This document claims no runtime fix.
+Verify each slice through isolated synthetic RPC/UI journeys using the repository
+verify skill. No runtime fix is claimed.
 
 ## Cut from v1
 
@@ -104,6 +117,6 @@ these proofs. This document claims no runtime fix.
 
 ## What we will not build
 
-No successor chains, prose blocker parser, new workflow engine, mandatory goals,
-GitHub logic in core, or automatic historical repairs. No implementation before
-human design approval.
+No successor chains, prose/silence inference, worker access to Neo-only operations,
+new card system, workflow engine, mandatory goals or GitHub logic in core. No
+automatic historical repairs or implementation before human design approval.
