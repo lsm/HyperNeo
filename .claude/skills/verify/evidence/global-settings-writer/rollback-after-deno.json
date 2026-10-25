@@ -1,5 +1,5 @@
 {
-  "rpcMs": 5.682750000000169,
+  "rpcMs": 3.5646670000000995,
   "reply": {
     "success": true,
     "settings": {
@@ -106,33 +106,33 @@
       "toolSelectionDefaults": {
         "version": 1,
         "choices": {
-          "mcp:74e27198-961a-4213-a298-7258c5585316": {
+          "mcp:3911a1af-e38c-46a0-b8ff-5d64570cc9ce": {
             "selected": true,
             "aliases": [
               "fetch-mcp"
             ]
           },
-          "mcp:bdc977db-6d41-4fc2-b524-ea1be6262590": {
+          "mcp:2e3f11ad-ae28-4f66-b87a-5c55c0a16d9c": {
             "selected": false,
             "aliases": [
               "chrome-devtools-mcp"
             ]
           },
-          "mcp:d6f2468f-924d-435c-913b-d308eaba1bf1": {
+          "mcp:ff4a1dff-c1d2-47e5-8c12-f16519b67584": {
             "selected": false,
             "aliases": [
               "chrome-devtools-user-mcp"
             ]
           },
-          "skill:54e1fd8e-68ce-4d99-a203-b7d2d8865241": {
+          "skill:2a552719-ea1f-457d-94a3-770f6f2c31fe": {
             "selected": true,
             "aliases": []
           },
-          "skill:8fee022b-a7a0-44d0-9028-7daf41a6a83d": {
+          "skill:63da355a-a1d7-4178-bbdf-cdae7f709148": {
             "selected": true,
             "aliases": []
           },
-          "skill:8db50f59-210d-4e14-b7f4-a5c2ee69fe28": {
+          "skill:3ccb37a5-dc53-4660-988b-214d66171f54": {
             "selected": true,
             "aliases": []
           }
@@ -242,33 +242,33 @@
     "toolSelectionDefaults": {
       "version": 1,
       "choices": {
-        "mcp:74e27198-961a-4213-a298-7258c5585316": {
+        "mcp:3911a1af-e38c-46a0-b8ff-5d64570cc9ce": {
           "selected": true,
           "aliases": [
             "fetch-mcp"
           ]
         },
-        "mcp:bdc977db-6d41-4fc2-b524-ea1be6262590": {
+        "mcp:2e3f11ad-ae28-4f66-b87a-5c55c0a16d9c": {
           "selected": false,
           "aliases": [
             "chrome-devtools-mcp"
           ]
         },
-        "mcp:d6f2468f-924d-435c-913b-d308eaba1bf1": {
+        "mcp:ff4a1dff-c1d2-47e5-8c12-f16519b67584": {
           "selected": false,
           "aliases": [
             "chrome-devtools-user-mcp"
           ]
         },
-        "skill:54e1fd8e-68ce-4d99-a203-b7d2d8865241": {
+        "skill:2a552719-ea1f-457d-94a3-770f6f2c31fe": {
           "selected": true,
           "aliases": []
         },
-        "skill:8fee022b-a7a0-44d0-9028-7daf41a6a83d": {
+        "skill:63da355a-a1d7-4178-bbdf-cdae7f709148": {
           "selected": true,
           "aliases": []
         },
-        "skill:8db50f59-210d-4e14-b7f4-a5c2ee69fe28": {
+        "skill:3ccb37a5-dc53-4660-988b-214d66171f54": {
           "selected": true,
           "aliases": []
         }
@@ -281,11 +281,11 @@
     "rule": "concurrent-rule"
   },
   "rollback": "touched settings restored without losing the concurrent commit",
-  "healthMs": 0.8889999999998963,
+  "healthMs": 0.8251660000000811,
   "preservedWriterCurrentRule": true,
-  "heldWriteMs": 399.3079170000001,
+  "heldWriteMs": 380.321375,
   "heldWriteLatencyTargetPassed": false,
-  "maxLoopLagMs": 2.0781669999996666,
+  "maxLoopLagMs": 2.6480000000001382,
   "result": "pass",
   "targetSqlOnMain": 0
 }
