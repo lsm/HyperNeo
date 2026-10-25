@@ -1,0 +1,19 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-work-writer.test.ts:
+59 | }
+60 | 
+61 | test('work acquisition and returned coverage do not read through the main repository', async () => {
+62 |   const f = fixture();
+63 |   const main = spyOn(f.facts, 'read').mockImplementation(() => {
+64 |     throw new Error('work coverage read on main repository');
+                   ^
+error: work coverage read on main repository
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-work-writer.test.ts:64:15)
+      at collect (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/work-facts.ts:132:17)
+(fail) work acquisition and returned coverage do not read through the main repository [5.02ms]
+
+ 0 pass
+ 5 filtered out
+ 1 fail
+Ran 1 test across 1 file. [30.00ms]

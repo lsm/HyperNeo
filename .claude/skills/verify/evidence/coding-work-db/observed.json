@@ -1,6 +1,6 @@
 {
   "scope": "Lane A row 24: work-PR snapshot and observation admission",
-  "regressionCommit": "64e120eb357d74b64eb5f9b7e1522168ba0b914a",
+  "regressionCommit": "7cf4cb25ed6b9850a155dee71dec8d5be1a73606",
   "productionChangedLines": 129,
   "focusedUnitTests": 13,
   "focusedAssertions": 51,
@@ -161,5 +161,76 @@
     "The fake upstream intentionally waits 300 ms, so affected read RPCs exceed 250 ms.",
     "The deliberately held 1.2-second writer lock makes the affected write exceed 250 ms; health remains responsive.",
     "This slice covers work observations only; other lane-A rows remain."
-  ]
+  ],
+  "originalPreRebaseRegressionCommit": "64e120eb357d74b64eb5f9b7e1522168ba0b914a",
+  "versions": {
+    "bun": "1.4.3",
+    "deno": "2.9.4"
+  },
+  "latestFixedEvidence": {
+    "bun": {
+      "folder": "bun-verify-1",
+      "testedCodeCommit": "eb04b4386912a39a2d6619f9b3f4c2c916e04a30",
+      "verified": true,
+      "mainConnectionTargetSql": 0,
+      "gatewayCommands": 18,
+      "acquisitionCounts": {
+        "initial": 1,
+        "changed": 1,
+        "detail-failed": 1,
+        "reopen": 1
+      },
+      "maxLoopLagMs": 11.25041599999986,
+      "contention": {
+        "healthMs": 0.4365829999997004,
+        "writeMs": 1199.424125,
+        "affectedWriteUnder250ms": false
+      },
+      "fence": {
+        "before": 6,
+        "after": 7,
+        "winningValue": {
+          "url": "https://github.com/synthetic/ledger/pull/7",
+          "state": "OPEN",
+          "checks": "passing",
+          "review": "none",
+          "head": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "temporaryDaemonDataRemoved": true,
+      "freeGiBBefore": 257.8156089782715
+    },
+    "deno": {
+      "folder": "deno-verify-1",
+      "testedCodeCommit": "eb04b4386912a39a2d6619f9b3f4c2c916e04a30",
+      "verified": true,
+      "mainConnectionTargetSql": 0,
+      "gatewayCommands": 18,
+      "acquisitionCounts": {
+        "initial": 1,
+        "changed": 1,
+        "detail-failed": 1,
+        "reopen": 1
+      },
+      "maxLoopLagMs": 25.905624999999873,
+      "contention": {
+        "healthMs": 0.670999999999367,
+        "writeMs": 1269.509083,
+        "affectedWriteUnder250ms": false
+      },
+      "fence": {
+        "before": 6,
+        "after": 7,
+        "winningValue": {
+          "url": "https://github.com/synthetic/ledger/pull/7",
+          "state": "OPEN",
+          "checks": "passing",
+          "review": "none",
+          "head": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "temporaryDaemonDataRemoved": true,
+      "freeGiBBefore": 257.8157958984375
+    }
+  }
 }

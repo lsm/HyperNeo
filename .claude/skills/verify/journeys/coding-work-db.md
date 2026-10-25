@@ -47,4 +47,4 @@ The failing regression commit precedes the fix. Focused unit cases additionally
 cover invalid input without upstream work, revision fencing, failed persistence,
 three bounded busy attempts, coalescing across retries and a later fresh retry.
 The existing work-ledger cases remain unchanged. `observed.json` summarizes the
-four retained runs; their raw JSON and request records are the source evidence.
+baseline runs and fixed runs, including the post-rebase repetitions; their raw JSON and request records are the source evidence.
