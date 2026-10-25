@@ -3,7 +3,8 @@
 Use the shared isolation rules in SKILL.md. No provider, model, GUI or HTTP mock
 is needed. The helper owns a real daemon on an ephemeral non-8399 port, a fresh
 home/database, a refusing GitHub fixture executable and a synthetic Codex Unix
-socket. It seeds only synthetic sessions and SDK input/result facts.
+socket plus the shared syntheticCodexDesktop IPC peer. It seeds only synthetic
+sessions and SDK input/result facts; its refusing open fixture prevents GUI launch.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-explicit-results-XXXXXX)
@@ -25,7 +26,7 @@ operation, retaining the same report bytes.
 The actual daemon also dispatches a synthetic Codex worker that ends a turn with
 an empty final message and no `hyperneo send`. Observe a tagged report in Neo's
 stored incoming SDK message: `worker ended its turn with no reply`, with the
-todo id and durable dispatch id. Repeated refresh sends it once through the
+todo id, worker status and durable dispatch id. Repeated refresh sends it once through the
 existing mailbox deduplication. The todo's result remains null and it stays
 doing: the relay neither submits a result nor completes it. The synthetic Neo
 has no provider, so this proves actual mailbox receipt/storage, not model
@@ -34,7 +35,7 @@ consumption. Preserve the `silentTurn` evidence and delivery receipt.
 Repeat refresh, remove the legacy todo through RPC, and reopen the daemon. The
 removed todo stays removed with its old report; the receipt-bound report remains
 identical. Only after the fixture PR merges may the pack finish its todo and
-actually dispatch the next worker through `turn/start`. The helper requests an
+actually dispatch the next worker through Desktop's `thread-follower-start-turn`. The helper requests an
 explicit fact recheck through the close operation, bypassing the normal check
 interval; the earlier identical request while the PR was open was refused. Repeating the fact sends
 nothing twice. Logical SDK input/result bytes remain unchanged across the daemon

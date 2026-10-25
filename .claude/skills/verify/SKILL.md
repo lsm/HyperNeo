@@ -76,6 +76,10 @@ only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any
 additional ports; do not also start `launch.sh` for these helpers.
 
+Await session creation through the daemon DB facade before inserting dependent
+synthetic SDK or task records. Session writes use the asynchronous DB writer;
+an unawaited creation can race a foreign-key insert.
+
 When a journey specifies an ephemeral model mock, omit the 8000/8001 preflight.
 That helper must bind its model listener to port 0 and redirect both session and
 title requests to the assigned loopback URL. Never reuse another run's listener.
@@ -94,6 +98,11 @@ that setting for synthetic transport-only checks. Their journey must say so;
 this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
 
 ## Doctor
+
+Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
+They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
+`open`, so owner discovery cannot inspect or open the real desktop app.
+App-server-only fixtures are insufficient for the current desktop send route.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

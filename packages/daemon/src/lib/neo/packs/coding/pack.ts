@@ -1,8 +1,4 @@
-import {
-  codingWatchedRepos,
-  initializeCodingWatches,
-  unwatchCodingRepos,
-} from './watched-repos.ts';
+import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
 import { runCodingReview } from './review.ts';
@@ -148,7 +144,6 @@ export function createCodingPack(deps: {
     },
     readFacts: todos.readFacts,
     judge: todos.judge,
-    forgetRepositories: (repos) => unwatchCodingRepos(deps.database(), repos, deps.projectRepos()),
     observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
       await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);

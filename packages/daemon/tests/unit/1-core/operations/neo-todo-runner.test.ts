@@ -140,6 +140,24 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('a refused receipt save leaves no partially recorded worker assignment', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.db.exec(
+        "CREATE TRIGGER reject_receipt BEFORE UPDATE OF sent_opening ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic receipt refusal'); END"
+      );
+      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic receipt refusal');
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+      expect(h.sessions.readRef(todo.id)).toBeNull();
+      expect(h.sessions.readSent(todo.id)).toBeNull();
+      expect(h.sessions.inputs.list(todo.id)).toHaveLength(1);
+      expect(h.sessions.inputs.list(todo.id)[0].outcome).toMatchObject({ ref, receipt });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
     const h = setup();
     try {
@@ -401,9 +419,8 @@ describe('neo todo runner', () => {
         });
         await h.runner.refresh(() => {});
         expect(h.told).toContain(
-          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}):\n\n${message || 'worker ended its turn with no reply'}`
+          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}, status done):\n\n${message || 'worker ended its turn with no reply'}`
         );
-        expect(h.toldKeys).toContain(`neo-todo-turn:${todo.id}:${dispatch.id}:turn-1`);
         expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: prior });
       } finally {
         h.db.close();

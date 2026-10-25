@@ -1,0 +1,45 @@
+{
+  "baseline": {
+    "mainForgetSql": 28,
+    "completedWriterCommands": 0,
+    "competingRpcMs": 0.7449999999998909,
+    "maxLoopLagMs": 1.0497499999999036,
+    "oneWinner": true,
+    "retainedWatches": [
+      "kept/repo"
+    ],
+    "rollbackVerified": true
+  },
+  "bun": {
+    "mainForgetSql": 0,
+    "completedWriterCommands": 3,
+    "competingRpcMs": 4.973666000000094,
+    "maxLoopLagMs": 15.887958000000026,
+    "oneWinner": true,
+    "retainedWatches": [
+      "kept/repo"
+    ],
+    "rollbackVerified": true,
+    "contention": {
+      "healthMs": 0.41433299999994233,
+      "writeMs": 1210.705959,
+      "affectedWriteUnder250ms": false
+    }
+  },
+  "deno": {
+    "mainForgetSql": 0,
+    "completedWriterCommands": 3,
+    "competingRpcMs": 3.3192079999998896,
+    "maxLoopLagMs": 2.8818750000000364,
+    "oneWinner": true,
+    "retainedWatches": [
+      "kept/repo"
+    ],
+    "rollbackVerified": true,
+    "contention": {
+      "healthMs": 0.660584000000199,
+      "writeMs": 1227.5552089999996,
+      "affectedWriteUnder250ms": false
+    }
+  }
+}

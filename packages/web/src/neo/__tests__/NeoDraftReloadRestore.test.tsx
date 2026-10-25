@@ -66,6 +66,7 @@ beforeEach(() => {
       method: string,
       input: {
         sessionId: string;
+        name?: string;
         metadata?: { inputDraft?: string | null };
         expected?: string;
       }
@@ -74,7 +75,10 @@ beforeEach(() => {
         return { session: { metadata: { inputDraft: persisted.get(input.sessionId) ?? '' } } };
       if (method === 'session.update' && input.metadata?.inputDraft !== undefined)
         persisted.set(input.sessionId, input.metadata.inputDraft ?? '');
-      if (method === 'operation.invoke') return recover(input as never);
+      if (method === 'operation.invoke')
+        return input.name === 'artifact.file.get'
+          ? { accepted: false, reason: 'unavailable' }
+          : recover(input as never);
       if (method === 'session.clearInputDraftIf') {
         const cleared = persisted.get(input.sessionId) === input.expected;
         if (cleared) persisted.set(input.sessionId, '');

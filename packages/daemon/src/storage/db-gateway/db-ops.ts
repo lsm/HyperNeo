@@ -1,4 +1,4 @@
-import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write.ts';
+import { neoProjectForgetWrites } from '../repositories/neo-project-forget-writes.ts';
 import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
 import { neoProjectCleanupWrites } from '../repositories/neo-project-cleanup-writes.ts';
 import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
@@ -61,10 +61,12 @@ import { createStandaloneTask } from '../tasks/create-task.ts';
 import { editStandaloneTaskWithDependencies } from '../tasks/set-task-dependencies.ts';
 import { transitionStandaloneTask } from '../tasks/transition-task.ts';
 import { deleteWorkFeedBatch } from '../work-feed.ts';
+import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write.ts';
 import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    neoProjectForgetWrites,
     neoProjectCleanupWrites,
     reserveNeoHomeProjects,
     neoTodoSessionReads,

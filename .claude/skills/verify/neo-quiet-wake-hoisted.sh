@@ -29,9 +29,9 @@ for port in 8000 8001; do
     echo "verification port $port is busy"; exit 1
   fi
 done
-mkdir -p "$RUN/home" "$RUN/evidence"
+mkdir -p "$RUN/home" "$RUN/evidence" "$RUN/tmp"
 printf '%s\n' 'root zod present; nested daemon zod absent' > "$RUN/evidence/layout.txt"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
+env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="${TMPDIR:-$RUN/tmp}" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
   HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn \
   bun .claude/skills/verify/neo-quiet-wake.ts "$RUN" > "$RUN/proof.log" 2>&1
 cat "$RUN/evidence/observed.json"

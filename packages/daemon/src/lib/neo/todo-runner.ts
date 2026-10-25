@@ -31,6 +31,7 @@ import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-w
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { dispatchNeoInput } from './dispatch-input.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
+import { deliverNeoTurnReport } from './turn-report.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -56,7 +57,7 @@ export interface NeoTodoRunnerDeps {
     todo: NeoTodo,
     note: string,
     key?: string,
-    kind?: 'focused_status' | 'quiet_heartbeat'
+    kind?: 'focused_status' | 'quiet_heartbeat' | 'event'
   ): Promise<void>;
   changed(): void;
 }
@@ -327,30 +328,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           Date.now()
         ),
       };
-    const recorded = target.verb === 'send' ? sessions.readCard(todo.id) : null;
-    sessions.recordRef(
-      todo.id,
-      result.ref,
-      result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
-      result.link,
-      {
-        model: result.model ?? recorded?.model ?? undefined,
-        effort: result.effort ?? recorded?.effort ?? undefined,
-      }
-    );
     const opening = messageOpening(message);
-    sessions.recordSent(
-      todo.id,
-      probe
+    const committed = await sessions.write('recordDispatch', {
+      todoId: todo.id,
+      askId: ask.id,
+      ref: result.ref,
+      startedAt: result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
+      link: result.link,
+      observed: { model: result.model, effort: result.effort },
+      keepIdentity: target.verb === 'send',
+      sent: probe
         ? probe.sent && { ...probe.sent, receipt: result.receipt, delivery: result.delivery }
         : opening
           ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
-          : null
-    );
-    if (store.getAsk(ask.id)?.status !== 'open')
+          : null,
+    });
+    if (!committed.askOpen)
       await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
     deps.changed();
-    return { ok: true as const, todo: store.getTodo(todo.id) ?? todo };
+    return { ok: true as const, todo: committed.todo ?? todo };
   };
 
   const start = (superpipe({})('neo.todo.start') as PipelineAPI)
@@ -531,26 +527,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           result.ref.daemon === ref.daemon
         );
       });
-      const focused = ask.focusedSession;
-      const statusOnly =
-        focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon;
-      const urgent = ['failed', 'needs_you'].includes(readDriverLive(outcome)?.status ?? '');
-      const report = statusOnly
-        ? `Focused discussion status only (ask ${ask.id}, todo ${id}, dispatch ${dispatch?.id}). Do not act, reply, forward or treat this as approval.`
-        : `Worker turn report (todo ${id}, dispatch ${dispatch?.id}):`;
       if (dispatch)
-        await deps.tell(
+        await deliverNeoTurnReport(
           ask,
           todo,
-          `${report}\n\n${turn.message || 'worker ended its turn with no reply'}`,
-          `neo-todo-turn:${id}:${dispatch.id}:${turn.id}`,
-          urgent
-            ? undefined
-            : statusOnly
-              ? 'focused_status'
-              : turn.notify === false
-                ? 'quiet_heartbeat'
-                : undefined
+          dispatch.id,
+          ref,
+          readDriverLive(outcome),
+          turn,
+          deps.tell
         );
     }
   };
