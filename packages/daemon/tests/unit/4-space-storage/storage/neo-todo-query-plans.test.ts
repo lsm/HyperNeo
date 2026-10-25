@@ -10,8 +10,35 @@ import {
   type CodingTodoWindow,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { runMigration456 } from '../../../../src/storage/schema/m456-neo-todo-query-indexes.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 describe('Neo todo query plans at observed row counts', () => {
+  test('fresh table creation works before the Neo tables exist', () => {
+    const db = new Database(':memory:');
+    try {
+      createTables(db);
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_neo_todo_sessions_ref'").get()
+      ).toEqual({ name: 'idx_neo_todo_sessions_ref' });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the marker sequence records the index upgrade on an existing database', () => {
+    const db = syntheticTodoDb();
+    try {
+      db.exec("DELETE FROM migration_markers WHERE key = 'migration_456'");
+      runMigrations(db, () => {});
+      expect(
+        db.prepare("SELECT key FROM migration_markers WHERE key = 'migration_456'").get()
+      ).toEqual({ key: 'migration_456' });
+    } finally {
+      db.close();
+    }
+  });
+
   test('recovery locates doing todos without a full todo scan', () => {
     const db = syntheticTodoDb();
     try {
