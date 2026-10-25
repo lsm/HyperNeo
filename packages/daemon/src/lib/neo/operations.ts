@@ -715,9 +715,15 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationReadOperation(
       service.repo,
       new NeoConversationReader(service.db.getDatabase(), messageStatuses),
-      (message) => service.messageNames(message)
+      (message) => service.messageNames(message),
+      service.db.getDatabase()
     ),
-    createNeoConversationAskReadOperation(service.repo, service.asks, messageStatuses),
+    createNeoConversationAskReadOperation(
+      service.repo,
+      service.asks,
+      messageStatuses,
+      service.db.getDatabase()
+    ),
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     ...createNeoRuleQuestions(service),

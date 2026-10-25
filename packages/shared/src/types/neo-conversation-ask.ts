@@ -1,3 +1,4 @@
+import type { NeoPreviewReference } from './neo-preview-context.ts';
 import type { SDKUserMessage } from '../sdk/sdk.d.ts';
 import type { NeoReplyTo } from './neo-ask.ts';
 import type { NeoInputOrigin } from './neo-message.ts';
@@ -18,6 +19,7 @@ export interface NeoConversationAskInput {
   readonly askOrigin: NeoInputOrigin;
   readonly content: SDKUserMessage['message']['content'];
   readonly replyTo?: NeoReplyTo;
+  readonly previewContext?: NeoPreviewReference;
 }
 
 export interface NeoConversationAsk extends NeoConversationAskInput {

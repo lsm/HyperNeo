@@ -1,3 +1,4 @@
+import { NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 import type { NeoConversationAskInput } from '@hyperneo/shared/types/neo-conversation-ask';
 import { z } from 'zod';
 import { toMailboxMessage } from '../mailbox/entry.ts';
@@ -31,6 +32,7 @@ export const NeoConversationAskSchema = z
       .strict(),
     content: SessionContentSchema,
     replyTo: NeoReplyToSchema.optional(),
+    previewContext: NeoPreviewReferenceSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {
