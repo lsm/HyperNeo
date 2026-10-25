@@ -467,7 +467,7 @@ export function createNeoQuestionOperations(
     askId: string
   ) => NeoCardReplyContext | null = () => null,
   publicationChanged: (conversationId: string) => void = () => {},
-  deliverAnswers: () => Promise<void> = async () => {}
+  deliverAnswers: (questionId: string) => Promise<void> = async () => {}
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -694,7 +694,7 @@ export function createNeoQuestionOperations(
             ...(refused.length ? [`These did not start: ${refused.join(' ')}`] : []),
           ].join('\n')
         );
-        await deliverAnswers();
+        await deliverAnswers(answered.question.id);
         return { ok: true, question: answered.question };
       },
       'outcome',

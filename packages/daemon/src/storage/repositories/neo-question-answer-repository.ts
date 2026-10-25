@@ -49,8 +49,8 @@ export class NeoQuestionAnswerRepository {
     return this.project(this.rows(questionId));
   }
 
-  pending() {
-    return this.project(this.rows()).filter((route) => route.state === 'pending');
+  pending(questionId?: string) {
+    return this.project(this.rows(questionId)).filter((route) => route.state === 'pending');
   }
 
   accept(id: string, receipt: string, now: number, expected?: string): boolean {

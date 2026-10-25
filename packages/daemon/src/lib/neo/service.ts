@@ -674,7 +674,7 @@ export class NeoService {
     this.notifyChanged();
   }
 
-  deliverQuestionAnswers(): Promise<void> {
+  deliverQuestionAnswers(questionId?: string): Promise<void> {
     const warn = (error: unknown) => this.log.warn('Worker answer delivery pending', error);
     return createNeoQuestionAnswerDelivery(
       this.todos,
@@ -684,7 +684,7 @@ export class NeoService {
       this.deliverForward.bind(this),
       this.todoRunner.recompute,
       warn
-    )().catch(warn);
+    )(questionId).catch(warn);
   }
 
   async refreshDriverWork(): Promise<void> {

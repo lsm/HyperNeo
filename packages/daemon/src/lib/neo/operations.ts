@@ -701,9 +701,9 @@ export function createNeoOperations(service: NeoService) {
     createNeoIntakeOperation(
       service.db,
       service.repo,
-      () => {
+      (_sessionId, questionId) => {
         service.notifyChanged();
-        void service.deliverQuestionAnswers();
+        if (questionId) void service.deliverQuestionAnswers(questionId);
       },
       service.todos
     ),
@@ -813,7 +813,7 @@ export function createNeoOperations(service: NeoService) {
           : null;
       },
       (id) => service.notifyPublicationsChanged(id),
-      () => service.deliverQuestionAnswers()
+      (questionId) => service.deliverQuestionAnswers(questionId)
     ),
     defineOperation({
       name: 'neo.open',

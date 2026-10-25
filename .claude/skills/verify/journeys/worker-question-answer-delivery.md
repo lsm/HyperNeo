@@ -26,17 +26,28 @@ job due immediately. The real job handler must retry delivery and return doing.
 Replay the original chat request and a closed button answer: each of the three
 answer receipts must still identify exactly one consumed worker user-message row.
 
-Unit contracts also exercise external worker acceptance, definite refusal/retry,
-and a lost or unconfirmed external response. External sends are durably claimed
-before dispatch; after an uncertain result, a repeated refresh reads the peer's
-recorded input marker and never blindly sends the answer again. Missing peer
-evidence keeps the hold. A newer unanswered card or changed worker assignment
-must prevent an old accepted answer from releasing the hold.
+Inline dispatch is scoped to the answered question for both buttons and chat.
+An unrelated pending route must neither send nor be recomputed before this
+answer returns. The refresh job retains the full sweep for restart recovery.
+
+Use the metadata-only companion with
+`PROOF=.claude/skills/verify/worker-question-answer-scope.ts` and SKILL.md's
+proof-run.sh wrapper. It needs no model or fixed port. It seeds another pending
+HyperNeo route on a synthetic remote daemon and holds only that transport's
+response behind a controlled barrier. The real target answer RPC must return
+without starting that unrelated transport; the target resumes while the other
+todo stays held. evidence/observed.json records which action happened first.
+
+External-worker delivery is intentionally deferred to lsm/HyperNeo#8824. Such
+routes stay pending and held without a transport call in this slice. That next
+PR distinguishes definite refusal from a lost acknowledgement before deciding
+whether to retry or reconcile. Unit contracts here cover HyperNeo acceptance,
+refusal/retry, scope isolation and retaining a newer unanswered hold.
 
 Keep evidence/button.json, observed.json, model request files, proof.log and
 cleanup.json. The helper closes its app/model, verifies both owned listening ports
 can be rebound, removes its temporary data and then exits explicitly so SDK idle
 timers cannot retain the proof process. Assertions and cleanup failures retain a
 nonzero exit status. This proves RPC, queue, SDK consumption and synthetic restart
-recovery. External desktop behavior is covered by contract tests here; native
-external-app delivery, GUI rendering and agent triage are not claimed.
+recovery. External-worker delivery, native external apps, GUI rendering and agent triage
+are outside this slice.

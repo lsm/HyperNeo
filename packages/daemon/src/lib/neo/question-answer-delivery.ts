@@ -1,22 +1,15 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { WorkDeliverySchema } from '../drivers/types.ts';
 import { SendMessageResultSchema } from '../messaging/message-send.ts';
 import { renderRemoteAddress } from '../mailbox/address.ts';
-import { driverWorkCaller, readDriverInputs } from './driver-work.ts';
+import { driverWorkCaller } from './driver-work.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
 import type { NeoService } from './service.ts';
 import type { NeoTodoRunner, NeoTodoRunnerDeps } from './todo-runner.ts';
 
 type Route = ReturnType<NeoAskTodoRepository['questionAnswers']['pending']>[number];
-const Sent = z.object({ ok: z.literal(true), value: WorkDeliverySchema });
-const Refused = z.object({
-  ok: z.literal(false),
-  reason: z.enum(['not_open', 'not_found', 'unsupported', 'unknown_adapter']),
-});
 
 export function createNeoQuestionAnswerDelivery(
   store: NeoAskTodoRepository,
@@ -34,7 +27,8 @@ export function createNeoQuestionAnswerDelivery(
         const ask = todo && store.getAsk(todo.askId);
         const assigned = sessions.readRef(route.todoId);
         const ref = route.sourceSession;
-        return todo?.blockedBy === 'needs-human' &&
+        return ref.adapter === 'hyperneo' &&
+          todo?.blockedBy === 'needs-human' &&
           ask?.status === 'open' &&
           assigned?.adapter === ref.adapter &&
           assigned.id === ref.id &&
@@ -76,51 +70,27 @@ export function createNeoQuestionAnswerDelivery(
             ask.sessionId,
             'event'
           );
-        const first = store.questionAnswers.claim(route.id, key);
-        let receipt: string | null = null;
-        if (ref.adapter === 'hyperneo') {
-          const to = ref.daemon
-            ? renderRemoteAddress({
-                kind: 'remote-session',
-                daemonId: ref.daemon,
-                sessionId: ref.id,
-              })
-            : ref.id;
-          const result = await invoke(caller, 'message.send', { to, text, idempotencyKey: key });
-          const sent = SendMessageResultSchema.safeParse(
-            result.kind === 'completed' ? result.value : null
-          );
-          if (sent.success && sent.data.kind === 'accepted') receipt = sent.data.messageId;
-          else store.questionAnswers.retry(route.id, key);
-        } else if (first) {
-          const result = await invoke(caller, 'work.send', { ref, message: text });
-          const value = result.kind === 'completed' ? result.value : null;
-          const sent = Sent.safeParse(value);
-          if (
-            sent.success &&
-            !sent.data.value.unconfirmed &&
-            (sent.data.value.delivered ||
-              sent.data.value.receipt ||
-              sent.data.value.queuedSubmissionId)
-          )
-            receipt = key;
-          else if (Refused.safeParse(value).success) store.questionAnswers.retry(route.id, key);
-        } else {
-          const result = await invoke(caller, 'work.status', { ref });
-          if (
-            readDriverInputs(result)?.some((input) => input.text.includes(`[worker-answer:${key}]`))
-          )
-            receipt = key;
-        }
+        store.questionAnswers.claim(route.id, key);
+        const to = ref.daemon
+          ? renderRemoteAddress({ kind: 'remote-session', daemonId: ref.daemon, sessionId: ref.id })
+          : ref.id;
+        const result = await invoke(caller, 'message.send', { to, text, idempotencyKey: key });
+        const sent = SendMessageResultSchema.safeParse(
+          result.kind === 'completed' ? result.value : null
+        );
+        const receipt = sent.success && sent.data.kind === 'accepted' ? sent.data.messageId : null;
+        if (receipt === null) store.questionAnswers.retry(route.id, key);
         return receipt !== null && store.questionAnswers.accept(route.id, receipt, Date.now(), key);
       },
       'delivery',
       'outcome'
     )
     .endAsync('outcome') as (route: Route) => Promise<boolean>;
-  return async () => {
-    for (const route of store.questionAnswers.pending()) await deliver(route).catch(warn);
-    for (const todo of store.listCheckable())
-      if (todo.blockedBy === 'needs-human') await resume(todo).catch(warn);
+  return async (questionId?: string) => {
+    const todos = questionId
+      ? store.questionAnswers.list(questionId).map((route) => store.getTodo(route.todoId))
+      : store.listCheckable();
+    for (const route of store.questionAnswers.pending(questionId)) await deliver(route).catch(warn);
+    for (const todo of todos) if (todo?.blockedBy === 'needs-human') await resume(todo).catch(warn);
   };
 }
