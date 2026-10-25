@@ -125,7 +125,7 @@ function parseAuthor(body: string) {
   });
   const match =
     lines.length === 1
-      ? /^(?:Agent|Author): ([a-z0-9][a-z0-9./[\]-]*) \(effort: (none|minimal|low|medium|high|xhigh|max|ultra)\) via ([^<>\n]+?)$/i.exec(
+      ? /^(?:Agent|Author): ([a-z0-9][a-z0-9./[\]-]*) \(effort: (none|off|minimal|low|medium|high|extra high|xhigh|max|ultra)\) via ([^<>\n]+?)$/i.exec(
           lines[0].trim()
         )
       : null;

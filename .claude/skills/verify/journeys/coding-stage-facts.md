@@ -42,3 +42,9 @@ produce a repair request. The preference assertion filters for coding provenance
 because migrations may seed unrelated upgrade preferences. No model compliance
 or native harness launch is claimed. Retain the workerInbox and repair entries
 in the same stage-facts evidence file.
+
+The same RPC check then uses a synthetic HyperNeo worker with each recorded
+effort `extra high` and `off`. Its captured signature must preserve that value
+verbatim and qualify for independent review rather than requesting a repair.
+The focused policy test covers every lowercased `THINKING_LEVEL_LABELS` value
+through the production brief formatter, including same-model alias refusal.
