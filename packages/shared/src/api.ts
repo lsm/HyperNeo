@@ -16,6 +16,7 @@ import type {
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
 } from './types/app-mcp-server.ts';
+import type { SessionToolInventory } from './types/observed-tool-inventory.ts';
 import type { AppSkill, CreateSkillParams, UpdateSkillParams } from './types/skills.ts';
 import type {
   CreateEvolutionLessonParams,
@@ -348,6 +349,12 @@ export interface RuntimeMcpServerEntry {
 export interface ListRuntimeMcpServersRequest {
   sessionId: string;
 }
+
+export interface GetSessionToolInventoryRequest {
+  sessionId: string;
+}
+
+export type GetSessionToolInventoryResponse = SessionToolInventory;
 
 export interface ListRuntimeMcpServersResponse {
   servers: RuntimeMcpServerEntry[];

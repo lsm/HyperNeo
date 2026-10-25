@@ -11,13 +11,16 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import {
   isSDKAPIRetryMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
+  isSDKSystemInit,
 } from '@hyperneo/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
@@ -42,6 +45,7 @@ import type { MessageQueue } from './message-queue.ts';
 import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
+import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
@@ -97,6 +101,14 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 }
 
 const RETRY_EXIT_TIMEOUT_MS = 5000;
+
+const toolStatusSchema = z.array(
+  z.object({
+    name: z.string(),
+    status: z.string(),
+    tools: z.array(z.object({ name: z.string() })).optional(),
+  })
+);
 
 type StartupWatchRace =
   | { kind: 'message'; result: IteratorResult<unknown, void> }
@@ -403,6 +415,9 @@ export interface QueryRunnerContext {
 
 export class QueryRunner {
   readonly retryPromptIdentity = new RetryPromptIdentity();
+  private readonly toolInventory = new ObservedToolInventory();
+  private toolInventoryOwner: QueryAttemptToken | null = null;
+  private toolStatusRead = 0;
   private turnEndedGeneration: number | null = null;
 
   private streamSilence: StreamSilenceState = { lastActivityAt: 0, openTools: [] };
@@ -460,6 +475,30 @@ export class QueryRunner {
   }
 
   constructor(private ctx: QueryRunnerContext) {}
+
+  async getToolInventory(): Promise<SessionToolInventory> {
+    const owner = this.toolInventoryOwner;
+    const queryObject = this.ctx.queryObject;
+    const snapshot = this.toolInventory.snapshot();
+    if (!owner || !queryObject || snapshot.state !== 'observed') return snapshot;
+    const read = ++this.toolStatusRead;
+    let status: unknown;
+    try {
+      status = await queryObject.mcpServerStatus?.();
+    } catch {
+      status = null;
+    }
+    if (read === this.toolStatusRead && queryObject === this.ctx.queryObject) {
+      const parsed = toolStatusSchema.safeParse(status);
+      this.toolInventory.captureStatus(
+        owner,
+        parsed.success
+          ? parsed.data
+          : snapshot.mcpServers.map((server) => ({ name: server.name, status: 'unverified' }))
+      );
+    }
+    return this.toolInventory.snapshot();
+  }
 
   private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
 
@@ -702,6 +741,10 @@ export class QueryRunner {
       this.ctx.getQueryGeneration() === queryGeneration
         ? this.ctx.attemptTokens.allocate()
         : QueryAttemptRegistry.detached();
+    if (attemptToken.isLive()) {
+      this.toolInventoryOwner = attemptToken;
+      this.toolInventory.begin(attemptToken, 'sdk');
+    }
     const questionInputs = new QuestionInputScope(
       session.id,
       () => attemptToken.isLive() && this.isRunOwnershipLive(queryGeneration)
@@ -1384,6 +1427,14 @@ export class QueryRunner {
             this.fedAfterTurnEnd = [];
           this.turnEndedGeneration = turnEndedGeneration;
           try {
+            if (isSDKSystemInit(message)) {
+              this.toolInventory.captureInit(attemptToken, {
+                tools: message.tools ?? [],
+                skills: message.skills ?? [],
+                plugins: message.plugins ?? [],
+                mcp_servers: message.mcp_servers ?? [],
+              });
+            }
             if (message.type === 'result') {
               questionInputs.endTurn();
               humanInputs.endTurn();
@@ -1789,6 +1840,7 @@ export class QueryRunner {
       }
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
+      this.toolInventory.end(attemptToken);
       removeFlagSettingsFile?.();
 
       releaseStartupPermit('attempt_finished');

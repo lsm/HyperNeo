@@ -1,5 +1,7 @@
 import type {
   CreateSessionRequest,
+  GetSessionToolInventoryRequest,
+  GetSessionToolInventoryResponse,
   HyperNeoActionMessage,
   ImageContent,
   ListRuntimeMcpServersRequest,
@@ -189,6 +191,18 @@ export function setupSessionHandlers(
     }
 
     return { sessionId, session };
+  });
+
+  messageHub.onRequest('session.getToolInventory', async (data) => {
+    const { sessionId } = data as GetSessionToolInventoryRequest;
+    if (!sessionId) throw new Error('sessionId is required');
+    const agentSession = await sessionManager.getSessionAsync(
+      sessionId,
+      { startQuery: false },
+      false
+    );
+    if (!agentSession) throw new Error(`Session not found: ${sessionId}`);
+    return (await agentSession.getToolInventory()) satisfies GetSessionToolInventoryResponse;
   });
 
   messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
