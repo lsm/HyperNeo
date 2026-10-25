@@ -167,6 +167,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.acceptedTitle': 'Neo 已收到。这不代表工作已完成。',
   'chat.foldMore': '更多',
   'chat.copyDetails': '复制详情',
+  'chat.copyQuote': '复制引用',
+  'chat.copied': '已复制',
   'chat.foldLess': '收起',
   'chat.cardReply': '我给你回了 · 查看卡片',
   'chat.cardUnavailable': '这张卡片已无法查看。',

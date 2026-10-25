@@ -1,5 +1,18 @@
 import { render } from 'preact';
 import { CopyButton } from '../ui/CopyButton.tsx';
+import { t } from '../../lib/i18n/index.ts';
+
+function QuoteCopyButton({ text }: { text: string }) {
+  return (
+    <CopyButton
+      text={text}
+      label={t('chat.copyQuote')}
+      copiedLabel={t('chat.copied')}
+      showFeedback
+      class="neo-quote-copy-button"
+    />
+  );
+}
 
 function quoteText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
@@ -38,10 +51,7 @@ export function attachQuoteCopyButtons(container: HTMLElement) {
     const mount = document.createElement('div');
     mount.className = 'neo-quote-copy';
     quote.prepend(mount);
-    render(
-      <CopyButton text={text} label="Copy quote" showFeedback class="neo-quote-copy-button" />,
-      mount
-    );
+    render(<QuoteCopyButton text={text} />, mount);
     return mount;
   });
 }

@@ -167,6 +167,8 @@ export const en = {
   'chat.acceptedTitle': 'Accepted by Neo. This does not mean work is complete.',
   'chat.foldMore': 'more',
   'chat.copyDetails': 'Copy details',
+  'chat.copyQuote': 'Copy quote',
+  'chat.copied': 'Copied',
   'chat.foldLess': 'less',
   'chat.cardReply': 'I replied · View card',
   'chat.cardUnavailable': 'This card is no longer available.',

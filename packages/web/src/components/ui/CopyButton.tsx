@@ -8,6 +8,7 @@ interface CopyButtonProps {
   disabled?: boolean;
   copiedAt?: number;
   showFeedback?: boolean;
+  copiedLabel?: string;
   class?: string;
 }
 
@@ -17,6 +18,7 @@ export function CopyButton({
   disabled = false,
   copiedAt,
   showFeedback = false,
+  copiedLabel,
   class: className = '',
 }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
@@ -58,7 +60,7 @@ export function CopyButton({
       type="button"
       disabled={disabled}
       onClick={handleCopy}
-      title={copied ? 'Copied!' : label}
+      title={copied ? (copiedLabel ?? 'Copied!') : label}
       aria-label={showFeedback ? label : undefined}
       class={`p-1.5 rounded transition-colors ${stateClasses} ${className}`}
     >
@@ -82,7 +84,7 @@ export function CopyButton({
       )}
       {showFeedback && (
         <span aria-live="polite" aria-atomic="true">
-          {copied ? 'Copied' : ''}
+          {copied ? (copiedLabel ?? 'Copied') : ''}
         </span>
       )}
     </button>
