@@ -23,6 +23,12 @@ fails through the existing artifact read operation. Retrying the accepted reques
 before and after a daemon restart retains one message/job and the original
 context; removing context conflicts. Older unbound messages still work.
 
+The initial bound send and post-restart retry use the actual web
+`submitNeoDraft` pipeline. Public ask responses pass through the web's
+`presentConversationAskPage` before their exact context is asserted. Require
+`webClientContext` and `webProjectionContext` in the evidence too. This proves the
+client-to-daemon contract without a mock transport or a rendered binding control.
+
 Keep the evidence before deleting the fresh run directory. The focused operation
 suite also checks strict input rejection and immutable retry conflicts. Run web
 tests and build for shared-type compatibility. Composer binding and rendered
