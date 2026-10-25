@@ -16,6 +16,10 @@ Pass requires:
   disabled IDs and a canonical off fixture. Invoke the coordinator to remove both
   vetoes; canonical choices and legacy tools persist together. Frozen MCP aliases
   and the native Read preset survive cold session.get readback.
+- Disable and re-enable the instruction with skills requests that omit optional
+  tools. Cold RPC reads must show both the canonical choice and matching legacy
+  disabled IDs changing, while advanced settings are preserved. Record
+  requestOnlyDisableEnableRoundTrip=true.
 - Set the session override and inspect session.mcp.list. Persist global defaults,
   then clear the override through the coordinator: it inherits that default while
   retaining the frozen alias and unrelated instruction choice.
@@ -33,7 +37,9 @@ finally; the held commit is released even if the concurrent RPC fixture fails.
 
 The coordinator captures session/catalog/override/default facts in one synchronous
 read transaction, then passes complete source guards to the atomic worker commit.
-It reuses the legacy adapter and choice-change pipeline. Corrupt stored defaults
+It reuses the legacy adapter and choice-change pipeline. Skills request IDs are
+also the authoritative legacy disabled list; optional settings cannot replace it.
+MCP requests retain captured skill vetoes even if optional settings differs. Corrupt stored defaults
 throw without writes; present-null session selection and unsupported versions never
 fall back to current catalog preferences. Later wiring owns caller authorization,
 cache updates and event publication through the committed callback.

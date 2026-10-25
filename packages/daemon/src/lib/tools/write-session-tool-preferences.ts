@@ -40,7 +40,12 @@ function storedDefaults(raw: unknown): SessionToolSelection | undefined {
     throw new Error('selection_version_unsupported');
   return value.toolSelectionDefaults;
 }
-function capture(id: string, request: LegacyToolPreference, db: PreferenceDatabase) {
+function capture(
+  id: string,
+  request: LegacyToolPreference,
+  tools: ToolsConfig | undefined,
+  db: PreferenceDatabase
+) {
   const raw = db.getDatabase();
   return raw.transaction(() => {
     const snapshot = db.captureSessionRuntimeSettings(id);
@@ -89,6 +94,10 @@ function capture(id: string, request: LegacyToolPreference, db: PreferenceDataba
         space && spaceDefaults ? { id: space.key.id, selection: spaceDefaults } : undefined
       );
     }
+    const toolsPatch =
+      request.kind === 'skills'
+        ? { ...(tools ?? config.tools), disabledSkills: [...request.disabledSkills] }
+        : tools && { ...tools, disabledSkills: config.tools?.disabledSkills };
     const translated = translateLegacyToolPreference(catalog, config, request, defaults);
     if (!translated.ok) return { reason: translated };
     const override =
@@ -106,6 +115,7 @@ function capture(id: string, request: LegacyToolPreference, db: PreferenceDataba
     return {
       value: {
         snapshot,
+        toolsPatch,
         catalog,
         guards,
         changes: translated.changes,
@@ -116,7 +126,7 @@ function capture(id: string, request: LegacyToolPreference, db: PreferenceDataba
   })();
 }
 type Prepared = Extract<ReturnType<typeof capture>, { value: unknown }>['value'];
-async function persist(prepared: Prepared, tools: ToolsConfig | undefined, db: PreferenceDatabase) {
+async function persist(prepared: Prepared, db: PreferenceDatabase) {
   const result = await changeSessionToolChoice(
     { sessionId: prepared.snapshot.id, changes: prepared.changes },
     {
@@ -126,7 +136,7 @@ async function persist(prepared: Prepared, tools: ToolsConfig | undefined, db: P
       commit: (snapshot, patch) =>
         db.casSessionToolPreferences(
           snapshot,
-          { ...patch, tools },
+          { ...patch, tools: prepared.toolsPatch },
           prepared.guards,
           prepared.override
         ),
@@ -143,8 +153,8 @@ async function persist(prepared: Prepared, tools: ToolsConfig | undefined, db: P
 }
 const write = (superpipe({})('write-session-tool-preferences') as PipelineAPI)
   .input(['id', 'request', 'tools', 'db', 'committed'])
-  .pipe(capture, ['id', 'request', 'db'], 'result:write')
-  .pipe(persist, ['write', 'tools', 'db'], 'result:write')
+  .pipe(capture, ['id', 'request', 'tools', 'db'], 'result:write')
+  .pipe(persist, ['write', 'db'], 'result:write')
   .pipe(
     async (
       result: SessionToolChoiceChangeResult,

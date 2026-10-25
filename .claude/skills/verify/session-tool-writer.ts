@@ -60,6 +60,19 @@ try {
   assert.deepEqual(session.config.toolSelection,saved.selection);
   assert.deepEqual(session.config.tools,tools);
   assert.deepEqual(session.config.sdkToolsPreset,['Read']);
+  const disabled=await write(sessionId,{kind:'skills',disabledSkills:[instruction.id]});
+  assert(disabled.ok);
+  await app.sessionManager.interruptInMemorySession(sessionId);
+  session=await reload();
+  assert.deepEqual(session.config.tools,{...tools,disabledSkills:[instruction.id]});
+  assert.equal(session.config.toolSelection!.choices[`skill:${instruction.id}`]?.selected,false);
+  const enabled=await write(sessionId,{kind:'skills',disabledSkills:[]});
+  assert(enabled.ok);
+  await app.sessionManager.interruptInMemorySession(sessionId);
+  session=await reload();
+  assert.deepEqual(session.config.tools,tools);
+  assert.equal(session.config.toolSelection!.choices[`skill:${instruction.id}`]?.selected,true);
+  evidence.requestOnlyDisableEnableRoundTrip=true;
   assert((await write(sessionId,{kind:'mcp',serverId:server.id,enabled:true})).ok);
   let entries=(await hub.request<{entries:{server:{id:string};enabled:boolean;source:string}[]}>('session.mcp.list',{sessionId})).entries;
   assert(entries.some(entry=>entry.server.id===server.id && entry.enabled && entry.source==='session'));
@@ -93,7 +106,7 @@ try {
   raw.exec('DROP TRIGGER coordinator_failure');
   assert.equal(app.db.captureSessionRuntimeSettings(sessionId)!.config,before.config);
   assert.equal(app.db.mcpEnablement.getOverride('session',sessionId,server.id)?.enabled,false);
-  assert.deepEqual(notices,[sessionId,sessionId,sessionId]);
+  assert.deepEqual(notices,[sessionId,sessionId,sessionId,sessionId,sessionId]);
   assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['navigate']);
   assert.equal((await hub.request<{state:string}>('session.getToolInventory',{sessionId})).state,'not_running');
   evidence.selection=cleared.selection;
