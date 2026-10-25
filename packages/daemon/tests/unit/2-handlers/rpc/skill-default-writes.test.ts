@@ -6,6 +6,7 @@ import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository.ts';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository.ts';
+import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { SkillsManager } from '../../../../src/lib/skills-manager.ts';
@@ -300,6 +301,36 @@ describe('skill default RPC writes', () => {
       appMcpServerId: second.id,
     });
     expect(publish).not.toHaveBeenCalled();
+  });
+  it('preserves a Space veto while reconciling shared wrappers', async () => {
+    const server = registry.create({
+      name: 'vetoed',
+      sourceType: 'stdio',
+      command: 'synthetic',
+      enabled: false,
+    });
+    new McpEnablementRepository(db, noOpReactiveDb).setOverride('space', 'space', server.id, false);
+    await wrapper('on-wrapper', server.id);
+    await wrapper('off-wrapper', server.id, false);
+    expect(defaults().choices[`mcp:${server.id}`].selected).toBe(true);
+    expect(defaults(true).choices[`mcp:${server.id}`].selected).toBe(false);
+  });
+  it('does not overwrite explicit registry intent during wrapper metadata or validation updates', async () => {
+    const server = registry.create({
+      name: 'manual',
+      sourceType: 'stdio',
+      command: 'synthetic',
+      enabled: false,
+    });
+    const { skill } = await wrapper('manual-wrapper', server.id);
+    const before = defaults();
+    before.choices[`mcp:${server.id}`].selected = false;
+    db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+      JSON.stringify({ toolSelectionDefaults: before })
+    );
+    await call('skill.update', { id: skill.id, params: { displayName: 'Changed label' } });
+    await manager.setSkillValidationStatus(skill.id, 'valid');
+    expect(defaults()).toEqual(before);
   });
   it('keeps config validation, built-in deletion and missing-id admission', async () => {
     await expect(

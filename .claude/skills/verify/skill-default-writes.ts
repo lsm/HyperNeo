@@ -59,6 +59,21 @@ try {
   assert.equal(readDefault().choices[`mcp:${second.id}`].selected, true);
   assert.equal(readDefault().choices[`mcp:${first.id}`].selected, false);
   evidence.concurrentWrapperBinding = true;
+  const { skill: staying } = await hub.request<{ skill: AppSkill }>('skill.create', { params: { ...params, name: 'staying-fixture', sourceType: 'mcp_server', config: { type: 'mcp_server', appMcpServerId: second.id }, enabled: true } });
+  const { skill: off } = await hub.request<{ skill: AppSkill }>('skill.create', { params: { ...params, name: 'off-sibling', sourceType: 'mcp_server', config: { type: 'mcp_server', appMcpServerId: second.id }, enabled: false } });
+  assert.equal(readDefault().choices[`mcp:${second.id}`].selected, true);
+  await hub.request('skill.setEnabled', { id: wrapper.id, enabled: false });
+  await hub.request('skill.delete', { id: off.id });
+  assert.equal(readDefault().choices[`mcp:${second.id}`].selected, true);
+  await hub.request('skill.update', { id: staying.id, params: { config: { type: 'mcp_server', appMcpServerId: first.id } } });
+  for (const scope of [undefined, space.id]) {
+    assert.equal(readDefault(scope).choices[`mcp:${second.id}`].selected, false);
+    assert.equal(readDefault(scope).choices[`mcp:${first.id}`].selected, true);
+  }
+  await hub.request('skill.delete', { id: staying.id });
+  assert.equal(readDefault().choices[`mcp:${first.id}`].selected, false);
+  await hub.request('skill.setEnabled', { id: wrapper.id, enabled: true });
+  evidence.wrapperRebindAndDelete = true; evidence.sharedWrapperDefault = true;
   let resolveSkills!: (rows: AppSkill[]) => void;
   let rejectSkills!: (error: Error) => void;
   const snapshot = new Promise<AppSkill[]>((resolve, reject) => { resolveSkills = resolve; rejectSkills = reject; });

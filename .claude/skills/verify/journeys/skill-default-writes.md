@@ -10,7 +10,8 @@ Before wiring, skill.create succeeds but its canonical default is absent. Preser
 that failing reproduction. With wiring, require evidence/skill-default-writes.json
 pass=true, skillCrudAndIntent, rollbackBeforeEnqueueOrNotice,
 syntheticInstallAndIdempotence, rejectedInstallNotPublished, concurrentWrapperBinding,
-skillLiveQueryReadback, validationThroughLiveQuery, frozenSessionPreserved and restartRetainedDefaults:
+skillLiveQueryReadback, validationThroughLiveQuery, wrapperRebindAndDelete,
+sharedWrapperDefault, frozenSessionPreserved and restartRetainedDefaults:
 
 - Real skill create/update/enable/delete RPCs change catalog and global/Space
   defaults together. Inspect the synthetic DB alongside RPC replies.
@@ -20,6 +21,12 @@ skillLiveQueryReadback, validationThroughLiveQuery, frozenSessionPreserved and r
   with no default accidentally enabled for the old server. Read the wrapper
   through the same skills.list LiveQuery snapshot/delta as the web; wait for
   the real validation job to publish valid status.
+- Rebind an enabled wrapper without passing enabled: clear the old server
+  default and enable the committed new binding. Deletion clears the old binding
+  when no enabled sibling remains. A disabled new sibling and disabling or
+  deleting one of several siblings must not switch off the shared server while
+  another remains enabled. Preserve explicit Space vetoes and frozen sessions.
+  A refused rebind rolls back both bindings and publishes no success notice.
 - Refuse an install at the same transactional boundary: no catalog/default row,
   plugin wrapper or success notice is published. Downloaded fixture files remain
   preparatory input and do not make the skill available.
