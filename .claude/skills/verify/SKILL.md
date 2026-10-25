@@ -95,6 +95,11 @@ this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
 
 ## Doctor
 
+Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
+They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
+`open`, so owner discovery cannot inspect or open the real desktop app.
+App-server-only fixtures are insufficient for the current desktop send route.
+
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"
 ```

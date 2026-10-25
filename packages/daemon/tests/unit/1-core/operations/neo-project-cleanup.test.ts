@@ -215,33 +215,19 @@ describe('neoCleanupFolders', () => {
 
 describe('createNeoProjectCleanupApply', () => {
   test('delete drops the empty project; merge is human-approved', async () => {
-    const calls: unknown[] = [];
-    const project = (id: string) => ({ id, revision: 3 });
-    const apply = createNeoProjectCleanupApply({
-      repo: {
-        deleteEmptyProject: (id: string) => calls.push(['dropped', id]),
-        getProject: project,
-        projectMerges: {
-          merge: (input: unknown) => (calls.push(['merge', input]), { ok: true }),
-        },
-      },
-    } as never);
-    await apply({ action: 'delete', projectId: 'a', title: 'A' });
-    await apply({ action: 'merge', projectId: 'b', title: 'B', targetId: 'c' });
-    expect(calls).toEqual([
-      ['dropped', 'a'],
-      [
-        'merge',
-        {
-          sourceId: 'b',
-          targetId: 'c',
-          sourceRevision: 3,
-          targetRevision: 3,
-          sourceIdentities: [],
-          targetIdentities: [],
-          humanApproved: true,
-        },
-      ],
-    ]);
+    const db = await createTestDb();
+    try {
+      const repo = new NeoRepository(db.getDatabase());
+      for (const id of ['a', 'b', 'c'])
+        repo.saveProject({ id, title: id, summary: '', context: '' }, 0);
+      const apply = createNeoProjectCleanupApply({ repo });
+      await apply({ action: 'delete', projectId: 'a', title: 'A' });
+      await apply({ action: 'merge', projectId: 'b', title: 'B', targetId: 'c' });
+      expect(repo.getProject('a')).toBeNull();
+      expect(repo.projectMerges.resolve('b')).toBe('c');
+      expect(repo.getProject('c')?.revision).toBe(2);
+    } finally {
+      await db.close();
+    }
   });
 });

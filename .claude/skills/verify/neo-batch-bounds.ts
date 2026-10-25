@@ -59,8 +59,8 @@ try {
   assert(receipts.every((value) => value.kind === 'accepted'));
   await hub.request('operation.invoke', { name: 'message.send', input: { to: root, text: 'Bounded blocker', kind: 'blocked', from: 'session:synthetic-worker' } });
   const deadline = Date.now() + 45000;
-  while (!coordinatorBodies.length && Date.now() < deadline) await Bun.sleep(100);
-  assert.equal(coordinatorBodies.length, 1);
+  while (coordinatorBodies.length < 2 && Date.now() < deadline) await Bun.sleep(100);
+  assert.equal(coordinatorBodies.length, 2);
   const request = coordinatorBodies[0] as { messages: {role: string; content: unknown}[] };
   const content = request.messages.filter((message) => message.role === 'user').at(-1)!.content;
   const bytes = Buffer.byteLength(JSON.stringify(content));
@@ -89,11 +89,13 @@ try {
     assert(at > previous, 'every original note and byte must survive in order');
     previous = at;
   }
-  assert(restored.indexOf('Bounded blocker') > previous);
+  assert(!restored.includes('Bounded blocker'));
   const resultDeadline = Date.now() + 10000;
   const resultCount = () => (app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result'").get(root) as {n: number}).n;
-  while (!resultCount() && Date.now() < resultDeadline) await Bun.sleep(100);
-  assert.equal(resultCount(), 1);
+  while (resultCount() < 2 && Date.now() < resultDeadline) await Bun.sleep(100);
+  assert.equal(resultCount(), 2);
+  assert.equal(coordinatorBodies.length, 2);
+  assert(JSON.stringify(coordinatorBodies[1]).includes('Bounded blocker'));;
   const observed = { accepted: receipts.length, promptBytes: bytes, restoredBytes: Buffer.byteLength(restored), restoredNotes: 120, hashVerifiedRead: true, coordinatorTurns: modelTurns };
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed));
   console.log(JSON.stringify(observed));

@@ -13,18 +13,21 @@ explicit wake decision; classification belongs to the final gate slice.
 First prepare and leave one synthetic mailbox job processing, then queue a
 later note and flush the timer. Its batch must contain the later note without
 copying the already admitted report. Submit another parked note and run the
-actual delivery teardown through the DB writer. The cancelled results must
+full delivery teardown through the DB writer, with failEnqueued and failDeferred
+enabled so already materialized SDK deliveries are cancelled too. The cancelled results must
 include that note, and a later timer flush must create no mailbox job. Keep
 evidence/review-cases.json; all three fields must be true. The old store makes
 all three false. This deliberately exercises the storage API's explicit wake
 decision, not the final gate's classification.
 
-Observe an unchanged original report, all twenty notes in order in its separate
-batch metadata, an intact job claim, and an identical retry snapshot. Close the
-owned daemon and reopen its DB read-only to verify that the snapshot persisted.
+Observe an unchanged original report, all twenty notes in order in a separately
+persisted SDK input, an intact job claim, and an identical retry snapshot. The
+timer creates one SDK delivery directly, without a placeholder mailbox event.
+Close the owned daemon and reopen its DB read-only to verify that the snapshot
+and independent batch delivery persisted.
 Keep evidence/observed.json and proof.log. Also run the queue-store, mailbox,
 outbox and prompt-comparison unit contracts.
 
-This verifies the staged store through the real isolated daemon's writer and
-SQLite storage, not a model turn, wake classification or GUI behavior. Current
-production callers are not wired to the store until the final #8647 slice.
+This verifies the store through the real isolated daemon's writer and SQLite
+storage, not a model turn, wake classification or GUI behavior. Automatic wake
+and UI behavior are covered by neo-automatic-worker-batch.md.

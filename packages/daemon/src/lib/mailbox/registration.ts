@@ -1,6 +1,5 @@
 import { captureDirectMailboxAdmission } from '../tasks/direct-mailbox-admission.ts';
-import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
+import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
@@ -99,15 +98,15 @@ function registerDelivery(
         entry.to.kind === 'session' &&
         new NeoRepository(deps.db.getDatabase()).getBindingBySession(entry.to.sessionId)?.kind ===
           'neo'
-          ? gatewayFor(deps.db.getDatabase()).call(
-              neoWakeQueueWrite,
-              'prepare',
-              entry,
-              jobId,
-              entry.origin === 'chat' ||
-                !!entry.message.workerReportKind ||
-                !!entry.message.neoWakeEvent
-            )
+          ? deps.db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue, {
+              prepare: [
+                entry,
+                jobId,
+                entry.origin === 'chat' ||
+                  !!entry.message.workerReportKind ||
+                  !!entry.message.neoWakeEvent,
+              ],
+            })
           : entry,
       getSession: deps.getSession,
       captureAdmission: (entry) => captureDirectMailboxAdmission(deps.db.getDatabase(), entry),

@@ -1,3 +1,7 @@
+import type { OperationCaller } from '../../lib/operations/registry.ts';
+import { neoProjectForgetWrites } from './neo-project-forget-writes.ts';
+import { neoProjectCleanupWrites } from './neo-project-cleanup-writes.ts';
+import type { NeoProjectCleanup } from '../../lib/neo/project-cleanup.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { reserveNeoHomeProjects } from './neo-home-reservation.ts';
 import { createHash } from 'node:crypto';
@@ -48,6 +52,11 @@ export class NeoRepository {
     }));
   }
 
+  async applyCleanup(step: NeoProjectCleanup): Promise<void> {
+    await gatewayFor(this.db).call(neoProjectCleanupWrites, 'apply', step);
+    this.notify();
+  }
+
   deleteEmptyProject(projectId: string): void {
     this.db.transaction(() => {
       const empty = this.db
@@ -61,6 +70,17 @@ export class NeoRepository {
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
     })();
     this.notify();
+  }
+
+  async forgetProjectCommand(projectId: string, caller: OperationCaller) {
+    const result = await gatewayFor(this.db).call(
+      neoProjectForgetWrites,
+      'forget',
+      projectId,
+      caller
+    );
+    if (result.ok) this.notify();
+    return result;
   }
 
   forgetProject(

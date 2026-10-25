@@ -26,6 +26,8 @@ import {
   persistNeoIntakeTransaction,
 } from './neo-conversation-ask-repository.ts';
 import { sdkMessageChanges, sdkMessageWrites } from './sdk-message-writes.ts';
+import { NeoWakeQueueRepository } from './neo-wake-queue-repository.ts';
+import type { MailboxEntry } from '../../lib/mailbox/entry.ts';
 
 const MAIN_ONLY = {
   db: true,
@@ -107,6 +109,16 @@ export const sdkNeoIntake = sdkOp(
       deps.jobQueue,
       (publish) => publish()
     )
+);
+export const sdkNeoWakeQueue = sdkOp(
+  'neoWakeQueue',
+  (args: { prepare: [MailboxEntry, string, boolean] } | { flush: number }, deps) => {
+    const queue = new NeoWakeQueueRepository(deps.db);
+    const options = { ...deps, hold: 'immediate' as const };
+    if ('prepare' in args) return queue.prepare(...args.prepare, options);
+    queue.flushDue(args.flush, options);
+    return null;
+  }
 );
 export const sdkDeliveryTeardown = sdkOp(
   'teardown',
@@ -214,6 +226,7 @@ export const SDK_MESSAGE_TRANSACTIONS = [
   sdkPromptActivate,
   sdkPromptRetry,
   sdkNeoIntake,
+  sdkNeoWakeQueue,
   sdkDeliveryTeardown,
   sdkMailboxFailure,
   sdkColumnBackfillChunk,

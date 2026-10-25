@@ -29,6 +29,11 @@ describe('Neo queued worker reports', () => {
         message: { content: text },
       },
     });
+  const options = () => ({
+    sdkMessageRepo: mailbox.sdkMessageRepo,
+    jobQueue: mailbox.jobQueue,
+    hold: 'immediate' as const,
+  });
   const handler = (wake: boolean) =>
     createMailboxDeliveryHandler({
       jobQueue: mailbox.jobQueue,
@@ -36,7 +41,7 @@ describe('Neo queued worker reports', () => {
       sdkMessageRepo: mailbox.sdkMessageRepo,
       getSession: async () => ({}),
       isSessionArchived: () => false,
-      prepareEntry: async (value, id) => queue.prepare(value, id, wake),
+      prepareEntry: async (value, id) => queue.prepare(value, id, wake, options()),
     });
 
   test('a blocked delivery contains all earlier messages in order and retries the same batch', async () => {
@@ -46,36 +51,38 @@ describe('Neo queued worker reports', () => {
     const jobs = mailbox.jobQueue.dequeue('mailbox', 21);
     const report = jobs.at(-1)!;
     await handler(true)(report);
-    expect(mailbox.sdkRows()).toHaveLength(1);
-    const body = JSON.stringify(JSON.parse(mailbox.sdkRows()[0].sdk_message).neoBatchContent);
+    expect(mailbox.sdkRows()).toHaveLength(2);
+    const body = JSON.stringify(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content);
     let previous = -1;
     for (let i = 0; i < 20; i++) {
       const position = body.indexOf(`chatty-${String(i).padStart(2, '0')}`);
       expect(position).toBeGreaterThan(previous);
       previous = position;
     }
-    expect(body.indexOf('Decision needed')).toBeGreaterThan(previous);
+    expect(body).not.toContain('Decision needed');
+    expect(JSON.parse(mailbox.sdkRows()[1].sdk_message).message.content).toBe('Decision needed');
     await handler(true)(mailbox.jobQueue.getJob(report.id)!);
-    expect(mailbox.sdkRows()).toHaveLength(1);
+    expect(mailbox.sdkRows()).toHaveLength(2);
     for (const job of jobs.slice(0, -1)) await handler(false)(job);
-    expect(mailbox.sdkRows()).toHaveLength(1);
+    expect(mailbox.sdkRows()).toHaveLength(2);
   });
 
   test('a persisted queue releases one batch at fifteen minutes without another event', async () => {
     for (const text of ['first', 'second', 'third']) queue.hold(entry(text));
     const oldest = mailbox.jobQueue.listActiveByPayload('neo_notes', { 'to.sessionId': root })[0]
       .createdAt;
-    new NeoWakeQueueRepository(mailbox.db).flushDue(oldest + 15 * 60_000 - 1);
+    new NeoWakeQueueRepository(mailbox.db).flushDue(oldest + 15 * 60_000 - 1, options());
     expect(mailbox.jobQueue.dequeue('mailbox', 10)).toHaveLength(0);
-    new NeoWakeQueueRepository(mailbox.db).flushDue(Date.now() + 15 * 60_000);
-    const jobs = mailbox.jobQueue.dequeue('mailbox', 10);
-    expect(jobs).toHaveLength(1);
-    await handler(true)(jobs[0]);
+    new NeoWakeQueueRepository(mailbox.db).flushDue(Date.now() + 15 * 60_000, options());
+    expect(mailbox.jobQueue.dequeue('mailbox', 10)).toHaveLength(0);
+    expect(
+      mailbox.jobQueue.listActiveByPayload('message_delivery', { sessionId: root })
+    ).toHaveLength(1);
     expect(mailbox.sdkRows()).toHaveLength(1);
     expect(mailbox.sdkRows()[0].sdk_message).toContain('first');
     expect(mailbox.sdkRows()[0].sdk_message).toContain('second');
     expect(mailbox.sdkRows()[0].sdk_message).toContain('third');
-    queue.flushDue(Date.now() + 30 * 60_000);
+    queue.flushDue(Date.now() + 30 * 60_000, options());
     expect(mailbox.jobQueue.dequeue('mailbox', 10)).toHaveLength(0);
   });
 
@@ -83,13 +90,13 @@ describe('Neo queued worker reports', () => {
     queue.hold(entry('queued note'));
     enqueueMailboxEntry(mailbox.jobQueue, entry('report original', 'blocked'));
     await handler(true)(mailbox.jobQueue.dequeue('mailbox')[0]);
-    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content).toBe('report original');
+    expect(JSON.parse(mailbox.sdkRows()[1].sdk_message).message.content).toBe('report original');
     enqueueMailboxEntry(mailbox.jobQueue, entry('report original', 'blocked'));
     await handler(true)(mailbox.jobQueue.dequeue('mailbox')[0]);
-    expect(mailbox.sdkRows()).toHaveLength(1);
+    expect(mailbox.sdkRows()).toHaveLength(2);
     expect(
       mailbox.jobQueue.listActiveByPayload('message_delivery', { sessionId: root })
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
   test('a queued retry cannot silently replace different content under the same message id', () => {
     const first = entry('first queued content');
@@ -102,14 +109,32 @@ describe('Neo queued worker reports', () => {
     ).toThrow('different content');
   });
 
+  test('an already attached legacy batch keeps its complete delivery on replay', async () => {
+    const legacy = entry('legacy event', 'blocked');
+    legacy.message.neoBatchContent = [
+      { type: 'text', text: 'legacy worker note' },
+      { type: 'text', text: 'legacy event' },
+    ];
+    enqueueMailboxEntry(mailbox.jobQueue, Object.assign(legacy, { neoBatchAttached: true }));
+    const [job] = mailbox.jobQueue.dequeue('mailbox');
+    await handler(true)(job);
+    await handler(true)(mailbox.jobQueue.getJob(job.id)!);
+    expect(mailbox.sdkRows()).toHaveLength(1);
+    expect(mailbox.sdkMessageRepo.getDeliveryContent(root, 'legacy event')!.content).toEqual(
+      legacy.message.neoBatchContent
+    );
+    expect(
+      mailbox.jobQueue.listActiveByPayload('message_delivery', { sessionId: root })
+    ).toHaveLength(1);
+  });
+
   test('a timed batch does not copy an already admitted processing message', async () => {
     enqueueMailboxEntry(mailbox.jobQueue, entry('already admitted'));
     const [processing] = mailbox.jobQueue.dequeue('mailbox');
     await handler(true)(processing);
     queue.hold(entry('later queued note'));
-    queue.flushDue(Date.now() + 15 * 60_000);
-    const [batch] = mailbox.jobQueue.dequeue('mailbox');
-    await handler(true)(batch);
+    queue.flushDue(Date.now() + 15 * 60_000, options());
+    expect(mailbox.jobQueue.dequeue('mailbox')).toHaveLength(0);
     const messages = mailbox.sdkRows().map((row) => JSON.parse(row.sdk_message));
     expect(messages).toHaveLength(2);
     expect(messages[0].message.content).toBe('already admitted');
@@ -124,7 +149,7 @@ describe('Neo queued worker reports', () => {
     expect(cancelled.map((row) => JSON.parse(row.payload).messageUuid)).toEqual([
       'cancelled report',
     ]);
-    queue.flushDue(Date.now() + 15 * 60_000);
+    queue.flushDue(Date.now() + 15 * 60_000, options());
     expect(mailbox.jobQueue.dequeue('mailbox')).toHaveLength(0);
   });
 });
