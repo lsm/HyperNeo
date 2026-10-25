@@ -4,6 +4,32 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-24
+
+### Added
+
+- **Coding settings**: Configure repository policy and explicitly add or remove watched repositories from Settings (#8588, #8610).
+- **Work feed**: Limit an instance's feed to sessions it started (#8604).
+- **Neo settings**: List muted sessions and unmute them individually (#8590).
+- **Document previews**: Show file tabs and retain preview workspace navigation state (#8583, #8586, #8595).
+- **Coding verification**: Admit recorded manual merges through the existing completion gates (#8484).
+
+### Changed
+
+- **Database writes**: Route live SDK message writers through the database gateway (#8570).
+
+### Fixed
+
+- **Device pairing**: Restore `hyperneo pair` and `hyperneo devices` in compiled binaries and list both commands in help (#8615).
+- **First start**: Download the Claude Code SDK without blocking the event loop, load embeddings in compiled binaries, and preserve explicit test mode in compiled entrypoints (#8599, #8601, #8612).
+- **Browser security**: Refuse cross-site WebSocket upgrades and mutating HTTP requests (#8594).
+- **Neo cards**: Link reply notices to their question cards and preserve the human turn context (#8584, #8603).
+- **Neo model menu**: Restore model and thinking choices on the Neo page (#8587).
+- **Desktop delivery**: Match direct and retried messages to the receiver's current permission mode (#8577, #8592).
+- **Coding events**: Keep PR events across restarts and log skipped unowned events (#8598).
+- **Repository watches**: Start with no watched repositories and require explicit enrolment (#8608).
+- **Prepared Claude workers**: Persist native Edit/Write denies for the main checkout and sibling clones while allowing the worker's own clone; unlisted outside directories still require the next OS-sandbox slice (#8606).
+
 ## [0.48.0] - 2026-10-24
 
 This release includes the features and fixes since v0.46.0, including the unpublished v0.47.0, v0.47.1 and v0.47.2 changes below. Those earlier tags remain unchanged.
