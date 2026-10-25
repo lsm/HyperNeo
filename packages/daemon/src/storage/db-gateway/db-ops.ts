@@ -1,3 +1,4 @@
+import { codingQueryReads, codingQueryWrites } from '../../lib/neo/packs/coding/query-facts-db.ts';
 import { codingWorkReads, codingWorkWrites } from '../../lib/neo/packs/coding/work-facts-db.ts';
 import { codingRefReads, codingRefWrites } from '../../lib/neo/packs/coding/ref-facts-db.ts';
 import {
@@ -75,6 +76,8 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    codingQueryReads,
+    codingQueryWrites,
     codingWorkReads,
     codingWorkWrites,
     codingRefReads,
