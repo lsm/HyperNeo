@@ -633,10 +633,7 @@ export class NeoHomeRepository {
         throw error;
       }
     }
-    const projects = this.projects.listProjects().map((project) => ({
-      id: project.id,
-      homePath: this.projects.ensureHomePath(project),
-    }));
+    const projects = await this.projects.reserveHomeProjects();
     for (const project of projects)
       await mkdir(join(this.root, project.homePath), { recursive: true });
     return { ok: true, path: this.root, projects };

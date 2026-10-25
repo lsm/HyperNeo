@@ -1,3 +1,5 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { reserveNeoHomeProjects } from './neo-home-reservation.ts';
 import { createHash } from 'node:crypto';
 import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
@@ -130,6 +132,12 @@ export class NeoRepository {
             .get(input.title, input.summary, input.context, now, input.id, expectedRevision);
     if (row) this.notify();
     return row as NeoProject | null;
+  }
+
+  async reserveHomeProjects(): Promise<{ id: string; homePath: string }[]> {
+    const result = await gatewayFor(this.db).call(reserveNeoHomeProjects, 'reserve');
+    if (result.changed) this.notify();
+    return result.projects;
   }
 
   ensureHomePath(project: NeoProject): string {
