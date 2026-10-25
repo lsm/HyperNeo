@@ -62,11 +62,18 @@ function translate(
   for (const id of new Set([...before, ...after])) {
     if (before.has(id) === after.has(id)) continue;
     const skill = catalog.skills.find((entry) => entry.id === id);
-    if (!skill) return { ok: false, reason: 'missing-definition' };
-    const key: SessionToolChoiceKey =
-      skill.sourceType === 'mcp_server' && skill.config.type === 'mcp_server'
-        ? `mcp:${skill.config.appMcpServerId}`
-        : `skill:${id}`;
+    const serverId =
+      skill?.sourceType === 'mcp_server' && skill.config.type === 'mcp_server'
+        ? skill.config.appMcpServerId
+        : undefined;
+    if (
+      !skill ||
+      (serverId !== undefined && !catalog.registry.some((server) => server.id === serverId))
+    ) {
+      if (after.has(id)) return { ok: false, reason: 'missing-definition' };
+      continue;
+    }
+    const key: SessionToolChoiceKey = serverId !== undefined ? `mcp:${serverId}` : `skill:${id}`;
     const selected = !after.has(id);
     if (changes.has(key) && changes.get(key) !== selected)
       return { ok: false, reason: 'ambiguous-alias' };

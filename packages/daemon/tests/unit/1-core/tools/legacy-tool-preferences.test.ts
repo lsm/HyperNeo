@@ -85,6 +85,26 @@ describe('legacy tool preference translation', () => {
       })
     ).toEqual({ ok: false, reason: 'missing-definition' });
   });
+  it('clears deleted disabled IDs while preserving valid edits and refusing new unknown IDs', () => {
+    expect(
+      translated({ kind: 'skills', disabledSkills: [] }, catalog(), config(['gone', 'notes']))
+    ).toEqual([{ key: 'skill:notes', selected: true }]);
+    expect(translated({ kind: 'skills', disabledSkills: [] }, catalog(), config(['gone']))).toEqual(
+      []
+    );
+  });
+  it('clears a wrapper veto after its server is deleted without binding the missing server', () => {
+    const input = catalog({ registry: [] });
+    expect(translated({ kind: 'skills', disabledSkills: [] }, input, config(['wrapper']))).toEqual(
+      []
+    );
+    expect(
+      translateLegacyToolPreference(input, config(), {
+        kind: 'skills',
+        disabledSkills: ['wrapper'],
+      })
+    ).toEqual({ ok: false, reason: 'missing-definition' });
+  });
   it('coalesces matching wrapper changes and refuses contradictory changes to one row', () => {
     const input = catalog({ skills: [skill('one', true), skill('two', true)] });
     expect(translated({ kind: 'skills', disabledSkills: ['one', 'two'] }, input)).toEqual([

@@ -267,7 +267,10 @@ describe('disabled-skill request authority', () => {
       useClaudeCodePreset: false,
       loadSettingSources: false,
     };
-    repo.updateSession(ID, { config: { ...current(), tools: priorTools } });
+    db.prepare('UPDATE sessions SET config=? WHERE id=?').run(
+      JSON.stringify({ ...current(), tools: priorTools }),
+      ID
+    );
     expect((await write(ID, { kind: 'skills', disabledSkills: ['notes'] })).ok).toBe(true);
     expect(current().tools).toEqual({ ...priorTools, disabledSkills: ['notes'] });
     expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(false);

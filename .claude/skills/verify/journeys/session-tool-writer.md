@@ -6,8 +6,8 @@ registration or GUI is required. The helper owns a fresh daemon DB, two boots,
 its WebSockets and an in-memory MCP fixture. No executable or SDK query starts.
 
 This is a Build slice: invoke the coordinator inside the isolated daemon and
-observe persisted state through the existing RPC read doors. RPC setters and
-cached-session synchronization are not wired yet; 6d.2b owns them. Unload only the
+observe persisted state through the existing RPC read doors. The legacy-session-tools journey covers the separately wired RPC setters and
+cached-session synchronization; this helper invokes the coordinator directly. Unload only the
 owned test session before cold readback. No SDK/UI flip before 6d.5.
 
 Pass requires:
@@ -36,7 +36,7 @@ Pass requires:
 
 Read evidence/session-tool-writer.json: pass=true, matching selection/rpcReadback,
 all coordinator/clear/race/rollback/notification/restart flags true, and false
-activeConsumerWired/sdkApplyVerified/queryStarted flags. All resources close in
+sdkConsumerWired/sdkApplyVerified/queryStarted flags, with coordinatorInvokedDirectly=true. All resources close in
 finally; the held commit is released even if the concurrent RPC fixture fails.
 
 The coordinator captures session/catalog/override/default facts in one reader-worker
@@ -46,8 +46,8 @@ It reuses the legacy adapter and choice-change pipeline. Skills request IDs are
 also the authoritative legacy disabled list; optional settings cannot replace it.
 MCP requests retain captured skill vetoes even if optional settings differs. Corrupt stored defaults
 throw without writes; present-null session selection and unsupported versions never
-fall back to current catalog preferences. Later wiring owns caller authorization,
-cache updates and event publication through the committed callback.
+fall back to current catalog preferences. The RPC wiring owns caller authorization, cache updates and event publication
+through the committed callback.
 
 Run write-session-tool-preferences.test.ts, legacy-tool-preferences.test.ts,
 change-session-tool-choice.test.ts and tool-preference-commit.test.ts. Fixtures also

@@ -43,6 +43,11 @@ const fixture = () => ({
   },
 });
 const config = () => repo.getSession(ID)!.config;
+const seed = (updates: Parameters<SessionRepository['updateSession']>[1]) => {
+  const { config, ...ordinary } = updates;
+  if (config) db.prepare('UPDATE sessions SET config=? WHERE id=?').run(JSON.stringify(config), ID);
+  repo.updateSession(ID, ordinary);
+};
 const change = (selected = true) =>
   changeSessionToolChoice({ sessionId: ID, key: 'mcp:browser', selected }, deps);
 beforeEach(() => {
@@ -111,7 +116,7 @@ describe('session tool choice changes', () => {
     });
   });
   it('initializes a legacy session from its effective preferences without serializing transport configuration', async () => {
-    repo.updateSession(ID, { config: { ...fixture().config, toolSelection: undefined } });
+    seed({ config: { ...fixture().config, toolSelection: undefined } });
     catalog.registry = [{ ...catalog.registry[0], env: { PRIVATE: 'secret' } }];
     expect((await change()).ok).toBe(true);
     expect(config().toolSelection?.choices['mcp:browser']).toEqual({
@@ -131,7 +136,7 @@ describe('session tool choice changes', () => {
     expect(config().toolSelection?.choices['mcp:browser']?.aliases).toEqual(['frozen-alias']);
   });
   it('preserves a captured legacy veto when a different tool is changed', async () => {
-    repo.updateSession(ID, {
+    seed({
       config: {
         ...fixture().config,
         toolSelection: undefined,
@@ -198,7 +203,7 @@ describe('session tool choice changes', () => {
       'workflow',
       pinned.versionHash
     );
-    repo.updateSession(ID, {
+    seed({
       config: { ...fixture().config, toolSelection: undefined },
       metadata: {
         ...fixture().metadata,
@@ -260,7 +265,7 @@ describe('session tool choice changes', () => {
     expect(config()).toEqual(before);
   });
   it('refuses ambiguous new aliases instead of guessing a binding', async () => {
-    repo.updateSession(ID, {
+    seed({
       config: {
         ...fixture().config,
         toolSelection: { version: 1, choices: { 'mcp:browser': { selected: false } } },
@@ -272,7 +277,7 @@ describe('session tool choice changes', () => {
     expect(config()).toEqual(before);
   });
   it('does not persist ambiguous aliases merely by turning a choice off', async () => {
-    repo.updateSession(ID, {
+    seed({
       config: { ...fixture().config, toolSelection: { version: 1, choices: {} } },
     });
     catalog.skills = [wrapper('one'), wrapper('two')];
@@ -292,7 +297,7 @@ describe('session tool choice changes', () => {
         'mcp:other': { selected: true, aliases: ['frozen-alias'] },
       },
     };
-    repo.updateSession(ID, { config: { ...fixture().config, toolSelection: selection } });
+    seed({ config: { ...fixture().config, toolSelection: selection } });
     const before = config();
     expect(await change()).toEqual({ ok: false, reason: 'ambiguous-alias' });
     expect(config()).toEqual(before);

@@ -1,3 +1,4 @@
+import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type {
   AppMcpServer,
@@ -140,9 +141,10 @@ function assertScopeType(value: unknown): asserts value is McpEnablementScopeTyp
 export function setupAppMcpHandlers(
   messageHub: MessageHub,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  db: Database
+  db: Database,
+  writePreferences: SessionToolPreferenceWriter
 ): void {
-  messageHub.onRequest('mcp.enablement.setOverride', (data) => {
+  messageHub.onRequest('mcp.enablement.setOverride', async (data) => {
     const { scopeType, scopeId, serverId, enabled } = data as McpEnablementSetOverrideRequest;
     assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
@@ -154,7 +156,14 @@ export function setupAppMcpHandlers(
       throw new Error(`MCP server not found: ${serverId}`);
     }
 
-    const override = db.mcpEnablement.setOverride(scopeType, scopeId, serverId, enabled);
+    const result =
+      scopeType === 'session'
+        ? await writePreferences(scopeId, { kind: 'mcp', serverId, enabled })
+        : undefined;
+    if (result && !result.ok) throw new Error(result.reason);
+    const override = result?.ok
+      ? { scopeType, scopeId, serverId, enabled }
+      : db.mcpEnablement.setOverride(scopeType, scopeId, serverId, enabled);
 
     internalEventBus
       .publish('mcp.registry.changed', { sessionId: 'global' })
@@ -163,14 +172,21 @@ export function setupAppMcpHandlers(
     return { override } satisfies McpEnablementSetOverrideResponse;
   });
 
-  messageHub.onRequest('mcp.enablement.clearOverride', (data) => {
+  messageHub.onRequest('mcp.enablement.clearOverride', async (data) => {
     const { scopeType, scopeId, serverId } = data as McpEnablementClearOverrideRequest;
     assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
     if (!serverId) throw new Error('serverId is required');
 
-    const deleted = db.mcpEnablement.clearOverride(scopeType, scopeId, serverId);
-    if (deleted) {
+    const result =
+      scopeType === 'session'
+        ? await writePreferences(scopeId, { kind: 'mcp', serverId, enabled: null })
+        : undefined;
+    if (result && !result.ok) throw new Error(result.reason);
+    const deleted = result?.ok
+      ? !!result.deleted
+      : db.mcpEnablement.clearOverride(scopeType, scopeId, serverId);
+    if (deleted || (result?.ok && result.changed)) {
       internalEventBus
         .publish('mcp.registry.changed', { sessionId: 'global' })
         .catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));

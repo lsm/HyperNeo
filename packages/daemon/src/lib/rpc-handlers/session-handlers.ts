@@ -1,3 +1,4 @@
+import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
 import type {
   CreateSessionRequest,
   GetSessionToolInventoryRequest,
@@ -100,6 +101,7 @@ export async function detectStrandedProviders(
 }
 
 export interface SessionHandlerDeps {
+  writeToolPreferences?: SessionToolPreferenceWriter;
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Session[];
@@ -375,6 +377,17 @@ export function setupSessionHandlers(
       }
     }
 
+    if (updates.config && Object.hasOwn(updates.config, 'tools')) {
+      if (!deps?.writeToolPreferences) throw new Error('Tool preference writer unavailable');
+      const tools = updates.config.tools ?? {};
+      const result = await deps.writeToolPreferences(
+        targetSessionId,
+        { kind: 'skills', disabledSkills: tools.disabledSkills ?? [] },
+        tools
+      );
+      if (!result.ok) throw new Error(result.reason);
+      delete updates.config.tools;
+    }
     await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
     return { success: true };
