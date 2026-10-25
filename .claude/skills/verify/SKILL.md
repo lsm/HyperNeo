@@ -66,6 +66,13 @@ space; stop if free memory is below 25% or disk space below 25 GiB. Run only
 one heavy job at a time (proof daemon, suite, full check or build), and wait
 for it to finish and clean up before starting the next. Reuse one checkout
 and its dependencies; do not create baseline worktrees just to compare proofs.
+The resource check must succeed before launching a job; chain it with `&&`
+or use a shell with `set -e`. For example:
+
+```bash
+bash .claude/skills/verify/resource-check.sh && bun run check
+```
+
 For a metadata-only Bun helper taking `[arguments] <run>`, use:
 
 ```bash

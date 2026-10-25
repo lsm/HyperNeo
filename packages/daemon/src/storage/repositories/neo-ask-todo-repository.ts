@@ -198,6 +198,15 @@ export class NeoAskTodoRepository {
     >;
   }
 
+  write<K extends (typeof neoTodoWrites.methods)[number]>(
+    method: K,
+    ...args: Parameters<NeoAskTodoRepository[K]>
+  ): Promise<ReturnType<NeoAskTodoRepository[K]>> {
+    return gatewayFor(this.db).call(neoTodoWrites, method, ...(args as never)) as Promise<
+      ReturnType<NeoAskTodoRepository[K]>
+    >;
+  }
+
   snapshot(projectId: string | null | undefined, limit: number) {
     const asks = this.listAsks(projectId, limit);
     const ids = asks.map((ask) => ask.id);
@@ -608,6 +617,22 @@ export class NeoAskTodoRepository {
     );
   }
 
+  commitState(
+    todoId: string,
+    change: NeoTodoPatch,
+    now: number,
+    judgement: NeoTodoJudgement
+  ): { todo: NeoTodo; startNext: string | null } {
+    const current = this.getTodo(todoId)!;
+    this.pruneQuestions(current.askId, now);
+    if (current.state === 'removed') return { todo: current, startNext: null };
+    return recomputeTodoState(
+      () => this.stateFacts(current, change, judgement),
+      (plan) => ({ todo: this.writeTodo(current, plan.patch, now)!, startNext: plan.startNext }),
+      now
+    );
+  }
+
   private writeTodo(
     todo: NeoTodo,
     change: NeoTodoPatch,
@@ -945,4 +970,15 @@ export const neoTodoReads = defineRepositoryOp(
     'listGoalAsks',
     'todoLinks',
   ]
+);
+
+export const neoTodoWrites = defineRepositoryOp(
+  'neo.todoWrites',
+  'write',
+  class extends NeoAskTodoRepository {
+    constructor(db: Database) {
+      super(db);
+    }
+  },
+  ['commitState']
 );

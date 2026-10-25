@@ -390,6 +390,22 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       if (await gateway.call(codingTodoPrReads, "isWaiting", id) !== (state === "OPEN")) Deno.exit(1);
     }
     console.log("[deno-smoke] cached PR waiting reader preserves missing, open, closed and merged decisions");
+    const { neoTodoWrites } = await import(src + "/storage/repositories/neo-ask-todo-repository.ts");
+    const stateId = "deno-state-first", nextId = "deno-state-next", body = "Complete report 🦊".repeat(1000);
+    db.prepare("INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES(?,?,?,?,1,1)").run("deno-state-ask", "deno-root", "Atomic state", "Complete both");
+    for (const [position, todoId] of [stateId, nextId].entries()) db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,started_at,report,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,1)").run(todoId, "deno-state-ask", position, todoId, "Observed", position ? "todo" : "doing", position ? null : 1, body);
+    db.prepare("INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES(?,?,?,?,?,1)").run("deno-state-question", "deno-state-ask", "Start first?", "start", JSON.stringify([stateId]));
+    const stateRead = () => db.prepare("SELECT state FROM neo_todos WHERE id=?").get(stateId).state;
+    const questionRead = () => db.prepare("SELECT state FROM neo_questions WHERE id=?").get("deno-state-question").state;
+    db.exec("CREATE TRIGGER refuse_state_ask BEFORE UPDATE OF updated_at ON neo_asks BEGIN SELECT RAISE(ABORT, \u0027synthetic state refusal\u0027); END");
+    refused = false;
+    try { await gateway.call(neoTodoWrites, "commitState", stateId, {}, 10, {state:"done",evidence:"Complete"}); }
+    catch (error) { refused = String(error).includes("synthetic state refusal"); }
+    db.exec("DROP TRIGGER refuse_state_ask");
+    if (!refused || stateRead() !== "doing" || questionRead() !== "open") Deno.exit(1);
+    const committed = await gateway.call(neoTodoWrites, "commitState", stateId, {}, 11, {state:"done",evidence:"Complete"});
+    if (committed.todo.state !== "done" || committed.startNext !== nextId || committed.todo.report !== body || questionRead() !== "retired" || db.prepare("SELECT state FROM neo_todos WHERE id=?").get(nextId).state !== "todo") Deno.exit(1);
+    console.log("[deno-smoke] todo state, pruning and ask stamps commit together; next work is returned without dispatch");
   } finally { db.close(); await gateway.close(); }
 '; then
   dump_log
