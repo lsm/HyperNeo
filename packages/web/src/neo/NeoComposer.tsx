@@ -20,6 +20,7 @@ import { attachmentMessage, NEO_FILE_ACCEPT, useNeoAttachments } from './neo-att
 import { type createNeoIntakeClient, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
 import { useCoarsePointer } from './useCoarsePointer.ts';
 import { VoiceDraftPreview } from '../components/voice/VoiceDraftPreview.tsx';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 
 export function neoEnterSends(
   keyboard: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
@@ -44,7 +45,11 @@ export function NeoComposer({
   onCancelQuote,
   forSession,
   onStop,
+  previewContext,
+  onCancelPreview,
 }: {
+  previewContext?: NeoPreviewReference;
+  onCancelPreview?: () => void;
   forSession?: boolean;
   onStop?: () => void;
   preference?: NeoPreference;
@@ -70,8 +75,15 @@ export function NeoComposer({
   const listening = recordingVoice || voicePhase === 'working';
   const attachments = useNeoAttachments(sessionId);
   const hasAttachments = attachments.files.length > 0 || attachments.reading > 0;
-  const needsDraft = hasAttachments || !!quote;
-  const draftContext = t(quote ? 'composer.quoteContext' : 'composer.attachmentsContext');
+  const boundPreview = forSession ? undefined : previewContext;
+  const needsDraft = hasAttachments || !!quote || !!boundPreview;
+  const draftContext = t(
+    boundPreview
+      ? 'composer.previewContext'
+      : quote
+        ? 'composer.quoteContext'
+        : 'composer.attachmentsContext'
+  );
   const voiceStatus = recordingVoice
     ? needsDraft
       ? t('composer.recordingDraft', { context: draftContext })
@@ -160,9 +172,13 @@ export function NeoComposer({
       const images = files.flatMap((file) => (file.kind === 'image' ? [file.image] : []));
       const content = attachmentMessage(submitted, files);
       attachments.remove(files.map((file) => file.id));
-      await onSend({ sessionId, text: content, images, ...(quote ? { quote } : {}) }).catch(
-        () => undefined
-      );
+      await onSend({
+        sessionId,
+        text: content,
+        images,
+        ...(quote ? { quote } : {}),
+        ...(boundPreview ? { previewContext: boundPreview } : {}),
+      }).catch(() => undefined);
     } finally {
       if (sendingText.current === submitted) {
         sendingText.current = null;
@@ -175,7 +191,8 @@ export function NeoComposer({
     record: VoiceRecordEntry,
     transcript: string
   ): Promise<VoiceSendOutcome> {
-    if (record.sendText === undefined && needsDraft) return { kind: 'unconfirmed' };
+    if (boundPreview || (record.sendText === undefined && needsDraft))
+      return { kind: 'unconfirmed' };
     const composed = record.sendText ?? combineVoiceSubmission(draft, transcript);
     if (!composed.trim() || inFlight.current || sending || !connected)
       return { kind: 'unconfirmed' };
@@ -217,6 +234,26 @@ export function NeoComposer({
       class="pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60"
     >
       {activity}
+      {boundPreview && (
+        <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+          <span role="status" class="min-w-0 flex-1 break-words">
+            {t(
+              boundPreview.state === 'available'
+                ? 'composer.previewBinding'
+                : 'composer.previewUnavailable',
+              { file: boundPreview.displayName, snapshot: boundPreview.snapshot.slice(0, 8) }
+            )}
+          </span>
+          <button
+            type="button"
+            aria-label={t('composer.removePreview')}
+            class="shrink-0 rounded-full p-2 hover:bg-fill-soft hover:text-fg"
+            onClick={onCancelPreview}
+          >
+            <NeoIcon name="close" class="!h-3 !w-3" />
+          </button>
+        </div>
+      )}
       {quote && (
         <div
           role="region"

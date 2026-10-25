@@ -4,6 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { SessionStore } from '../../lib/session-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
+import type { MessageHub } from '@hyperneo/shared';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import {
+  createNeoIntakeClient,
+  type NeoDraft,
+  type NeoPendingAsk,
+  neoDraftPayload,
+} from '../neo-intake.ts';
+import type { NeoPublicEntry } from '../public-conversation.ts';
 
 const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn(), event: vi.fn() }));
 const voice = vi.hoisted(() => ({ recording: false, submit: vi.fn() }));
@@ -46,6 +55,7 @@ let slowLoad: Promise<unknown> | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  voice.submit.mockReset();
   voice.recording = false;
   persisted.clear();
   slowLoad = null;
@@ -116,7 +126,7 @@ function mount() {
     viewPublicConversation: {
       conversationId: root.slice(4),
       status: 'ready',
-      entries: [],
+      entries: [] as NeoPublicEntry[],
       hasEarlier: false,
       hasMore: false,
     },
@@ -130,6 +140,8 @@ function mount() {
     publications: { refresh: vi.fn() },
     send: vi.fn().mockResolvedValue({ ok: true, created: true, messageId: 'fictional-send' }),
     sendRequestId: vi.fn(() => null),
+    pendingAsks: [] as readonly NeoPendingAsk[],
+    discardSend: vi.fn((_id: string): NeoDraft | null => null),
   });
   seams.useNeo.mockImplementation(() => model.value);
   return { ...render(<NeoLive />), model, store };
@@ -144,6 +156,195 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it.each([false, true])(
+    'restores an unavailable persisted reference, voice draft: %s',
+    async (withVoice) => {
+      const view = mount();
+      await act(async () => {});
+      const previewContext: NeoPreviewReference = {
+        artifactId: 'registered-report',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Unavailable report',
+        state: 'unavailable',
+      };
+      view.model.value = {
+        ...view.model.value,
+        viewPublicConversation: {
+          ...view.model.value.viewPublicConversation,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'bound-undelivered',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000001',
+                askOrigin: { sessionId: root, messageId: '20000000-0000-4000-8000-000000000001' },
+                content: [{ type: 'text', text: 'Undelivered bound request' }],
+                sequence: 1,
+                createdAt: '2026-10-25T09:00:00.000Z',
+                delivery: { state: 'failed' },
+                previewContext,
+              },
+            },
+          ],
+        },
+      };
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit and send again' }));
+      await waitFor(() => expect(value()).toBe('Undelivered bound request'));
+      expect(
+        screen.getByText(/To Neo.*Preview unavailable.*Unavailable report.*aaaaaaaa/)
+      ).toBeTruthy();
+      if (withVoice) {
+        voice.recording = true;
+        type('Voice-bound draft');
+        voice.submit.mockResolvedValueOnce({
+          kind: 'routed',
+          recordId: 'bound-voice',
+          outcome: { kind: 'insert', transcript: 'Voice addition', autoSend: false },
+        });
+        const stop = await screen.findByRole('button', {
+          name: 'Stop recording and add it to your draft',
+        });
+        voice.recording = false;
+        fireEvent.click(stop);
+        await waitFor(() => expect(value()).toBe('Voice-bound draft\nVoice addition'));
+        expect(voice.submit.mock.calls[0][0].intent).toBe('draft');
+        expect(view.model.value.send).not.toHaveBeenCalled();
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      expect(view.model.value.send.mock.calls[0][0]).toMatchObject({ previewContext });
+    }
+  );
+  it.each([false, true])(
+    'retains or explicitly removes a failed-send Preview binding: %s',
+    async (remove) => {
+      const view = mount();
+      await act(async () => {});
+      const previewContext: NeoPreviewReference = {
+        artifactId: 'registered-report',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Synthetic report',
+        state: 'available',
+      };
+      let offline = true;
+      const request = vi.fn(
+        async (_method: string, { input }: { input: ReturnType<typeof neoDraftPayload> }) => {
+          if (offline) throw new Error('Disconnected');
+          return {
+            ok: true,
+            requestId: input.requestId,
+            messageId: input.requestId,
+            created: true,
+            ...(input.previewContext
+              ? { previewContext: { ...previewContext, ...input.previewContext } }
+              : {}),
+          };
+        }
+      );
+      const client = createNeoIntakeClient(
+        async () => ({ request }) as unknown as MessageHub,
+        (pendingAsks) => {
+          view.model.value = { ...view.model.value, pendingAsks };
+        }
+      );
+      view.model.value = {
+        ...view.model.value,
+        send: vi.fn(client.send),
+        discardSend: vi.fn(client.discard),
+        sendRequestId: vi.fn(() => null),
+      };
+      await act(async () => {
+        await expect(
+          client.send({ sessionId: root, text: 'Failed bound request', previewContext })
+        ).rejects.toThrow('Disconnected');
+      });
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      await waitFor(() => expect(value()).toBe('Failed bound request'));
+      expect(screen.getByText(/To Neo.*Synthetic report.*aaaaaaaa/)).toBeTruthy();
+      if (remove) fireEvent.click(screen.getByRole('button', { name: 'Remove Preview context' }));
+      offline = false;
+      type('Edited request');
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+      expect(request.mock.calls[1][1].input.previewContext).toEqual(
+        remove
+          ? undefined
+          : {
+              artifactId: previewContext.artifactId,
+              snapshot: previewContext.snapshot,
+            }
+      );
+      expect(request.mock.calls[1][1].input.content).toBe('Edited request');
+      await waitFor(() => expect(screen.queryByText(/To Neo.*Synthetic report/)).toBeNull());
+    }
+  );
+  it('keeps a newer restored binding when an earlier send completes', async () => {
+    const view = mount();
+    await act(async () => {});
+    const contextA: NeoPreviewReference = {
+      artifactId: 'report-a',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Report A',
+      state: 'available',
+    };
+    const contextB: NeoPreviewReference = {
+      artifactId: 'report-b',
+      snapshot: 'b'.repeat(64),
+      displayName: 'Report B',
+      state: 'available',
+    };
+    let acceptFirst = () => {};
+    const request = vi.fn(
+      async (_method: string, { input }: { input: ReturnType<typeof neoDraftPayload> }) => {
+        if (input.content !== 'Edited A') throw new Error('Disconnected');
+        return new Promise((resolve) => {
+          acceptFirst = () =>
+            resolve({
+              ok: true,
+              requestId: input.requestId,
+              messageId: input.requestId,
+              created: true,
+              previewContext: contextA,
+            });
+        });
+      }
+    );
+    const client = createNeoIntakeClient(
+      async () => ({ request }) as unknown as MessageHub,
+      (pendingAsks) => {
+        view.model.value = { ...view.model.value, pendingAsks };
+      }
+    );
+    view.model.value = {
+      ...view.model.value,
+      send: vi.fn(client.send),
+      discardSend: vi.fn(client.discard),
+    };
+    await act(async () => {
+      await expect(
+        client.send({ sessionId: root, text: 'Failed A', previewContext: contextA })
+      ).rejects.toThrow('Disconnected');
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(value()).toBe('Failed A'));
+    type('Edited A');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await expect(
+        client.send({ sessionId: root, text: 'Failed B', previewContext: contextB })
+      ).rejects.toThrow('Disconnected');
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(value()).toBe('Failed B'));
+    await act(async () => {
+      acceptFirst();
+    });
+    expect(value()).toBe('Failed B');
+    expect(screen.getByText(/To Neo.*Report B.*bbbbbbbb/)).toBeTruthy();
+    expect(screen.queryByText(/To Neo.*Report A/)).toBeNull();
+  });
   it.each([false, true])(
     'clears an edited saved draft without clearing concurrent text: %s',
     async (concurrent) => {

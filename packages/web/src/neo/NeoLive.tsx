@@ -38,6 +38,7 @@ import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 import type { NeoQuote } from './neo-intake.ts';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { t } from '../lib/i18n/index.ts';
 import { ArtifactPreviewPanel } from '../components/artifacts/ArtifactPreviewPanel.tsx';
 import {
@@ -90,7 +91,16 @@ export function NeoLive() {
     quote: NeoQuote;
   } | null>(null);
   const quote = quoted?.scope === neo.sessionId ? quoted.quote : undefined;
-  useEffect(() => setQuoted(null), [neo.sessionId]);
+  const [restoredPreview, setRestoredPreview] = useState<{
+    scope: string;
+    reference: NeoPreviewReference;
+  } | null>(null);
+  const previewContext =
+    restoredPreview?.scope === neo.sessionId ? restoredPreview.reference : undefined;
+  useEffect(() => {
+    setQuoted(null);
+    setRestoredPreview(null);
+  }, [neo.sessionId]);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
   const acceptedCleanups = useRef(new Map<string, () => Promise<void>>()).current;
@@ -615,6 +625,11 @@ export function NeoLive() {
                 }
                 const restored = neo.discardSend(requestId);
                 if (!restored) return;
+                setRestoredPreview(
+                  restored.previewContext
+                    ? { scope: restored.sessionId, reference: restored.previewContext }
+                    : null
+                );
                 acceptedCleanups.delete(requestId);
                 writeDraft(restored.text);
                 setQuoted(
@@ -641,6 +656,9 @@ export function NeoLive() {
                   return false;
                 }
                 const text = publicAskText(ask.content);
+                setRestoredPreview(
+                  ask.previewContext ? { scope: sessionId, reference: ask.previewContext } : null
+                );
                 writeDraft([liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'));
               }}
               onLoadEarlierPublic={() => {
@@ -833,6 +851,8 @@ export function NeoLive() {
                 />
               }
               quote={quote}
+              previewContext={previewContext}
+              onCancelPreview={() => setRestoredPreview(null)}
               onCancelQuote={() => setQuoted(null)}
               key={neo.sessionId}
               store={neo.store}
@@ -861,6 +881,7 @@ export function NeoLive() {
                 const captured = reloadBuffer.read(sessionId);
                 const submittedQuote = quoted;
                 setDraft('');
+                setRestoredPreview(null);
                 const cleanup = async () => {
                   if (input.quote)
                     setQuoted((current) => (current === submittedQuote ? null : current));

@@ -10,6 +10,8 @@ import { getConfig } from '../../src/config.ts';
 import { NeoAskTodoRepository } from '../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../src/storage/repositories/neo-repository.ts';
 import { NeoTodoSessionRepository } from '../../src/storage/repositories/neo-todo-session-repository.ts';
+import { submitNeoDraft } from '../../../web/src/neo/neo-intake.ts';
+import { presentConversationAskPage } from '../../../web/src/neo/conversation-ask-client.ts';
 
 const run = realpathSync(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -146,9 +148,9 @@ try {
     content: 'Please discuss this exact snapshot.',
     previewContext,
   };
-  const first = await rpc<{ ok: boolean; created: boolean; previewContext: NeoPreviewReference }>(
-    'neo.message.send',
-    input
+  const first = await submitNeoDraft(
+    { sessionId, requestId, text: input.content, previewContext: reference },
+    async () => hub
   );
   assert(first.ok && first.created);
   assert.deepEqual(first.previewContext, reference);
@@ -164,7 +166,9 @@ try {
       items: { role: string; ask?: NeoConversationAsk }[];
     }>('neo.conversation.read', { conversationId });
     assert(asks.ok && conversation.ok);
-    const directAsk = asks.items.find((ask) => ask.requestId === requestId);
+    const projected = presentConversationAskPage(asks, { conversationId, after: 0, limit: 50 });
+    assert('value' in projected);
+    const directAsk = projected.value.items.find((ask) => ask.requestId === requestId);
     const combinedAsk = conversation.items.find(
       (item) => item.role === 'human' && item.ask?.requestId === requestId
     )?.ask;
@@ -224,7 +228,10 @@ try {
   await stop();
   await start();
   assert.deepEqual(await readContext(), { ...reference, state: 'unavailable' });
-  const replay = await rpc<typeof first>('neo.message.send', input);
+  const replay = await submitNeoDraft(
+    { sessionId, requestId, text: input.content, previewContext: reference },
+    async () => hub
+  );
   assert(replay.ok && !replay.created);
   assert.deepEqual(replay.previewContext, reference);
   count();
@@ -247,6 +254,8 @@ try {
     restartPreserved: true,
     legacyCompatible: true,
     sourcePathsOmitted: true,
+    webClientContext: true,
+    webProjectionContext: true,
   });
 } finally {
   await stop();
