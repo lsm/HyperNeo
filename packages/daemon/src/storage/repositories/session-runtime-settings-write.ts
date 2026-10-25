@@ -1,4 +1,5 @@
 import type { SQLiteValue } from '../types.ts';
+import type { SessionToolSelection } from '@hyperneo/shared/types/session-tool-choice';
 export const ACP_METADATA_CLEAR_PATHS = ['$.acpContextUsageEstimate', '$.acpSessionCommand'];
 
 export interface SessionRuntimeSettingsSnapshot {
@@ -23,6 +24,7 @@ export interface SessionRuntimeSettingsSnapshot {
 }
 
 export interface RuntimeSettingsPatch {
+  readonly toolSelection?: SessionToolSelection;
   readonly model?: string;
   readonly provider?: string;
   readonly thinkingLevel?: string;
@@ -143,6 +145,8 @@ export function planRuntimeSettingsPatch(patch: RuntimeSettingsPatch): RuntimeSe
       throw new Error(`runtime settings write: ${key} must be a non-empty string`);
     configEntries.push([CONFIG_PATH_BY_KEY[key], value]);
   }
+  if (patch.toolSelection !== undefined)
+    configEntries.push(['$.toolSelection', JSON.stringify(patch.toolSelection)]);
   if (configEntries.length === 0) throw new Error('runtime settings write: nothing to write');
   const clearAcpSession = patch.clearAcpSession === true;
   return {
@@ -158,7 +162,9 @@ export function buildSessionRuntimeSettingsWrite(
   plan: RuntimeSettingsPatchPlan
 ): SessionRuntimeSettingsWrite {
   if (plan.configEntries.length === 0) throw new Error('runtime settings write: empty patch plan');
-  const paths = plan.configEntries.map(([path]) => `'${path}', ?`).join(', ');
+  const paths = plan.configEntries
+    .map(([path]) => `'${path}', ${path === '$.toolSelection' ? 'json(?)' : '?'}`)
+    .join(', ');
   const sets = [`config = json_set(config, ${paths})`];
   const values: SQLiteValue[] = plan.configEntries.map(([, value]) => value);
   if (plan.clearAcpMetadata)
