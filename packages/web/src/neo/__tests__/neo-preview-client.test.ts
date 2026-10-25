@@ -104,6 +104,32 @@ describe('Neo Preview client contract', () => {
       { timeout: 90000 },
     ]);
   });
+  it.each([false, true])(
+    'captures current input when the object is reused, new ID: %s',
+    async (newId) => {
+      const request = vi.fn(
+        async (_method: string, { input }: { input: ReturnType<typeof neoDraftPayload> }) =>
+          receipt(input.requestId, { ...reference, ...input.previewContext })
+      );
+      const hub = async () => ({ request }) as unknown as MessageHub;
+      const input = { ...draft(), requestId };
+      expect(await submitNeoDraft(input, hub)).toHaveProperty('ok', true);
+      input.text = 'A different request';
+      input.previewContext = { ...reference, artifactId: 'another-file', snapshot: 'b'.repeat(64) };
+      if (newId) input.requestId = '20000000-0000-4000-8000-000000000002';
+      expect(await submitNeoDraft(input, hub)).toHaveProperty('ok', true);
+      expect(request.mock.calls[1][1].input).toMatchObject({
+        requestId: input.requestId,
+        content: 'A different request',
+        previewContext: { artifactId: 'another-file', snapshot: 'b'.repeat(64) },
+      });
+      expect(request.mock.calls[0][1].input).toMatchObject({
+        requestId,
+        content: 'Discuss this snapshot.',
+        previewContext: { artifactId: reference.artifactId, snapshot: reference.snapshot },
+      });
+    }
+  );
   it('keeps pending, retry and edit context detached from later draft mutation', async () => {
     const pending: (readonly NeoPendingAsk[])[] = [];
     const request = vi.fn(async () => {

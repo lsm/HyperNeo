@@ -57,11 +57,9 @@ function captureNeoDraft<T extends NeoDraft>(draft: T): T {
   };
 }
 
-const submissionCaptures = new WeakMap<Submission, Submission>();
+const intakeSubmissions = new WeakSet<Submission>();
 function captureNeoSubmission(submission: Submission): Submission {
-  const captured = submissionCaptures.get(submission) ?? captureNeoDraft(submission);
-  submissionCaptures.set(submission, captured);
-  return captured;
+  return intakeSubmissions.has(submission) ? submission : captureNeoDraft(submission);
 }
 
 type NeoThumbnail = {
@@ -347,6 +345,7 @@ export function createNeoIntakeClient(
           requestId: generateUUID(),
         },
       };
+      intakeSubmissions.add(entry.submission);
       entries.add(entry);
       pending.set(draft.sessionId, entries);
     }
