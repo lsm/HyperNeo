@@ -129,7 +129,7 @@ describe('KimiProvider', () => {
       expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro-highspeed');
     });
 
-    it('shows K3.1 in the china region when the endpoint model list attests it', async () => {
+    it('never offers K3.1 in the china region, even when the endpoint lists it', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const fetchImpl = mock(async (input: unknown) => {
         if (String(input).endsWith('/v1/models')) {
@@ -147,17 +147,24 @@ describe('KimiProvider', () => {
       }) as unknown as typeof fetch;
       provider = new KimiProvider(process.env, undefined, fetchImpl);
 
-      const models = await provider.getModels();
+      const chinaModels = await provider.getModels();
+      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro-highspeed');
 
-      const pro = models.find((m) => m.id === 'kimi-k3.1-pro');
-      const highspeed = models.find((m) => m.id === 'kimi-k3.1-pro-highspeed');
+      const chinaRemote = await provider.listRemoteModels({ force: true });
+      expect(chinaRemote.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+
+      provider.setDefaultRegion('global');
+      const globalModels = await provider.getModels();
+      const pro = globalModels.find((m) => m.id === 'kimi-k3.1-pro');
+      const highspeed = globalModels.find((m) => m.id === 'kimi-k3.1-pro-highspeed');
       expect(pro?.contextWindow).toBe(1_048_576);
       expect(pro?.thinkingModes).toBe('granular');
       expect(highspeed?.contextWindow).toBe(1_048_576);
       expect(highspeed?.thinkingModes).toBe('granular');
     });
 
-    it('does not let a curated K3.1 entry pass the china attestation gate', async () => {
+    it('hides curated K3.1 entries in the china region', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();
       provider.setCuratedModels([{ id: 'kimi-k3.1-pro' }, { id: 'kimi-for-coding' }]);
@@ -954,6 +961,18 @@ describe('KimiProvider', () => {
       const highspeed = provider.buildSdkConfig('k3.1-pro-highspeed');
       expect(highspeed.envVars.ANTHROPIC_MODEL).toBe('kimi-k3.1-pro-highspeed');
       expect(highspeed.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
+    it('drops the [1m] suffix for natively-1M K3.1 ids instead of sending it upstream', () => {
+      expect(provider.translateModelIdForSdk('kimi-k3.1-pro[1m]')).toBe('kimi-k3.1-pro');
+      expect(provider.translateModelIdForSdk('k3.1-pro-highspeed[1m]')).toBe(
+        'kimi-k3.1-pro-highspeed'
+      );
+
+      const config = provider.buildSdkConfig('kimi-k3.1-pro[1m]', { region: 'global' });
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3.1-pro');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+      expect(KimiProvider.resolveContextWindow('kimi-k3.1-pro[1m]')).toBe(1_048_576);
     });
 
     it('keeps boundary-crossing moonshot IDs and suffixed known IDs on themselves', () => {
