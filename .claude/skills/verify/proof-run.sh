@@ -8,6 +8,7 @@ bash "$(dirname "${BASH_SOURCE[0]}")/resource-check.sh"
 mkdir "$EVIDENCE"
 PROOF_TMP_ROOT=${TMPDIR:-/private/tmp}
 RUN=$(mktemp -d "${PROOF_TMP_ROOT%/}/hyperneo-proof-XXXXXX")
+RUN=$(cd "$RUN" && pwd -P)
 save_and_clean() {
   STATUS=$?
   trap - EXIT
