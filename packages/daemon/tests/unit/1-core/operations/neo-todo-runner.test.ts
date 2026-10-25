@@ -155,9 +155,16 @@ describe('neo todo runner', () => {
       const warnings: string[] = [];
       await h.runner.refresh((_message, error) => warnings.push(String(error)));
       expect(warnings.some((warning) => warning.includes('synthetic check refusal'))).toBe(true);
-      expect(h.sessions.readLiveStatus(todo.id)).toBe('needs_you');
-      expect(h.sessions.readNeedsYouSince(todo.id)).toBe(900);
-      expect(h.sessions.readCardCheck(todo.id)).toBeNull();
+      const afterRefusal = {
+        live: h.sessions.readLiveStatus(todo.id),
+        needsYouSince: h.sessions.readNeedsYouSince(todo.id),
+        check: h.sessions.readCardCheck(todo.id),
+      };
+      h.db.exec('DROP TRIGGER reject_check');
+      h.setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 1_002 } });
+      await h.runner.refresh((_message, error) => warnings.push(String(error)));
+      expect(h.told).toEqual([]);
+      expect(afterRefusal).toEqual({ live: 'needs_you', needsYouSince: 900, check: null });
     } finally {
       h.db.close();
     }
