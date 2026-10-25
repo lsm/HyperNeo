@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { ingestSessionEvent, SESSION_EVENT_SCOPE } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
+import { ingestSessionEvent, SessionExternalEventStore, SESSION_EVENT_SCOPE } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
 import { sessionEventText, mailSessionEvent } from '../../../packages/daemon/src/lib/external-events/session-event-delivery.ts';
 import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/session-event-subscription-repository.ts';
 import { buildImmediateEventMessageUuid } from '../../../packages/daemon/src/lib/external-events/immediate-delivery-pipeline.ts';
@@ -41,10 +41,11 @@ try {
     id: 'synthetic-review', spaceId: SESSION_EVENT_SCOPE, source: 'github',
     topic: 'github/synthetic/repo/pull_request/7.review_submitted',
     dedupeKey: 'synthetic-review', occurredAt: Date.now(), ingestedAt: Date.now(),
-    summary: 'Synthetic review', payload: { actor: 'synthetic-reviewer', title: 'Review ready' },
-    render: 'complete synthetic feedback '.repeat(5000), urgency: 'queued',
+    summary: 'Synthetic review', payload: { actor: 'synthetic-reviewer', title: 'Review ready ' + 'complete synthetic feedback '.repeat(5000) },
+    urgency: 'queued',
   };
   await app.db.gateway.run(ingestSessionEvent, event);
+  const expectedText = sessionEventText(new SessionExternalEventStore(raw).getById(event.id)!.event);
   const payload = { ...event, namespaceId: SESSION_EVENT_SCOPE, eventId: event.id };
   const publish = () => app!.internalEventBus.publish('externalEvent.published', payload);
   const messageId = buildImmediateEventMessageUuid(event.id, `session:${sessionId}`);
@@ -65,7 +66,7 @@ try {
     const jobs = app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': sessionId, messageUuid: messageId });
     assert.equal(jobs.length, 1);
     const queued = jobs[0].payload as { message: { message: { content: string } }; id: string };
-    assert.equal(hash(queued.message.message.content), hash(sessionEventText(event)));
+    assert.equal(hash(queued.message.message.content), hash(expectedText));
     const receipts = raw.prepare('SELECT receipt FROM message_send_receipts').all() as { receipt: string }[];
     assert.equal(receipts.filter(row => JSON.parse(row.receipt).id === queued.id).length, 1);
     evidence.status = await hub.request('operation.invoke', { name: 'message.status', input: { sessionId, messageId } });
@@ -79,16 +80,15 @@ try {
     const retryId = buildImmediateEventMessageUuid(retryEvent.id, `session:${sessionId}`);
     const retry = () => app!.internalEventBus.publish('externalEvent.published', { ...retryEvent, namespaceId: SESSION_EVENT_SCOPE, eventId: retryEvent.id });
     raw.exec(`CREATE TRIGGER reject_event_receipt BEFORE INSERT ON message_send_receipts BEGIN SELECT RAISE(ABORT, 'synthetic receipt unavailable'); END`);
-    const rejected = await retry();
-    assert(rejected.failures.length > 0);
+    await assert.rejects(retry(), /Publish of 'externalEvent.published' failed/);
     assert.equal(app.jobQueue.listActiveByPayload('mailbox', { messageUuid: retryId }).length, 0);
     raw.exec('DROP TRIGGER reject_event_receipt');
     const accepted = await retry();
     assert.equal(accepted.failures.length, 0);
     assert.equal(app.jobQueue.listActiveByPayload('mailbox', { messageUuid: retryId }).length, 1);
     evidence.rollbackAndRetry = true;
-    evidence.bodyBytes = Buffer.byteLength(sessionEventText(event));
-    evidence.fullBodyHash = hash(sessionEventText(event));
+    evidence.bodyBytes = Buffer.byteLength(expectedText);
+    evidence.fullBodyHash = hash(expectedText);
     evidence.health = await hub.request('system.health', {});
     assert.equal(mainSqlAttempts, 0);
   } finally {
