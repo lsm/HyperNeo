@@ -311,7 +311,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       const dispatched = await gateway.call(neoTodoSessionWrites, "recordDispatch", {todoId:"deno-todo",askId:"deno-todo-ask",ref:{adapter:"hyperneo",id:"deno-worker"},startedAt:2,observed:{model:"synthetic-model",effort:"high"},keepIdentity:false,sent:{inputBefore:0,opening:"Complete synthetic instruction"}});
       const receipt = db.prepare("SELECT ref,actual_model,sent_opening FROM neo_todo_sessions WHERE todo_id=?").get("deno-todo");
       if (!dispatched.askOpen || dispatched.todo?.id !== "deno-todo" || JSON.parse(receipt.ref).id !== "deno-worker" || receipt.actual_model !== "synthetic-model" || receipt.sent_opening !== "Complete synthetic instruction") Deno.exit(1);
-      db.exec("CREATE TRIGGER reject_todo_receipt BEFORE UPDATE OF sent_opening ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic refusal'); END");
+      db.exec("CREATE TRIGGER reject_todo_receipt BEFORE UPDATE OF sent_opening ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, \u0027synthetic refusal\u0027); END");
       let refused = false;
       try { await gateway.call(neoTodoSessionWrites, "recordDispatch", {todoId:"deno-todo",askId:"deno-todo-ask",ref:{adapter:"hyperneo",id:"rejected-worker"},observed:{},keepIdentity:true,sent:null}); } catch { refused = true; }
       db.exec("DROP TRIGGER reject_todo_receipt");
