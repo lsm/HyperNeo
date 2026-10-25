@@ -263,3 +263,54 @@ describe('inherited template presence', () => {
     });
   });
 });
+
+describe('disabled-skill request authority', () => {
+  it('persists the list even without tools and supports a disable/re-enable round trip', async () => {
+    const priorTools = {
+      disabledSkills: [],
+      useClaudeCodePreset: false,
+      loadSettingSources: false,
+    };
+    repo.updateSession(ID, { config: { ...current(), tools: priorTools } });
+    expect((await write(ID, { kind: 'skills', disabledSkills: ['notes'] })).ok).toBe(true);
+    expect(current().tools).toEqual({ ...priorTools, disabledSkills: ['notes'] });
+    expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(false);
+    expect((await write(ID, { kind: 'skills', disabledSkills: [] })).ok).toBe(true);
+    expect(current().tools).toEqual(priorTools);
+    expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(true);
+    expect(current().sdkToolsPreset).toEqual(['Read']);
+  });
+  it('uses request IDs when supplied tools has a conflicting list', async () => {
+    expect(
+      (
+        await write(
+          ID,
+          { kind: 'skills', disabledSkills: ['notes'] },
+          { disabledSkills: ['wrapper'], useClaudeCodePreset: false }
+        )
+      ).ok
+    ).toBe(true);
+    expect(current().tools).toEqual({ disabledSkills: ['notes'], useClaudeCodePreset: false });
+    expect(current().toolSelection?.choices['mcp:browser']?.selected).toBe(true);
+    expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(false);
+    expect(
+      (await write(ID, { kind: 'skills', disabledSkills: [] }, { disabledSkills: ['notes'] })).ok
+    ).toBe(true);
+    expect(current().tools?.disabledSkills).toEqual([]);
+    expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(true);
+  });
+  it('leaves skill vetoes unchanged on an MCP request even if optional settings supplies another list', async () => {
+    const before = current().tools?.disabledSkills;
+    expect(
+      (
+        await write(
+          ID,
+          { kind: 'mcp', serverId: 'browser', enabled: true },
+          { disabledSkills: [], useClaudeCodePreset: false }
+        )
+      ).ok
+    ).toBe(true);
+    expect(current().tools).toEqual({ disabledSkills: before, useClaudeCodePreset: false });
+    expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(false);
+  });
+});
