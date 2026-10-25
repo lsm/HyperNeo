@@ -1,3 +1,4 @@
+import { handoffDraftDirectory } from '../../../../src/lib/handoffs/outbox';
 import { installClaudeNativeWrites } from '../../../../src/lib/drivers/claude-native-writes';
 import {
   workerSandboxPaths,
@@ -133,6 +134,9 @@ describe('QueryOptionsBuilder', () => {
         allowUnsandboxedCommands: false,
         excludedCommands: [],
       });
+      const draft = handoffDraftDirectory(handoffDataDir, mockSession.id);
+      expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(draft);
+      expect(options.sandbox?.filesystem?.allowWrite).toContain(draft);
       expect(options.env?.TMPDIR).toBe(workerSandboxPaths(root).TMPDIR);
       expect(statSync(options.env!.TMPDIR!).isDirectory()).toBe(true);
       await releaseWorkerSandbox(root);

@@ -17,6 +17,10 @@ printf 'outside-status=%s\\n' "$?"
 printf temp > "$TMPDIR/probe-{engine}"
 printf 'temp-status=%s\\n' "$?"
 ''')
+protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine != 'codex' else []
+policy_before = {path: path.read_bytes() for path in protected}
+with probe.open('a') as script:
+    for path in protected: script.write(f"rm '{path}'\n")
 requests = []
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -91,10 +95,12 @@ try:
     (run / f'evidence/{engine}-stdout.jsonl').write_text(result.stdout)
     (run / f'evidence/{engine}-stderr.log').write_text(result.stderr)
     observed = {'engine': engine, 'exit': result.returncode, 'requests': len(requests), 'insideAllowed': (worker / f'inside-{engine}.txt').exists(), 'gitAllowed': (worker / f'.git/hyperneo-probe-{engine}').exists(), 'cacheAllowed': bool(expected_env.get('XDG_CACHE_HOME')) and (Path(expected_env['XDG_CACHE_HOME']) / f'probe-{engine}').exists(), 'outsideRefused': not (outside / 'escaped.txt').exists(), 'tempPath': (worker / f'observed-temp-{engine}.txt').read_text() if (worker / f'observed-temp-{engine}.txt').exists() else '', 'tempAllowed': bool(expected_env.get('TMPDIR')) and (worker / f'observed-temp-{engine}.txt').exists() and Path((worker / f'observed-temp-{engine}.txt').read_text()).is_relative_to(Path(expected_env['TMPDIR'])) and (Path((worker / f'observed-temp-{engine}.txt').read_text()) / f'probe-{engine}').exists()}
+    observed['policyIntact'] = all(path.exists() and path.read_bytes() == contents for path, contents in policy_before.items())
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
     print(json.dumps(observed))
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
+    assert observed['policyIntact'], 'BUG: worker removed its sandbox gate or settings'
     assert observed['networkAllowed'], 'Sandbox network probe failed'
     assert observed['insideAllowed'], result.stderr
     assert observed['gitAllowed'], 'Private Git metadata write failed'
