@@ -100,3 +100,8 @@ local-source loading alone does not apply its protected environment variables.
 Runtime roots are re-created on resume/query and sibling-policy refresh. Claude
 HTTP(S) hosts are allowed through its proxy; SSH-agent/Unix sockets are not granted,
 so use HTTPS repository-token remotes. Live GitHub push/authentication is unverified.
+
+Pre-upgrade prepared Claude sessions repair missing env/sandbox defaults before
+resume. Sibling permission refresh supplies defaults for absent/corrupt settings
+but preserves complete existing env/sandbox values and never provisions another
+worker's runtime. Policy replacements are atomic within the prepared clone.

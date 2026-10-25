@@ -74,6 +74,23 @@ real Bash deleted its policy, report env pointed at the wrong directory, and
 archive/delete retained runtime roots. No production clone-placement change is
 part of this fix; the policy always takes its root from the prepared directory.
 
+## Legacy and damaged policies (review 9453)
+
+Run the same command above with `VERIFY_LEGACY_POLICY=1` added to the `env -i`
+arguments. The helper replaces the first synthetic prepared worker's settings
+with the slice-2 permissions-only shape, invokes the actual `work.send` RPC resume
+path, then runs the installed CLI against that resulting file. Outside writes
+and policy deletion must be denied and private temp/cache writes must succeed.
+No env/sandbox values are injected into the native CLI environment by the proof.
+
+Own-session resume repairs missing env/sandbox defaults atomically. A missing or
+malformed sibling settings file falls back to the full computed policy, without
+provisioning that sibling's runtime; complete existing env/sandbox values remain
+unchanged. Focused regressions for legacy, missing and corrupt own settings and
+missing/corrupt sibling settings were committed first in `05e843275e`; all five
+fail before the fix. The baseline real CLI also writes outside its synthetic
+clone after the permissions-only resume, proving the pre-upgrade escape.
+
 ## Sibling runtime independence (review 9444)
 
 The actual daemon proof releases the first worker's synthetic runtime, starts a

@@ -45,6 +45,12 @@ function policy(root: string, roots: string[], siblings: string[]) {
   };
 }
 
+async function writePolicy(root: string, value: ReturnType<typeof policy>) {
+  const temporary = `${settingsPath(root)}.${crypto.randomUUID()}.tmp`;
+  await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+  await rename(temporary, settingsPath(root));
+}
+
 async function install(root: string, roots: string[]) {
   const siblings = (await readdir(dirname(root), { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
@@ -73,11 +79,11 @@ async function install(root: string, roots: string[]) {
   for (const worker of workers) {
     if (!(await lstat(join(worker.root, '.claude'))).isDirectory())
       throw new Error('Native write policy requires an in-clone .claude directory');
-    const temporary = `${settingsPath(worker.root)}.hyperneo-tmp`;
-    const existing = JSON.parse(await readFile(settingsPath(worker.root), 'utf8'));
-    const permissions = policy(worker.root, worker.roots, siblings).permissions;
-    await writeFile(temporary, JSON.stringify({ ...existing, permissions }), { mode: 0o600 });
-    await rename(temporary, settingsPath(worker.root));
+    const computed = policy(worker.root, worker.roots, siblings);
+    const existing = await readFile(settingsPath(worker.root), 'utf8')
+      .then(JSON.parse)
+      .catch(() => computed);
+    await writePolicy(worker.root, { ...computed, ...existing, permissions: computed.permissions });
   }
 }
 
@@ -91,14 +97,20 @@ export function installClaudeNativeWrites(directory: string, roots: string[]): P
 
 export async function readClaudeWorkerSandbox(directory: string | undefined) {
   if (!directory) return null;
-  const marker = await readFile(markerPath(directory), 'utf8').catch(
-    (error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
-      throw error;
-    }
-  );
+  const marker = await readFile(markerPath(directory), 'utf8').catch((error) => {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
+  });
   if (marker === null) return null;
   const { roots } = Marker.parse(JSON.parse(marker));
   await prepareWorkerSandbox(directory);
-  return policy(directory, roots, []);
+  const computed = policy(directory, roots, []);
+  const existing = await readFile(settingsPath(directory), 'utf8')
+    .then(JSON.parse)
+    .catch(() => ({}));
+  if (!existing?.env || !existing?.sandbox) {
+    Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
+    await writePolicy(directory, { ...computed, ...existing });
+  }
+  return computed;
 }
