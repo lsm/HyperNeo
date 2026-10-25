@@ -32,6 +32,8 @@ import {
   sessionRuntimeSettingsSnapshotFromRow,
 } from './session-runtime-settings-write.ts';
 
+import type { SessionMcpPreferenceEdit, ToolPreferenceSnapshot } from './tool-preference-commit.ts';
+
 export function sessionConfigReplacer(key: string, value: unknown): unknown {
   if (key === 'mcpServers') return undefined;
   if (key === 'workerOperations') return undefined;
@@ -534,6 +536,15 @@ export class SessionRepository {
     const write = buildSessionRuntimeSettingsWrite(snapshot, planRuntimeSettingsPatch(patch));
     const result = this.db.prepare(write.sql).run(...write.values);
     return result.changes > 0 ? 'won' : 'superseded';
+  }
+
+  casSessionToolPreferences(
+    _snapshot: SessionRuntimeSettingsSnapshot,
+    _patch: RuntimeSettingsPatch,
+    _guards: readonly ToolPreferenceSnapshot[],
+    _override?: SessionMcpPreferenceEdit
+  ): 'won' | 'superseded' {
+    return 'superseded';
   }
 
   private updateMessageSearchSessionTitle(sessionId: string, title: string): void {
