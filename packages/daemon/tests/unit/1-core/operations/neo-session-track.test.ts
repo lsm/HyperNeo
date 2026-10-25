@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   findNeoSessionNotice,
   requireNeoTrackRoot,
@@ -145,6 +147,23 @@ describe('neo.session.track', () => {
   afterEach(() => {
     service.dispose();
     db.close();
+  });
+
+  test('concurrent Track taps create only one card for the worker', async () => {
+    Object.assign(service, { deliver: async () => {} });
+    service.sessionWatcher.sessionNotices = [notice()];
+    const registry = createOperationRegistry(createNeoOperations(service));
+    await Promise.all(
+      [1, 2].map(() =>
+        invokeOperation(
+          registry,
+          'neo.session.track',
+          { key },
+          { source: 'rpc', principal: 'local' }
+        )
+      )
+    );
+    expect(service.todos.listOpenAsks()).toHaveLength(1);
   });
 
   test('a human Track tap immediately queues a Neo kickoff', async () => {
