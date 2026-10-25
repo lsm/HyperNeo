@@ -61,3 +61,20 @@ Evidence is `evidence/card-reply-acp.json` and `evidence/acp-protocol.jsonl` in
 the synthetic run. The same ACP proof runs in the online regression file above.
 The helper closes its owned daemon, ACP client and MCP proxy in finally; no real
 provider, live DB, credential file, fixed TCP port or GUI is used.
+
+## Structured background reports
+
+With the #8647 wake gate, a free-form teammate report waits in the durable
+queue. A fixture that requires immediate background work must send an explicit
+question report through message.send, including when it steers the active human
+turn. The ACP and SDK fixtures must retain their original publication assertions:
+one notice linked to the human, no duplicate question, and no human association
+borrowed by a later background-only question.
+
+The pre-update fixtures reproduce CI run 40182192213: the SDK fixture waits for
+an untyped teammate input to be consumed, and the ACP fixture times out waiting
+for its untyped BACKGROUND_CARD turn. In the ACP evidence, the human notice is
+present, no background prompt was sent, and one neo_notes row remains pending.
+This is the requested queue behavior, so update the fixture's structured input
+rather than making untyped worker chatter wake Neo again. Keep the neo-wake-queue
+journey as the independent twenty-message quiet-burst contract.
