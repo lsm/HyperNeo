@@ -1340,6 +1340,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         const refused = admit();
         if (refused) return refused;
         await server.call('thread/archive', { threadId: ref.id });
+        await releaseWorkerSandbox(found.value.thread.folder);
         return { ok: true, value: { archived: true } };
       });
     },

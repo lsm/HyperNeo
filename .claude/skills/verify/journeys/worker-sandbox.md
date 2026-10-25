@@ -69,6 +69,11 @@ The SDK Bash turn writes `sandbox-report.txt` in its actual
 report. This proves the exported draft path matches the daemon reader and is
 writable without granting the surrounding data directory.
 
+Finally, the real isolated `session.archive` RPC must remove the SDK worker's
+private temp/cache dirs and retain its clone. `runtime-cleanup.json` records that
+result. Focused adapter tests verify the same release for both Desktop archives;
+SDK lifecycle tests cover archive and delete, including uncached sessions.
+
 Failing reproductions for review run 9434 were committed first in `04bebfb404`:
 real Bash deleted its policy, report env pointed at the wrong directory, and
 archive/delete retained runtime roots. No production clone-placement change is
@@ -126,3 +131,12 @@ first in `c8ed6ebffe` and fail on the reviewed head.
 Successful archive/delete runtime release is verified in the stacked lifecycle
 follow-up, not in #8632. Failure cleanup and own-session runtime recreation remain
 part of this core journey. The final stacked PR closes #8627 after both merge.
+
+## Stacked lifecycle follow-up
+
+The lifecycle branch adds successful temp/cache release to Desktop archives and
+SDK archive/delete. Its regression tests and actual RPC archive proof are committed
+before the fix. In this branch `runtime-cleanup.json` also requires a later actual
+SDK `work.start` sibling to leave the archived worker's runtime absent, preserving
+the core fix for review 9444. The later synthetic sibling is archived through RPC
+as well. Existing worker clones are retained; no placement logic changes here.

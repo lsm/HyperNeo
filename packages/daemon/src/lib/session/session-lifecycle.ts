@@ -1,3 +1,4 @@
+import { releaseWorkerSandbox } from '../drivers/worker-sandbox.ts';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import type {
   MessageHub,
@@ -608,6 +609,8 @@ export class SessionLifecycle {
       }
     }
 
+    await releaseWorkerSandbox(sessionSdkPath(session));
+
     let archiveMetadata:
       | {
           sdkArchivePath: string;
@@ -738,6 +741,7 @@ export class SessionLifecycle {
       }
 
       if (session) {
+        await releaseWorkerSandbox(sessionSdkPath(session));
         try {
           const sdkWorkspacePath = sessionSdkPath(session);
           if (!sdkWorkspacePath) {

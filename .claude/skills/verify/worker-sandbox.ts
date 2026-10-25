@@ -195,7 +195,13 @@ try {
   assert(!existsSync(sdkSettings.env.TMPDIR), 'Archive must release private temp root');
   assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'Archive must release private cache root');
   assert(existsSync(sdkWorker), 'Archive must preserve the private clone');
-  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, tempReleased: true, cacheReleased: true, cloneRetained: true }, null, 2));
+  await app.jobProcessor.stop();
+  const afterArchive = await rpc('work.start', { ...request, adapter: 'hyperneo', title: 'Sibling after actual SDK archive' }) as Result<WorkStarted>;
+  assert(afterArchive.ok, JSON.stringify(afterArchive));
+  assert(!existsSync(sdkSettings.env.TMPDIR), 'A later sibling must not resurrect archived temp roots');
+  assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'A later sibling must not resurrect archived cache roots');
+  await rpc('rpc:session.archive', { sessionId: afterArchive.value.ref.id, confirmed: true });
+  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, tempReleased: true, cacheReleased: true, cloneRetained: true, notResurrectedByLaterSibling: true }, null, 2));
   console.log(`PASS Codex Desktop, Claude Desktop and real HyperNeo SDK outside refusal + inside/Git/temp/cache/network: ${run}/evidence`);
 
 

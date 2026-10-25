@@ -1764,5 +1764,6 @@ async function archiveClaudeSession(
   } finally {
     rmSync(temporary, { force: true });
   }
+  await releaseWorkerSandbox(record.cwd);
   return { ok: true, value: { archived: true } };
 }
