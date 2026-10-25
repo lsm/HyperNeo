@@ -7,6 +7,7 @@ import { closeArtifactPreview, openArtifactPreview } from '../../lib/artifact-pr
 import { connectionState } from '../../lib/state.ts';
 import { SessionStore } from '../../lib/session-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
+import { restoreNeoImages, useNeoAttachments } from '../neo-attachments.ts';
 
 const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn(), event: vi.fn() }));
 vi.mock('../../components/SessionSchedules.tsx', () => ({ SessionSchedules: () => null }));
@@ -71,6 +72,7 @@ beforeEach(() => {
   metadataFault = false;
   metadataGate = null;
   persisted.clear();
+  useNeoAttachments(root).remove(useNeoAttachments(root).files.map((file) => file.id));
   connectionState.value = 'connected';
   seams.event.mockImplementation(() => () => {});
   vi.stubGlobal('matchMedia', () => ({
@@ -411,6 +413,122 @@ describe('NeoLive reload draft restore', () => {
     expect(value()).toBe('Newer visible draft');
     expect(screen.queryByText(/To Neo.*Original report/)).toBeNull();
   });
+  it('releases Preview auto-binding and later server-draft adoption after a local edit supersedes recovery', async () => {
+    remember('Old captured reply', null, root, reference);
+    let release!: (value: unknown) => void;
+    metadataGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'report-b' }));
+    mount();
+    await waitFor(() =>
+      expect(
+        seams.request.mock.calls.some(
+          ([, input]) =>
+            input.name === 'artifact.file.get' && input.input?.artifactId === 'report-a'
+        )
+      ).toBe(true)
+    );
+    type('New local edit');
+    type('');
+    await waitFor(() => expect(persisted.get(root)).toBe(''));
+    await act(async () => release({ accepted: false, reason: 'unavailable' }));
+    await screen.findByText(/To Neo.*Other report.*bbbbbbbb/);
+    expect(value()).toBe('');
+    persisted.set(root, 'Later landed transcript');
+    for (const [name, callback] of seams.event.mock.calls) {
+      if (name === 'session.voiceLanded')
+        await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+    }
+    await waitFor(() => expect(value()).toBe('Later landed transcript'));
+    expect(screen.queryByText(/To Neo.*Original report/)).toBeNull();
+  });
+
+  it.each(['quote', 'cancel quote', 'attachment', 'reading'] as const)(
+    'settles pending recovery when only %s framing changes',
+    async (framing) => {
+      remember('Old captured reply', null, root, reference);
+      const original = read();
+      let release!: (value: unknown) => void;
+      metadataGate = new Promise((resolve) => {
+        release = resolve;
+      });
+      act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'report-b' }));
+      const view = mount();
+      await waitFor(() =>
+        expect(
+          seams.request.mock.calls.some(
+            ([, input]) =>
+              input.name === 'artifact.file.get' && input.input?.artifactId === 'report-a'
+          )
+        ).toBe(true)
+      );
+      let finish!: () => void;
+      let reading: Promise<void> | undefined;
+      if (framing === 'quote' || framing === 'cancel quote') {
+        act(() => {
+          view.model.value = {
+            ...view.model.value,
+            viewPublicConversation: {
+              ...view.model.value.viewPublicConversation,
+              entries: [
+                {
+                  kind: 'ask',
+                  key: 'quoted',
+                  ask: {
+                    conversationId: root.slice(4),
+                    requestId: 'quoted',
+                    askOrigin: { sessionId: root, messageId: 'quoted' },
+                    content: 'Synthetic quoted thought',
+                    sequence: 1,
+                    createdAt: '2026-10-25T12:00:00Z',
+                  },
+                },
+              ],
+            },
+          } as never;
+        });
+        fireEvent.click(await screen.findByRole('button', { name: 'Reply to your message' }));
+        if (framing === 'cancel quote')
+          fireEvent.click(screen.getByRole('button', { name: 'Remove reply' }));
+      } else if (framing === 'attachment') {
+        act(() => {
+          restoreNeoImages(root, [{ data: 'YWJj', media_type: 'image/png' }]);
+        });
+      } else {
+        const file = new File(['Synthetic notes'], 'notes.txt', { type: 'text/plain' });
+        vi.spyOn(file, 'text').mockReturnValue(
+          new Promise((resolve) => {
+            finish = () => resolve('Synthetic notes');
+          })
+        );
+        act(() => {
+          reading = useNeoAttachments(root).add([file], vi.fn());
+        });
+      }
+      try {
+        await waitFor(() => expect(read()?.id).not.toBe(original.id));
+        expect(read()).toMatchObject({ text: '', previewContext: null });
+        await waitFor(() => expect(persisted.get(root)).toBe(''));
+        await act(async () => release({ accepted: false, reason: 'unavailable' }));
+        expect(value()).toBe('');
+        expect(screen.queryByText(/To Neo.*Original report/)).toBeNull();
+        persisted.set(root, 'Newly landed dictation');
+        for (const [name, callback] of seams.event.mock.calls) {
+          if (name === 'session.voiceLanded')
+            await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+        }
+        await waitFor(() => expect(value()).toBe('Newly landed dictation'));
+      } finally {
+        if (reading)
+          await act(async () => {
+            finish();
+            await reading;
+          });
+      }
+    }
+  );
+
   it('does not capture the dropped Preview after a fully empty reset', async () => {
     const first = mount();
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'report-a' }));
