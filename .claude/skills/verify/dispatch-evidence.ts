@@ -9,6 +9,7 @@ import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repos
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { syntheticCodexDesktop } from './codex-desktop-peer.ts';
 
 const [portText, runText] = process.argv.slice(2);
 assert(runText);
@@ -72,6 +73,27 @@ const peer = Bun.serve({
   },
 });
 const sessionId = 'neo:10000000-0000-4000-8000-000000000002';
+const closeDesktop = await syntheticCodexDesktop(run, {
+  active: () => mode === 'steer',
+  start: (request) => {
+    const message = request.params.turnStart.request.input[0].text;
+    evidence.push({ desktopStart: request });
+    if (obligations) {
+      const inputs = readInputs();
+      beforeEffects.push({ method: 'turn/start', inputs, message });
+      evidence.push({ beforeExternalEffect: 'turn/start', inputs });
+    }
+    return 'synthetic-started';
+  },
+  steer: () => {
+    if (obligations) {
+      const inputs = readInputs();
+      beforeEffects.push({ method: 'turn/steer', inputs });
+      evidence.push({ beforeExternalEffect: 'turn/steer', inputs });
+    }
+    return 'synthetic-turn';
+  },
+});
 const ref = { adapter: 'codex-desktop', id: 'synthetic-thread' };
 const dbPath = join(run, 'data/daemon.db');
 let todoId = '';
@@ -158,6 +180,7 @@ try {
   console.log(`PASS: ${obligations ? "write-ahead input history/deadlines plus " : ""}real daemon MCP todo dispatch retains start/unconfirmed/steer facts across daemon restart and read-only DB reopen. ${run}/evidence/observed.json`);
 } finally {
   peer.stop(true);
+  await closeDesktop();
   await new Promise<void>(done => inbox.close(() => done()));
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }
