@@ -1,0 +1,42 @@
+{
+  "stage": "local draft; not ready for PR",
+  "base": "fc0f3bdcc06a152dea5060630bd0d5b7d39d712c",
+  "regressionCommit": "0da4d96baf86066338b10f98eb404dffe645260c",
+  "red": {
+    "test": "reference acquisition and its terminal-cache check do not read through the main repository",
+    "failure": "reference admission read on main repository"
+  },
+  "focusedUnits": {
+    "passed": 15,
+    "failed": 0,
+    "assertions": 77,
+    "scope": [
+      "7 reference writer cases",
+      "6 selected existing reference contracts",
+      "2 selected branch retry contracts"
+    ],
+    "daemonCasesExcluded": true
+  },
+  "validationEnvironment": {
+    "runtime": "Bun 1.4.3",
+    "database": "private memory; one existing small cross-connection unit fixture",
+    "dependencies": "reused primary-checkout daemon dependencies through a temporary symlink; only that newly created link was removed after testing, leaving its target untouched",
+    "autoInstall": false,
+    "envFileLoading": false,
+    "home": "empty system directory"
+  },
+  "productionLinesChanged": 166,
+  "deferredByHumanDiskHold": [
+    "repository-wide hooks and checks",
+    "Deno validation",
+    "fresh isolated RPC/job proof with target SQL absent on main",
+    "PR creation"
+  ],
+  "newWorktrees": 0,
+  "installs": 0,
+  "daemonProofs": 0,
+  "notes": [
+    "The initial async-read draft broke a legacy coalescing assertion under contention; moving coalescing ahead of the snapshot fixes it without weakening the assertion.",
+    "Draft commits defer repository-wide hooks under the explicit disk hold."
+  ]
+}
