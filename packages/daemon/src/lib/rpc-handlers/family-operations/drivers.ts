@@ -68,6 +68,7 @@ import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { neoFolder } from '../../neo/folder.ts';
+import { neoStartPlace } from '../../neo/start-place.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
@@ -120,9 +121,12 @@ export async function createDriverSession(
   model?: string,
   availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels,
   provider?: string,
-  effort?: string
+  effort?: string,
+  inPlace = false
 ): Promise<string> {
-  const { gitRoot } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
+  const gitRoot = inPlace
+    ? null
+    : (await sessionManager.getWorktreeManager().detectGitSupport(workspacePath)).gitRoot;
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
   const thinkingLevel = THINKING_OPTIONS.find(
     (entry) => entry.label.toLowerCase() === effort
@@ -218,7 +222,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
       return { ok: true, value: { archived: true } };
     },
-    create: (workspacePath, title, model, provider, effort) =>
+    create: (workspacePath, title, model, provider, effort, inPlace) =>
       createDriverSession(
         sessionManager,
         workspacePath,
@@ -226,7 +230,8 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         model,
         readAvailableModels,
         provider,
-        effort
+        effort,
+        inPlace
       ),
     resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
     effort: (sessionId) =>
@@ -612,6 +617,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     adapters: () => adapters,
     remote: remoteDaemons,
     daemonName: machine,
+    startPlace: neoStartPlace({
+      db: db(),
+      machine,
+      workspaceRoot: context.deps.config.workspaceRoot,
+    }),
     isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);

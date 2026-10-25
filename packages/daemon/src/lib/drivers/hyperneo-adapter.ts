@@ -95,7 +95,8 @@ export interface HyperneoSessionControl {
     title: string,
     model?: string,
     provider?: string,
-    effort?: string
+    effort?: string,
+    inPlace?: boolean
   ): Promise<string>;
   resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
   effort?(sessionId: string): string | null;
@@ -579,7 +580,8 @@ export async function createHyperneoSession(
       request.title,
       request.model,
       request.provider,
-      request.effort
+      request.effort,
+      request.inPlace
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)

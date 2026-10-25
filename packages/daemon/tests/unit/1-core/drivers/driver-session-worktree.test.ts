@@ -334,6 +334,28 @@ describe('createDriverSession model', () => {
     { ...model('other-high', '2026-09-01'), name: 'Other High', provider: 'custom:other' },
   ];
 
+  test('preserves provider and effort for a shared-folder start under a Git parent', async () => {
+    const { created, manager } = sessionManager(true);
+    await createDriverSession(
+      manager as never,
+      '/HyperNeo',
+      'task',
+      'swe-2-high',
+      async () => offers(),
+      'custom:synthetic',
+      'extra high',
+      true
+    );
+    expect(created).toEqual([
+      {
+        workspacePath: '/HyperNeo',
+        title: 'task',
+        worktreeMode: 'direct',
+        config: { model: 'swe-2-high', provider: 'custom:synthetic', thinkingLevel: 'think32k' },
+      },
+    ]);
+  });
+
   test('starts on a unique case-insensitive display name and its provider', async () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(manager as never, '/notes', 'task', 'sWe-2 HIGH', async () =>

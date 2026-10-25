@@ -1038,7 +1038,7 @@ export function selectCodexStartFolder(
 ): Gate<string> {
   const admitted = workStartPreparation.admit(request.preparation, !!deps.prepareExecution);
   if ('reason' in admitted) return admitted;
-  return selectLocalStartFolder(request, deps, 'A Codex thread needs a folder to work in.');
+  return selectLocalStartFolder(request, deps, 'A Codex thread needs a folder to work in.', true);
 }
 
 export function startedThreadId(started: unknown): string | null {
@@ -1065,9 +1065,12 @@ async function runGit(args: string[], repo: string, deps: CodexDesktopAdapterDep
 
 export async function prepareCodexWorkFolder(
   folder: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  inPlace = false
 ): Promise<Result<CodexWorkFolder>> {
-  const placement = planWorkPlacement(await deps.gitCheckout(folder).catch(() => null));
+  const placement = planWorkPlacement(
+    inPlace ? null : await deps.gitCheckout(folder).catch(() => null)
+  );
   if (placement.kind === 'in_place') {
     return { ok: true, value: { cwd: folder, release: async () => {} } };
   }
@@ -1122,6 +1125,8 @@ export async function startCodexThread(
         server
       );
       if (!configuration.ok) return configuration;
+      const folderReady = request.prepareFolder?.();
+      if (folderReady && 'reason' in folderReady) return folderReady.reason;
       if (request.preparation) {
         const prepared = await deps.prepareExecution!(request.preparation, {
           directory: folder,
@@ -1130,11 +1135,13 @@ export async function startCodexThread(
         if (!prepared.ok) return prepared;
         workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
       } else {
-        const prepared = await prepareCodexWorkFolder(folder, deps);
+        const prepared = await prepareCodexWorkFolder(folder, deps, request.inPlace);
         if (!prepared.ok) return prepared;
         workFolder = prepared.value;
       }
-      const projectFolder = (await deps.gitCheckout(folder))?.repo ?? folder;
+      const projectFolder = request.inPlace
+        ? folder
+        : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
       const started = await server.call('thread/start', {
         projectId,

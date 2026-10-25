@@ -43,6 +43,7 @@ import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
 import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
 import mdneoPacksCodingWorkerRules from './neo/packs/coding/worker-rules.md' with { type: 'text' };
+import mdneoWorkFiles from './neo/work/files.md' with { type: 'text' };
 import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
 import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
 import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
@@ -282,6 +283,7 @@ const registry: Record<string, string> = {
   'neo/packs/coding/goal-pr-subscribe.md': mdneoPacksCodingGoalPrSubscribe,
   'neo/packs/life-admin/instructions.md': mdneoPacksLifeAdminInstructions,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
+  'neo/work/files.md': mdneoWorkFiles,
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/blocker.md': mdneoWorkBlocker,
   'agents/default-instructions.md': mdagentsDefaultInstructions,
@@ -418,6 +420,7 @@ export const {
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_GOAL,
   NEO_WORK_BLOCKER,
+  NEO_NON_CODING_FILES,
   AGENT_DEFAULT_INSTRUCTIONS,
   EVOLUTION_EPISODE_JUDGE_PROMPT,
   CODEX_PROBE_INSTRUCTIONS,

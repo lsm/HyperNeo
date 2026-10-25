@@ -98,9 +98,10 @@ export function ensureStartFolder(
 }
 
 export function selectLocalStartFolder(
-  request: Pick<StartRequest, 'place' | 'createFolder'>,
+  request: Pick<StartRequest, 'place' | 'createFolder' | 'prepareFolder'>,
   deps: StartFolderDeps & { machine: string },
-  noFolder: string
+  noFolder: string,
+  deferPreparation = false
 ): { value: string } | { reason: Rejected } {
   const { place } = request;
   if (place.spaceId) {
@@ -110,5 +111,7 @@ export function selectLocalStartFolder(
     return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
   }
   if (!place.folder) return { reason: reject('invalid_place', noFolder) };
+  if (request.prepareFolder)
+    return deferPreparation ? { value: place.folder } : request.prepareFolder();
   return ensureStartFolder(place.folder, request.createFolder, deps);
 }

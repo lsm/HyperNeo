@@ -248,6 +248,8 @@ export interface FindQuery {
 }
 
 export interface StartRequest {
+  prepareFolder?: () => { value: string } | { reason: Rejected };
+  inPlace?: boolean;
   place: Place;
   title: string;
   message: string;

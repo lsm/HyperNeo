@@ -1561,7 +1561,7 @@ export async function startClaudeSession(
     }
   }
   const placement = planWorkPlacement(
-    prepared ? null : await deps.gitCheckout(folder).catch(() => null)
+    prepared || request.inPlace ? null : await deps.gitCheckout(folder).catch(() => null)
   );
   const worktree = placement.kind === 'worktree' ? `neo-${cliSessionId.slice(0, 8)}` : null;
   const permissionMode = deps.permissionMode?.() ?? 'auto';

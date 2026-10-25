@@ -70,9 +70,12 @@ Options:
   --host <host>             Host to bind to (default: 127.0.0.1)
   --db-path <path>          Database file path (default: <data-dir>/data/daemon.db)
   --data-dir <dir>          Data directory for daemon state (default: ~/.hyperneo)
-  --workspace <path>        Default workspace root for file indexing
+  --workspace <path>        Neo user folder override; also file indexing root
   -V, --version             Show version number
   -h, --help                Show this help message
+
+Neo user files default to ~/HyperNeo. HYPERNEO_WORKSPACE_PATH sets the same override.
+The folder is the selected path, with no suffix, created on first need.
 
 Examples:
   hyperneod                            Start daemon (state under ~/.hyperneo)
