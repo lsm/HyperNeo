@@ -1,4 +1,6 @@
 import type { AppMcpServer, AppSkill, SessionMcpServerEntry } from '@hyperneo/shared';
+import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export function computeSkillGroupState(items: { enabled: boolean }[]): {
   allEnabled: boolean;
@@ -18,6 +20,8 @@ export type McpSkillRuntimeStatus =
   | 'skill-disabled'
   | 'server-off'
   | 'server-missing'
+  | 'pending'
+  | 'instructions-loaded'
   | 'unknown';
 
 export interface McpSkillRuntimeState {
@@ -27,22 +31,76 @@ export interface McpSkillRuntimeState {
   label: string;
 }
 
+function projectObservedRuntime(
+  inventory: SessionToolInventory | null,
+  name: string
+): McpSkillRuntimeState {
+  const server = inventory?.mcpServers.find((entry) => entry.name === name);
+  if (server?.status === 'connected') {
+    return {
+      status: server.tools?.length === 0 ? 'pending' : 'active',
+      label:
+        server.tools === null
+          ? 'Attached · tool count unverified'
+          : server.tools.length
+            ? `Attached · ${server.tools.length} ${server.tools.length === 1 ? 'tool' : 'tools'}`
+            : 'Connected · 0 tools',
+    };
+  }
+  const reason = server
+    ? {
+        failed: 'connection failed',
+        'needs-auth': 'sign-in or consent required',
+        pending: 'connecting',
+        disabled: 'server disabled in the running session',
+        unverified: 'server status could not be verified',
+        connected: '',
+      }[server.status]
+    : inventory
+      ? {
+          not_running: 'session not running',
+          awaiting_init: 'session is starting',
+          unverified: 'provider cannot confirm tools',
+          observed: 'not observed; restart may be needed',
+        }[inventory.state]
+      : 'running inventory unavailable';
+  return { status: 'pending', label: `Configured but not attached yet — ${reason}` };
+}
+
+export const computeObservedRuntimeState = (superpipe({})('observed-tool-row') as PipelineAPI)
+  .input(['inventory', 'name'])
+  .pipe(projectObservedRuntime, ['inventory', 'name'], 'state')
+  .end('state') as (inventory: SessionToolInventory | null, name: string) => McpSkillRuntimeState;
+
 export function computeMcpSkillRuntimeState(
   skill: AppSkill,
   sessionMcpList: SessionMcpServerEntry[],
-  sessionMcpLoaded: boolean
+  sessionMcpLoaded: boolean,
+  inventory: SessionToolInventory | null = null,
+  disabledSkills: ReadonlySet<string> = new Set()
 ): McpSkillRuntimeState {
+  const observed = computeObservedRuntimeState(inventory, skill.name);
+  if (inventory?.mcpServers.some((server) => server.name === skill.name)) return observed;
   if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') {
-    return { status: 'unknown', label: '' };
+    const name = skill.config.type === 'builtin' ? skill.config.commandName : skill.name;
+    if (inventory?.skills.includes(name) || inventory?.plugins.includes(name)) {
+      return {
+        status: 'instructions-loaded',
+        label: 'Instructions loaded · prerequisites unverified',
+      };
+    }
+    return !skill.enabled || disabledSkills.has(skill.id)
+      ? { status: 'skill-disabled', label: 'Off · skill disabled' }
+      : observed;
   }
 
   const appMcpServerId = skill.config.appMcpServerId;
 
   if (!sessionMcpLoaded) {
-    return { status: 'unknown', appMcpServerId, label: '' };
+    return { ...observed, appMcpServerId };
   }
 
-  if (!skill.enabled) {
+  if (!skill.enabled || disabledSkills.has(skill.id)) {
     const entry = sessionMcpList.find((e) => e.server.id === appMcpServerId);
     if (!entry) {
       return {
@@ -54,7 +112,7 @@ export function computeMcpSkillRuntimeState(
     return {
       status: 'skill-disabled',
       appMcpServerId,
-      label: 'Skill off — not injected',
+      label: 'Off · skill disabled — not injected',
     };
   }
 
@@ -79,9 +137,8 @@ export function computeMcpSkillRuntimeState(
   }
 
   return {
-    status: 'active',
+    ...observed,
     appMcpServerId,
-    label: 'Active in this session',
   };
 }
 
@@ -92,6 +149,7 @@ export interface McpSkillRuntimeClasses {
 
 export function getMcpSkillRuntimeClasses(status: McpSkillRuntimeStatus): McpSkillRuntimeClasses {
   switch (status) {
+    case 'instructions-loaded':
     case 'active':
       return { dot: 'bg-emerald-400', text: 'text-emerald-500/70' };
     case 'server-off':
@@ -99,6 +157,7 @@ export function getMcpSkillRuntimeClasses(status: McpSkillRuntimeStatus): McpSki
     case 'server-missing':
       return { dot: 'bg-red-400', text: 'text-danger' };
     case 'skill-disabled':
+    case 'pending':
     case 'unknown':
       return { dot: 'bg-fg-faint', text: 'text-fg-faint' };
   }
