@@ -46,3 +46,13 @@ these two additional urgent reports bring the final SDK result count to three.
 The note-delivery unit tests cover both quiet kinds, plus ten concurrent quiet
 retries yielding only one stored row and zero jobs. Against the prior reviewed
 head, the same helper fails the overlap assertion and retains overlaps.json.
+
+
+## Quiet history uses the DB writer
+
+Before delivering worker turn ends, the helper makes only the isolated daemon's
+main connection read-only. Ten concurrent retries of each quiet kind must still
+persist exactly one history row through the DB writer and produce zero Neo
+turns. The main connection is restored in finally. Retain readonly-quiet.json;
+the prior head fails with a read-only database error. Also run the
+sdk-message-gateway-routing unit suite, including its typed writer inventory.

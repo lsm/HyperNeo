@@ -60,6 +60,20 @@ try {
   let turnEnds: Awaited<ReturnType<typeof readCodexTurn>>['turnEnds'] = [];
   const registry = createOperationRegistry([defineOperation({ name: 'work.status', description: 'Synthetic status source', inputSchema: z.unknown(), resultSchema: z.unknown(), policy: { safetyClass: 'read' }, execute: async () => ({ ok: true, value: { status: 'running', lastActivityAt: Date.now(), turnEnds } }) })]);
   service = createNeoService(app.db, { getOperationRegistry: () => registry } as unknown as SessionManager, app.messageHub, app.internalEventBus);
+  const readOnlyQuiet = [];
+  app.db.getDatabase().exec('PRAGMA query_only=ON');
+  try {
+    for (const kind of ['focused_status', 'quiet_heartbeat'] as const) {
+      const id = `synthetic-readonly-${kind}`;
+      await Promise.all(Array.from({ length: 10 }, () => service!.deliverForward(root, id, 'Quiet persisted report.', root, kind)));
+      const count = (app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND sdk_uuid=?').get(root, id) as { n: number }).n;
+      assert.equal(count, 1);
+      readOnlyQuiet.push({ kind, historyRows: count, neoTurns: modelTurns });
+    }
+  } finally {
+    app.db.getDatabase().exec('PRAGMA query_only=OFF');
+    writeFileSync(join(run, 'evidence/readonly-quiet.json'), JSON.stringify(readOnlyQuiet, null, 2));
+  }
   const ref = { adapter: 'codex-desktop', id: 'synthetic-worker' };
   const now = Date.now();
   const ask = service.todos.openAsk({ id: 'synthetic-ask', projectId: null, sessionId: root, originMessageId: 'synthetic-origin', title: 'Discussion', request: 'Discuss', createdAt: now });
@@ -126,7 +140,7 @@ try {
   assert.equal(results().n, 3);
   assert.equal(modelTurns, 3);
   for (const phase of ['pending', 'queued']) assert.equal(historyCount(`synthetic-urgent-${phase}`), 1);
-  Object.assign(observed, { urgentOverlaps: overlaps, urgentTurns: modelTurns - 1, urgentHistoryRows: 2 });
+  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 1, urgentHistoryRows: 2 });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
 } finally {
