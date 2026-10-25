@@ -29,7 +29,9 @@ sqlite3 -readonly "$RUN/data/daemon.db" "SELECT name FROM sqlite_master
     'idx_neo_todos_state_ask', 'idx_neo_todo_sessions_ref') ORDER BY name"
 ```
 
-All three indexes must survive restart. Launch the upgraded daemon again and
+All three indexes must survive restart, and the newest numbered migration marker
+must advance to `migration_456` on upgrade and remain there on restart.
+Launch the upgraded daemon again and
 run `doctor.sh` plus `rpc.ts neo.snapshot '{}'` against its isolated port; save
 the replies. Expect the two seeded cards with three and one blocked todos,
 respectively, in their original order. End state: the daemon serves the populated
