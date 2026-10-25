@@ -16,17 +16,31 @@ handoff.read. Every worker note must survive in order; no human words may enter
 that file. Public neo.conversation.read must place the labelled batch before
 the unchanged human ask.
 
-Use --hold-ui to keep the owned web listener alive for at most two minutes. Open
-the printed /neo URL, observe the small and large batch disclosures before their
-human asks, expand one and confirm worker text, then reload and confirm they
-remain. Keep screenshots and the observed page text with evidence/observed.json,
-the public conversation pages, worker-handoff.json and model requests. Create
-the run's finish-ui file to close the owned listeners promptly.
+Use --hold-ui to keep the owned web listener alive for at most two minutes.
+For headless-only verification, run neo-human-batch-headless.mjs with the run
+directory. VERIFY_PLAYWRIGHT_MODULE may select an installed Playwright module
+and VERIFY_CHROMIUM a compatible Chromium executable. The script uses a fresh
+headless context, restricts requests to the isolated UI origin, expands the
+worker disclosures, checks order and reload, and closes its resources. It writes
+the run's finish-ui file to close the owned listeners promptly. Never launch a
+GUI browser on a locked Mac.
+
+If headless launch is denied or unavailable, do not retry through another route.
+Label browser verification unverified. Run the real rendered component against
+the saved daemon pages instead: from packages/web, set VERIFY_NEO_BATCH_RUN to
+the run directory and execute bunx vitest run src/neo/__tests__/NeoWorkerBatch.test.tsx.
+Keep render.log and rendered-*.html. This fallback proves labels, order,
+disclosure interaction and remount from actual daemon data, not browser layout
+or browser reload. Retain headless-unverified.json and headless.log as well.
+
+Keep evidence/observed.json, the public conversation pages, worker-handoff.json,
+model requests and any successful headless screenshots/page text.
 
 Before the fix, the human's effective content includes the worker batch, the
 oversized model input hides the human words in the same handoff file, and the
 public transcript/UI has no batch entry. Commit that failing reproduction first.
 The fixed unit contracts also preserve the original human SDK envelope and
-exercise delivery order, retry identity and independent bounding. This proves
-synthetic daemon/SDK and browser behavior, not a live rollout, real-provider
-reasoning or OS sandbox enforcement.
+exercise delivery order, retry identity and independent bounding. Daemon and
+rendered-component evidence proves synthetic transport and presentation; claim
+browser behavior only when the headless check passes. This does not prove a live
+rollout, real-provider reasoning or OS sandbox enforcement.

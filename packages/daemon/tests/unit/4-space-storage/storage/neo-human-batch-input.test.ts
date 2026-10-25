@@ -7,7 +7,11 @@ import { neoIntakeMessage } from '../../../../src/lib/neo/intake';
 import { createMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { boundDeliveryContent } from '../../../../src/lib/handoffs/bound-delivery';
 import { NeoWakeQueueRepository } from '../../../../src/storage/repositories/neo-wake-queue-repository';
-import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository';
+import {
+  NeoConversationAskRepository,
+  prepareNeoIntakeAsk,
+  persistNeoIntakeTransaction,
+} from '../../../../src/storage/repositories/neo-conversation-ask-repository';
 import { NeoSessionMessageRepository } from '../../../../src/storage/repositories/neo-session-message-repository';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
 
@@ -63,7 +67,9 @@ describe('worker batches before human intake', () => {
     hold('Worker note B');
     const human = '  Keep my words inline, exactly.\n第二行。  ';
     const { prompt, ledger } = accept(human);
-    expect(db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId })).toHaveLength(2);
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId })
+    ).toHaveLength(2);
     expect(db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, requestId)).toEqual([prompt]);
     const queue = db.getJobQueueRepo();
     const [batchJob] = queue.dequeueSessionFifo('message_delivery', 1);
@@ -76,7 +82,10 @@ describe('worker batches before human intake', () => {
     expect(JSON.stringify(batch.content)).toContain('Worker note A');
     expect(JSON.stringify(batch.content)).toContain('Worker note B');
     expect(JSON.stringify(batch.content)).not.toContain(human);
-    db.getSDKMessageRepo().markDeliveryConsumedByUuid(sessionId, String(batchJob.payload.messageUuid));
+    db.getSDKMessageRepo().markDeliveryConsumedByUuid(
+      sessionId,
+      String(batchJob.payload.messageUuid)
+    );
     queue.complete(batchJob.id, {}, batchJob.claimToken);
     const humanJob = queue.dequeueSessionFifo('message_delivery', 1)[0];
     expect(humanJob.payload.messageUuid).toBe(requestId);
@@ -116,5 +125,41 @@ describe('worker batches before human intake', () => {
     );
     expect(inline.content).toEqual(prompt.message.content);
     expect(JSON.stringify(inline.content)).not.toContain('handoffFiles');
+  });
+
+  test('a rolled-back intake leaves worker notes available for the next accepted human input', () => {
+    hold('Worker note survives rollback');
+    const message = neoIntakeMessage({ sessionId, requestId, content: 'Human after rollback' });
+    const ask = prepareNeoIntakeAsk(conversationId, message);
+    if (!('value' in ask)) throw new Error('invalid fixture');
+    const ledger = new NeoConversationAskRepository(db.getDatabase());
+    expect(() =>
+      db.getDatabase().transaction(() => {
+        persistNeoIntakeTransaction(
+          ask.value,
+          message,
+          'immediate',
+          db.getDatabase(),
+          ledger,
+          db.getSDKMessageRepo(),
+          db.getJobQueueRepo(),
+          () => {}
+        );
+        throw new Error('rollback');
+      })()
+    ).toThrow('rollback');
+    expect(ledger.list(conversationId)).toEqual([]);
+    expect(new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10)).toEqual(
+      []
+    );
+    expect(db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, requestId)).toEqual([]);
+    accept('Human after rollback');
+    const [job] = db.getJobQueueRepo().dequeueSessionFifo('message_delivery', 1);
+    expect(
+      JSON.stringify(
+        db.getSDKMessageRepo().getDeliveryContent(sessionId, String(job.payload.messageUuid))
+          ?.content
+      )
+    ).toContain('Worker note survives rollback');
   });
 });

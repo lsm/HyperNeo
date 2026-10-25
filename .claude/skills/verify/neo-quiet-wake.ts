@@ -124,9 +124,9 @@ try {
   assert(receipt.ok);
   const deadline = Date.now() + 45000;
   const results = () => app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result'").get(root) as { n: number };
-  while (!results().n && Date.now() < deadline) await Bun.sleep(100);
-  assert.equal(results().n, 1);
-  assert.equal(modelTurns, 1);
+  while (results().n < 2 && Date.now() < deadline) await Bun.sleep(100);
+  assert.equal(results().n, 2);
+  assert.equal(modelTurns, 2);
   const observed = { daemonPort: app.server.port, heartbeat: { recorded: heartbeatId, neoTurns: 0 }, focusedStatus: { recorded: focusedId, neoTurns: 0 }, human: { requestId, neoTurns: modelTurns, results: results().n, totalRequestsIncludingTitle: modelRequests }, sandboxEnforcementVerified: false };
   await app.jobProcessor.stop();
   const historyCount = (id: string) => (app.db.getDatabase().prepare(
@@ -147,11 +147,11 @@ try {
   }
   app.jobProcessor.start();
   const overlapDeadline = Date.now() + 45000;
-  while (results().n < 3 && Date.now() < overlapDeadline) await Bun.sleep(100);
-  assert.equal(results().n, 3);
-  assert.equal(modelTurns, 3);
+  while (results().n < 4 && Date.now() < overlapDeadline) await Bun.sleep(100);
+  assert.equal(results().n, 4);
+  assert.equal(modelTurns, 4);
   for (const phase of ['pending', 'queued']) assert.equal(historyCount(`synthetic-urgent-${phase}`), 1);
-  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 1, urgentHistoryRows: 2 });
+  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 2, urgentHistoryRows: 2 });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
 } finally {

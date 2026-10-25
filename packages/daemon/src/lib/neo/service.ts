@@ -1,4 +1,5 @@
 import type { UUID } from 'node:crypto';
+import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
@@ -413,6 +414,12 @@ export class NeoService {
   }
 
   async messageNames<T extends { fromSession: string; toSession: string }>(message: T) {
+    if (message.fromSession === WORKER_BATCH_SENDER)
+      return {
+        ...message,
+        fromName: 'System-forwarded worker messages',
+        toName: (await this.readSessionWorker(message.toSession)).label,
+      };
     const [from, to] = await Promise.all([
       this.readSessionWorker(message.fromSession),
       this.readSessionWorker(message.toSession),

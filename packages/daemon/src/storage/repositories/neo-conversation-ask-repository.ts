@@ -1,6 +1,7 @@
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { NeoWakeQueueRepository } from './neo-wake-queue-repository.ts';
+import { ChangeRecorder } from '../db-gateway/db-op.ts';
 import { sdkNeoIntake } from './sdk-message-transactions.ts';
 import type {
   NeoConversationAsk,
@@ -133,7 +134,8 @@ export function persistNeoIntakeTransaction(
   ledger: NeoConversationAskRepository,
   sdkMessageRepo: SDKMessageRepository,
   jobQueue: JobQueueRepository,
-  deferPostSaveSideEffects: (effect: () => void) => void
+  deferPostSaveSideEffects: (effect: () => void) => void,
+  changes = new ChangeRecorder()
 ): NeoConversationAskAppendResult {
   return db.transaction(() => {
     const stored = ledger.append(ask);
@@ -144,24 +146,21 @@ export function persistNeoIntakeTransaction(
         .length === 0
     )
       return { ...stored, created: false };
-    const batch = stored.created
-      ? new NeoWakeQueueRepository(db).attach(
-          ask.askOrigin.sessionId,
-          message.message.content,
-          undefined,
-          ask.requestId
-        )
-      : message.message.content;
-    const batched = {
-      ...message,
-      ...(batch !== message.message.content ? { neoBatchContent: batch } : {}),
-    };
+    if (stored.created)
+      new NeoWakeQueueRepository(db).release(ask.askOrigin.sessionId, {
+        at: Date.parse(stored.ask.createdAt) - 1,
+        sdkMessageRepo,
+        jobQueue,
+        hold,
+        deferPostSaveSideEffects,
+        changes,
+      });
     const prompt = ensurePromptInTransaction({
       db,
       sdkMessageRepo,
       jobQueue,
       sessionId: ask.askOrigin.sessionId,
-      message: batched,
+      message,
       hold,
       delivery: { origin: 'chat', priority: NEO_HUMAN_DELIVERY_PRIORITY },
       deferPostSaveSideEffects,
@@ -181,7 +180,7 @@ function commitNeoIntake(
 ): NeoConversationAskAppendResult {
   const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
   if (active) throw new Error('Public ask intake must own its commit boundary');
-  let publish = () => {};
+  const effects: (() => void)[] = [];
   const receipt = persistNeoIntakeTransaction(
     ask,
     message,
@@ -191,12 +190,14 @@ function commitNeoIntake(
     sdkMessageRepo,
     jobQueue,
     (effect) => {
-      publish = effect;
+      effects.push(effect);
     }
   );
-  try {
-    publish();
-  } catch {}
+  for (const publish of effects) {
+    try {
+      publish();
+    } catch {}
+  }
   return receipt;
 }
 
