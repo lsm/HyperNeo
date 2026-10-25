@@ -58,6 +58,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   continue: 'rejected',
   type: 'rejected',
   context: 'rejected',
+  toolSelection: 'rejected',
 };
 
 function fieldsWithPolicy(policy: CreateSessionConfigFieldPolicy): (keyof SessionConfig)[] {
