@@ -406,7 +406,7 @@ export interface RPCHandlerSetupResult {
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
   let taskAgentManager: TaskAgentManager;
-  const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
+  const persistToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
     createSessionToolPreferenceWriter(deps.db, async () => {
       const stored = deps.db.getSession(id);
       if (!stored) return;
@@ -432,6 +432,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           deps.sessionManager.getCachedSession(id)
         )?.refreshToolsContextUsage();
     })(id, request, tools);
+  const preferenceWrites = new Map<string, Promise<unknown>>();
+  const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) => {
+    const previous = preferenceWrites.get(id) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(() => persistToolPreferences(id, request, tools));
+    preferenceWrites.set(id, next);
+    void next
+      .finally(() => {
+        if (preferenceWrites.get(id) === next) preferenceWrites.delete(id);
+      })
+      .catch(() => {});
+    return next;
+  };
   const pendingInactivityRunNow = new Set<Promise<void>>();
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;

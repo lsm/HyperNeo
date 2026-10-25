@@ -29,6 +29,14 @@ cold session.get returns the old canonical choice. With the fix:
   MCP server with a surviving wrapper must behave the same way. Missing choices
   stay unbound, frozen aliases survive, and neither cache retains the stale list.
   Record deletedDefinitionSaves=true. New unknown disabled IDs still refuse.
+- Hold the first real CAS before worker submission, issue a second override for
+  that session concurrently, and complete an independent-session override before
+  releasing it. Both sibling set requests must fulfill, then both sibling clear
+  requests must fulfill. Read both canonical choices, legacy rows and cached
+  configs back. This reproduces ToolsModal's parallel save without sleeps. Record
+  concurrentSessionOverrides=true and independentSessionNotBlocked=true. The
+  existing SQL-failure step followed by a successful save also proves a rejected
+  write does not poison the per-session queue.
 - Restart only the owned daemon and read the same preferences through session.get.
   Inventory remains not_running; the synthetic MCP server lists navigate.
 
