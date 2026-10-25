@@ -45,6 +45,13 @@ and produce two separate Neo turns; repeating an image reuses its receipt.
 Together with the initial card, this run has three turns. The initial handled
 card report must also retain its original conversation record before returning.
 
+The `recover` and `expired` modes mark the first undelivered job dead or run the
+actual mailbox expiry sweep at a synthetic 25-hour boundary before processing it.
+A repeat must create a replacement admission, keep the same card/hold, and
+deliver exactly one Neo turn. The fixture then cleans completed jobs and restarts:
+the consumed SDK input must still prevent redelivery. Operation contracts also
+cover repeated failures, dead-job cleanup before recovery, and cardless triage.
+
 Keep evidence/observed.json, the model request files, cleanup.json and the proof
 log. This proves RPC, durable queue, SDK wake and synthetic runner behavior.
 GUI rendering, real-worker language compliance, answer delivery and hold release

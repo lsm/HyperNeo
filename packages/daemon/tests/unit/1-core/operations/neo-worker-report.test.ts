@@ -148,6 +148,28 @@ test('handled card reports still notify the sent observer with the original repo
   }
 });
 
+test('a dead ambiguous triage wake can be replaced without creating a card', async () => {
+  const { db, service, send } = await setup();
+  try {
+    const { question: _question, ...legacy } = input;
+    const first = await send(legacy);
+    const jobs = db.getJobQueueRepo();
+    jobs.markDead(
+      jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })[0].id,
+      'synthetic triage failure'
+    );
+    const recovered = await send(legacy);
+    expect(recovered).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(recovered).not.toEqual(first);
+    expect(service.todos.listQuestions('ask')).toHaveLength(0);
+    expect(jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })).toHaveLength(1);
+    expect(await send(legacy)).toEqual(recovered);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('distinct image-only envelope reports retain their media and receive different incident receipts', async () => {
   const { db, service, send } = await setup();
   try {

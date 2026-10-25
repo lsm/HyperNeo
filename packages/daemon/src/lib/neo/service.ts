@@ -448,7 +448,19 @@ export class NeoService {
         let receipt: z.infer<typeof SendMessageResultSchema> | null = null;
         const wake = (incident: string, note: string) => {
           if (files.length) note += `\n${JSON.stringify({ handoffFiles: files })}`;
-          const key = `worker-question:${incident}`;
+          type Prior = { mailboxId: string; messageId: string };
+          let key = `worker-question:${incident}`;
+          for (;;) {
+            const prior = jobs.submissionReceipt<Prior>(key, key);
+            if (!prior) break;
+            const status = this.db
+              .getSDKMessageRepo()
+              .getUserSendStatus(input.sessionId, prior.messageId);
+            const job = jobs.getLatestByPayload('mailbox', { id: prior.mailboxId });
+            const live = job && ['pending', 'processing', 'completed'].includes(job.status);
+            if (status === 'consumed' || (status !== 'failed' && live)) break;
+            key = `worker-question:${incident}:${prior.mailboxId}`;
+          }
           const submit = () =>
             jobs.commitSubmissionReceipt(key, key, () => {
               const messageId = neoDerivedId(key);
