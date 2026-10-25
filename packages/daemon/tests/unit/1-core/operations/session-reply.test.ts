@@ -24,6 +24,8 @@ describe('SendMessage to a HyperNeo session', () => {
       (await call('neo:root')) as { hookSpecificOutput: { permissionDecisionReason: string } }
     ).hookSpecificOutput.permissionDecisionReason;
     expect(reason).toContain('neo:root is a HyperNeo session; SendMessage cannot reach it.');
+    expect(reason).toContain('"kind":"<kind>"');
+    expect(reason).toContain('Choose kind done, blocked, question or failed');
     expect(reason).toContain(
       'mcp__hyperneo-operations__invoke {"name":"message.send","input":{"sessionId":"neo:root"'
     );

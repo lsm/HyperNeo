@@ -20,6 +20,9 @@ describe('hyperneo send, question and build', () => {
       planSessionCommand(['send', 'neo:root', '--kind', 'progress', 'Done.'], 'worker')
     ).toHaveProperty('reason');
   });
+  test('a misplaced --kind flag fails instead of silently becoming report text', () => {
+    expect(planSessionCommand(['send', 'neo:root', 'PR merged', '--kind', 'done'], 'worker')).toHaveProperty('reason');
+  });
   test('lost-phone reset uses only its explicit local command', () => {
     expect(planSessionCommand(['devices', 'reset-human'], 'cli')).toEqual({
       value: { name: 'device.reset_human', input: {} },
