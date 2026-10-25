@@ -329,12 +329,88 @@ describe('newestAvailableModel', () => {
 });
 
 describe('createDriverSession model', () => {
+  const offers = () => [
+    { ...model('swe-2-high', '2026-09-01'), name: 'SWE-2 High', provider: 'custom:synthetic' },
+    { ...model('other-high', '2026-09-01'), name: 'Other High', provider: 'custom:other' },
+  ];
+
+  test('preserves provider and effort for a shared-folder start under a Git parent', async () => {
+    const { created, manager } = sessionManager(true);
+    await createDriverSession(
+      manager as never,
+      '/HyperNeo',
+      'task',
+      'swe-2-high',
+      async () => offers(),
+      'custom:synthetic',
+      'extra high',
+      true
+    );
+    expect(created).toEqual([
+      {
+        workspacePath: '/HyperNeo',
+        title: 'task',
+        worktreeMode: 'direct',
+        config: { model: 'swe-2-high', provider: 'custom:synthetic', thinkingLevel: 'think32k' },
+      },
+    ]);
+  });
+
+  test('starts on a unique case-insensitive display name and its provider', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'sWe-2 HIGH', async () =>
+      offers()
+    );
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
+  });
+
+  test('refuses an ambiguous display name and lists both matching ids before creation', async () => {
+    const { created, manager } = sessionManager(false);
+    await expect(
+      createDriverSession(manager as never, '/notes', 'task', 'SWE-2 High', async () =>
+        offers().map((entry) => ({ ...entry, name: 'SWE-2 High' }))
+      )
+    ).rejects.toThrow(/swe-2-high.*other-high/);
+    expect(created).toEqual([]);
+  });
+
+  test('an exact id wins over another model display name', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', async () =>
+      offers().map((entry) => ({ ...entry, name: 'swe-2-high' }))
+    );
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
+  });
+
   test('opens the session on the model asked for', async () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(manager as never, '/notes', 'essay', 'glm-5.3', async () => [
       { ...model('glm-5.3[1m]', '2026-08-14'), alias: 'glm-5.3' },
     ]);
-    expect(created[0].config).toEqual({ model: 'glm-5.3' });
+    expect(created[0].config).toEqual({ model: 'glm-5.3[1m]', provider: 'glm' });
+  });
+
+  test('applies effort to session configuration while retaining its default model', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(
+      manager as never,
+      '/notes',
+      'task',
+      undefined,
+      async () => offers(),
+      undefined,
+      'high'
+    );
+    expect(created[0].config).toEqual({ thinkingLevel: 'think24k' });
+  });
+
+  test('preserves the selected provider when another provider offers the same id', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'Other Model', async () => [
+      offers()[0],
+      { ...offers()[0], provider: 'custom:other', name: 'Other Model' },
+    ]);
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:other' });
   });
 
   test('falls back to the newest available model when the default cannot run', async () => {
@@ -362,8 +438,26 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'essay', 'kimi-k3', models);
     await createDriverSession(manager as never, '/notes', 'essay', 'claude-sonnet-4-6', models);
     expect(created.map((params): unknown => params.config)).toEqual([
-      { model: 'kimi-k3' },
-      { model: 'claude-sonnet-4-6' },
+      { model: 'kimi-k3-0901', provider: 'kimi' },
+      { model: 'sonnet', provider: 'sonnet' },
+    ]);
+  });
+
+  test('exact shared ids retain catalog precedence while a unique name selects its provider', async () => {
+    const { created, manager } = sessionManager(false);
+    const models = async () => [
+      offers()[0],
+      {
+        ...offers()[0],
+        provider: 'custom:other',
+        name: 'Other SWE offer',
+      },
+    ];
+    await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', models);
+    await createDriverSession(manager as never, '/notes', 'task', 'Other SWE offer', models);
+    expect(created.map((entry) => entry.config)).toEqual([
+      { model: 'swe-2-high', provider: 'custom:synthetic' },
+      { model: 'swe-2-high', provider: 'custom:other' },
     ]);
   });
 

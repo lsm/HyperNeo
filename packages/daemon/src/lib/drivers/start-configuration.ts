@@ -110,6 +110,7 @@ const confirm = (superpipe({})('work-start-configuration-receipt') as PipelineAP
   .end('configuration') as (requested: Request, observed: Request) => Receipt;
 
 export const workStartConfiguration = {
+  normalize: normalized,
   schema: Schema,
   refusalSchema: RefusalSchema,
   select,
