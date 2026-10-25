@@ -13,6 +13,7 @@ export type NeoDraftReloadEntry = Draft & { id: string };
 type Refusal = { kind: 'refused' };
 const PREFIX = 'hyperneo_neo_draft_reload_v1.';
 const MAX_ENTRIES = 20;
+const MAX_SERIALIZED_CHARS = DRAFT_CHAR_LIMIT * 2 + 1024;
 
 export function admitNeoReloadEdit(
   sessionId: string,
@@ -56,7 +57,7 @@ export const planNeoReloadCapture = (superpipe({})('neo-reload-edit-capture') as
 ) => NeoDraftReloadEntry | Refusal;
 
 function parseEntry(raw: string | null, sessionId: string): NeoDraftReloadEntry | null {
-  if (!raw || raw.length > DRAFT_CHAR_LIMIT * 2 + 1024) return null;
+  if (!raw || raw.length > MAX_SERIALIZED_CHARS) return null;
   try {
     const entry: unknown = JSON.parse(raw);
     if (
@@ -117,6 +118,8 @@ export function createNeoDraftReloadBuffer(
         previewContext
       );
       if ('kind' in planned) return false;
+      const serialized = JSON.stringify(planned);
+      if (serialized.length > MAX_SERIALIZED_CHARS) return false;
       if (raw === null) {
         let count = 0;
         for (let i = 0; i < storage.length; i++) {
@@ -124,7 +127,7 @@ export function createNeoDraftReloadBuffer(
         }
         if (count >= MAX_ENTRIES) return false;
       }
-      storage.setItem(target, JSON.stringify(planned));
+      storage.setItem(target, serialized);
       return true;
     } catch {
       return false;

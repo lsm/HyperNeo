@@ -110,6 +110,61 @@ describe('createNeoDraftReloadBuffer', () => {
     expect(buffer.remember(root, 'replacement', '')).toBe(false);
     expect(saved.getItem(key(root))).toBe(raw);
   });
+  it.each([
+    [false, 'text'],
+    [true, 'text'],
+    [false, 'name'],
+    [true, 'name'],
+  ] as const)(
+    'refuses oversized escaped capture without poisoning storage: prior=%s escapes=%s',
+    (prior, escapes) => {
+      const saved = storage();
+      const buffer = createNeoDraftReloadBuffer(() => saved);
+      const owner = 'neo:10000000-0000-4000-8000-000000000001';
+      if (prior) expect(buffer.remember(owner, 'Previous recoverable draft', '')).toBe(true);
+      const previous = buffer.read(owner);
+      const raw = saved.getItem(key(owner));
+      const previewContext = {
+        artifactId: 'a'.repeat(160),
+        snapshot: 'a'.repeat(64),
+        displayName: (escapes === 'name' ? '\0' : 'd').repeat(200),
+        state: 'available' as const,
+      };
+      const text =
+        escapes === 'text'
+          ? '\n'.repeat(512) + 't'.repeat(DRAFT_CHAR_LIMIT - 512)
+          : 't'.repeat(DRAFT_CHAR_LIMIT);
+      expect(buffer.remember(owner, text, 'b'.repeat(DRAFT_CHAR_LIMIT), previewContext)).toBe(
+        false
+      );
+      expect(saved.getItem(key(owner))).toBe(raw);
+      expect(buffer.read(owner)).toEqual(previous);
+      expect(buffer.remember(owner, 'Later recoverable draft', '', previewContext)).toBe(true);
+      const later = buffer.read(owner)!;
+      expect(later).toMatchObject({ text: 'Later recoverable draft', previewContext });
+      expect(buffer.forget(owner, later.id)).toBe(true);
+      expect(buffer.read(owner)).toBeNull();
+    }
+  );
+  it('roundtrips maximum raw text/base with bounded escaping and maximum context', () => {
+    const saved = storage();
+    const buffer = createNeoDraftReloadBuffer(() => saved);
+    const owner = 'neo:10000000-0000-4000-8000-000000000001';
+    const text = '\n'.repeat(100) + 't'.repeat(DRAFT_CHAR_LIMIT - 100);
+    const base = 'b'.repeat(DRAFT_CHAR_LIMIT);
+    const previewContext = {
+      artifactId: 'a'.repeat(160),
+      snapshot: 'a'.repeat(64),
+      displayName: '"'.repeat(200),
+      state: 'available' as const,
+    };
+    expect(buffer.remember(owner, text, base, previewContext)).toBe(true);
+    expect(createNeoDraftReloadBuffer(() => saved).read(owner)).toMatchObject({
+      text,
+      base,
+      previewContext,
+    });
+  });
   it('lets a fresh buffer instance read the exact stored edit without replaying it', () => {
     const saved = storage();
     const first = createNeoDraftReloadBuffer(() => saved);

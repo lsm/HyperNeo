@@ -80,3 +80,11 @@ requests without context retain text-only submitted detection. Malformed or
 path-bearing stored references are refused without an unbound fallback.
 Composer capture/recovery wiring remains #8721 and pending identity #8707; these
 contract checks alone do not claim completed refresh recovery.
+
+
+Reload capture checks also require `reloadSizeRefusalPreserved`: encoded text or
+reference escaping that exceeds the existing serialized read budget must be
+refused before storage writes, preserving the previous recoverable capture.
+A subsequent valid edit must remain writable/readable/removable, and maximum raw
+text/base plus bounded escaping and full context must still roundtrip. Read and
+write share the same serialized-size limit; no larger read budget is introduced.

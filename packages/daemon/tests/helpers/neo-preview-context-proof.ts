@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MessageHub, WebSocketClientTransport } from '../../../shared/src/mod.ts';
+import { DRAFT_CHAR_LIMIT, MessageHub, WebSocketClientTransport } from '../../../shared/src/mod.ts';
 import type { NeoConversationAsk } from '../../../shared/src/types/neo-conversation-ask.ts';
 import type { NeoPreviewReference } from '../../../shared/src/types/neo-preview-context.ts';
 import { createDaemonApp } from '../../src/app.ts';
@@ -180,6 +180,16 @@ try {
   assert(reload.remember(sessionId, input.content, '', reference));
   const captured = createNeoDraftReloadBuffer(() => captureStorage).read(sessionId)!;
   assert.deepEqual(captured.previewContext, reference);
+  assert.equal(
+    reload.remember(
+      sessionId,
+      '\n'.repeat(DRAFT_CHAR_LIMIT),
+      'b'.repeat(DRAFT_CHAR_LIMIT),
+      reference
+    ),
+    false
+  );
+  assert.deepEqual(reload.read(sessionId), captured);
   const recovery = { sessionId, text: captured.text, base: captured.base };
   const submitted = await rpc<{ ok: boolean; reason?: string }>('neo.draft.recover', {
     ...recovery,
@@ -330,6 +340,7 @@ try {
     voiceMessageNoDuplicate: true,
     syntheticIndexedDb: true,
     reloadContextContract: true,
+    reloadSizeRefusalPreserved: true,
     explicitUnboundRecovery: true,
     alreadySavedContextRestore: true,
     legacyRecoveryDedup: true,
