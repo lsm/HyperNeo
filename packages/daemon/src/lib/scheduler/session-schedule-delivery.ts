@@ -5,8 +5,9 @@ import {
   type SessionSchedule,
 } from '../../storage/repositories/session-schedule-repository.ts';
 import type { WorkStatus } from '../drivers/types.ts';
-import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
-import { renderAddress } from '../mailbox/address.ts';
+import { createMailboxEntry } from '../mailbox/entry.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { enqueueMailboxAdmission } from '../../storage/repositories/mailbox-admission-write.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { hyperneoWorkStatus } from '../drivers/hyperneo-adapter.ts';
@@ -69,35 +70,24 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
         if (!sent.ok) return 'target_gone';
         return sent.value.unconfirmed ? 'unconfirmed' : undefined;
       }
-      const session = db.getSession(ref.id);
-      if (!session || sessionUnavailable(session.status)) return 'target_gone';
-      const queue = db.getJobQueueRepo();
-      if (
-        db.getSDKMessageRepo().findMessageIdByUuid(ref.id, messageId) ||
-        queue.listActiveByPayload('mailbox', { 'to.sessionId': ref.id, messageUuid: messageId })
-          .length
-      )
-        return;
-      new SessionScheduleRepository(db.getDatabase()).recordWake(
-        ref.id,
-        messageId,
-        { scheduleId: schedule.id, sourceKind: schedule.sourceKind, sourceId: schedule.sourceId },
-        Date.now()
+      const sent = await gatewayFor(db.getDatabase()).call(
+        enqueueMailboxAdmission,
+        'enqueueScheduled',
+        createMailboxEntry({
+          to: { kind: 'session', sessionId: ref.id },
+          origin,
+          messageUuid: messageId,
+          message: {
+            type: 'user',
+            message: { role: 'user', content: message },
+            parent_tool_use_id: null,
+            inputKind: 'system',
+            neoWakeEvent: true,
+          },
+        }),
+        { scheduleId: schedule.id, sourceKind: schedule.sourceKind, sourceId: schedule.sourceId }
       );
-      const sent = await handoffPromptToMailbox({
-        to: renderAddress({ kind: 'session', sessionId: ref.id }),
-        origin,
-        messageUuid: messageId,
-        message: {
-          type: 'user',
-          message: { role: 'user', content: message },
-          parent_tool_use_id: null,
-          inputKind: 'system',
-          neoWakeEvent: true,
-        },
-        jobQueue: queue,
-      });
-      if (sent.kind === 'rejected') throw new Error(sent.reason);
+      if (sent === 'target_gone') return sent;
     },
   };
 }

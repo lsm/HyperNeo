@@ -81,6 +81,7 @@ import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import {
   createNeoDoneTodosOperation,
+  createNeoAskReadOperation,
   NeoAskEntrySchema,
   neoSnapshotAskEntries,
   projectNeoAskEntries,
@@ -744,6 +745,12 @@ export function createNeoOperations(service: NeoService) {
       todoControls,
       () => service.installedPacks(),
       createArtifactRefReader(() => service.db.getDatabase()),
+      (todos) => service.todoWorkers(todos)
+    ),
+    createNeoAskReadOperation(
+      service.todos,
+      () => service.installedPacks(),
+      (caller) => admitNeoCaller(service, caller, 'neo.ask.read'),
       (todos) => service.todoWorkers(todos)
     ),
     createNeoDoneTodosOperation(

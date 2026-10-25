@@ -1,3 +1,4 @@
+import { mockMailboxAdmission } from '../../../helpers/mock-mailbox-admission';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -111,7 +112,7 @@ function makeManager(opts: {
       getJobQueueRepo: () =>
         opts.outbox
           ? opts.enqueueThrows
-            ? opts.outbox.breakingEnqueue()
+            ? mockMailboxAdmission(opts.outbox.breakingEnqueue())
             : opts.outbox.jobQueue
           : {
               activeDeliveryMessageUuids: () =>

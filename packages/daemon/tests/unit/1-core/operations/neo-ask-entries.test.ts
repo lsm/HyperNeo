@@ -9,6 +9,7 @@ import type {
 } from '@hyperneo/shared/types/neo-ask';
 import {
   createNeoDoneTodosOperation,
+  createNeoAskReadOperation,
   neoAskEntryState,
   neoSnapshotAskEntries,
   neoTodoStatusLine,
@@ -375,6 +376,28 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     const settledAsks = [store.getAsk('ask')!];
     const settled = projectNeoAskEntries(settledAsks, facts(store, sessions, settledAsks), []);
     expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);
+  });
+
+  test('neo.ask.read returns an exact card and refuses missing or denied reads', async () => {
+    const { store } = seed(['failed', 'done']);
+    let allowed = true;
+    const op = createNeoAskReadOperation(
+      store,
+      () => [],
+      (caller) => (allowed ? { value: caller } : { reason: { ok: false, reason: 'denied' } }),
+      async (todos) => [...todos]
+    );
+    const read = (askId: string) => op.execute(op.inputSchema.parse({ askId }), { source: 'rpc' });
+    const result = await read('ask');
+    expect(result).toMatchObject({ ok: true, entry: { ask: { id: 'ask' }, doneCount: 1 } });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.entry.todos.map((todo) => [todo.id, todo.state])).toEqual([
+      ['t0', 'failed'],
+      ['t1', 'done'],
+    ]);
+    expect(await read('missing')).toEqual({ ok: false, reason: 'not_found: no such ask.' });
+    allowed = false;
+    expect(await read('ask')).toEqual({ ok: false, reason: 'denied' });
   });
 
   test('neo.ask.doneTodos pages the done todos in list order', async () => {

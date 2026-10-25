@@ -204,6 +204,15 @@ export class NeoAskTodoRepository {
     };
   }
 
+  askFacts(input: { askId?: string; todoId?: string; questionId?: string }) {
+    const askId =
+      input.askId ??
+      (input.todoId ? this.getTodo(input.todoId)?.askId : undefined) ??
+      (input.questionId ? this.getQuestion(input.questionId)?.askId : undefined) ??
+      '';
+    return { ...this.doneTodoFacts(askId), questions: this.listQuestionsForAsks([askId]) };
+  }
+
   doneTodoFacts(askId: string) {
     const todos = this.listTodos(askId);
     return {
@@ -902,6 +911,7 @@ export const neoTodoReads = defineRepositoryOp(
   [
     'snapshot',
     'doneTodoFacts',
+    'askFacts',
     'listCheckable',
     'listOpenAsks',
     'listTodosForAsks',

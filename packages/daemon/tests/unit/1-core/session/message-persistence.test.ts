@@ -1,3 +1,4 @@
+import { mockMailboxAdmission } from '../../../helpers/mock-mailbox-admission';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
@@ -89,11 +90,11 @@ describe('MessagePersistence', () => {
       () => new Set<string>(lastHandedOffUuid ? [lastHandedOffUuid] : [])
     );
     activeDeliveryUuidsSpy = mock(() => new Set<string>());
-    mockJobQueue = {
+    mockJobQueue = mockMailboxAdmission({
       enqueueUniquePending: enqueueUniquePendingSpy,
       activeMailboxMessageUuids: activeMailboxUuidsSpy,
       activeDeliveryMessageUuids: activeDeliveryUuidsSpy,
-    } as unknown as JobQueueRepository;
+    }) as unknown as JobQueueRepository;
 
     internalEventBusPublishSpy = mock(async () => {});
     mockInternalEventBus = {

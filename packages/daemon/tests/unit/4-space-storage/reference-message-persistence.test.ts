@@ -1,3 +1,4 @@
+import { mockMailboxAdmission } from '../../helpers/mock-mailbox-admission';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -171,11 +172,11 @@ describe('MessagePersistence with ReferenceResolver', () => {
     } as unknown as Database;
 
     enqueueUniquePendingSpy = mock(() => 'mailbox-job-1');
-    mockJobQueue = {
+    mockJobQueue = mockMailboxAdmission({
       enqueueUniquePending: enqueueUniquePendingSpy,
       activeMailboxMessageUuids: mock(() => new Set<string>()),
       activeDeliveryMessageUuids: mock(() => new Set<string>()),
-    } as unknown as JobQueueRepository;
+    }) as unknown as JobQueueRepository;
   });
 
   it('persists without referenceMetadata when no resolver is provided', async () => {

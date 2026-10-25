@@ -20,7 +20,7 @@ import {
   rejected,
 } from '../../../../src/lib/mailbox/handoff';
 import { createUlid, isUlid } from '../../../../src/lib/mailbox/ulid';
-import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 
 const textMessage: MailboxMessage = {
@@ -402,23 +402,23 @@ describe('enqueueStage', () => {
     mailbox.close();
   });
 
-  test('a well-formed entry enqueues and passes the outcome through', () => {
+  test('a well-formed entry enqueues and passes the outcome through', async () => {
     const entry = makeEntry();
 
-    const outcome = enqueueStage(mailbox.jobQueue, entry);
+    const outcome = await enqueueStage(mailbox.jobQueue, entry);
 
     expect(outcome).toEqual({ kind: 'enqueued', id: entry.id });
     expect(mailbox.rowCount()).toBe(1);
     expect(JSON.parse(mailbox.rows()[0].payload)).toEqual(entry);
   });
 
-  test('an unserializable entry passes the serialization rejection through with zero rows', () => {
+  test('an unserializable entry passes the serialization rejection through with zero rows', async () => {
     const entry = {
       ...makeEntry(),
       policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY, priority: 1n },
     } as unknown as MailboxEntry;
 
-    const outcome = enqueueStage(mailbox.jobQueue, entry);
+    const outcome = await enqueueStage(mailbox.jobQueue, entry);
 
     expect(outcome.kind).toBe('rejected');
     if (outcome.kind === 'rejected') {
@@ -705,17 +705,16 @@ describe('handoffPromptToMailbox', () => {
 
   describe('crash path', () => {
     test('a non-TypeError throw from a stage maps to an internal rejection and writes nothing', async () => {
-      const crashingQueue = {
-        enqueueUniquePending: () => {
-          throw new Error('disk exploded');
-        },
-      } as unknown as JobQueueRepository;
+      const gateway = new DbGateway(':memory:', null, undefined, () => {
+        throw new Error('disk exploded');
+      });
+      bindGateway(mailbox.db, gateway);
 
       const outcome = await handoffPromptToMailbox({
         to: 'session:sess-1',
         message: textMessage,
         origin: 'test',
-        jobQueue: crashingQueue,
+        jobQueue: mailbox.jobQueue,
       });
 
       expect(outcome).toEqual({
@@ -723,6 +722,7 @@ describe('handoffPromptToMailbox', () => {
         reason: 'internal: disk exploded',
       });
       expect(mailbox.rowCount()).toBe(0);
+      await gateway.close();
     });
   });
 });

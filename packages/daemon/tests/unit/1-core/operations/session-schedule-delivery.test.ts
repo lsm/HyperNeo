@@ -26,6 +26,40 @@ describe('createScheduleDelivery', () => {
     await db.updateSession('neo:root', { status: 'archived' });
     expect(await delivery.status({ adapter: 'hyperneo', id: 'neo:root' })).toBe('not_open');
   });
+  test('enqueue rejection rolls back the wake receipt and allows a clean retry', async () => {
+    const row = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo()).create({
+      target: { adapter: 'hyperneo', id: 'recipient' },
+      sourceKind: 'reminder',
+      sourceId: 'release',
+      note: 'Check release',
+      nudgeEvery: 1,
+      cadence: { kind: 'every', everyMs: 60000 },
+      createdBySession: null,
+    });
+    const messageId = `schedule:${row.id}:${row.nextRunAt}`;
+    const delivery = createScheduleDelivery(db, () => createOperationRegistry([]));
+    const raw = db.getDatabase();
+    raw.exec(`CREATE TRIGGER reject_scheduled_mail BEFORE INSERT ON job_queue
+      WHEN NEW.queue = 'mailbox' BEGIN SELECT RAISE(ABORT, 'synthetic queue unavailable'); END`);
+    await expect(delivery.deliver(row, messageId, 'Check release')).rejects.toThrow(
+      'synthetic queue unavailable'
+    );
+    const wake = () =>
+      raw
+        .prepare('SELECT * FROM session_schedule_wakes WHERE session_id = ? AND message_id = ?')
+        .get('recipient', messageId);
+    expect(wake()).toBeFalsy();
+    expect(db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: messageId })).toEqual(
+      []
+    );
+    raw.exec('DROP TRIGGER reject_scheduled_mail');
+    await delivery.deliver(row, messageId, 'Check release');
+    expect(wake()).toBeTruthy();
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: messageId })
+    ).toHaveLength(1);
+  });
+
   test('concurrent retries enqueue one daemon note with verifiable wake metadata', async () => {
     const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
     const row = scheduler.create({
