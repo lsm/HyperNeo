@@ -307,6 +307,14 @@ describe('Neo MVP', () => {
     expect(await invoke('neo.ask.doneTodos', { askId: 'missing' }, caller)).toMatchObject({
       value: { ok: false, reason: 'not_found: no such ask.' },
     });
+    expect(
+      await invoke('neo.ask.read', { askId: 'missing' }, { ...caller, sessionId: 'impostor' })
+    ).toMatchObject({
+      value: { ok: false, reason: 'This operation belongs to Neo.' },
+    });
+    expect(await invoke('neo.ask.read', { askId: 'missing' }, caller)).toMatchObject({
+      value: { ok: false, reason: 'not_found: no such ask.' },
+    });
     const definitions = createNeoOperations(service);
     expect(
       listOperationSummaries(createOperationRegistry(definitions), caller, true).map(
@@ -339,6 +347,7 @@ describe('Neo MVP', () => {
       'neo.todo.continue',
       'neo.todo.retry',
       'neo.todo.close',
+      'neo.ask.read',
       'neo.ask.doneTodos',
       'neo.ask.open',
       'neo.ask.outcome',
