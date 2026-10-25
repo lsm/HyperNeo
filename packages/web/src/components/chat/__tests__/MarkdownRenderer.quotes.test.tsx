@@ -38,6 +38,21 @@ it('copies a rendered math formula once as readable source', async () => {
   );
 });
 
+it('keeps paragraph boundaries around multiline display math', async () => {
+  vi.mocked(copyToClipboard).mockResolvedValue(true);
+  const app = render(
+    <MarkdownRenderer
+      class="neo-markdown"
+      content={'> Formula:\n>\n> $$\n> x^2 + y^2 = z^2\n> $$\n>\n> End.'}
+    />
+  );
+  await waitFor(() => expect(app.container.querySelector('.katex-display')).toBeTruthy());
+  fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
+  await waitFor(() =>
+    expect(copyToClipboard).toHaveBeenLastCalledWith('Formula:\n\nx^2 + y^2 = z^2\n\nEnd.')
+  );
+});
+
 it('keeps line breaks, lists, entities, and code without copying other controls', async () => {
   vi.mocked(copyToClipboard).mockResolvedValue(true);
   const app = render(

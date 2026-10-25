@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 const [port, run, phase = 'after'] = process.argv.slice(2);
 assert(port && run && port !== '8399');
 assert(readFileSync(`${run}/daemon.log`, 'utf8').includes(`Database: ${run}/data/daemon.db`));
-const rpc = (name) => JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', name, '{}'], {
+const rpc = (name, input = {}) => JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', name, JSON.stringify(input)], {
   env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8',
 })).reply;
 const opened = rpc('neo.open');
@@ -19,6 +19,14 @@ const fence = `> \`\`\`python\n${code.split('\n').map((line) => `> ${line}`).joi
 const text = `英文 message（可直接复制）\n\n> Hello **friend** and [team](https://example.com).\n>\n> Second \`paragraph\`.\n>\n${fence}\n>\n> $$${formula}$$\n>\n> > Nested *reply*.\n\n> Another quote.`;
 const publication = { conversationId, publicationId: 'quote-copy-proof', shortText: text, fullText: text, links: [], replyTo: [] };
 execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT OR REPLACE INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(${quote(conversationId)},'quote-copy-proof',${quote(JSON.stringify(publication))},${quote(new Date().toISOString())});`]);
+const page = rpc('neo.publication.read', { conversationId });
+assert.equal(page.ok, true, `seeded publication must be readable: ${JSON.stringify(page)}`);
+assert(page.items.some((item) => item.publicationId === publication.publicationId && item.fullText === text));
+writeFileSync(`${run}/evidence/quote-copy-seed.json`, JSON.stringify(page, null, 2));
+if (phase === 'seed-only') {
+  console.log(JSON.stringify({ seededPublicationReadable: true, publicationId: publication.publicationId }));
+  process.exit(0);
+}
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const results = [];
