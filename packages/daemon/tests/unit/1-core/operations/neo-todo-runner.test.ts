@@ -437,6 +437,43 @@ describe('neo todo runner', () => {
     expect(told).toEqual([]);
     db.close();
   });
+  test.each([false, true])(
+    'delivers one input per shared worker turn, explicit send: %s',
+    async (sent) => {
+      const h = setup(false);
+      try {
+        const todos = [
+          h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+          h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+        ];
+        for (const todo of todos) await h.runner.start(todo.id);
+        const startedAt = Date.now() + 10;
+        if (sent)
+          h.db
+            .prepare(`INSERT INTO neo_session_messages
+        (conversation_id,message_id,from_session,to_session,text,created_at)
+        VALUES ('conversation','explicit','worker-1','neo','PR opened',?)`)
+            .run(new Date(startedAt + 10).toISOString());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            turnEnds: [{ id: 'shared-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(
+          sent ? 0 : 1
+        );
+        for (const todo of todos) expect(h.store.getTodo(todo.id)?.state).toBe('doing');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
     'relays a terminal message verbatim as a report without changing the todo result: %s',
     async (message) => {
