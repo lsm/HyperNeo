@@ -264,7 +264,9 @@ describe('Provider RPC handlers', () => {
         force: true,
         baseUrl: 'https://models.example/v1',
       });
-      expect(result).toEqual({ models: [{ id: 'remote-model', name: 'Remote Model' }] });
+      expect(result).toEqual({
+        models: [{ id: 'remote-model', name: 'Remote Model', provider: 'remote' }],
+      });
     });
 
     it('rejects unknown, unregistered, and unsupported providers', async () => {
@@ -409,7 +411,7 @@ describe('Provider RPC handlers', () => {
         {}
       );
 
-      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default' }] });
+      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default', provider: 'acp' }] });
       expect(legacy).toEqual(canonical);
       expect(repo.getProvider(created.id)?.configJson).toBe(created.configJson);
       expect(provider.getAcpCommand()).toBe('registered acp');

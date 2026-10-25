@@ -74,7 +74,12 @@ import { WorktreeManager } from '../../worktree-manager.ts';
 import { readWorkTurnPage, type WorkTurnPage } from '../../../storage/work-turn-page.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
-import type { ModelInfo, Provider } from '@hyperneo/shared';
+import {
+  THINKING_OPTIONS,
+  type ModelInfo,
+  type Provider,
+  type SessionConfig,
+} from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
 import { usableModels } from '../../usable-models.ts';
@@ -95,29 +100,50 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
   return getAvailableModels('global');
 }
 
+async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
+  const { findInModels } = await import('../../model-service.ts');
+  const available = usableModels(models);
+  const exact = available.find((entry) => entry.id === requested);
+  if (exact) return exact;
+  const names = available.filter((entry) => entry.name?.toLowerCase() === requested.toLowerCase());
+  if (names.length > 1)
+    throw new ModelUnavailableError(
+      `Model name '${requested}' is ambiguous: ${names.map((entry) => `${entry.id} (${entry.provider})`).join(', ')}. Choose an exact model ID.`
+    );
+  return names[0] ?? findInModels(available, requested) ?? null;
+}
+
 export async function createDriverSession(
   sessionManager: Pick<SessionManager, 'createSession' | 'getWorktreeManager'>,
   workspacePath: string,
   title: string,
   model?: string,
-  availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels
+  availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels,
+  provider?: string,
+  effort?: string
 ): Promise<string> {
   const { gitRoot } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
-  const create = (config?: { model: string; provider?: Provider }) =>
+  const thinkingLevel = THINKING_OPTIONS.find(
+    (entry) => entry.label.toLowerCase() === effort
+  )?.value;
+  const create = (config?: Partial<SessionConfig>) =>
     sessionManager.createSession({
       workspacePath,
       title,
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
-      ...(config ? { config } : {}),
+      ...(config || thinkingLevel
+        ? { config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
+        : {}),
     });
-  if (model) {
-    const { findInModels } = await import('../../model-service.ts');
-    if (!findInModels(usableModels(await availableModels()), model))
-      throw new ModelUnavailableError(`Model '${model}' is not available.`);
-  }
+  const selected = model
+    ? await resolveDriverModel(usableModels(await availableModels(), provider), model)
+    : null;
+  if (model && !selected) throw new ModelUnavailableError(`Model '${model}' is not available.`);
   try {
-    return await create(model ? { model } : undefined);
+    return await create(
+      selected ? { model: selected.id, provider: selected.provider as Provider } : undefined
+    );
   } catch (error) {
     if (model || !(error instanceof ModelUnavailableError)) throw error;
     const newest = newestAvailableModel(await availableModels());
@@ -192,12 +218,21 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
       return { ok: true, value: { archived: true } };
     },
-    create: (workspacePath, title, model) =>
-      createDriverSession(sessionManager, workspacePath, title, model),
-    resolveModel: async (model) => {
-      const { findInModels } = await import('../../model-service.ts');
-      return findInModels(usableModels(await readAvailableModels()), model)?.id ?? null;
-    },
+    create: (workspacePath, title, model, provider, effort) =>
+      createDriverSession(
+        sessionManager,
+        workspacePath,
+        title,
+        model,
+        readAvailableModels,
+        provider,
+        effort
+      ),
+    resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
+    effort: (sessionId) =>
+      THINKING_OPTIONS.find(
+        (entry) => entry.value === sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
+      )?.label.toLowerCase() ?? null,
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
     chooseWorktree: async (sessionId) => {
       await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');

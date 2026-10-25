@@ -291,7 +291,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       models = await provider.listRemoteModels(options);
     }
     return {
-      models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
+      models: models.map(({ id, name }) => ({ id, name: name ?? id, provider: record.providerId })),
     };
   });
 
@@ -304,7 +304,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         throw new Error(`Provider ${data.id} is not an ACP provider`);
       }
       const options = normalizeRemoteModelOptions({ command: data.command });
-      return { models: await listAcpRemoteModels(record, options) };
+      return {
+        models: (await listAcpRemoteModels(record, options)).map(({ id, name }) => ({
+          id,
+          name: name ?? id,
+          provider: record.providerId,
+        })),
+      };
     }
   );
 
