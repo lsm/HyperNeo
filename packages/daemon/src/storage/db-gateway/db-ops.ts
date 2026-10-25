@@ -1,3 +1,4 @@
+import { codingWorkReads, codingWorkWrites } from '../../lib/neo/packs/coding/work-facts-db.ts';
 import { codingRefReads, codingRefWrites } from '../../lib/neo/packs/coding/ref-facts-db.ts';
 import {
   codingBranchReads,
@@ -74,6 +75,8 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    codingWorkReads,
+    codingWorkWrites,
     codingRefReads,
     codingRefWrites,
     codingBranchReads,
