@@ -16,6 +16,8 @@ messages. Refusing admission with a trigger must send no reminder or notice.
 After removing the trigger, the reminder's failed delivery must escalate once;
 repeated refreshes stay quiet and the real WebSocket snapshot keeps the card
 doing. Main instrumentation must see zero reminder bookkeeping queries.
+The coding pack's waiting hook still runs synchronously and remains outstanding
+under #8712; this count does not cover its SQL or the rest of the refresh.
 Two actual writer claims must reserve one reminder only, and late completion
 must preserve a newer activity incident. Runner tests retain successful
 delivery at 20/40 minutes and escalation at 60, pack waiting and adopted cards.

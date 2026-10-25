@@ -109,7 +109,7 @@ try {
   sessions.recordNudge(id, { since, nudges: 0 });
   const live = { status: 'stopped' as const, lastActivityAt: since };
   if (mode === 'verify') {
-    const claims = await Promise.all([sessions.write('claimNudge', id, { adapter: 'hyperneo', id: worker }, live, Date.now()), sessions.write('claimNudge', id, { adapter: 'hyperneo', id: worker }, live, Date.now())]);
+    const claims = await Promise.all([sessions.write('claimNudge', id, { adapter: 'hyperneo', id: worker }, live, Date.now(), todos.getTodo(id)!.updatedAt), sessions.write('claimNudge', id, { adapter: 'hyperneo', id: worker }, live, Date.now(), todos.getTodo(id)!.updatedAt)]);
     report.concurrentWinners = claims.filter(Boolean).length;
     assert.equal(report.concurrentWinners, 1);
     const claim = claims.find(Boolean)!;
@@ -132,7 +132,7 @@ try {
     const incident = prior && since <= prior.since ? prior : { since, nudges: 0 };
     sessions.recordNudge(id, incident);
     return todo;
-  }) : sessions.write('claimNudge', id, { adapter: 'hyperneo', id: worker }, live, Date.now());
+  }) : sessions.write('claimNudge', id, { adapter: 'hyperneo', id: worker }, live, Date.now(), todos.getTodo(id)!.updatedAt);
   const healthStart = performance.now();
   await rpc('system.health', {});
   const healthMs = performance.now() - healthStart;

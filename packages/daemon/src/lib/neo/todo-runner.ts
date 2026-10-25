@@ -1,5 +1,4 @@
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
-import { planNudge } from './nudge.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -590,50 +589,82 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('followed') as (todo: NeoTodo, now: number) => Promise<void>;
 
-  const nudge = async (todo: NeoTodo, now: number) => {
-    const ref = sessions.readRef(todo.id),
-      ask = store.getAsk(todo.askId);
-    if (
-      todo.state !== 'doing' ||
-      sessions.get(todo.id)?.verb === 'adopt' ||
-      !todo.instruction ||
-      !ref ||
-      ask?.status !== 'open' ||
-      deps
-        .packs()
-        .some((pack) => (!todo.check || pack.id === todo.check.pack) && pack.todos?.waiting?.(todo))
+  const nudge = (superpipe({})('neo.todo.nudge') as PipelineAPI)
+    .input(['todoId', 'now'])
+    .pipe((todoId: string) => sessions.read('nudgeContext', todoId), 'todoId', 'snapshot')
+    .pipe(
+      (snapshot: Awaited<ReturnType<typeof sessions.nudgeContext>>) =>
+        snapshot &&
+        !deps
+          .packs()
+          .some(
+            (pack) =>
+              (!snapshot.todo.check || pack.id === snapshot.todo.check.pack) &&
+              pack.todos?.waiting?.(snapshot.todo)
+          )
+          ? { value: snapshot }
+          : { reason: null },
+      'snapshot',
+      'result:admission'
     )
-      return;
-    const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
-    if (store.getTodo(todo.id)?.state !== 'doing') return;
-    if (!live || live.status === 'queued') return;
-    const since = Math.max(
-      todo.startedAt ?? todo.createdAt,
-      live.lastReplyAt ?? live.lastActivityAt
-    );
-    const prior = sessions.readNudge(todo.id);
-    const incident = prior && since <= prior.since ? prior : { since, nudges: 0 };
-    sessions.recordNudge(todo.id, incident);
-    if (!['done', 'stopped'].includes(live.status)) return;
-    const plan = planNudge(incident, now);
-    if (!plan) return;
-    const minutes = Math.round((now - incident.since) / 60_000);
-    const sent =
-      plan.kind === 'remind' &&
-      (await deps
-        .invoke(caller(ask), 'work.send', { ref, message: neoTodoIdleReminder(todo, minutes) })
-        .catch(() => null));
-    const delivered =
-      sent && sent.kind === 'completed' && (sent.value as { ok?: boolean } | null)?.ok;
-    if (!delivered)
-      await deps.tell(
-        ask,
-        todo,
-        `Todo "${todo.title}" has made no progress for ${minutes} min; ${plan.kind === 'escalate' ? 'the reminder window elapsed without progress' : 'its worker could not be reached'}. Decide how to continue.`,
-        `neo-todo-remind:${todo.id}:${incident.since}:${plan.nudges}`
-      );
-    sessions.recordNudge(todo.id, { since: incident.since, nudges: delivered ? plan.nudges : 3 });
-  };
+    .pipe(
+      async (context: NonNullable<ReturnType<typeof sessions.nudgeContext>>, now: number) => {
+        const live = readDriverLive(
+          await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
+        );
+        const claim =
+          live &&
+          (await sessions.write(
+            'claimNudge',
+            context.todo.id,
+            context.ref,
+            live,
+            now,
+            context.todo.updatedAt
+          ));
+        return claim ? { value: claim } : { reason: null };
+      },
+      ['admission', 'now'],
+      'result:admission'
+    )
+    .pipe(
+      async (
+        { todo, ask, ref, incident, plan }: NonNullable<ReturnType<typeof sessions.claimNudge>>,
+        now: number
+      ) => {
+        const minutes = Math.round((now - incident.since) / 60_000);
+        const sent =
+          plan.kind === 'remind' &&
+          (await deps
+            .invoke(caller(ask), 'work.send', { ref, message: neoTodoIdleReminder(todo, minutes) })
+            .catch(() => null));
+        const delivered =
+          sent && sent.kind === 'completed' && (sent.value as { ok?: boolean } | null)?.ok;
+        if (!delivered) {
+          await deps
+            .tell(
+              ask,
+              todo,
+              `Todo "${todo.title}" has made no progress for ${minutes} min; ${plan.kind === 'escalate' ? 'the reminder window elapsed without progress' : 'its worker could not be reached'}. Decide how to continue.`,
+              `neo-todo-remind:${todo.id}:${incident.since}:${plan.nudges}`
+            )
+            .catch(async (error) => {
+              await sessions.write(
+                'finishNudge',
+                todo.id,
+                incident.since,
+                plan.nudges,
+                incident.nudges
+              );
+              throw error;
+            });
+          await sessions.write('finishNudge', todo.id, incident.since, plan.nudges, 3);
+        }
+      },
+      ['admission', 'now'],
+      'admission'
+    )
+    .endAsync('admission') as (todoId: string, now: number) => Promise<void | null>;
 
   const read = (todoId: string) => {
     const todo = store.getTodo(todoId);
@@ -767,9 +798,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
         );
-        await nudge(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
-          warn('Todo nudge pending', error)
-        );
+        await nudge(todo.id, Date.now()).catch((error) => warn('Todo nudge pending', error));
       }
       const asks = await store.read('listOpenAsks');
       const todos = await store.read(
