@@ -204,7 +204,7 @@ test('explicit ancestry observations write only through the bound gateway connec
   bindGateway(main, gateway);
   try {
     const facts = new CodingAncestryFactsRepository(main);
-    await facts.record(subject, { status: 'behind' }, 100, 0);
+    await facts.observeCurrent(subject, { status: 'behind' }, 100, 0);
     expect(
       writer.prepare('SELECT status, observation_revision FROM pack_coding_ancestry_facts').get()
     ).toEqual({ status: 'behind', observation_revision: 1 });

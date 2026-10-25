@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { callCodingBranchDb } from './branch-facts-db.ts';
 import { codingAncestryReads, codingAncestryWrites } from './ancestry-facts-db.ts';
-import { withBusyRetry } from '../../../../storage/busy-retry.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
@@ -124,12 +123,6 @@ export class CodingAncestryFactsRepository {
       () =>
         gatewayFor(this.db).call(codingAncestryWrites, 'observe', input, observation, at, revision),
       'coding.ancestry.db'
-    );
-  }
-
-  record(input: Subject, observation: Observation, at: number, revision: number) {
-    return withBusyRetry(
-      this.db.transaction(() => this.persist(input, observation, at, revision), 'immediate')
     );
   }
 

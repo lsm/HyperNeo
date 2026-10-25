@@ -53,5 +53,8 @@ outside this slice, so this is no claim that the entire RPC is free of main SQL.
 The regression was committed before the fix. Focused unit tests cover bounded
 reader/writer retries, coalescing, write rollback, later retry, retained failed
 observations, immutable negatives, ordered SHA/host identity and a late positive
-response. Existing ancestry tests remain unchanged. `observed.json` summarizes
+response. The synchronous record API is removed. Existing identity and race expectations
+remain; their fixture writes now await the gateway. A regression binds a separate
+writer and makes the main connection read-only to prove explicit observations
+cannot bypass the gateway. `observed.json` summarizes
 the four retained runtime comparisons; raw JSON is the source evidence.
