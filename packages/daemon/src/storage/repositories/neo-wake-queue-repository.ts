@@ -73,9 +73,7 @@ export class NeoWakeQueueRepository {
         fromName: 'System-forwarded worker messages',
         toSession: sessionId,
         toName: 'Neo',
-        text: content
-          .map((block) => (block.type === 'text' ? block.text : JSON.stringify(block)))
-          .join('\n\n'),
+        text: content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n\n'),
         createdAt: new Date(options.at).toISOString(),
       },
       options.changes
