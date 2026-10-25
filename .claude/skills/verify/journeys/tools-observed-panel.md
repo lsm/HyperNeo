@@ -38,6 +38,20 @@ Tools. Do not use an unattended GUI test or a component-only preview for this pr
    browser text. Close the temporary tab and send SIGTERM only to the helper PID;
    its finally closes the web server, daemon and MCP transports.
 
+For the refresh review regression, add `--slow-status` beside `--show-panel`.
+SIGUSR2 then makes status reads take 2.5 seconds. After the initial attachment
+is visible, send that signal and click Refresh. During the pending read, the
+confirmed server, tool count and instruction observation must remain visible;
+after the reply they must change to sign-in/consent required. Session changes
+and disconnects must still clear prior observations. The baseline 74a0ffc98d
+instead collapses observed MCP, shows zero names and falsely labels the known
+browser not attached while waiting. Retain refresh-before/after screenshots and
+browser text; a resolved read alone does not verify the pending interval.
+
+Space TaskToolsModal is explicitly deferred by Neo to follow-up #8648, immediately
+after this PR merges, to keep this slice within 200 production lines. Its original
+configured-only source is not a verified observed surface in this PR.
+
 Baseline: the unchanged slice 2 panel shows the configured absent browser as
 `Active in this session` and configured-only as a runtime tool. The six rendering
 reproductions were committed before the fix at cde1191533. Copy only the updated

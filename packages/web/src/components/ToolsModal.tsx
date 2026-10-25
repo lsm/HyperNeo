@@ -188,6 +188,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
   useEffect(() => {
     inventory.value = null;
+  }, [isOpen, session?.id]);
+
+  useEffect(() => {
     if (!isOpen || !session) return;
     let live = true;
     let read = 0;
@@ -198,7 +201,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
         if (!live) return;
         const refresh = async () => {
           const current = ++read;
-          inventory.value = null;
           try {
             const result = await hub.request<GetSessionToolInventoryResponse>(
               'session.getToolInventory',

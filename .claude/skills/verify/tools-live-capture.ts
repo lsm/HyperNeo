@@ -84,7 +84,10 @@ try {
   assert(!JSON.stringify(first).match(/secret|private|config|error/));
   if (process.argv.includes('--show-panel')) {
     process.once('SIGUSR1', () => queries[0].finish.resolve());
-    process.once('SIGUSR2', () => { queries[0].status = async () => [{ name: 'browser', status: 'needs-auth' }]; });
+    process.once('SIGUSR2', () => { queries[0].status = async () => {
+      if (process.argv.includes('--slow-status')) await new Promise(done => setTimeout(done, 2500));
+      return [{ name: 'browser', status: 'needs-auth' }];
+    }; });
     for (const name of ['browser', 'configured-browser']) {
       const { server } = await hub.request<{ server: { id: string } }>('mcp.registry.create', { name: `${name}-server`, sourceType: 'stdio', command: 'synthetic-not-executed', args: [], enabled: true });
       await hub.request('skill.create', { params: { name, displayName: name === 'browser' ? 'Observed browser' : 'Configured browser (absent from SDK)', description: 'Synthetic panel verification', sourceType: 'mcp_server', config: { type: 'mcp_server', appMcpServerId: server.id }, enabled: true, validationStatus: 'valid' } });
