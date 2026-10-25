@@ -233,6 +233,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
   const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
+    instruction += `\n\nEven when told to stay quiet, report questions or blockers with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
     const pack = deps.packs().find((candidate) => candidate.id === todo.check?.pack);
     const recorded = existing ? sessions.readCard(todo.id) : null;
     return (
@@ -632,6 +633,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
       return;
     const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
+    if (store.getTodo(todo.id)?.state !== 'doing') return;
     if (!live || live.status === 'queued') return;
     const since = Math.max(
       todo.startedAt ?? todo.createdAt,

@@ -3,6 +3,13 @@ import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { createNeoWorkerQuestionWriter } from './question-operations.ts';
+import {
+  sessionSender,
+  type SessionReportHandler,
+  type SendMessageResultSchema,
+} from '../messaging/message-send.ts';
+import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
+import { wrapSessionContent } from '../messaging/session-envelope.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
@@ -19,7 +26,7 @@ import type {
   Session,
   SessionConfig,
 } from '@hyperneo/shared';
-import type { NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoQuestion, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
@@ -396,14 +403,115 @@ export class NeoService {
     };
   }
 
-  storeWorkerQuestion(ref: WorkRef, report: unknown) {
+  storeWorkerQuestion(ref: WorkRef, report: unknown, stored?: (question: NeoQuestion) => void) {
     return createNeoWorkerQuestionWriter(
       this.todos,
       this.todoSessions,
       () => this.db.getGlobalSettings().language,
-      (source) => this.readQuestionSource(source)
+      (source) => this.readQuestionSource(source),
+      stored
     )(ref, report);
   }
+
+  readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
+    .input(['input', 'origin', 'retry'])
+    .pipe(
+      (input: Parameters<SessionReportHandler>[0], origin: string) => {
+        const sender = sessionSender(origin);
+        if (
+          !sender ||
+          !['question', 'blocked'].includes(input.kind ?? '') ||
+          this.repo.getBindingBySession(input.sessionId)?.kind !== 'neo'
+        )
+          return { reason: null };
+        return { value: sender };
+      },
+      ['input', 'origin'],
+      'result:receipt'
+    )
+    .pipe(
+      async (
+        sender: string,
+        input: Parameters<SessionReportHandler>[0],
+        origin: string,
+        retry: Parameters<SessionReportHandler>[2]
+      ) => {
+        const content = input.message.message.content;
+        const text =
+          input.handoff?.text ??
+          (typeof content === 'string'
+            ? content
+            : content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n'));
+        const files = input.handoff?.files ?? [];
+        const jobs = this.db.getJobQueueRepo();
+        let receipt: z.infer<typeof SendMessageResultSchema> | null = null;
+        const wake = (incident: string, note: string) => {
+          const key = `worker-question:${incident}`;
+          const submit = () =>
+            jobs.commitSubmissionReceipt(key, key, () => {
+              const messageId = neoDerivedId(key);
+              const outcome = enqueueMailboxEntry(
+                jobs,
+                createMailboxEntry({
+                  to: { kind: 'session', sessionId: input.sessionId },
+                  origin,
+                  messageUuid: messageId,
+                  message: {
+                    type: 'user',
+                    parent_tool_use_id: null,
+                    inputKind: 'task',
+                    workerReportKind: input.kind,
+                    message: {
+                      content: wrapSessionContent(
+                        files.length ? `${note}\n${JSON.stringify({ handoffFiles: files })}` : note,
+                        { sessionId: sender, name: null }
+                      ) as string,
+                    },
+                  },
+                })
+              );
+              if (outcome.kind === 'rejected') throw new Error(outcome.reason);
+              return {
+                kind: 'accepted' as const,
+                mailboxId: outcome.id,
+                messageId,
+                ...(files.length ? { files } : {}),
+              };
+            });
+          receipt = retry
+            ? jobs.commitSubmissionReceipt(retry.key, retry.fingerprint, submit)
+            : submit();
+        };
+        if (!input.question) {
+          wake(
+            neoDerivedId(
+              JSON.stringify([origin, input.sessionId, text, files.map((f) => f.sha256)])
+            ),
+            text
+          );
+          return receipt;
+        }
+        const todo = this.todos.getTodo(input.question.todoId);
+        if (!todo || this.todos.getAsk(todo.askId)?.sessionId !== input.sessionId)
+          return {
+            kind: 'rejected',
+            reason: 'report_assignment: choose a todo owned by the receiving Neo.',
+          };
+        const result = await this.storeWorkerQuestion(
+          sessionWorkerRef(sender, !!this.db.getSession(sender)),
+          { ...input.question, kind: input.kind, report: text },
+          (question) =>
+            wake(
+              question.id,
+              `Worker needs a human decision. Read card ${question.id}: ${question.text}`
+            )
+        );
+        return result.ok ? receipt : { kind: 'rejected', reason: result.reason };
+      },
+      ['receipt', 'input', 'origin', 'retry'],
+      'receipt'
+    )
+    .endAsync('receipt') as SessionReportHandler;
 
   readSessionWorker(id: string) {
     return this.readWorker(sessionWorkerRef(id, !!this.db.getSession(id)));

@@ -1725,7 +1725,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       parkStopped: (spaceId, taskId, expected) =>
         spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId, expected),
     },
-    familyOperations
+    familyOperations,
+    neoService.handleWorkerQuestion
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);

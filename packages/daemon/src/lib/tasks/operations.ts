@@ -51,6 +51,7 @@ import {
   type TaskMessageSendDependencies,
 } from '../messaging/task-message-send.ts';
 import { enqueueDirectOutcome } from './direct-outcome-jobs.ts';
+import type { SessionReportHandler } from '../messaging/message-send.ts';
 
 interface RetryTaskCapability {
   getTaskManager: RetryTaskDependencies['getTaskManager'];
@@ -110,7 +111,8 @@ export function createSpaceOperationRegistryProvider(
   pendingCompletion?: OwnedPendingCompletionDependencies,
   directStart?: DirectStartOperationDependencies,
   transition?: Omit<SpaceTransitionTaskDependencies, 'db'>,
-  extra: readonly OperationDefinition[] = []
+  extra: readonly OperationDefinition[] = [],
+  workerReport?: SessionReportHandler
 ) {
   let registry: OperationRegistry | undefined;
   return () =>
@@ -118,6 +120,7 @@ export function createSpaceOperationRegistryProvider(
       database,
       jobQueue,
       {
+        workerReport,
         readTask: (taskId, caller) =>
           stampActiveAttempt(
             database.getDatabase(),

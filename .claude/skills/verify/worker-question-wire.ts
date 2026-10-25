@@ -7,6 +7,8 @@ import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repos
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
+import { request } from 'node:http';
+import { sessionDoorPath } from '../../../packages/daemon/src/lib/messaging/session-door.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -52,6 +54,22 @@ async function rpc(name: string, input: unknown) {
   receipts.push({ name, result });
   return result.reply.value ?? result.reply;
 }
+async function workerSend(input: unknown) {
+  const result = await new Promise<{ kind: string; value?: unknown }>((resolve, reject) => {
+    const call = request({ socketPath: sessionDoorPath(), path: '/', method: 'POST', agent: false, headers: { 'content-type': 'application/json', connection: 'close' } }, (response) => {
+      let body = '';
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (error) { reject(error); }
+      });
+    });
+    call.on('error', reject);
+    call.end(JSON.stringify({ sender: 'synthetic-worker', name: 'message.send', input }));
+  });
+  receipts.push({ name: 'session-door:message.send', result });
+  assert.equal(result.kind, 'completed', JSON.stringify(result));
+  return result.value as { kind: string; mailboxId: string; messageId: string; files?: { byteLength: number }[] };
+}
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
@@ -77,14 +95,14 @@ try {
     multiple: false, noLabel: null, yesLabel: null, startTodos: null,
     sourceSession: { ...ref, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: null },
   }, 1);
-  const first = await rpc('message.send', input);
+  const first = await workerSend(input);
   assert.equal(first.kind, 'accepted');
   const question = store.listQuestions(todo.askId)[0];
   assert(question, 'message.send must create a human card before returning');
   assert.equal(store.getTodo(todo.id)?.blockedBy, 'needs-human');
   assert.equal(question.document, input.text);
   assert.equal(question.sourceSession?.id, ref.id);
-  for (let i = 0; i < 8; i++) assert.deepEqual(await rpc('message.send', { ...input, text: `Repeat ${i}` }), first);
+  for (let i = 0; i < 8; i++) assert.deepEqual(await workerSend({ ...input, text: `Repeat ${i}` }), first);
   const wakes = () => app.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': root });
   assert.equal(wakes().length, 1);
   const wake = wakes()[0];
@@ -95,15 +113,33 @@ try {
   assert.equal(app.db.getJobQueueRepo().getJob(wake.id)?.status, 'completed');
   await Bun.sleep(1000);
   await app.jobProcessor.stop();
-  assert.deepEqual(await rpc('message.send', { ...input, kind: 'question' }), first);
+  assert.deepEqual(await workerSend({ ...input, kind: 'question' }), first);
   assert.equal(wakes().length, 0, 'consuming a wake must not allow repeats to create another');
+  let expectedTurns = 1;
+  if (process.argv[3] === 'triage') {
+    const legacy = { to: root, from: input.from, kind: 'blocked', text: 'Original ambiguous blocker\n'.repeat(300) };
+    const triage = await workerSend(legacy);
+    assert.equal(triage.kind, 'accepted');
+    assert.equal(triage.files![0].byteLength, Buffer.byteLength(legacy.text));
+    assert.deepEqual(await workerSend(legacy), triage);
+    assert.equal(wakes().length, 1);
+    app.jobProcessor.start();
+    const triageDeadline = Date.now() + 45000;
+    while ((modelTurns < 2 || app.db.getJobQueueRepo().getJob(triage.mailboxId)?.status !== 'completed') && Date.now() < triageDeadline) await Bun.sleep(100);
+    assert.equal(modelTurns, 2);
+    await Bun.sleep(1000);
+    await app.jobProcessor.stop();
+    assert.deepEqual(await workerSend(legacy), triage);
+    assert.equal(wakes().length, 0);
+    expectedTurns = 2;
+  }
   await app.cleanup();
   app = await createDaemonApp({ config, verbose: false });
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
-  assert.deepEqual(await rpc('message.send', input), first);
+  assert.deepEqual(await workerSend(input), first);
   await Bun.sleep(1000);
-  assert.equal(modelTurns, 1, 'restart and repeats must not wake Neo again');
+  assert.equal(modelTurns, expectedTurns, 'restart and repeats must not wake Neo again');
   const restored = new NeoAskTodoRepository(app.db.getDatabase());
   const links = new NeoTodoSessionRepository(app.db.getDatabase());
   assert.equal(restored.listQuestions(todo.askId).length, 1);
@@ -118,7 +154,7 @@ try {
   assert(!reminders.includes('tell'));
   const read = await rpc('neo.question.get', { questionId: question.id });
   assert.equal(read.question.state, 'open');
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, question, hold: restored.getTodo(todo.id), reminders, consumedWakeId: wake.id, modelTurns, oldCard: process.argv[3] === 'old', restartRetained: true }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, question, hold: restored.getTodo(todo.id), reminders, consumedWakeId: wake.id, modelTurns, expectedTurns, oldCard: process.argv[3] === 'old', restartRetained: true }, null, 2));
   console.log('PASS: message.send creates a held card and one real Neo turn; repeats and restart do not re-wake; held todo receives no runner nudge');
 } finally {
   await app.cleanup();
