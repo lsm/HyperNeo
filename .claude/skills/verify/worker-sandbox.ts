@@ -1,4 +1,4 @@
-import { releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
+import { prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
@@ -190,6 +190,7 @@ try {
   writeFileSync(join(run, 'sdk-finish'), 'done');
   await new Promise<void>(resolve => sdkModel!.once('exit', () => resolve()));
   sdkModel = undefined;
+  if (process.platform === 'darwin' && process.env.VERIFY_IMMUTABLE_RUNTIME !== '0') assert.equal(readFileSync(join(sdkWorker, 'observed-flags-sdk.txt'), 'utf8'), '0', 'Real SDK Bash must set its own immutable flags');
   const locked = join(sdkTemp, 'locked');
   assert(existsSync(locked), 'Real SDK Bash must create its locked runtime directory');
   let archived: unknown;
@@ -200,18 +201,26 @@ try {
     throw error;
   } finally {
     if (existsSync(locked)) chmodSync(locked, 0o700);
+    if (process.platform === 'darwin' && existsSync(sdkSettings.env.TMPDIR)) spawnSync('/usr/bin/chflags', ['-RP', 'nouchg,nouappnd', sdkSettings.env.TMPDIR]);
   }
   assert.equal(app.db.getSession(sdk.value.ref.id)?.status, 'archived');
   assert(!existsSync(sdkSettings.env.TMPDIR), 'Archive must release private temp root');
   assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'Archive must release private cache root');
   assert(existsSync(sdkWorker), 'Archive must preserve the private clone');
+  await prepareWorkerSandbox(sdkWorker);
+  await app.sessionManager.unregisterSession(sdk.value.ref.id);
+  const retry = await rpc('neo.session.archive', { ref: sdk.value.ref }) as Result<{ archived: boolean }>;
+  assert.deepEqual(retry, { ok: true, value: { archived: false } });
+  assert(!existsSync(sdkSettings.env.TMPDIR), 'Archive retry must release legacy SDK temp leftovers');
+  assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'Archive retry must release legacy SDK cache leftovers');
+  writeFileSync(join(run, 'evidence/archive-retry.json'), JSON.stringify({ retry, tempReleased: true, cacheReleased: true }, null, 2));
   await app.jobProcessor.stop();
   const afterArchive = await rpc('work.start', { ...request, adapter: 'hyperneo', title: 'Sibling after actual SDK archive' }) as Result<WorkStarted>;
   assert(afterArchive.ok, JSON.stringify(afterArchive));
   assert(!existsSync(sdkSettings.env.TMPDIR), 'A later sibling must not resurrect archived temp roots');
   assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'A later sibling must not resurrect archived cache roots');
   await rpc('rpc:session.archive', { sessionId: afterArchive.value.ref.id, confirmed: true });
-  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, lockedNonemptyDirectoryReleased: true, tempReleased: true, cacheReleased: true, cloneRetained: true, notResurrectedByLaterSibling: true }, null, 2));
+  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, lockedNonemptyDirectoryReleased: true, immutableRuntimeReleased: process.platform === 'darwin' && process.env.VERIFY_IMMUTABLE_RUNTIME !== '0', tempReleased: true, cacheReleased: true, cloneRetained: true, notResurrectedByLaterSibling: true }, null, 2));
   console.log(`PASS Codex Desktop, Claude Desktop and real HyperNeo SDK outside refusal + inside/Git/temp/cache/network: ${run}/evidence`);
 
 

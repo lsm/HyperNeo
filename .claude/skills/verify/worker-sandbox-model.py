@@ -20,6 +20,8 @@ printf 'temp-status=%s\\n' "$?"
 ''')
 protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine != 'codex' else []
 policy_before = {path: path.read_bytes() for path in protected}
+if engine == 'sdk' and sys.platform == 'darwin' and os.environ.get('VERIFY_IMMUTABLE_RUNTIME') != '0':
+    with probe.open('a') as script: script.write('mkdir -p "$TMPDIR/flagged"; printf synthetic > "$TMPDIR/flagged/file"; /usr/bin/chflags uchg "$TMPDIR/flagged/file" "$TMPDIR/flagged"; printf "%s" "$?" > observed-flags-sdk.txt\n')
 if engine == 'sdk':
     with probe.open('a') as script: script.write('mkdir -p "$TMPDIR/locked"; printf synthetic > "$TMPDIR/locked/file"; chmod 000 "$TMPDIR/locked"\n')
     with probe.open('a') as script: script.write('printf synthetic-report > "$HYPERNEO_HANDOFF_DIR/sandbox-report.txt"\n')

@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { expect, test } from 'bun:test';
 import {
   chmodSync,
@@ -45,6 +46,43 @@ test.skipIf(process.platform === 'win32')(
       }
       await releaseWorkerSandbox(root);
       chmodSync(outside, 0o700);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'releases user-immutable files and locked immutable directories',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'worker-flags-'));
+    mkdirSync(join(root, '.git'));
+    const env = await prepareWorkerSandbox(root);
+    const locked = join(env.TMPDIR, 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'synthetic'), 'worker bytes');
+    const cacheFile = join(env.XDG_CACHE_HOME, 'synthetic');
+    writeFileSync(cacheFile, 'cache bytes');
+    const outside = join(root, 'retained');
+    writeFileSync(outside, 'retained bytes');
+    symlinkSync(outside, join(env.XDG_CACHE_HOME, 'outside'));
+    try {
+      chmodSync(locked, 0o000);
+      expect(spawnSync('/usr/bin/chflags', ['uchg', locked]).status).toBe(0);
+      expect(spawnSync('/usr/bin/chflags', ['uchg,uappnd', cacheFile, outside]).status).toBe(0);
+      await releaseWorkerSandbox(root);
+      expect(existsSync(env.TMPDIR)).toBe(false);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+      expect(spawnSync('/bin/ls', ['-ldO', outside], { encoding: 'utf8' }).stdout).toContain(
+        'uchg'
+      );
+    } finally {
+      if (existsSync(locked)) {
+        spawnSync('/usr/bin/chflags', ['-h', 'nouchg,nouappnd', locked]);
+        chmodSync(locked, 0o700);
+      }
+      spawnSync('/usr/bin/chflags', ['-RP', 'nouchg,nouappnd', join(env.TMPDIR, '..')]);
+      spawnSync('/usr/bin/chflags', ['-h', 'nouchg,nouappnd', outside]);
+      await releaseWorkerSandbox(root);
       rmSync(root, { recursive: true, force: true });
     }
   }
