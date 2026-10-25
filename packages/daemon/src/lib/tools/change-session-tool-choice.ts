@@ -65,13 +65,18 @@ function prepareChoice(
   input: SessionToolChoiceChange,
   deps: SessionToolChoiceChangeDependencies
 ): Gate<PreparedChoice> {
-  const current = (JSON.parse(snapshot.config) as SessionConfig).toolSelection;
+  const config = JSON.parse(snapshot.config) as SessionConfig;
+  const current = config.toolSelection;
   if (current && current.version !== 1)
     return { reason: { ok: false, reason: 'selection_version_unsupported' } };
   const catalog: SessionToolChoiceInput = {
     ...deps.catalog(snapshot),
     session: { id: snapshot.id, context: parseJson(snapshot.sessionContext, {}) },
   };
+  catalog.disabledSkillIds = [
+    ...(catalog.disabledSkillIds ?? []),
+    ...(config.tools?.disabledSkills ?? []),
+  ];
   const original = current ?? projectLegacySessionToolSelection(catalog);
   const saved = original.choices[input.key];
   const selection: SessionToolSelection = {

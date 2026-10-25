@@ -30,5 +30,6 @@ Focused suites: change-session-tool-choice.test.ts, session-tool-choice.test.ts,
 session-runtime-settings-write.test.ts, runtime-settings-commit.test.ts and
 runtime-settings-commit-owner.test.ts. They pin refused policy/Space/definition
 changes, ambiguous aliases, future versions, closed targets and same-ID recreation.
+They also preserve captured legacy vetoes when a different tool is selected.
 Run the existing session-tool-choice journey for unchanged scripted-SDK/MCP parity.
 No one-click control, live tool attachment or permission to execute is claimed.
