@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -33,11 +34,12 @@ try {
   projects.reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
   projects.saveProject({ id: 'project:synthetic-life', title: 'Life admin', summary: '', context: '' }, 0);
   const store = new NeoAskTodoRepository(db);
-  const starts: { folder: string; title: string }[] = [];
+  const starts: { folder: string; title: string; mode?: string }[] = [];
+  execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '-q', workspaceRoot ?? join(run, 'data/Neo')]);
   app.sessionManager.createSession = async (input) => {
     const id = crypto.randomUUID();
     assert(input.workspacePath);
-    starts.push({ folder: input.workspacePath, title: input.title ?? '' });
+    starts.push({ folder: input.workspacePath, title: input.title ?? '', mode: input.worktreeMode });
     insert(id, input.workspacePath, input.title ?? 'Synthetic worker');
     return id;
   };
@@ -72,6 +74,7 @@ try {
   open('workspace', 'Organize my life admin');
   const workspaceReply = await add('workspace', { place: { machine: hostname(), folder: workspace, name: 'Inside workspace' }, createFolder: true });
   const checks = {
+    sharedHomeInPlace: defaultStart?.mode === 'direct' && secondStart?.mode === 'direct',
     sharedDefault: defaultReply.ok === true && homePath === null && defaultStart?.folder === expectedHome && existsSync(defaultStart.folder) && secondReply.ok === true && secondStart?.folder === defaultStart.folder,
     inventedRefused: !existsSync(invented) && !starts.some(start => start.title === 'invented') && /user.named|user.*path|path.*user/i.test(String(store.getTodo(inventedReply.todo?.id)?.reason ?? inventedReply.reason)),
     namedAllowed: namedReply.ok === true && existsSync(named) && starts.some(start => start.folder === named),
