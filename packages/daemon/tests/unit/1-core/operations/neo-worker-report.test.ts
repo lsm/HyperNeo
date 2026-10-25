@@ -16,6 +16,9 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 async function setup() {
   const db = await createTestDb();
@@ -259,5 +262,33 @@ test('legacy ambiguous blockers wake triage once and malformed card reports have
   } finally {
     service.dispose();
     db.close();
+  }
+});
+
+test('repeating a large ambiguous report shares one wake despite fresh published references', async () => {
+  const before = process.env.HYPERNEO_DATA_DIR;
+  const root = mkdtempSync(join(tmpdir(), 'worker-report-files-'));
+  process.env.HYPERNEO_DATA_DIR = root;
+  const { db, service, send } = await setup();
+  try {
+    const legacy = { to: 'neo', kind: 'blocked', text: 'Original blocker\n'.repeat(400) };
+    const first = await send(legacy);
+    expect(first).toMatchObject({
+      kind: 'completed',
+      value: {
+        kind: 'accepted',
+        files: [expect.objectContaining({ byteLength: Buffer.byteLength(legacy.text) })],
+      },
+    });
+    expect(await send(legacy)).toEqual(first);
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+    ).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+    if (before === undefined) delete process.env.HYPERNEO_DATA_DIR;
+    else process.env.HYPERNEO_DATA_DIR = before;
+    rmSync(root, { recursive: true, force: true });
   }
 });
