@@ -476,6 +476,14 @@ export class QueryRunner {
 
   constructor(private ctx: QueryRunnerContext) {}
 
+  private notifyToolInventory(): void {
+    this.ctx.messageHub.event(
+      'session.toolInventory.changed',
+      { sessionId: this.ctx.session.id },
+      { channel: `session:${this.ctx.session.id}` }
+    );
+  }
+
   async getToolInventory(): Promise<SessionToolInventory> {
     const owner = this.toolInventoryOwner;
     const queryObject = this.ctx.queryObject;
@@ -744,6 +752,7 @@ export class QueryRunner {
     if (attemptToken.isLive()) {
       this.toolInventoryOwner = attemptToken;
       this.toolInventory.begin(attemptToken, 'sdk');
+      this.notifyToolInventory();
     }
     const questionInputs = new QuestionInputScope(
       session.id,
@@ -1434,6 +1443,7 @@ export class QueryRunner {
                 plugins: message.plugins ?? [],
                 mcp_servers: message.mcp_servers ?? [],
               });
+              this.notifyToolInventory();
             }
             if (message.type === 'result') {
               questionInputs.endTurn();
@@ -1841,6 +1851,7 @@ export class QueryRunner {
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
       this.toolInventory.end(attemptToken);
+      this.notifyToolInventory();
       removeFlagSettingsFile?.();
 
       releaseStartupPermit('attempt_finished');

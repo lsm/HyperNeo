@@ -13,8 +13,8 @@ import type {
   SessionMcpServerEntry,
   McpEnablementSetOverrideResponse,
   McpEnablementClearOverrideResponse,
+  GetSessionToolInventoryResponse,
 } from '@hyperneo/shared';
-import { listRuntimeMcpServers } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
 import { globalSettings } from '../lib/state.ts';
 
@@ -31,6 +31,8 @@ const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }>
 import {
   buildDisabledSkillsList,
   computeMcpSkillRuntimeState,
+  computeObservedRuntimeState,
+  computeMcpServerSkillLinkage,
   computeSkillGroupState,
   getMcpServerEffectiveEnabled,
   getMcpServerProvenanceBadge,
@@ -126,7 +128,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
   const mcpServersGroupOpen = useSignal(true);
   const advancedOpen = useSignal(false);
 
-  const runtimeMcpServers = useSignal<string[]>([]);
+  const inventory = useSignal<GetSessionToolInventoryResponse | null>(null);
+  const refreshInventory = useSignal(0);
+  const runtimeMcpServers = useComputed(
+    () => inventory.value?.mcpServers.map((server) => server.name) ?? []
+  );
 
   const sessionMcpEntries = useSignal<SessionMcpServerEntry[]>([]);
   const mcpServerSearch = useSignal('');
@@ -170,7 +176,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     if (isOpen && session) {
       loadConfig();
       void loadGlobalConfig();
-      void loadRuntimeMcpServers();
       void loadSessionMcpEntries();
       void skillsStore.subscribe().catch(() => {
         toast.error('Failed to load App MCP Servers');
@@ -180,6 +185,53 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
       skillsStore.unsubscribe();
     };
   }, [isOpen, session?.id]);
+
+  useEffect(() => {
+    inventory.value = null;
+  }, [isOpen, session?.id]);
+
+  useEffect(() => {
+    if (!isOpen || !session) return;
+    let live = true;
+    let read = 0;
+    let cleanups: Array<() => void> = [];
+    void connectionManager
+      .getHub()
+      .then((hub) => {
+        if (!live) return;
+        const refresh = async () => {
+          const current = ++read;
+          try {
+            const result = await hub.request<GetSessionToolInventoryResponse>(
+              'session.getToolInventory',
+              { sessionId: session.id }
+            );
+            if (live && current === read) inventory.value = result;
+          } catch {}
+        };
+        cleanups = [
+          hub.onConnection((state) => {
+            if (state === 'connected') void refresh();
+            else {
+              read++;
+              inventory.value = null;
+            }
+          }),
+          hub.onEvent<{ sessionId: string }>('session.toolInventory.changed', (event) => {
+            if (event.sessionId === session.id) void refresh();
+          }),
+          hub.onEvent('state.session', (_state, context) => {
+            if (context?.channel === `session:${session.id}`) void refresh();
+          }),
+        ];
+        void refresh();
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [isOpen, session?.id, refreshInventory.value]);
 
   const loadConfig = () => {
     if (!session) return;
@@ -205,16 +257,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
       const response = await hub.request<{ config: GlobalToolsConfig }>('globalTools.getConfig');
       globalConfig.value = response.config;
     } catch {}
-  };
-
-  const loadRuntimeMcpServers = async () => {
-    if (!session) return;
-    try {
-      const response = await listRuntimeMcpServers(session.id);
-      runtimeMcpServers.value = response.servers.map((s) => s.name);
-    } catch {
-      runtimeMcpServers.value = [];
-    }
   };
 
   const loadSessionMcpEntries = async () => {
@@ -439,6 +481,17 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
       <div class="space-y-4">
+        <div class="text-xs text-fg-faint space-y-2">
+          <button type="button" onClick={() => refreshInventory.value++}>
+            Refresh running tools
+          </button>
+          <details>
+            <summary>Observed tool names ({inventory.value?.tools.length ?? 0})</summary>
+            <div class="break-words">
+              {inventory.value?.tools.join(', ') || 'No running tool inventory confirmed'}
+            </div>
+          </details>
+        </div>
         {runtimeMcpServers.value.length > 0 && (
           <>
             <div>
@@ -457,10 +510,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                   />
-                  <span class="text-sm font-medium text-fg-soft">Agent Runtime Tools</span>
+                  <span class="text-sm font-medium text-fg-soft">Observed MCP Servers</span>
                   <span class="text-xs text-fg-faint">({runtimeMcpServers.value.length})</span>
                 </button>
-                <span class="text-xs text-emerald-500/70 font-medium">Built-in</span>
+                <span class="text-xs text-fg-faint font-medium">Observed</span>
               </div>
               {runtimeMcpGroupOpen.value && (
                 <div class="mt-1 ml-5 space-y-1">
@@ -487,7 +540,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                         <div class="flex-1 min-w-0">
                           <div class="text-sm text-fg-soft truncate">{label?.title ?? name}</div>
                           <div class="text-xs text-fg-faint truncate">
-                            {label?.description ?? name}
+                            {computeObservedRuntimeState(inventory.value, name).label}
                           </div>
                         </div>
                       </div>
@@ -546,7 +599,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                         const runtime = computeMcpSkillRuntimeState(
                           skill,
                           sessionMcpEntries.value,
-                          sessionMcpLoaded.value
+                          sessionMcpLoaded.value,
+                          inventory.value,
+                          pendingDisabledSkills.value
                         );
                         const { dot: runtimeDotClass, text: runtimeTextClass } =
                           getMcpSkillRuntimeClasses(runtime.status);
@@ -575,15 +630,15 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                               </div>
                               {runtime.status !== 'unknown' && runtime.label && (
                                 <div
-                                  class={`text-[10px] truncate flex items-center gap-1 mt-0.5 ${runtimeTextClass}`}
+                                  class={`text-[10px] flex items-start gap-1 mt-0.5 ${runtimeTextClass}`}
                                   title={runtime.label}
                                   data-testid={`skill-runtime-${skill.name}`}
                                   data-status={runtime.status}
                                 >
                                   <span
-                                    class={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${runtimeDotClass}`}
+                                    class={`w-1.5 h-1.5 mt-1 rounded-full flex-shrink-0 ${runtimeDotClass}`}
                                   />
-                                  <span class="truncate">{runtime.label}</span>
+                                  <span class="break-words">{runtime.label}</span>
                                 </div>
                               )}
                             </div>
@@ -638,8 +693,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
               {mcpServersGroupOpen.value && (
                 <div class="mt-2 ml-5 space-y-2">
                   <div class="text-xs text-fg-faint">
-                    Overrides apply to this session only. Click Save to persist; changes take effect
-                    on the next respawn.
+                    Save persists this session's choices. Attachment is confirmed separately above;
+                    some changes may require a restart.
                   </div>
                   {sessionMcpEntries.value.length > 4 && (
                     <input
@@ -662,6 +717,18 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                         const pending = pendingMcpOverrides.value.get(entry.server.id);
                         const effectiveEnabled = getMcpServerEffectiveEnabled(entry, pending);
                         const provenanceBadge = getMcpServerProvenanceBadge(entry.server);
+                        const linked = computeMcpServerSkillLinkage(allSkills.value).get(
+                          entry.server.id
+                        );
+                        const observed = linked
+                          ? computeMcpSkillRuntimeState(
+                              linked,
+                              sessionMcpEntries.value,
+                              sessionMcpLoaded.value,
+                              inventory.value,
+                              pendingDisabledSkills.value
+                            )
+                          : computeObservedRuntimeState(inventory.value, entry.server.name);
                         const showClearAffordance =
                           entry.source === 'session' && (!pending || pending.enabled !== null);
                         return (
@@ -688,6 +755,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                                   {entry.server.name}
                                 </span>
                                 <SourceBadge {...provenanceBadge} />
+                              </div>
+                              <div class="text-[10px] text-fg-faint" title={observed.label}>
+                                {observed.label}
                               </div>
                               {entry.server.description && (
                                 <div class="text-[10px] text-fg-faint truncate">

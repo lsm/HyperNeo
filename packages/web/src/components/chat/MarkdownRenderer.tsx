@@ -23,6 +23,7 @@ type MarkdownModules = {
   unified: typeof import('unified').unified;
   remarkParse: typeof import('remark-parse').default;
   remarkGfm: typeof import('remark-gfm').default;
+  remarkCjkFriendly: typeof import('remark-cjk-friendly/parseOnly').default;
   remarkBreaks: typeof import('remark-breaks').default;
   remarkMath: typeof import('remark-math').default;
   remarkRehype: typeof import('remark-rehype').default;
@@ -48,6 +49,7 @@ function getMarkdownModules() {
       import('unified'),
       import('remark-parse'),
       import('remark-gfm'),
+      import('remark-cjk-friendly/parseOnly'),
       import('remark-breaks'),
       import('remark-math'),
       import('remark-rehype'),
@@ -58,6 +60,7 @@ function getMarkdownModules() {
           unifiedModule,
           remarkParseModule,
           remarkGfmModule,
+          remarkCjkFriendlyModule,
           remarkBreaksModule,
           remarkMathModule,
           remarkRehypeModule,
@@ -66,6 +69,7 @@ function getMarkdownModules() {
           unified: unifiedModule.unified,
           remarkParse: remarkParseModule.default,
           remarkGfm: remarkGfmModule.default,
+          remarkCjkFriendly: remarkCjkFriendlyModule.default,
           remarkBreaks: remarkBreaksModule.default,
           remarkMath: remarkMathModule.default,
           remarkRehype: remarkRehypeModule.default,
@@ -400,6 +404,7 @@ async function buildMarkdownProcessor(
     .unified()
     .use(modules.remarkParse)
     .use(modules.remarkGfm)
+    .use(modules.remarkCjkFriendly)
     .use(modules.remarkMath, { singleDollarTextMath: false })
     .use(modules.remarkBreaks)
     .use(modules.remarkRehype)

@@ -26,6 +26,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const queries: Array<{ finish: ReturnType<typeof deferred<void>>; status: () => Promise<unknown[]> }> = [];
+let preview: ReturnType<typeof Bun.serve> | undefined;
 const sdk = await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({ ...sdk, query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
   const number = queries.length + 1;
@@ -36,7 +37,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({ ...sdk, query: ({ prompt 
       const feed = prompt[Symbol.asyncIterator]();
       await feed.next();
       void feed.next().catch(() => {});
-      yield { type: 'system', subtype: 'init', uuid: crypto.randomUUID(), session_id: `synthetic-sdk-${number}`, cwd: join(run, 'workspace'), model: 'claude-haiku-4-5-20251001', permissionMode: 'default', apiKeySource: 'user', claude_code_version: 'synthetic', tools: ['Read', `mcp__browser__navigate${number}`], skills: ['synthetic-instructions'], plugins: [{ name: 'synthetic-wrapper', path: '/private/plugin' }], mcp_servers: [{ name: 'browser', status: 'connected' }], slash_commands: [], output_style: 'default' };
+      yield { type: 'system', subtype: 'init', uuid: crypto.randomUUID(), session_id: `synthetic-sdk-${number}`, cwd: join(run, 'workspace'), model: 'claude-haiku-4-5-20251001', permissionMode: 'default', apiKeySource: 'user', claude_code_version: 'synthetic', tools: ['Read', `mcp__browser__navigate${number}`], skills: ['playwright'], plugins: [{ name: 'playwright', path: '/private/plugin' }], mcp_servers: [{ name: 'browser', status: 'connected' }], slash_commands: [], output_style: 'default' };
       await entry.finish.promise;
       yield { type: 'result', subtype: 'success', uuid: crypto.randomUUID(), session_id: `synthetic-sdk-${number}`, is_error: false, result: 'Synthetic completed', duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {}, permission_denials: [], stop_reason: 'end_turn' };
     },
@@ -81,6 +82,39 @@ try {
   assert(first.tools.includes('mcp__browser__navigate1'));
   assert.deepEqual(first.mcpServers, [{ name: 'browser', status: 'connected', tools: ['navigate'] }]);
   assert(!JSON.stringify(first).match(/secret|private|config|error/));
+  if (process.argv.includes('--show-panel')) {
+    process.once('SIGUSR1', () => queries[0].finish.resolve());
+    process.once('SIGUSR2', () => { queries[0].status = async () => {
+      if (process.argv.includes('--slow-status')) await new Promise(done => setTimeout(done, 2500));
+      return [{ name: 'browser', status: 'needs-auth' }];
+    }; });
+    for (const name of ['browser', 'configured-browser']) {
+      const { server } = await hub.request<{ server: { id: string } }>('mcp.registry.create', { name: `${name}-server`, sourceType: 'stdio', command: 'synthetic-not-executed', args: [], enabled: true });
+      await hub.request('skill.create', { params: { name, displayName: name === 'browser' ? 'Observed browser' : 'Configured browser (absent from SDK)', description: 'Synthetic panel verification', sourceType: 'mcp_server', config: { type: 'mcp_server', appMcpServerId: server.id }, enabled: true, validationStatus: 'valid' } });
+    }
+    const agent = app.sessionManager.getSession(sessionId)!;
+    agent.getSessionData().config.mcpServers = { ...agent.getSessionData().config.mcpServers, 'configured-only': { type: 'sdk', name: 'configured-only', instance: {} as never } };
+    const { Hono } = await import(Bun.resolveSync('hono', resolve(import.meta.dir, '../../../packages/cli')));
+    const { serveStatic } = await import(Bun.resolveSync('hono/bun', resolve(import.meta.dir, '../../../packages/cli')));
+    const { createWebSocketHandlers } = await import('../../../packages/daemon/src/routes/setup-websocket.ts');
+    const dist = resolve(import.meta.dir, '../../../packages/web/dist');
+    const web = new Hono();
+    web.use('/*', serveStatic({ root: dist }));
+    web.get('*', async c => c.html(await Bun.file(join(dist, 'index.html')).text()));
+    preview = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async (request, server) => {
+      const refused = app.guardRequest(request);
+      if (refused) return refused;
+      if (new URL(request.url).pathname === '/ws') {
+        const device = await app.authenticateUpgrade(request, server.requestIP(request)?.address ?? null);
+        if (server.upgrade(request, { data: { connectionSessionId: 'global', device } })) return;
+        return new Response('Upgrade failed', { status: 500 });
+      }
+      return web.fetch(request);
+    }, websocket: createWebSocketHandlers(app.transport, app.sessionManager) });
+    console.log(`PANEL: http://127.0.0.1:${preview.port}/session/${sessionId} PID=${process.pid}`);
+    await new Promise<void>(done => process.once('SIGTERM', done));
+    evidence.panelAwaitedManualInspection = true;
+  } else {
   queries[0].status = async () => { throw new Error('secret failure'); };
   evidence.failed = await inventory();
   assert.equal((evidence.failed as SessionToolInventory).mcpServers[0].status, 'unverified');
@@ -131,7 +165,9 @@ try {
   } finally { await reconnected.close(); }
   evidence.pass = true;
   console.log(`PASS actual isolated-daemon inventory RPC: ${join(run, 'evidence/live-inventory.json')}`);
+  }
 } finally {
+  preview?.stop(true);
   settleLateStatus();
   evidence.finalQueryCount = queries.length;
   for (const query of queries) query.finish.resolve();
