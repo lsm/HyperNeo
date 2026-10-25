@@ -5,6 +5,11 @@ import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
+import {
+  artifactPreviewStack,
+  artifactPreviewWorkspace,
+  closeArtifactPreview,
+} from '../../lib/artifact-preview-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoPublicConversation, PendingAsk, publicAskText } from '../NeoPublicConversation.tsx';
@@ -76,8 +81,64 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
 
 afterEach(() => {
   cleanup();
+  closeArtifactPreview();
   connectionState.value = initialConnectionState;
   vi.clearAllMocks();
+});
+
+describe('message preview references', () => {
+  const previewContext = {
+    artifactId: 'registered-report',
+    snapshot: 'a'.repeat(64),
+    displayName: 'Synthetic report',
+    state: 'available' as const,
+  };
+  it.each([false, true])('opens an exact available reference from pending: %s', (pending) => {
+    if (pending)
+      render(
+        <PendingAsk
+          ask={{
+            requestId: 'bound',
+            sessionId: root,
+            text: 'About this report',
+            images: [],
+            createdAt: '2026-10-25T12:00:00Z',
+            state: 'sending',
+            previewContext,
+          }}
+        />
+      );
+    else
+      render(<NeoPublicConversation conversation={conversation([ask({ previewContext })], [])} />);
+    const button = screen.getByRole('button', { name: /Preview.*Synthetic report.*aaaaaaaa/ });
+    fireEvent.click(button);
+    expect(artifactPreviewStack.value.at(-1)).toEqual({
+      kind: 'artifact',
+      artifactId: previewContext.artifactId,
+    });
+    fireEvent.click(button);
+    expect(
+      artifactPreviewWorkspace.state.value.files.filter(
+        (file) => file.artifactId === previewContext.artifactId
+      )
+    ).toHaveLength(1);
+  });
+  it('shows an unavailable snapshot without opening a replacement', () => {
+    render(
+      <NeoPublicConversation
+        conversation={conversation(
+          [ask({ previewContext: { ...previewContext, state: 'unavailable' } })],
+          []
+        )}
+      />
+    );
+    const button = screen.getByRole('button', {
+      name: /Preview unavailable.*Synthetic report.*aaaaaaaa/,
+    });
+    expect(button.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(button);
+    expect(artifactPreviewStack.value).toHaveLength(0);
+  });
 });
 
 describe('durable public conversation presentation', () => {

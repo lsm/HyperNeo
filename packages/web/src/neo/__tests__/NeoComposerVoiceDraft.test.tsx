@@ -1,7 +1,8 @@
 import { signal } from '@preact/signals';
-import { cleanup, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { useEffect } from 'preact/hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ComponentProps } from 'preact';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import type { VoicePhase } from '../NeoVoice.tsx';
@@ -22,7 +23,10 @@ vi.mock('../../lib/state.ts', () => ({
 }));
 
 const onDraft = vi.fn();
-function composer(draft = 'Fictional draft about lunch') {
+function composer(
+  draft = 'Fictional draft about lunch',
+  props: Partial<ComponentProps<typeof NeoComposer>> = {}
+) {
   const store = {
     sdkMessages: signal([]),
     agentState: signal({ status: 'idle' }),
@@ -41,6 +45,7 @@ function composer(draft = 'Fictional draft about lunch') {
       onError={vi.fn()}
       onTranscript={vi.fn()}
       onSend={vi.fn()}
+      {...props}
     />
   );
 }
@@ -60,6 +65,29 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it('keeps the ordinary worker composer outside Neo Preview binding', async () => {
+  const onSend = vi.fn().mockResolvedValue({ ok: true, created: true, messageId: 'worker-send' });
+  const reference = {
+    artifactId: 'registered-report',
+    snapshot: 'a'.repeat(64),
+    displayName: 'Neo-only report',
+    state: 'available' as const,
+  };
+  render(
+    composer('Worker-specific request', {
+      forSession: true,
+      previewContext: reference,
+      previewCandidate: { ...reference, artifactId: 'different-report' },
+      onSend,
+    })
+  );
+  expect(screen.queryByText(/Neo-only report/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Use current Preview' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+  expect(onSend.mock.calls[0][0]).not.toHaveProperty('previewContext');
 });
 
 describe('Neo composer draft while voice is active', () => {

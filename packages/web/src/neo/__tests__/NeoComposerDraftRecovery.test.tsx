@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeArtifactPreview, openArtifactPreview } from '../../lib/artifact-preview-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { SessionStore } from '../../lib/session-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
@@ -12,18 +13,26 @@ import {
   type NeoPendingAsk,
   neoDraftPayload,
 } from '../neo-intake.ts';
+import { restoreNeoImages, useNeoAttachments } from '../neo-attachments.ts';
 import type { NeoPublicEntry } from '../public-conversation.ts';
 
 const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn(), event: vi.fn() }));
-const voice = vi.hoisted(() => ({ recording: false, submit: vi.fn() }));
-vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => voice.recording }));
+const voice = vi.hoisted(() => ({
+  recording: false,
+  enabled: false,
+  start: vi.fn(),
+  submit: vi.fn(),
+}));
+vi.mock('../useNeoVoiceSettings.ts', () => ({
+  useNeoVoiceSettings: () => voice.recording || voice.enabled,
+}));
 vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
   isVoiceRecordingSupported: () => true,
   useVoiceRecorder: () => ({
     isRecording: voice.recording,
     isStarting: false,
     durationLimitHit: false,
-    start: vi.fn(),
+    start: voice.start,
     stop: vi.fn(),
     cancel: vi.fn(),
     getLevel: () => 0,
@@ -57,6 +66,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   voice.submit.mockReset();
   voice.recording = false;
+  voice.enabled = false;
+  voice.start.mockResolvedValue(undefined);
+  useNeoAttachments(root).remove(useNeoAttachments(root).files.map((file) => file.id));
+  closeArtifactPreview();
   persisted.clear();
   slowLoad = null;
   seams.event.mockImplementation(() => () => {});
@@ -102,6 +115,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  closeArtifactPreview();
   vi.unstubAllGlobals();
 });
 
@@ -154,6 +168,198 @@ function type(text: string) {
 function value() {
   return (screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement).value;
 }
+
+function previewRoute(delay?: Promise<unknown>) {
+  const original = seams.request.getMockImplementation()!;
+  seams.request.mockImplementation(async (method, input) => {
+    if (method !== 'operation.invoke') return original(method, input);
+    if (input.name === 'artifact.file.get') {
+      if (input.input.artifactId === 'report-a' && delay) return delay;
+      const id = input.input.artifactId;
+      return {
+        accepted: true,
+        metadata: {
+          context: { kind: 'todo', id: 'fictional-todo' },
+          artifact: {
+            daemonId: 'd',
+            artifactId: id,
+            title: `${id}.md`,
+            kind: 'markdown',
+            byteLength: 8,
+          },
+          sha256: (id === 'report-a' ? 'a' : 'b').repeat(64),
+          createdAt: 1,
+          sourcePath: `${id}.md`,
+          producer: { adapter: 'hyperneo', id: 's' },
+        },
+      };
+    }
+    if (input.name === 'artifact.file.read')
+      return {
+        accepted: true,
+        data: btoa('# Report'),
+        nextOffset: 8,
+        byteLength: 8,
+        sha256: (input.input.artifactId === 'report-a' ? 'a' : 'b').repeat(64),
+        complete: true,
+      };
+    return { accepted: true };
+  });
+}
+function openPreview(id: string) {
+  act(() => openArtifactPreview({ kind: 'artifact', artifactId: id }, `${id}.md`));
+}
+function binding(name: string, hash: string) {
+  return screen.queryByText(new RegExp(`To Neo.*${name}.*${hash}`));
+}
+
+describe('Neo live preview binding', () => {
+  it('keeps an authored draft on its snapshot until explicitly rebound or removed', async () => {
+    previewRoute();
+    const view = mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    type('Discuss this snapshot');
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use current Preview' }));
+    await waitFor(() => expect(binding('report-b', 'bbbbbbbb')).toBeTruthy());
+    openPreview('report-a');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-b', 'bbbbbbbb')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Preview context' }));
+    openPreview('report-b');
+    await act(async () => {});
+    expect(binding('report-b', 'bbbbbbbb')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0]).not.toHaveProperty('previewContext');
+  });
+  it('retains a phone preview binding after dismissing the sheet and captures before send', async () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    previewRoute();
+    const view = mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    act(() => closeArtifactPreview());
+    type('About this report');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    openPreview('report-b');
+    expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+      previewContext: {
+        artifactId: 'report-a',
+        snapshot: 'a'.repeat(64),
+        displayName: 'report-a.md',
+        state: 'available',
+      },
+    });
+  });
+  it('pins the association before awaiting microphone access on an otherwise empty draft', async () => {
+    voice.enabled = true;
+    let release!: () => void;
+    voice.start.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+    previewRoute();
+    mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledOnce());
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+    await act(async () => {
+      release();
+    });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+  });
+  it('holds an attachment-only draft binding while switching previews', async () => {
+    previewRoute();
+    const view = mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    act(() => {
+      restoreNeoImages(root, [{ data: 'YWJj', media_type: 'image/png' }]);
+    });
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+      previewContext: { artifactId: 'report-a' },
+      images: [{ data: 'YWJj' }],
+    });
+  });
+  it('does not clear a newer binding when an earlier send is accepted', async () => {
+    previewRoute();
+    const view = mount();
+    let release!: (value: unknown) => void;
+    view.model.value.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    type('Earlier snapshot comment');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    openPreview('report-b');
+    await waitFor(() => expect(binding('report-b', 'bbbbbbbb')).toBeTruthy());
+    type('Later snapshot comment');
+    await act(async () => {
+      release({ ok: true, created: true, messageId: 'first' });
+    });
+    expect(value()).toBe('Later snapshot comment');
+    expect(binding('report-b', 'bbbbbbbb')).toBeTruthy();
+    expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+      previewContext: { artifactId: 'report-a' },
+    });
+  });
+  it('keeps a previously unbound draft unbound when a preview is opened', async () => {
+    previewRoute();
+    mount();
+    type('Unbound before preview');
+    openPreview('report-a');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Use current Preview' }));
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+  });
+  it('never silently binds existing text when metadata arrives late', async () => {
+    let release!: (value: unknown) => void;
+    previewRoute(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    const view = mount();
+    openPreview('report-a');
+    type('Unbound thought');
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    await act(async () => {
+      release({ accepted: false, reason: 'revoked' });
+    });
+    expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    expect(binding('report-b', 'bbbbbbbb')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0]).not.toHaveProperty('previewContext');
+  });
+});
 
 describe('Neo real composer draft recovery', () => {
   it.each([false, true])(
