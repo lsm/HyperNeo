@@ -102,7 +102,7 @@ try {
   const todo = service.todos.addTodo('synthetic-todo', ask.id, { title: 'Discuss', doneWhen: 'Human decides', instruction: null, named: null, check: null }, now);
   service.todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
   service.todoSessions.bind(todo.id, ref, now);
-  const dispatch = await service.todoSessions.inputs.accept(todo.id, root, { verb: 'send', ref }, 'Discuss', now);
+  const dispatch = await service.todoSessions.inputs.accept(todo.id, root, { verb: 'send', ref }, 'Discuss', now - 60_000);
   await service.todoSessions.inputs.recordOutcome(dispatch, { ref }, now);
   const rolloutPath = join(run, 'rollout.jsonl');
   const heartbeat = '<heartbeat>\n<automation_id>reviewbot-test</automation_id>\n<decision>DONT_NOTIFY</decision>\n<message>TEST remains healthy</message>\n</heartbeat>';
@@ -125,6 +125,13 @@ try {
     assert.equal(modelTurns, expected, label);
     assert.equal(results().n, expected, label);
   };
+  const firstNewTurn = turnEnds;
+  turnEnds = Array.from({ length: 20 }, (_, i) => ({ id: `old-${i}`, at: now - 50_000 + i, message: `Previously handled ${i}` }));
+  await expectTurns('upgradeHistoryDoesNotReplay', 2);
+  workerStatus = 'done';
+  await expectTurns('oldHistoryStatusChangeDoesNotReplay', 2);
+  workerStatus = 'running';
+  turnEnds = firstNewTurn;
   await expectTurns('firstNotifyFalseReport', 3);
   assert(latestInput().includes(heartbeat), 'the unchanged heartbeat must reach Neo inline');
   service.todos.focusAsk(ask.id, { ...ref, name: 'Discussion', label: 'Discussion', provider: 'Codex', link: 'codex://threads/synthetic-worker' }, Date.now());
@@ -145,16 +152,18 @@ try {
   await expectTurns('changedReasonSameTransportId', 5);
   assert(latestInput().includes('Prepared discussion. New reason.'));
   workerStatus = 'queued';
-  await expectTurns('changedWorkerStatus', 6);
+  await expectTurns('changedWorkerStatusDoesNotReplay', 5);
   waitingFor = 'A different owner decision.';
-  await expectTurns('changedStructuredReason', 7);
+  await expectTurns('changedStructuredReasonDoesNotReplay', 5);
+  turnEnds = [{ id: 'new-turn-after-cutoff', at: Date.now() + 1, message: 'New report after the cutoff.' }];
+  await expectTurns('newTurnAfterCutoff', 6);
   assert(latestInput().includes('Waiting for: A different owner decision.'));
   const second = service.todos.addTodo('other-todo', ask.id, { title: 'Other', doneWhen: 'Human decides', instruction: null, named: null, check: null }, now);
   service.todos.updateTodo(second, { state: 'doing', startedAt: now }, now);
   service.todoSessions.bind(second.id, ref, now);
   const secondDispatch = await service.todoSessions.inputs.accept(second.id, root, { verb: 'send', ref }, 'Other', now);
   await service.todoSessions.inputs.recordOutcome(secondDispatch, { ref }, now);
-  await expectTurns('sameReportDifferentTodo', 8);
+  await expectTurns('sameReportDifferentTodo', 7);
   await app.jobProcessor.stop();
   const historyCount = (id: string) => (app.db.getDatabase().prepare(
     'SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND sdk_uuid=?'
@@ -174,11 +183,11 @@ try {
   }
   app.jobProcessor.start();
   const overlapDeadline = Date.now() + 45000;
-  while (results().n < 10 && Date.now() < overlapDeadline) await Bun.sleep(100);
-  assert.equal(results().n, 10);
-  assert.equal(modelTurns, 10);
+  while (results().n < 9 && Date.now() < overlapDeadline) await Bun.sleep(100);
+  assert.equal(results().n, 9);
+  assert.equal(modelTurns, 9);
   for (const phase of ['pending', 'queued']) assert.equal(historyCount(`synthetic-urgent-${phase}`), 1);
-  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 8, urgentHistoryRows: 2, finalTurns: modelTurns, finalResults: results().n });
+  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 7, urgentHistoryRows: 2, finalTurns: modelTurns, finalResults: results().n });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
 } finally {
