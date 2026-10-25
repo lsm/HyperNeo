@@ -97,6 +97,24 @@ describe('initial canonical tool default writes', () => {
       .run(JSON.stringify({ toolSelectionDefaults: selection(false) }));
     expect(db.getSession('veto')!.config.toolSelection).toEqual(selection(false));
   });
+  it('captures workflow vetoes before the queued write can observe caller mutations', async () => {
+    const session = make('captured-veto');
+    const overrides = [{ skillId: 'wrapper', enabled: false }];
+    const pending = db.createSession(session, { initialSkillOverrides: overrides });
+    overrides[0].enabled = true;
+    await pending;
+    expect(session.config.toolSelection?.choices['mcp:browser'].selected).toBe(false);
+    expect(session.config.toolSelection?.choices['skill:notes'].selected).toBe(true);
+  });
+  it('does not publish a caller snapshot if insertion fails', async () => {
+    const session = make('rejected-insert');
+    db.getDatabase().exec(
+      "CREATE TRIGGER reject_initial_session BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT,'synthetic creation failure'); END"
+    );
+    await expect(db.createSession(session)).rejects.toThrow('synthetic creation failure');
+    expect(db.getSession(session.id)).toBeNull();
+    expect(session.config.toolSelection).toBeUndefined();
+  });
   it('freezes workflow initialization vetoes in AgentSession.fromInit and retains them on reload', async () => {
     const bus = await createTestInternalEventBus();
     const init = {
