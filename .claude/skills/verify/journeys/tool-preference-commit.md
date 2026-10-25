@@ -23,6 +23,10 @@ Pass requires:
 - Commit a catalog/default update. Registry RPC readback reflects the edit while
   session.get still returns the frozen session choices. A failing default edit
   rolls back its catalog change too.
+- Successful global default edits refresh updated_at in the existing UTC text
+  format. Seed two old Space timestamps, edit the older Space's defaults, then
+  space.listWithTasks must return it first with a current numeric millisecond
+  updatedAt. Record defaultTimestamps.spaceRpcOrdering=true.
 - Restart only the owned daemon. Both canonical settings and the final legacy
   override survive. Inventory stays not_running; the MCP fixture lists navigate.
 

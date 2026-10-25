@@ -68,6 +68,8 @@ try {
   assert.equal(await app.db.casSessionToolPreferences(stale,{toolSelection:off},[],{before:capturedOverride,enabled:true}),'superseded');
   assert.equal(captureToolPreferenceRow(raw,key).row?.enabled,0);
   assert.deepEqual(app.db.getSession(sessionId)!.config.toolSelection,selection);
+  raw.prepare("UPDATE global_settings SET updated_at='2000-01-01 00:00:00' WHERE id=1").run();
+  const globalBefore=(raw.prepare("SELECT datetime('now') AS value").get() as {value:string}).value;
   const target=captureToolPreferenceRow(raw,{table:'global_settings',id:1});
   assert.equal(commitToolDefaultUpdate(raw,target,[guard],off,()=>{
     raw.prepare('UPDATE app_mcp_servers SET enabled=1 WHERE id=?').run(server.id);
@@ -75,6 +77,26 @@ try {
   }),'won');
   const defaults=JSON.parse(captureToolPreferenceRow(raw,target.key).row!.settings as string).toolSelectionDefaults;
   assert.deepEqual(defaults,off);
+  const globalUpdatedAt=captureToolPreferenceRow(raw,target.key).row!.updated_at;
+  const globalAfter=(raw.prepare("SELECT datetime('now') AS value").get() as {value:string}).value;
+  assert.equal(typeof globalUpdatedAt,'string');
+  assert((globalUpdatedAt as string)>=globalBefore && (globalUpdatedAt as string)<=globalAfter);
+  const {SpaceRepository}=await import('../../../packages/daemon/src/storage/repositories/space-repository.ts');
+  const spaces=new SpaceRepository(raw);
+  const edited=spaces.createSpace({name:'Edited fixture',slug:'edited-fixture',workspacePath:join(run,'space-edited')});
+  const other=spaces.createSpace({name:'Other fixture',slug:'other-fixture',workspacePath:join(run,'space-other')});
+  raw.prepare('UPDATE spaces SET updated_at=1000,stopped=1 WHERE id=?').run(edited.id);
+  raw.prepare('UPDATE spaces SET updated_at=2000,stopped=1 WHERE id=?').run(other.id);
+  const readSpaces=async()=>(await hub.request<{id:string;updatedAt:number}[]>('space.listWithTasks',{summary:true})).filter(space=>space.id===edited.id || space.id===other.id);
+  assert.deepEqual((await readSpaces()).map(space=>space.id),[other.id,edited.id]);
+  const spaceTarget=captureToolPreferenceRow(raw,{table:'spaces',id:edited.id});
+  const spaceBefore=Date.now();
+  assert.equal(commitToolDefaultUpdate(raw,spaceTarget,[],off,()=>true),'won');
+  const ordered=await readSpaces();
+  assert.deepEqual(ordered.map(space=>space.id),[edited.id,other.id]);
+  assert.equal(typeof ordered[0].updatedAt,'number');
+  assert(ordered[0].updatedAt>=spaceBefore && ordered[0].updatedAt<=Date.now());
+  evidence.defaultTimestamps={globalUpdatedAt,spaceUpdatedAt:ordered[0].updatedAt,spaceRpcOrdering:true};
   const registryAfter=(await hub.request<{servers:{id:string;enabled:boolean}[]}>('mcp.registry.list',{})).servers;
   assert(registryAfter.some(entry=>entry.id===server.id && entry.enabled));
   assert.deepEqual((await hub.request<{session:Session}>('session.get',{sessionId})).session.config.toolSelection,selection);

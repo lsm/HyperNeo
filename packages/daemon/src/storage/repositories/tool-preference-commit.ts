@@ -98,9 +98,9 @@ export function commitToolDefaultUpdate(
     return (
       db
         .prepare(
-          `UPDATE ${target.key.table} SET ${column}=json_set(COALESCE(${column},'{}'),'$.toolSelectionDefaults',json(?)) WHERE id=? AND json_type(COALESCE(${column},'{}'))='object'`
+          `UPDATE ${target.key.table} SET ${column}=json_set(COALESCE(${column},'{}'),'$.toolSelectionDefaults',json(?)),updated_at=CASE ? WHEN 'spaces' THEN ? ELSE datetime('now') END WHERE id=? AND json_type(COALESCE(${column},'{}'))='object'`
         )
-        .run(JSON.stringify(selection), target.key.id).changes === 1
+        .run(JSON.stringify(selection), target.key.table, Date.now(), target.key.id).changes === 1
     );
   });
 }
