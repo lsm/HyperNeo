@@ -369,6 +369,20 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
     db.prepare("UPDATE neo_todos SET state=? WHERE id=?").run("done", id);
     if (await gateway.call(neoTodoSessionWrites, "claimNeedsYou", id, 13) !== null || read().needs !== null) Deno.exit(1);
     console.log("[deno-smoke] needs-you writer admits one notice and refuses failed or closed incidents");
+    const ref = {adapter:"hyperneo",id:"synthetic-nudge-worker"}, live = {status:"stopped",lastActivityAt:1};
+    db.prepare("UPDATE neo_todos SET state=?,instruction=?,updated_at=1 WHERE id=?").run("doing", "Continue synthetic work", id);
+    db.prepare("UPDATE neo_todo_sessions SET target=?,ref=? WHERE todo_id=?").run(JSON.stringify({verb:"send",ref}), JSON.stringify(ref), id);
+    const { neoTodoSessionReads } = await import(src + "/storage/repositories/neo-todo-session-repository.ts");
+    if (!(await gateway.call(neoTodoSessionReads, "nudgeContext", id))?.todo.instruction) Deno.exit(1);
+    const reminders = await Promise.all([gateway.call(neoTodoSessionWrites, "claimNudge", id, ref, live, 1200001, 1), gateway.call(neoTodoSessionWrites, "claimNudge", id, ref, live, 1200001, 1)]);
+    if (reminders.filter(Boolean).length !== 1 || reminders.find(Boolean).plan.nudges !== 1) Deno.exit(1);
+    await gateway.call(neoTodoSessionWrites, "finishNudge", id, 1, 1, 0);
+    if (!(await gateway.call(neoTodoSessionWrites, "claimNudge", id, ref, live, 1200001, 1))) Deno.exit(1);
+    db.prepare("UPDATE pack_facts SET value_json=? WHERE todo_id=? AND pack=? AND key=?").run(JSON.stringify({since:99,nudges:0}), id, "core", "nudge");
+    await gateway.call(neoTodoSessionWrites, "finishNudge", id, 1, 1, 3);
+    const incident = JSON.parse(db.prepare("SELECT value_json FROM pack_facts WHERE todo_id=? AND pack=? AND key=?").get(id, "core", "nudge").value_json);
+    if (incident.since !== 99 || incident.nudges !== 0) Deno.exit(1);
+    console.log("[deno-smoke] reminder reservation has one winner, permits release and preserves newer activity");
   } finally { db.close(); await gateway.close(); }
 '; then
   dump_log
@@ -448,5 +462,11 @@ mkdir -p "$DELIVERY_PARKING_RUN/home"
 env -i HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$DELIVERY_PARKING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-delivery-parking.ts" "$DELIVERY_PARKING_RUN"
+
+RATE_LIMIT_CANCEL_RUN="$WORK_DIR/rate-limit-cancel"
+mkdir -p "$RATE_LIMIT_CANCEL_RUN/home"
+env -i HOME="$RATE_LIMIT_CANCEL_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$RATE_LIMIT_CANCEL_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-rate-limit-cancel.ts" "$RATE_LIMIT_CANCEL_RUN"
 
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

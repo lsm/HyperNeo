@@ -1,6 +1,8 @@
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import { withBusyRetry } from '../../../../storage/busy-retry.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { callCodingBranchDb } from './branch-facts-db.ts';
+import { codingWorkReads, codingWorkWrites } from './work-facts-db.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
@@ -19,6 +21,15 @@ const pending = new WeakMap<
   Database,
   Map<string, Promise<ReturnType<CodingWorkFactsRepository['read']>>>
 >();
+
+function workRequests(db: Database) {
+  let reads = pending.get(db);
+  if (!reads) {
+    reads = new Map();
+    pending.set(db, reads);
+  }
+  return reads;
+}
 
 export class CodingWorkFactsRepository {
   constructor(private readonly db: Database) {}
@@ -73,23 +84,37 @@ export class CodingWorkFactsRepository {
     };
   }
 
+  readCurrent(url: string, at = Date.now(), maxAgeMs = NEO_WORK_PR_READ_MS) {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingWorkReads, 'read', url, at, maxAgeMs),
+      'coding.work.db'
+    );
+  }
+
   refresh(
     url: string,
     spawn: SpawnFn = spawnProcess,
     now = Date.now
   ): Promise<ReturnType<CodingWorkFactsRepository['read']>> {
-    const canonical = this.canonical(url);
-    if (!canonical) return Promise.resolve(this.read(url, now()));
-    let reads = pending.get(this.db);
-    if (!reads) {
-      reads = new Map();
-      pending.set(this.db, reads);
-    }
+    const reads = workRequests(this.db),
+      key = `request:${url.toLowerCase()}`;
+    const held = reads.get(key);
+    if (held) return held;
+    const request = this.collectCurrent(url, spawn, now).finally(() => reads.delete(key));
+    reads.set(key, request);
+    return request;
+  }
+
+  private async collectCurrent(url: string, spawn: SpawnFn, now: () => number) {
+    const valid = parsePrUrl(url.toLowerCase());
+    const current = await this.readCurrent(url, now());
+    if (!valid) return current;
+    const canonical = current.url,
+      reads = workRequests(this.db);
     const held = reads.get(canonical);
     if (held) return held;
-    const revision = this.row(canonical)?.observation_revision ?? 0;
-    const request = this.collect(canonical, revision, spawn, now).finally(() =>
-      reads!.delete(canonical)
+    const request = this.collect(canonical, current.observationRevision, spawn, now).finally(() =>
+      reads.delete(canonical)
     );
     reads.set(canonical, request);
     return request;
@@ -106,29 +131,32 @@ export class CodingWorkFactsRepository {
       value = (await readGithubPrs([url], measured))?.[0] ?? null;
     } catch {}
     log.info('PR ledger work GitHub read', { url, lookups: requests, ok: value !== null });
-    const persist = this.db.transaction(() => {
-      const before = this.row(url);
-      if ((before?.observation_revision ?? 0) !== revision) return;
-      const at = now(),
-        json = value ? JSON.stringify(value) : (before?.value_json ?? null);
-      this.db
-        .prepare(`INSERT INTO pack_coding_work_facts
-        (url,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)
-        VALUES(?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET
-        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,
-        value_json=excluded.value_json,observed_at=excluded.observed_at,
-        attempted_at=excluded.attempted_at,reason=excluded.reason`)
-        .run(
-          url,
-          (before?.fact_revision ?? 0) + (value && json !== before?.value_json ? 1 : 0),
-          revision + 1,
-          json,
-          value ? at : (before?.observed_at ?? null),
-          at,
-          value ? null : 'failed'
-        );
-    }, 'immediate');
-    withBusyRetry(persist);
-    return this.read(url, now());
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingWorkWrites, 'observe', url, revision, value, now()),
+      'coding.work.db'
+    );
+  }
+
+  observe(url: string, revision: number, value: NeoWorkPr | null, at: number) {
+    const before = this.row(url);
+    if ((before?.observation_revision ?? 0) !== revision) return this.read(url, at);
+    const json = value ? JSON.stringify(value) : (before?.value_json ?? null);
+    this.db
+      .prepare(`INSERT INTO pack_coding_work_facts
+      (url,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET
+      fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,
+      value_json=excluded.value_json,observed_at=excluded.observed_at,
+      attempted_at=excluded.attempted_at,reason=excluded.reason`)
+      .run(
+        url,
+        (before?.fact_revision ?? 0) + (value && json !== before?.value_json ? 1 : 0),
+        revision + 1,
+        json,
+        value ? at : (before?.observed_at ?? null),
+        at,
+        value ? null : 'failed'
+      );
+    return this.read(url, at);
   }
 }
