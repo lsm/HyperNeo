@@ -161,6 +161,36 @@ afterEach(() => {
 });
 
 describe('Neo preview Work layout', () => {
+  it.each([320, 390, 719])(
+    'uses a single result at %ipx and returns to the preserved draft',
+    async (width) => {
+      viewport = width;
+      mount();
+      const draft = screen.getByRole('textbox', { name: 'Draft' });
+      fireEvent.input(draft, { target: { value: 'Keep phone discussion' } });
+      await open('a');
+      await open('b');
+      expect(screen.getByRole('dialog', { name: 'File b' })).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Document a' })).toBeNull();
+      expect(screen.getAllByRole('region', { name: 'File preview' })).toHaveLength(1);
+      expect(screen.queryByRole('tablist')).toBeNull();
+      expect(screen.queryByRole('separator')).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: /Close preview|Expand preview|Restore side by side/ })
+      ).toBeNull();
+      const content = screen.getByRole('heading', { name: 'Document b' });
+      const edge = window.innerWidth - 20;
+      fireEvent.touchStart(content, { touches: [{ clientX: edge, clientY: 200 }] });
+      fireEvent.touchMove(content, { touches: [{ clientX: edge - 300, clientY: 205 }] });
+      fireEvent.touchEnd(content, { changedTouches: [{ clientX: edge - 300, clientY: 205 }] });
+      expect(document.querySelector('.neo-sheet-open')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss preview' }));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
+      expect((draft as HTMLTextAreaElement).value).toBe('Keep phone discussion');
+    }
+  );
+
   it('keeps custom width across tabs/expand, clamps at breakpoints and resets on phone/dismissal', async () => {
     viewport = 900;
     const { container } = mount();

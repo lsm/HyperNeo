@@ -632,6 +632,19 @@
   justify-content: center;
   padding-top: 8px;
 }
+.artifact-preview-phone {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.artifact-preview-phone section > header {
+  padding-right: 16px;
+}
+.artifact-preview-phone > .artifact-preview-handle {
+  height: 44px;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0;
+  touch-action: none;
+}
 .artifact-preview-handle span {
   width: 36px;
   height: 4px;
