@@ -789,14 +789,17 @@ function isProviderCatalogDiscovered(providerId: string, provider: Provider): bo
 }
 
 function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[] {
-  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  const registry = getProviderRegistry();
+  const curatedModels = registry.getCuratedModels(providerId);
   if (curatedModels === undefined) return models;
+  const provider = registry.get(providerId);
   const knownIds = new Set(models.map((model) => model.id));
   const staticProviderModels = STATIC_MODEL_METADATA.filter(
     (model) => model.provider === providerId
   );
   const missing = curatedModels.flatMap((curated) => {
     if (knownIds.has(curated.id)) return [];
+    if (provider?.isCuratedModelVisible?.(curated.id) === false) return [];
     const known = findInModels(staticProviderModels, curated.id);
     if (known) return [{ ...known }];
     return [
