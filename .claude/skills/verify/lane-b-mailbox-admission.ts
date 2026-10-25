@@ -35,10 +35,17 @@ try {
     workspacePath: join(run, 'workspace'), config: { queryMode: 'manual' },
   });
   const raw = app.db.getDatabase();
+  const { SessionScheduler } = await import('../../../packages/daemon/src/lib/scheduler/session-schedules.ts');
+  const { createScheduleDelivery } = await import('../../../packages/daemon/src/lib/scheduler/session-schedule-delivery.ts');
+  const { createOperationRegistry } = await import('../../../packages/daemon/src/lib/operations/registry.ts');
+  const schedule = new SessionScheduler(raw, app.jobQueue).create({
+    target: { adapter: 'hyperneo', id: sessionId }, sourceKind: 'reminder', sourceId: 'synthetic',
+    note: 'One reminder', nudgeEvery: 1, cadence: { kind: 'every', everyMs: 60000 }, createdBySession: null,
+  });
   const prepare = raw.prepare;
   let mainSqlAttempts = 0;
   raw.prepare = (...args) => {
-    if (/\/mailbox\/(?:handoff|enqueue)\.ts/.test(new Error().stack ?? '')) {
+    if (/\/(?:mailbox\/(?:handoff|enqueue)|scheduler\/session-schedule-delivery)\.ts/.test(new Error().stack ?? '')) {
       mainSqlAttempts++;
       throw new Error('mailbox admission SQL reached main connection');
     }
@@ -64,8 +71,19 @@ try {
     assert.equal(hash(payload.message.message.content), hash(body));
     evidence.fullBodyHash = hash(body);
     evidence.bodyBytes = Buffer.byteLength(body);
+    const scheduledId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
+    const delivery = createScheduleDelivery(app.db, () => createOperationRegistry([]));
+    await Promise.all([
+      delivery.deliver(schedule, scheduledId, 'One reminder'),
+      delivery.deliver(schedule, scheduledId, 'One reminder'),
+    ]);
+    const scheduled = app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': sessionId, messageUuid: scheduledId });
+    assert.equal(scheduled.length, 1, 'concurrent scheduled retries must enqueue once');
+    evidence.scheduledRetries = scheduled.length;
+    assert.equal(mainSqlAttempts, 0);
     evidence.healthAfter = await hub.request('system.health', {});
   } finally {
+    evidence.mainSqlAttempts = mainSqlAttempts;
     raw.prepare = prepare;
   }
 } finally {
