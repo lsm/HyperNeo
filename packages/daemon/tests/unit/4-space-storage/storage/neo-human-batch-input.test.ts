@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake';
-import { createMailboxEntry } from '../../../../src/lib/mailbox/entry';
+import { createMailboxEntry, type MailboxMessageContent } from '../../../../src/lib/mailbox/entry';
 import { boundDeliveryContent } from '../../../../src/lib/handoffs/bound-delivery';
 import { NeoWakeQueueRepository } from '../../../../src/storage/repositories/neo-wake-queue-repository';
 import {
@@ -38,13 +38,13 @@ describe('worker batches before human intake', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const hold = (text: string) =>
+  const hold = (content: MailboxMessageContent) =>
     new NeoWakeQueueRepository(db.getDatabase()).hold(
       createMailboxEntry({
         to: { kind: 'session', sessionId },
         origin: 'session:synthetic-worker',
         messageUuid: crypto.randomUUID(),
-        message: { type: 'user', parent_tool_use_id: null, message: { content: text } },
+        message: { type: 'user', parent_tool_use_id: null, message: { content } },
       })
     );
   const accept = (content: string) => {
@@ -99,6 +99,28 @@ describe('worker batches before human intake', () => {
       ledger.acceptPromptSync(conversationId, prompt, 'immediate', db.getSDKMessageRepo(), queue)
     ).toMatchObject({ accepted: true, created: false });
     expect(db.getSDKMessageRepo().getSDKMessages(sessionId, 100).messages).toHaveLength(2);
+  });
+
+  test('worker images reach Neo without leaking base64 or raw block JSON into public text', () => {
+    const image = {
+      type: 'image' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: 'image/png' as const,
+        data: 'd29ya2VyLWltYWdl',
+      },
+    };
+    hold([{ type: 'text', text: 'Worker image context' }, image]);
+    accept('Human words unchanged');
+    const [job] = db.getJobQueueRepo().dequeueSessionFifo('message_delivery', 1);
+    const delivered = db
+      .getSDKMessageRepo()
+      .getDeliveryContent(sessionId, String(job.payload.messageUuid))!;
+    expect(delivered.content).toContainEqual(image);
+    const [row] = new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10);
+    expect(row.text).toContain('Worker image context');
+    expect(row.text).not.toContain(image.source.data);
+    expect(row.text).not.toContain('"type":"image"');
   });
 
   test('oversized worker content is bounded independently of the inline human message', async () => {

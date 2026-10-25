@@ -7,7 +7,9 @@ the model mock, daemon, static web listener and refusing GitHub stub. External
 MCP servers and SDK sandboxing are disabled only for this transport proof.
 
 Queue two small worker messages through message.send, then send a whitespace-
-sensitive human message through neo.message.send. Repeat with 35 worker notes
+sensitive human message through neo.message.send. The first note includes a PNG;
+the image must reach Neo's SDK/model input while the public disclosure contains
+only worker text, without raw image JSON or base64. Repeat with 35 worker notes
 of 2,048 payload bytes each, so no individual send uses the existing 4 KiB file
 path while the combined batch exceeds 64 KiB. Observe separately persisted
 system-forwarded worker input, unchanged effective human content, human words

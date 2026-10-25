@@ -74,6 +74,8 @@ it.each(['small', 'large'])(
       ...first.container.querySelectorAll<HTMLDetailsElement>('details[data-public-entry]'),
     ].find((row) => row.textContent?.includes(`${size} worker note 00`));
     expect(batch).toBeDefined();
+    expect(first.container.textContent).not.toContain('iVBORw0KGgo');
+    expect(first.container.textContent).not.toContain('"type":"image"');
     const human = (await screen.findByText(new RegExp(`Human ${size}:`))).closest(
       '[data-public-entry]'
     );

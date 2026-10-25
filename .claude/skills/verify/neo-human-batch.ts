@@ -73,10 +73,16 @@ try {
   while (!ready() && Date.now() < readyDeadline) await Bun.sleep(25);
   assert(ready());
   const observed: Record<string, unknown>[] = [];
+  const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6kXcAAAAASUVORK5CYII=';
   for (const large of [false, true]) {
     const tag = large ? 'large' : 'small';
     const notes = Array.from({ length: large ? 35 : 2 }, (_, index) => `${tag} worker note ${String(index).padStart(2, '0')} ${large ? 'x'.repeat(2048) : ''}`);
-    for (const text of notes) assert.equal((await hub.request<{kind:string}>('operation.invoke', { name: 'message.send', input: { to: root, text, from: 'session:synthetic-worker' } })).kind, 'accepted');
+    for (const [index, text] of notes.entries()) {
+      const input = !large && index === 0
+        ? { sessionId: root, message: { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'text', text }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageData } }] } }, from: 'session:synthetic-worker' }
+        : { to: root, text, from: 'session:synthetic-worker' };
+      assert.equal((await hub.request<{kind:string}>('operation.invoke', { name: 'message.send', input })).kind, 'accepted');
+    }
     const requestId = crypto.randomUUID();
     const human = `  Human ${tag}: keep these exact words inline.\n第二行。  `;
     assert((await hub.request<{ok:boolean}>('operation.invoke', { name: 'neo.message.send', input: { sessionId: root, requestId, content: human } })).ok);
@@ -123,6 +129,10 @@ try {
       allWorkerNotesInFile = notes.every((note) => { const at = restored.indexOf(note); const next = at > previous; previous = at; return next; });
     }
     observed.push({ size: tag, separateTranscriptInput: !!batch, humanDeliveryUnchanged: sameHuman, humanInlineAtModel: inlineAtModel, workerFileExcludesHuman, allWorkerNotesInFile, publicBatchBeforeHuman: batchAt >= 0 && batchAt < humanAt, publicSystemLabel: batchAt >= 0 && page.items[batchAt].message?.fromName === 'System-forwarded worker messages' });
+    if (!large) Object.assign(observed.at(-1)!, {
+      workerImageDelivered: !!batch && JSON.stringify(batch.message.content).includes(imageData) && requests.some((body) => JSON.stringify(body.messages).includes(imageData)),
+      publicWorkerTextOnly: batchAt >= 0 && !page.items[batchAt].message!.text.includes(imageData) && !page.items[batchAt].message!.text.includes('"type":"image"'),
+    });
     writeFileSync(join(run, `evidence/${tag}-conversation.json`), JSON.stringify(page, null, 2));
   }
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
