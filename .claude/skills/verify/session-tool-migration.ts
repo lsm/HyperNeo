@@ -64,6 +64,8 @@ for (const boot of [1, 2]) {
       const updatedSpace = await hub.request<{ config: { toolSelectionDefaults?: unknown }; maxConcurrentTasks: number }>('space.update', { id: spaceId, config: { maxConcurrentTasks: 5 } });
       assert.deepEqual(updatedSpace.config.toolSelectionDefaults, spaceDefaults);
       assert.equal(updatedSpace.maxConcurrentTasks, 5);
+      await hub.request('settings.global.update', { updates: { autoScroll: false } });
+      assert.deepEqual(app.db.getGlobalSettings().toolSelectionDefaults, defaults);
       for (const [method, params] of [
         ['space.update', { id: spaceId, config: { toolSelectionDefaults: { version: 1, choices: {} } } }],
         ['space.create', { name: 'Injected', workspacePath: join(run, 'injected'), config: { toolSelectionDefaults: { version: 1, choices: {} } } }],

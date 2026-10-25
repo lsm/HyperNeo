@@ -12,6 +12,11 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { resolveMcpServers, type ResolveMcpServersSession } from '../mcp/resolve-mcp-servers.ts';
 
+export function assertNoToolSelectionDefaults(config: object | null | undefined): void {
+  if (config && Object.hasOwn(config, 'toolSelectionDefaults'))
+    throw new Error('toolSelectionDefaults is daemon-owned and cannot be supplied in settings');
+}
+
 export interface SessionToolChoiceInput {
   session: ResolveMcpServersSession;
   skills: readonly AppSkill[];

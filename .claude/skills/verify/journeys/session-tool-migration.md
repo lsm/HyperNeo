@@ -14,6 +14,9 @@ default snapshots preserve their different effective preferences.
 
 After the first boot, public settings RPCs disable the synthetic skill and server.
 The ordinary session update RPC must refuse caller-supplied canonical selections.
+An ordinary Space config replacement changes the concurrency limit while retaining
+the frozen defaults. Space creation/update and global settings RPCs must refuse
+caller-supplied defaults, including empty snapshots, before any settings change.
 On the second boot the same session selections, aliases and default snapshots
 must remain unchanged. The helper asserts every result, closes all resources,
 and writes `evidence/session-tool-migration.json`. `pass` must be true and both
