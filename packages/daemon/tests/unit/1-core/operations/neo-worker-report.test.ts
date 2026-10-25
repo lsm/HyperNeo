@@ -22,6 +22,7 @@ import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { expireMailboxEntries } from '../../../../src/lib/mailbox/expire.ts';
 
 async function setup() {
   const db = await createTestDb();
@@ -102,6 +103,37 @@ const input = {
     language: 'en',
   },
 };
+
+test.each(['dead', 'expired', 'cleaned'] as const)(
+  'an undelivered %s incident wake can recover without another card',
+  async (mode) => {
+    const { db, service, send } = await setup();
+    try {
+      const first = await send(input);
+      const jobs = db.getJobQueueRepo();
+      const old = jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })[0];
+      if (mode === 'expired')
+        await expireMailboxEntries({ jobQueue: jobs, now: Date.now() + 25 * 60 * 60_000 });
+      else jobs.markDead(old.id, 'synthetic delivery failure');
+      if (mode === 'cleaned') jobs.cleanup(Date.now() + 1);
+      const recovered = await send(input);
+      expect(recovered).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+      expect(recovered).not.toEqual(first);
+      expect(service.todos.listQuestions('ask')).toHaveLength(1);
+      expect(service.todos.getTodo('todo')?.blockedBy).toBe('needs-human');
+      expect(jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })).toHaveLength(1);
+      expect(await send(input)).toEqual(recovered);
+      const second = jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })[0];
+      jobs.markDead(second.id, 'second synthetic delivery failure');
+      const third = await send(input);
+      expect(third).not.toEqual(recovered);
+      expect(jobs.listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })).toHaveLength(1);
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  }
+);
 
 test('handled card reports still notify the sent observer with the original report', async () => {
   const { db, service, send, observed } = await setup();

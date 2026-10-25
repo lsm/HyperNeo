@@ -9,6 +9,7 @@ import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-r
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { request } from 'node:http';
 import { sessionDoorPath } from '../../../packages/daemon/src/lib/messaging/session-door.ts';
+import { expireMailboxEntries } from '../../../packages/daemon/src/lib/mailbox/expire.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -96,7 +97,7 @@ try {
     multiple: false, noLabel: null, yesLabel: null, startTodos: null,
     sourceSession: { ...ref, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: null },
   }, 1);
-  const first = await workerSend(input);
+  let first = await workerSend(input);
   assert.equal(first.kind, 'accepted');
   const question = store.listQuestions(todo.askId)[0];
   assert(question, 'message.send must create a human card before returning');
@@ -108,7 +109,17 @@ try {
   for (let i = 0; i < 8; i++) assert.deepEqual(await workerSend({ ...input, text: `Repeat ${i}` }), first);
   const wakes = () => app.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': root });
   assert.equal(wakes().length, 1);
-  const wake = wakes()[0];
+  let wake = wakes()[0];
+  if (['recover', 'expired'].includes(process.argv[3])) {
+    if (process.argv[3] === 'expired') await expireMailboxEntries({ jobQueue: app.db.getJobQueueRepo(), now: Date.now() + 25 * 60 * 60_000 });
+    else app.db.getJobQueueRepo().markDead(wake.id, 'synthetic undelivered wake');
+    const replacement = await workerSend(input);
+    assert.notDeepEqual(replacement, first, 'a failed wake receipt must not permanently suppress delivery');
+    first = replacement;
+    assert.equal(wakes().length, 1);
+    wake = wakes()[0];
+    assert.equal(store.listQuestions(todo.askId).length, 1);
+  }
   app.jobProcessor.start();
   const deadline = Date.now() + 45000;
   while ((modelTurns === 0 || app.db.getJobQueueRepo().getJob(wake.id)?.status !== 'completed') && Date.now() < deadline) await Bun.sleep(100);
@@ -116,6 +127,7 @@ try {
   assert.equal(app.db.getJobQueueRepo().getJob(wake.id)?.status, 'completed');
   await Bun.sleep(1000);
   await app.jobProcessor.stop();
+  if (['recover', 'expired'].includes(process.argv[3])) app.db.getJobQueueRepo().cleanup(Date.now() + 1);
   assert.deepEqual(await workerSend({ ...input, kind: 'question' }), first);
   assert.equal(wakes().length, 0, 'consuming a wake must not allow repeats to create another');
   let expectedTurns = 1;
