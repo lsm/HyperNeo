@@ -1,3 +1,4 @@
+import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { workExecutionLocation } from './execution-location.ts';
@@ -89,8 +90,15 @@ export interface HyperneoSessionControl {
     queuedSubmissionId: string,
     from: string
   ) => Promise<Result<WorkWithdrawal>>;
-  create(workspacePath: string, title: string, model?: string): Promise<string>;
-  resolveModel(model: string): Promise<string | null>;
+  create(
+    workspacePath: string,
+    title: string,
+    model?: string,
+    provider?: string,
+    effort?: string
+  ): Promise<string>;
+  resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
+  effort?(sessionId: string): string | null;
   model(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
@@ -550,9 +558,11 @@ export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDe
   return selectLocalStartFolder(request, deps, 'Start new work in a project folder or a Space.');
 }
 
+type HyperneoStartRequest = StartRequest & { provider?: string };
+
 export async function createHyperneoSession(
   folder: string,
-  request: StartRequest,
+  request: HyperneoStartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<Gate<string>> {
   const prepared = request.preparation
@@ -567,7 +577,9 @@ export async function createHyperneoSession(
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,
-      request.model
+      request.model,
+      request.provider,
+      request.effort
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)
@@ -586,14 +598,27 @@ export async function createHyperneoSession(
 async function requireHyperneoStartConfiguration(
   request: StartRequest,
   deps: HyperneoAdapterDeps
-): Promise<Gate<StartRequest>> {
-  if (request.effort !== undefined)
-    return { reason: reject('unsupported_effort', 'HyperNeo cannot confirm a requested effort.') };
-  if (request.model === undefined) return { value: request };
-  const model = await deps.sessions.resolveModel(request.model);
-  return model
-    ? { value: { ...request, model } }
-    : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };
+): Promise<Gate<HyperneoStartRequest>> {
+  const thinking =
+    request.effort === undefined
+      ? undefined
+      : THINKING_OPTIONS.find((entry) =>
+          [entry.value, entry.label.toLowerCase()].includes(request.effort!.toLowerCase())
+        );
+  if (request.effort !== undefined && !thinking)
+    return { reason: reject('unsupported_effort', `Unknown HyperNeo effort ${request.effort}.`) };
+  const configured = { ...request, ...(thinking ? { effort: thinking.label.toLowerCase() } : {}) };
+  if (request.model === undefined) return { value: configured };
+  try {
+    const model = await deps.sessions.resolveModel(request.model);
+    return model
+      ? { value: { ...configured, model: model.id, provider: model.provider } }
+      : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };
+  } catch (error) {
+    if (error instanceof ModelUnavailableError)
+      return { reason: reject('unsupported_model', error.message) };
+    throw error;
+  }
 }
 
 function confirmHyperneoStart(
@@ -602,7 +627,10 @@ function confirmHyperneoStart(
   deps: HyperneoAdapterDeps
 ): Gate<{ sessionId: string; model: string | null }> {
   const model = deps.sessions.model(sessionId);
-  const confirmed = workStartConfiguration.confirm(request, model ? { model } : {});
+  const confirmed = workStartConfiguration.confirm(request, {
+    ...(model ? { model } : {}),
+    ...(request.effort ? { effort: deps.sessions.effort?.(sessionId) ?? undefined } : {}),
+  });
   return confirmed.ok
     ? { value: { sessionId, model } }
     : {
@@ -642,6 +670,7 @@ export async function openHyperneoWork(
       ...work,
       ...(work.status === 'done' ? { status: 'queued' as const } : {}),
       ...(model ? { model } : {}),
+      ...(request.effort ? { effort: request.effort } : {}),
       receipt: { executionId: sessionId, inputId },
     },
   };
@@ -764,6 +793,7 @@ const runHyperneoRename = (superpipe({})('hyperneo-rename-work') as PipelineAPI)
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
+    supportsStartEffort: true,
     supportsStartPreparation: !!deps.prepareExecution,
     capabilities: [
       'find',

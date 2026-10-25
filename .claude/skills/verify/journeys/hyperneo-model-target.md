@@ -13,6 +13,7 @@ and database, GitHub stub and ephemeral non-8399 listeners. It invokes the same
 WebSocket operations used by the app. Model discovery must expose id/name/provider;
 a unique case-insensitive display name must start on that provider; a duplicate
 name must refuse with both IDs without creating a session; an exact ID must win.
+A uniquely named offer must retain its provider even when IDs are shared.
 HyperNeo effort must appear in the work receipt and session thinking readback
 before the queued input is processed. Evidence is `evidence/observed.json`.
 All resources close in finally. This metadata/admission proof does not assert

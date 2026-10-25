@@ -18,7 +18,11 @@ function control(db: Database, events: string[], withdraw?: HyperneoSessionContr
     sessions: {
       ...(withdraw ? { withdraw } : {}),
       resolveModel: async (model: string) =>
-        model === 'GLM 5.3' ? 'glm-5.3' : ['glm-5.3', 'gpt-6-luna'].includes(model) ? model : null,
+        model === 'GLM 5.3'
+          ? { id: 'glm-5.3', provider: 'glm' }
+          : ['glm-5.3', 'gpt-6-luna'].includes(model)
+            ? { id: model, provider: 'synthetic' }
+            : null,
       create: async (workspacePath: string, title: string, model?: string) => {
         selectedModel = model ?? selectedModel;
         const status = workspacePath === '/focus/repo' ? 'pending_worktree_choice' : 'active';
@@ -646,7 +650,16 @@ describe('hyperneo adapter start and stop', () => {
     expect(handed).toHaveLength(1);
   });
 
-  test.each([{ model: 'unavailable' }, { effort: 'medium' }])(
+  test('keeps input unsent when the session does not confirm the requested effort', async () => {
+    const result = await adapter({ effort: () => 'low' }).start!(
+      { place: place('/focus/notes'), title: 'task', message: 'write it', effort: 'high' },
+      from
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+    expect(handed).toEqual([]);
+  });
+
+  test.each([{ model: 'unavailable' }, { effort: 'unknown' }])(
     'refuses unsupported configuration before creating a session: %j',
     async (configuration) => {
       expect(

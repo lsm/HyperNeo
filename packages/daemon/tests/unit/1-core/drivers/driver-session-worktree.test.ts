@@ -365,7 +365,30 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'essay', 'glm-5.3', async () => [
       { ...model('glm-5.3[1m]', '2026-08-14'), alias: 'glm-5.3' },
     ]);
-    expect(created[0].config).toEqual({ model: 'glm-5.3' });
+    expect(created[0].config).toEqual({ model: 'glm-5.3[1m]', provider: 'glm' });
+  });
+
+  test('applies effort to session configuration while retaining its default model', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(
+      manager as never,
+      '/notes',
+      'task',
+      undefined,
+      async () => offers(),
+      undefined,
+      'high'
+    );
+    expect(created[0].config).toEqual({ thinkingLevel: 'think24k' });
+  });
+
+  test('preserves the selected provider when another provider offers the same id', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'Other Model', async () => [
+      offers()[0],
+      { ...offers()[0], provider: 'custom:other', name: 'Other Model' },
+    ]);
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:other' });
   });
 
   test('falls back to the newest available model when the default cannot run', async () => {
@@ -393,8 +416,8 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'essay', 'kimi-k3', models);
     await createDriverSession(manager as never, '/notes', 'essay', 'claude-sonnet-4-6', models);
     expect(created.map((params): unknown => params.config)).toEqual([
-      { model: 'kimi-k3' },
-      { model: 'claude-sonnet-4-6' },
+      { model: 'kimi-k3-0901', provider: 'kimi' },
+      { model: 'sonnet', provider: 'sonnet' },
     ]);
   });
 

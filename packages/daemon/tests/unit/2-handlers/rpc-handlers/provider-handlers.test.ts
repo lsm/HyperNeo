@@ -411,7 +411,7 @@ describe('Provider RPC handlers', () => {
         {}
       );
 
-      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default' }] });
+      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default', provider: 'acp' }] });
       expect(legacy).toEqual(canonical);
       expect(repo.getProvider(created.id)?.configJson).toBe(created.configJson);
       expect(provider.getAcpCommand()).toBe('registered acp');
