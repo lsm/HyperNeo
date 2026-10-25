@@ -161,6 +161,76 @@ afterEach(() => {
 });
 
 describe('Neo preview Work layout', () => {
+  it.each([900, 1500])('expands and restores the same file/Work workspace at %s', async (width) => {
+    viewport = width;
+    const { container } = mount();
+    const draft = screen.getByRole('textbox', { name: 'Draft' });
+    fireEvent.input(draft, { target: { value: 'Keep this discussion' } });
+    const work = container.querySelector<HTMLElement>('.neo-scene-list')!;
+    await open('a');
+    const heading = screen.getByRole('heading', { name: 'Document a' });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
+    expect(container.querySelector('.neo-preview-expanded')).toBeTruthy();
+    expect(container.querySelector<HTMLElement>('.neo-chat-rail')?.inert).toBe(true);
+    expect(screen.queryByRole('textbox', { name: 'Draft' })).toBeNull();
+    expect(work.hidden).toBe(true);
+    expect(
+      screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
+    ).toBe('true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
+    expect(screen.getByRole('tabpanel', { name: 'Your work · 1' })).toBe(work);
+    fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
+    expect(screen.getByRole('heading', { name: 'Document a' })).toBe(heading);
+    fireEvent.click(screen.getByRole('button', { name: 'Restore side by side' }));
+    expect(container.querySelector('.neo-preview-expanded')).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
+    expect((draft as HTMLTextAreaElement).value).toBe('Keep this discussion');
+    expect(container.querySelector('.neo-scene-list')).toBe(work);
+    expect(work.hidden).toBe(width < 1440);
+    expect(
+      request.mock.calls.filter(
+        ([, { name, input }]) => name === 'artifact.file.get' && input.artifactId === 'a'
+      )
+    ).toHaveLength(1);
+  });
+
+  it('resets expansion on phone transition and workspace dismissal', async () => {
+    const { container } = mount();
+    await open('a');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
+    resize(719);
+    await screen.findByRole('heading', { name: 'Document a' });
+    expect(
+      screen.queryByRole('button', { name: /Expand preview|Restore side by side/ })
+    ).toBeNull();
+    expect(container.querySelector<HTMLElement>('.neo-chat-rail')?.inert).toBe(false);
+    resize(900);
+    expect(
+      screen.getByRole('button', { name: 'Expand preview' }).getAttribute('aria-pressed')
+    ).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
+    await open('b');
+    expect(
+      screen.getByRole('button', { name: 'Expand preview' }).getAttribute('aria-pressed')
+    ).toBe('false');
+  });
+
+  it('retains expansion while worker chat temporarily suspends the workspace', async () => {
+    mount(false, true);
+    await open('a');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
+    expect(
+      screen.queryByRole('button', { name: /Expand preview|Restore side by side/ })
+    ).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close worker chat' }));
+    expect(
+      screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
+    ).toBe('true');
+  });
+
   it('retains a Work workspace across worker chat without history cleanup or refocus', async () => {
     mount(false, true);
     const pushed = vi.spyOn(history, 'pushState');
