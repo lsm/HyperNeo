@@ -84,7 +84,12 @@ try {
   assert(!JSON.stringify(first).match(/secret|private|config|error/));
   if (process.argv.includes('--show-panel') || process.argv.includes('--show-task-panel')) {
     process.once('SIGUSR1', () => queries[0].finish.resolve());
-    process.once('SIGUSR2', () => { queries[0].status = async () => {
+    process.once('SIGUSR2', () => {
+      if (process.argv.includes('--fail-inventory')) {
+        app.sessionManager.getSession(sessionId)!.getToolInventory = async () => { throw new Error('Synthetic inventory read failure'); };
+        return;
+      }
+      queries[0].status = async () => {
       if (process.argv.includes('--slow-status')) await new Promise(done => setTimeout(done, 2500));
       return [{ name: 'browser', status: 'needs-auth' }];
     }; });

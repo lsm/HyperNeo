@@ -168,7 +168,7 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
             >
               Refresh running tools
             </button>
-            {!!inventory?.tools.length && (
+            {!error && !!inventory?.tools.length && (
               <details class="text-xs text-fg-muted">
                 <summary>Observed tool names ({inventory.tools.length})</summary>
                 <div class="break-words">{inventory.tools.join(', ')}</div>

@@ -36,3 +36,14 @@ ToolsModal.observed.test.tsx and ToolsModal.test.tsx. They cover query end,
 disconnect/reconnect, stale session reads, empty/unknown/error and status reasons,
 and pending refresh. A real ACP transport, executing MCP/native tools, activation
 settings and migration remain unverified/outside this slice.
+
+For the failed-refresh review regression, launch with `--show-task-panel
+--fail-inventory` instead of slow-status. Load and expand the observed names,
+then send SIGUSR2 to the printed helper PID and click Refresh. This injects a
+failure in that synthetic worker's inventory reader through the real RPC door;
+the connection stays open. The error must replace both the server rows and
+the observed-name details. Baseline 23bb462df6 leaves the names below the error.
+Retain error-before/error-after text and screenshots. The focused regression
+was committed at 4144e92c4e before its fix and also proves a later successful
+read restores names. An SDK MCP-status exception is a different case: the
+daemon normalizes it to an unverified server, not an inventory RPC error.

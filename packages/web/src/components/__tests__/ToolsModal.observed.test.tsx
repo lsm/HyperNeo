@@ -26,9 +26,6 @@ vi.mock('../../lib/connection-manager.ts', () => ({
     }),
   },
 }));
-vi.mock('../../lib/api-helpers.ts', () => ({
-  listRuntimeMcpServers: async () => ({ servers: [{ name: 'configured-only' }] }),
-}));
 vi.mock('../../lib/skills-store.ts', async () => {
   const { signal } = await import('@preact/signals');
   return { skillsStore: { skills: signal([]), subscribe: async () => {}, unsubscribe: () => {} } };

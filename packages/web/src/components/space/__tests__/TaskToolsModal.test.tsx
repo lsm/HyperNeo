@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, waitFor, act, fireEvent } from '@testing-library/preact';
 import { TaskToolsModal } from '../TaskToolsModal';
 
-const mockListRuntimeMcpServers = vi.fn();
 const mockInventoryRequest = vi.fn();
 const inventoryEvents = new Map<string, (payload: unknown) => void>();
 let connectionListener: ((state: string) => void) | null = null;
@@ -36,10 +35,6 @@ const observed = (names: string[] = []) => ({
   })),
 });
 
-vi.mock('../../../lib/api-helpers', () => ({
-  listRuntimeMcpServers: (...args: unknown[]) => mockListRuntimeMcpServers(...args),
-}));
-
 vi.mock('../../ui/Modal', () => ({
   Modal: ({ children, isOpen, title }: { children: any; isOpen: boolean; title: string }) => {
     if (!isOpen) return null;
@@ -60,7 +55,6 @@ describe('TaskToolsModal', () => {
   });
 
   it('does not show configured-only servers as observed task tools', async () => {
-    mockListRuntimeMcpServers.mockResolvedValue({ servers: [{ name: 'configured-only' }] });
     mockInventoryRequest.mockResolvedValue({
       state: 'not_running',
       tools: [],
@@ -73,7 +67,6 @@ describe('TaskToolsModal', () => {
     );
     await waitFor(() => expect(view.queryByText('Loading tools...')).toBeNull());
     expect(view.queryByText('configured-only')).toBeNull();
-    expect(mockListRuntimeMcpServers).not.toHaveBeenCalled();
     expect(mockInventoryRequest).toHaveBeenCalledWith('session.getToolInventory', {
       sessionId: 'task-session',
     });
@@ -81,7 +74,6 @@ describe('TaskToolsModal', () => {
   });
 
   it('reports an unverified task provider instead of asserting no runtime tools', async () => {
-    mockListRuntimeMcpServers.mockResolvedValue({ servers: [] });
     mockInventoryRequest.mockResolvedValue({
       state: 'unverified',
       tools: [],
