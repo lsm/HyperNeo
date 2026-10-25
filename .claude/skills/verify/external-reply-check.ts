@@ -178,7 +178,7 @@ try {
   assert(!received[2].includes('hyperneo send'));
   const reply = spawnSync(
     process.execPath,
-    ['packages/cli/main.ts', 'send', neo, 'Blocked: synthetic peer needs a decision.'],
+    ['packages/cli/main.ts', 'send', neo, '--kind', 'blocked', 'Blocked: synthetic peer needs a decision.'],
     {
       cwd: root,
       env: {
@@ -193,6 +193,7 @@ try {
   assert.equal(JSON.parse(reply.stdout).kind, 'accepted');
   const db = new Database(join(data, 'daemon.db'), { readonly: true });
   let persisted = false;
+  let structured = false;
   try {
     for (let i = 0; i < 40; i++) {
       persisted = !!db
@@ -203,16 +204,19 @@ try {
       if (persisted) break;
       await pause();
     }
+    structured = !!db.prepare("SELECT 1 FROM sdk_messages WHERE session_id = ? AND json_extract(sdk_message, '$.workerReportKind') = 'blocked' LIMIT 1").get(neo);
   } finally {
     db.close();
   }
   assert(persisted, 'CLI blocker did not reach Neo transcript');
+  assert(structured, 'CLI blocker lost its structured report kind');
   const evidence = {
     neo,
     ref,
     received,
     reply: JSON.parse(reply.stdout),
     persisted,
+    structured,
     transport: 'real daemon RPC and Claude inbox socket; synthetic peer, no model or GUI',
   };
   writeFileSync(join(run, 'observed.json'), JSON.stringify(evidence, null, 2));

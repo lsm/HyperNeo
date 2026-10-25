@@ -63,6 +63,22 @@ describe('simple message.send worker handoff', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  test.each(['done', 'blocked', 'question', 'failed'])(
+    'a structured %s report survives the mailbox boundary',
+    async (kind) => {
+      await accepted({ to: 'neo:root', text: 'Ordinary words.', kind });
+      expect(JSON.parse(mailbox.rows()[0].payload).message.workerReportKind).toBe(kind);
+    }
+  );
+
+  test('unknown report kinds are refused rather than silently becoming free text', async () => {
+    expect(await send({ to: 'neo:root', text: 'Done.', kind: 'progress' })).not.toMatchObject({
+      kind: 'completed',
+      value: { kind: 'accepted' },
+    });
+    expect(mailbox.rows()).toHaveLength(0);
+  });
+
   test.each(['neo:root', 'ordinary-target'])(
     'session messages to %s retain their envelope without a human id',
     async (to) => {
