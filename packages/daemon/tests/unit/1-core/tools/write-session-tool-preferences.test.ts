@@ -314,3 +314,31 @@ describe('disabled-skill request authority', () => {
     expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(false);
   });
 });
+
+describe('preference capture lane', () => {
+  it('captures through the worker read adapter without touching a caller-thread connection', async () => {
+    const { readSessionToolPreferences } = await import(
+      '../../../../src/storage/repositories/session-tool-preference-read.ts'
+    );
+    const { ChangeRecorder } = await import('../../../../src/storage/db-gateway/db-op.ts');
+    const reader = {
+      ...data,
+      captureSessionToolPreferences: async (
+        id: string,
+        request: Parameters<typeof write>[1],
+        tools?: Parameters<typeof write>[2]
+      ) =>
+        db.transaction(() =>
+          readSessionToolPreferences.run(db, { id, request, tools }, new ChangeRecorder())
+        )(),
+      getDatabase: () => {
+        throw new Error('caller-thread SQLite capture');
+      },
+    };
+    const offThread = createSessionToolPreferenceWriter(reader, async () => {});
+    expect(
+      (await offThread(ID, { kind: 'skills', disabledSkills: [] }, { disabledSkills: [] })).ok
+    ).toBe(true);
+    expect(current().toolSelection?.choices['skill:notes']?.selected).toBe(true);
+  });
+});
