@@ -396,6 +396,24 @@ describe('KimiProvider', () => {
       return { fetchMock, calls };
     }
 
+    it('gates curated K3.1 entries by region on the non-discoveryOnly return', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+      provider.setCuratedModels([{ id: 'kimi-k3.1-pro' }, { id: 'kimi-for-coding' }]);
+
+      const chinaModels = await provider.listRemoteModels();
+      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-for-coding');
+
+      provider.setDefaultRegion('global');
+      const globalModels = await provider.listRemoteModels({ force: true });
+      expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
+    });
+
     it('uses the China OpenAI endpoint instead of the Anthropic probe endpoint by default', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const { fetchMock, calls } = installModelListFetch([
