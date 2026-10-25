@@ -31,6 +31,8 @@ export type MailboxMessage = {
   inputKind?: MessageInputKind;
   taskKickoff?: boolean;
   workerReportKind?: (typeof WORKER_REPORT_KINDS)[number];
+  neoWakeEvent?: boolean;
+  neoBatchContent?: MailboxMessageContent;
   referenceMetadata?: ReferenceMetadata;
 };
 
@@ -168,6 +170,10 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
       ...(message.inputKind !== undefined ? { inputKind: message.inputKind } : {}),
       ...(message.taskKickoff === true ? { taskKickoff: true } : {}),
       ...(message.workerReportKind ? { workerReportKind: message.workerReportKind } : {}),
+      ...(message.neoWakeEvent === true ? { neoWakeEvent: true } : {}),
+      ...(message.neoBatchContent !== undefined
+        ? { neoBatchContent: message.neoBatchContent }
+        : {}),
       ...(referenceMetadata !== undefined ? { referenceMetadata } : {}),
     },
   };

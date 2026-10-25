@@ -34,22 +34,32 @@ export function normalizePromptForComparison(message: SDKMessage): SDKMessage {
     isSynthetic?: boolean;
     taskKickoff?: boolean;
     workerReportKind?: string;
+    neoBatchContent?: unknown;
   };
   const dropInputKind = typed.inputKind === 'task' || typed.inputKind === 'human';
   const dropSynthetic = typed.isSynthetic === false;
   const dropTaskKickoff = typed.taskKickoff !== undefined;
   const dropWorkerReportKind = typed.workerReportKind !== undefined;
-  if (!dropInputKind && !dropSynthetic && !dropTaskKickoff && !dropWorkerReportKind)
+  const dropNeoBatchContent = typed.neoBatchContent !== undefined;
+  if (
+    !dropInputKind &&
+    !dropSynthetic &&
+    !dropTaskKickoff &&
+    !dropWorkerReportKind &&
+    !dropNeoBatchContent
+  )
     return roleNormalized;
   const normalized = { ...roleNormalized } as SDKMessage & {
     inputKind?: string;
     isSynthetic?: boolean;
     taskKickoff?: boolean;
     workerReportKind?: string;
+    neoBatchContent?: unknown;
   };
   if (dropInputKind) delete normalized.inputKind;
   if (dropSynthetic) delete normalized.isSynthetic;
   if (dropTaskKickoff) delete normalized.taskKickoff;
   if (dropWorkerReportKind) delete normalized.workerReportKind;
+  if (dropNeoBatchContent) delete normalized.neoBatchContent;
   return normalized;
 }
