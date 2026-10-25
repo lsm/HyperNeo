@@ -176,4 +176,61 @@ describe('atomic tool default transition worker', () => {
     ).toBe(true);
     expect(readGlobal().choices['mcp:browser'].aliases).toEqual(['frozen-browser']);
   });
+  it('keeps default timestamps unchanged when a catalog rename changes no choices', async () => {
+    db.prepare('UPDATE spaces SET updated_at=1000').run();
+    db.prepare("UPDATE global_settings SET updated_at='2000-01-01 00:00:00' WHERE id=1").run();
+    expect(
+      (
+        await apply({
+          mutations: [
+            { repository: 'registry', method: 'update', args: ['browser', { name: 'renamed' }] },
+          ],
+          edits: [],
+        })
+      ).ok
+    ).toBe(true);
+    expect(spaces.getSpace('space')!.updatedAt).toBe(1000);
+    expect(
+      (
+        db.prepare('SELECT updated_at FROM global_settings WHERE id=1').get() as {
+          updated_at: string;
+        }
+      ).updated_at
+    ).toBe('2000-01-01 00:00:00');
+  });
+  it('rolls back earlier batch writes on a missing mutation target without replaying notifications', async () => {
+    const notices: unknown[] = [];
+    gateway.onChanges = (changes) => {
+      notices.push(changes);
+    };
+    expect(
+      await apply({
+        mutations: [
+          ...update().mutations,
+          { repository: 'registry', method: 'delete', args: ['missing'] },
+        ],
+        edits: update().edits,
+      })
+    ).toMatchObject({ ok: false, reason: 'superseded' });
+    expect(registry.get('browser')!.enabled).toBe(false);
+    expect(readGlobal()).toEqual(selection());
+    expect(notices).toEqual([]);
+  });
+  it('rejects mismatched Space mutations without changing either scope', async () => {
+    await expect(
+      apply({
+        spaceId: 'space',
+        mutations: [
+          {
+            repository: 'overrides',
+            method: 'setOverride',
+            args: ['space', 'other', 'browser', true],
+          },
+        ],
+        edits: [{ key: 'mcp:browser', selected: true }],
+      })
+    ).rejects.toThrow('Space override scope mismatch');
+    expect(overrides.listAll()).toEqual([]);
+    expect(readSpace()).toEqual(selection());
+  });
 });
