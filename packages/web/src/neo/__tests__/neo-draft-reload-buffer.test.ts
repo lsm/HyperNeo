@@ -65,6 +65,51 @@ describe('planNeoReloadCapture', () => {
 });
 
 describe('createNeoDraftReloadBuffer', () => {
+  it.each([
+    null,
+    {
+      artifactId: 'report-a',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Original report',
+      state: 'available' as const,
+    },
+  ])(
+    'retains an explicit original or unbound reference across buffer instances',
+    (previewContext) => {
+      const saved = storage();
+      const first = createNeoDraftReloadBuffer(() => saved);
+      expect(first.remember(root, 'Discuss this', '', previewContext)).toBe(true);
+      expect(createNeoDraftReloadBuffer(() => saved).read(root)).toMatchObject({ previewContext });
+      if (previewContext) {
+        previewContext.displayName = 'Mutated caller';
+        expect(first.read(root)?.previewContext?.displayName).toBe('Original report');
+      }
+    }
+  );
+  it.each([
+    { artifactId: 'report-a' },
+    {
+      artifactId: 'report-a',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Report',
+      state: 'available',
+      sourcePath: '/untrusted/path',
+    },
+  ])('refuses malformed stored context without silently dropping it', (previewContext) => {
+    const saved = storage();
+    const raw = JSON.stringify({
+      sessionId: root,
+      text: 'Untrusted context',
+      base: '',
+      id: 'captured',
+      previewContext,
+    });
+    saved.setItem(key(root), raw);
+    const buffer = createNeoDraftReloadBuffer(() => saved);
+    expect(buffer.read(root)).toBeNull();
+    expect(buffer.remember(root, 'replacement', '')).toBe(false);
+    expect(saved.getItem(key(root))).toBe(raw);
+  });
   it('lets a fresh buffer instance read the exact stored edit without replaying it', () => {
     const saved = storage();
     const first = createNeoDraftReloadBuffer(() => saved);

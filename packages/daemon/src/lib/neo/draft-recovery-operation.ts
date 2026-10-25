@@ -4,6 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { NeoPreviewContextSchema } from './preview-context-schema.ts';
 import type { NeoService } from './service.ts';
 
 const Input = z
@@ -11,6 +12,7 @@ const Input = z
     sessionId: z.string().startsWith('neo:').max(200),
     text: z.string().max(DRAFT_CHAR_LIMIT),
     base: z.string().max(DRAFT_CHAR_LIMIT).nullable(),
+    previewContext: NeoPreviewContextSchema.nullable().optional(),
   })
   .strict();
 type Recovery = z.infer<typeof Input>;
@@ -40,7 +42,8 @@ export function captureRecoverableDraft(recovery: Recovery, service: Recovers): 
 }
 
 export function requireUnchangedBase(captured: Captured): Gate<Captured> {
-  return (captured.snapshot.draft || null) === (captured.recovery.base || null)
+  return (captured.snapshot.draft || null) === (captured.recovery.base || null) ||
+    (captured.snapshot.draft || '') === captured.recovery.text.trim()
     ? { value: captured }
     : refuse('superseded');
 }
@@ -60,7 +63,12 @@ export function requireUnsubmitted(captured: Captured, service: Recovers): Gate<
   const conversation = service.repo.conversationId();
   if (!conversation) return refuse('session_not_found');
   const newest = service.asks.newestFrom(conversation, captured.recovery.sessionId);
-  return newest && askText(newest) === captured.recovery.text.trim()
+  const context = captured.recovery.previewContext;
+  const sameContext =
+    context === undefined ||
+    (context?.artifactId === newest?.previewContext?.artifactId &&
+      context?.snapshot === newest?.previewContext?.snapshot);
+  return newest && sameContext && askText(newest) === captured.recovery.text.trim()
     ? refuse('submitted')
     : { value: captured };
 }

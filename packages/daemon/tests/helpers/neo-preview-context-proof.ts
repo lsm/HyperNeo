@@ -10,6 +10,7 @@ import { getConfig } from '../../src/config.ts';
 import { NeoAskTodoRepository } from '../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../src/storage/repositories/neo-repository.ts';
 import { NeoTodoSessionRepository } from '../../src/storage/repositories/neo-todo-session-repository.ts';
+import { createNeoDraftReloadBuffer } from '../../../web/src/neo/neo-draft-reload-buffer.ts';
 import { submitNeoDraft } from '../../../web/src/neo/neo-intake.ts';
 import { presentConversationAskPage } from '../../../web/src/neo/conversation-ask-client.ts';
 import { createVoicePreviewProof } from '../../../web/src/lib/voice/__tests__/voice-preview-proof.ts';
@@ -160,6 +161,57 @@ try {
   assert.deepEqual(first.previewContext, reference);
   assert(!JSON.stringify(first).includes('sourcePath'));
   assert(!JSON.stringify(first).includes(run));
+  const captures = new Map<string, string>();
+  const captureStorage: Storage = {
+    get length() {
+      return captures.size;
+    },
+    getItem: (key) => captures.get(key) ?? null,
+    setItem: (key, value) => {
+      captures.set(key, value);
+    },
+    key: (index) => [...captures.keys()][index] ?? null,
+    removeItem: (key) => {
+      captures.delete(key);
+    },
+    clear: () => captures.clear(),
+  };
+  const reload = createNeoDraftReloadBuffer(() => captureStorage);
+  assert(reload.remember(sessionId, input.content, '', reference));
+  const captured = createNeoDraftReloadBuffer(() => captureStorage).read(sessionId)!;
+  assert.deepEqual(captured.previewContext, reference);
+  const recovery = { sessionId, text: captured.text, base: captured.base };
+  const submitted = await rpc<{ ok: boolean; reason?: string }>('neo.draft.recover', {
+    ...recovery,
+    previewContext,
+  });
+  assert(!submitted.ok && submitted.reason === 'submitted');
+  assert(reload.remember(sessionId, input.content, '', null));
+  const unbound = reload.read(sessionId)!;
+  assert.equal(unbound.previewContext, null);
+  assert(
+    (
+      await rpc<{ ok: boolean }>('neo.draft.recover', {
+        ...recovery,
+        previewContext: unbound.previewContext,
+      })
+    ).ok
+  );
+  assert(
+    (
+      await rpc<{ ok: boolean }>('neo.draft.recover', {
+        ...recovery,
+        base: 'older synthetic base',
+        previewContext: null,
+      })
+    ).ok
+  );
+  const legacyRecovery = await rpc<{ ok: boolean; reason?: string }>('neo.draft.recover', {
+    ...recovery,
+    base: input.content,
+  });
+  assert(!legacyRecovery.ok && legacyRecovery.reason === 'submitted');
+
   async function readContext() {
     const asks = await rpc<{ ok: boolean; items: NeoConversationAsk[] }>(
       'neo.conversation.asks.read',
@@ -277,6 +329,10 @@ try {
     voiceRefusalRetained: true,
     voiceMessageNoDuplicate: true,
     syntheticIndexedDb: true,
+    reloadContextContract: true,
+    explicitUnboundRecovery: true,
+    alreadySavedContextRestore: true,
+    legacyRecoveryDedup: true,
   });
 } finally {
   try {

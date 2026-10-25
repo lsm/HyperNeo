@@ -69,3 +69,14 @@ Also run the compiled-worker-startup journey when changing these schema import
 boundaries. Source-mode RPC can pass while a schema-to-runtime dependency cycle
 causes Bun to emit invalid compiled initializers. Require the actual compiled
 binary to start and answer `system.build`, using the pinned release runtime.
+
+
+Reload contract proof also requires `reloadContextContract`,
+`explicitUnboundRecovery`, `alreadySavedContextRestore` and `legacyRecoveryDedup`.
+The actual web reload buffer preserves a validated original reference or explicit
+null; the owned RPC door refuses an exact submitted association, accepts a newly
+unbound same-text draft and a draft already saved before reload, while legacy
+requests without context retain text-only submitted detection. Malformed or
+path-bearing stored references are refused without an unbound fallback.
+Composer capture/recovery wiring remains #8721 and pending identity #8707; these
+contract checks alone do not claim completed refresh recovery.
