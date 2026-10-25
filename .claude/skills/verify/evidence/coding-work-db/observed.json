@@ -1,0 +1,165 @@
+{
+  "scope": "Lane A row 24: work-PR snapshot and observation admission",
+  "regressionCommit": "64e120eb357d74b64eb5f9b7e1522168ba0b914a",
+  "productionChangedLines": 129,
+  "focusedUnitTests": 13,
+  "focusedAssertions": 51,
+  "repositoryCheck": "passed",
+  "noNewInstall": true,
+  "oneExistingCheckout": true,
+  "runtimes": {
+    "bun": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 40,
+        "gatewayCommands": 0,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "detail-failed": 1,
+          "reopen": 1
+        },
+        "maxLoopLagMs": 11.792083000000048,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.5213203430176,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          467.62537499999996,
+          467.6077080000001,
+          467.59837500000003,
+          467.5981670000001,
+          467.59504200000003,
+          330.3643750000001,
+          317.1522910000001,
+          332.7851660000001,
+          369.9570410000001,
+          148.4545839999996,
+          385.55099999999993
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 18,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "detail-failed": 1,
+          "reopen": 1
+        },
+        "maxLoopLagMs": 2.558749999999918,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.34972381591797,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          539.4504160000001,
+          539.409917,
+          539.4010000000001,
+          539.3980000000001,
+          539.393125,
+          330.877833,
+          316.6181250000002,
+          410.445792,
+          330.77095899999995,
+          15.135749999999916,
+          347.5452919999998
+        ],
+        "fence": {
+          "before": 6,
+          "after": 7,
+          "winningValue": {
+            "url": "https://github.com/synthetic/ledger/pull/7",
+            "state": "OPEN",
+            "checks": "passing",
+            "review": "none",
+            "head": "cccccccccccccccccccccccccccccccccccccccc"
+          }
+        },
+        "contention": {
+          "healthMs": 0.4519170000003214,
+          "writeMs": 1204.3320830000002,
+          "affectedWriteUnder250ms": false
+        }
+      }
+    },
+    "deno": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 40,
+        "gatewayCommands": 0,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "detail-failed": 1,
+          "reopen": 1
+        },
+        "maxLoopLagMs": 18.858791999999994,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.54983139038086,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          547.531583,
+          547.4285410000002,
+          547.4223330000004,
+          547.4225420000002,
+          547.4273750000002,
+          361.8457920000001,
+          344.48454200000015,
+          346.07129200000054,
+          344.6193750000002,
+          274.57516600000054,
+          404.27729199999976
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 18,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "detail-failed": 1,
+          "reopen": 1
+        },
+        "maxLoopLagMs": 16.949833000000126,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.94359588623047,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          709.1411249999996,
+          709.075875,
+          709.0727499999998,
+          709.076,
+          709.081917,
+          340.1842919999999,
+          318.57608400000026,
+          467.7828330000002,
+          333.02395799999977,
+          19.708333999999923,
+          345.90041699999983
+        ],
+        "fence": {
+          "before": 6,
+          "after": 7,
+          "winningValue": {
+            "url": "https://github.com/synthetic/ledger/pull/7",
+            "state": "OPEN",
+            "checks": "passing",
+            "review": "none",
+            "head": "cccccccccccccccccccccccccccccccccccccccc"
+          }
+        },
+        "contention": {
+          "healthMs": 0.5404159999998228,
+          "writeMs": 1212.628917,
+          "affectedWriteUnder250ms": false
+        }
+      }
+    }
+  },
+  "limits": [
+    "The fake upstream intentionally waits 300 ms, so affected read RPCs exceed 250 ms.",
+    "The deliberately held 1.2-second writer lock makes the affected write exceed 250 ms; health remains responsive.",
+    "This slice covers work observations only; other lane-A rows remain."
+  ]
+}
