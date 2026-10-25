@@ -145,6 +145,51 @@ describe('Neo daemon notes', () => {
     }
   );
 
+  const storedCount = (messageId: string) =>
+    (
+      db
+        .getDatabase()
+        .prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?')
+        .get(rootId, messageId) as { n: number }
+    ).n;
+
+  test.each(['focused_status', 'quiet_heartbeat'] as const)(
+    '%s retry preserves one pending urgent delivery',
+    async (kind) => {
+      const id = 'pending-urgent';
+      const urgent = service.deliverForward(rootId, id, 'Worker failed.', rootId);
+      await service.deliverForward(rootId, id, 'Quiet retry.', rootId, kind);
+      await urgent;
+      expect(storedCount(id)).toBe(0);
+      expect(queued(id)).toEqual(['immediate']);
+    }
+  );
+
+  test.each(['focused_status', 'quiet_heartbeat'] as const)(
+    '%s retry preserves one queued urgent delivery',
+    async (kind) => {
+      const id = 'queued-urgent';
+      await service.deliverForward(rootId, id, 'Worker failed.', rootId);
+      await service.deliverForward(rootId, id, 'Quiet retry.', rootId, kind);
+      expect(storedCount(id)).toBe(0);
+      expect(queued(id)).toEqual(['immediate']);
+    }
+  );
+
+  test.each(['focused_status', 'quiet_heartbeat'] as const)(
+    '%s concurrent retries record one history row without a wake',
+    async (kind) => {
+      const id = 'concurrent-quiet';
+      await Promise.all(
+        Array.from({ length: 10 }, () =>
+          service.deliverForward(rootId, id, 'Quiet report.', rootId, kind)
+        )
+      );
+      expect(storedCount(id)).toBe(1);
+      expect(queued(id)).toEqual([]);
+    }
+  );
+
   test('a message to a busy ordinary chat is not deferred', async () => {
     await db.createSession(createTestSession('chat-1'));
     await events.publish('session.updated', {
