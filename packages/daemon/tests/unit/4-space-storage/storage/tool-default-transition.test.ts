@@ -216,6 +216,14 @@ describe('atomic tool default transition worker', () => {
     expect(readGlobal()).toEqual(selection());
     expect(notices).toEqual([]);
   });
+  it('refuses a catalog mutation restricted to one Space so other defaults cannot become stale', async () => {
+    await expect(apply({ ...update(), spaceId: 'space' })).rejects.toThrow(
+      'Default mutation scope mismatch'
+    );
+    expect(registry.get('browser')!.enabled).toBe(false);
+    expect(readGlobal()).toEqual(selection());
+    expect(readSpace()).toEqual(selection());
+  });
   it('rejects mismatched Space mutations without changing either scope', async () => {
     await expect(
       apply({
