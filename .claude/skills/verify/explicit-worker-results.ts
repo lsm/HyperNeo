@@ -10,6 +10,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { sdkMessageBodyAt } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-read.ts';
 import { hyperneoInputText } from '../../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts';
+import { syntheticCodexDesktop } from './codex-desktop-peer.ts';
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
@@ -48,6 +49,12 @@ for (const id of ['next', 'silent']) {
 }
 external.close();
 const calls: { method: string; params: Record<string, unknown> }[] = [];
+const closeDesktop = await syntheticCodexDesktop(run, {
+  start: (request) => {
+    calls.push({ method: 'thread-follower-start-turn', params: request.params as unknown as Record<string, unknown> });
+    return crypto.randomUUID();
+  },
+});
 const peer = Bun.serve({ unix: join(run, 'home/.codex/app-server-control/app-server-control.sock'),
   fetch(request, server) { return server.upgrade(request) ? undefined : new Response('websocket', { status: 400 }); },
   websocket: { message(socket, bytes) {
@@ -100,10 +107,10 @@ const put = (worker: string, id: string, type: string, text: string, consumed: n
   const body = type === 'result' ? { type, uuid: uuid(id), subtype: 'success', result: text, is_error: false } : { type, uuid: uuid(id), message: { content: [{ type: 'text', text }] } };
   app!.db.getDatabase().prepare("INSERT INTO sdk_messages(id,session_id,sdk_uuid,message_type,sdk_message,timestamp,send_status,consumed_seq,is_terminal) VALUES (?,?,?,?,?,?,'consumed',?,?)").run(id, worker, uuid(id), type, JSON.stringify(body), new Date(at + consumed).toISOString(), consumed, type === 'result' ? 1 : 0);
 };
-const seed = (id: string, packed: boolean, receipt: boolean) => {
+const seed = async (id: string, packed: boolean, receipt: boolean) => {
   store.openAsk({ id, title: id, request: 'Synthetic explicit worker result', sessionId: root, projectId: null, originMessageId: null, createdAt: at });
   const todo = store.addTodo(id, id, { title: id, doneWhen: packed ? 'Synthetic PR merged' : 'Human confirms result', check: packed ? { pack: 'coding', kind: 'pr_merged', params: { urls: [pr] } } : null, instruction: `Perform ${id}`, named: null }, at - 100);
-  seedSession(id);
+  await seedSession(id);
   const ref = { adapter: 'hyperneo', id };
   sessions.create(id, { verb: 'send', ref });
   sessions.recordRef(id, ref, at);
@@ -114,14 +121,14 @@ const seed = (id: string, packed: boolean, receipt: boolean) => {
   put(id, `${id}-later`, 'user', 'Unrelated later input', 30);
   put(id, `${id}-later-result`, 'result', 'UNRELATED LATER RESULT', 40);
 };
-const starts = () => calls.filter((call) => call.method === 'turn/start' && call.params.threadId === 'next').length;
+const starts = () => calls.filter((call) => call.method === 'thread-follower-start-turn' && call.params.conversationId === 'next').length;
 try {
   await open();
-  seedSession(root);
+  await seedSession(root);
   new NeoRepository(app!.db.getDatabase()).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-  seed('legacy', true, false);
-  seed('explicit', true, true);
-  seed('human', false, true);
+  await seed('legacy', true, false);
+  await seed('explicit', true, true);
+  await seed('human', false, true);
   const next = store.addTodo('next', 'explicit', { title: 'Next after facts', doneWhen: 'Human checks next', instruction: 'Perform next', named: null }, at);
   sessions.create(next.id, { verb: 'send', ref: { adapter: 'codex-desktop', id: 'next' } });
   const sdkHash = () => hash(JSON.stringify(app!.db.getDatabase().prepare(`SELECT id,session_id,sdk_uuid,message_type,${sdkMessageBodyAt('sdk_messages.rowid')} AS message,timestamp,send_status,consumed_seq,is_terminal FROM sdk_messages WHERE session_id IN ('legacy','explicit','human') ORDER BY seq`).all()));
@@ -151,16 +158,18 @@ try {
     threadState.prepare('UPDATE threads SET updated_at_ms=? WHERE id=?').run(endedAt, 'silent');
     threadState.close();
     await refresh();
-    const noReply = `Worker turn report (todo ${silentTodo.id}, dispatch ${dispatch.id}):\n\nworker ended its turn with no reply`;
+    const reportPrefix = `Worker turn report (todo ${silentTodo.id}, dispatch ${dispatch.id}, status `;
+    const noReply = 'worker ended its turn with no reply';
     const recipientMessages = () => (app!.db.getDatabase().prepare(`SELECT ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages WHERE session_id=? AND message_type='user' ORDER BY seq`).all(root) as { message: string }[]).map((row) => hyperneoInputText(row.message));
+    const received = () => recipientMessages().filter((text) => text.includes(reportPrefix) && text.endsWith(noReply));
     const deadline = Date.now() + 3000;
-    while (!recipientMessages().some((text) => text.includes(noReply)) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
-    evidence.silentTurn = { todoId: silentTodo.id, dispatchId: dispatch.id, endedAt, recipientMessages: recipientMessages(), expected: noReply };
-    assert(recipientMessages().some((text) => text.includes(noReply)), 'Neo did not receive the silent-turn report');
+    while (!received().length && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    evidence.silentTurn = { todoId: silentTodo.id, dispatchId: dispatch.id, endedAt, recipientMessages: recipientMessages(), expected: { prefix: reportPrefix, finalMessage: noReply } };
+    assert(received().length > 0, 'Neo did not receive the silent-turn report');
     assert.equal(store.getTodo(silentTodo.id)?.state, 'doing');
     assert.equal(store.getTodo(silentTodo.id)?.report, null);
     await refresh();
-    assert.equal(recipientMessages().filter((text) => text.includes(noReply)).length, 1);
+    assert.equal(received().length, 1);
     evidence.unmetClose = await rpc('neo.todo.close', { todoId: 'explicit', reason: 'Worker says complete' });
     assert.equal((evidence.unmetClose as any).ok, false);
     assert.equal(starts(), 0);
@@ -180,7 +189,7 @@ try {
     assert.equal(store.getTodo('legacy')?.report, prior);
     assert.equal(store.getTodo('explicit')?.report, `Agent: ${report}`);
     assert.equal(store.getTodo('explicit')?.state, 'doing');
-    assert.equal(recipientMessages().filter((text) => text.includes(noReply)).length, 1);
+    assert.equal(received().length, 1);
     evidence.restartedEvidence = await rpc('work.status', { ref: { adapter: 'hyperneo', id: 'explicit' }, receipt: { executionId: 'explicit', inputId: uuid('explicit-input') } });
     assert.equal((evidence.restartedEvidence as any).value.inputEvidence.state, 'observed');
     assert.equal((evidence.restartedEvidence as any).value.inputEvidence.replyReport, `Agent: ${report}`);
@@ -212,5 +221,6 @@ try {
   ws?.close();
   await app?.cleanup();
   peer.stop(true);
+  await closeDesktop();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }
