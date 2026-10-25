@@ -114,25 +114,25 @@ function makeEntry(overrides: Partial<SessionMcpServerEntry> = {}): SessionMcpSe
 }
 
 describe('computeMcpSkillRuntimeState', () => {
-  it('returns "unknown" for builtin skills (no runtime linkage path)', () => {
+  it('does not certify builtin instructions without an observed inventory', () => {
     const skill = makeBuiltinSkill();
     const state = computeMcpSkillRuntimeState(skill, [], true);
-    expect(state.status).toBe('unknown');
-    expect(state.label).toBe('');
+    expect(state.status).toBe('pending');
+    expect(state.label).toMatch(/running inventory unavailable/);
   });
 
-  it('returns "unknown" while session MCP list is still loading', () => {
+  it('keeps attachment unconfirmed while session MCP configuration loads', () => {
     const skill = makeMcpSkill();
     const state = computeMcpSkillRuntimeState(skill, [], false);
-    expect(state.status).toBe('unknown');
+    expect(state.status).toBe('pending');
   });
 
-  it('returns "active" when the backing server is effectively enabled', () => {
+  it('does not infer active attachment from an enabled backing server', () => {
     const skill = makeMcpSkill();
     const entries = [makeEntry({ enabled: true, source: 'registry' })];
     const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('active');
-    expect(state.label).toMatch(/active/i);
+    expect(state.status).toBe('pending');
+    expect(state.label).toMatch(/Configured but not attached yet/);
   });
 
   it('returns "server-off" with registry source when registry default is false', () => {

@@ -137,7 +137,7 @@ describe('ToolsModal observed running inventory', () => {
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
       expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
-        'Attached · 1 tools'
+        'Attached · 1 tool'
       )
     );
   });
@@ -196,6 +196,31 @@ describe('ToolsModal observed running inventory', () => {
     });
     expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
       'Attached · 2 tools'
+    );
+  });
+
+  it.each([
+    ['needs-auth', 'sign-in or consent required'],
+    ['failed', 'connection failed'],
+    ['pending', 'connecting'],
+    ['disabled', 'server disabled'],
+    ['unverified', 'could not be verified'],
+  ] as const)('shows a plain reason for SDK status %s', async (status, reason) => {
+    response = { ...attached(), mcpServers: [{ name: 'browser-alias', status, tools: null }] };
+    const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
+    await waitFor(() =>
+      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(reason)
+    );
+    expect(view.getByTestId('skill-runtime-browser-alias').textContent).not.toContain('Attached ·');
+  });
+
+  it('does not describe a connected server with zero tools as tool availability', async () => {
+    response = attached(0);
+    const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
+    await waitFor(() =>
+      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toBe(
+        'Connected · 0 tools'
+      )
     );
   });
 
