@@ -3,6 +3,7 @@ import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -105,6 +106,7 @@ export function NeoLive() {
   }, [neo.sessionId]);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
+  const editRevision = useSignal(0);
   const acceptedCleanups = useRef(new Map<string, () => Promise<void>>()).current;
   const scroll = useRef<HTMLElement>(null);
   const mainScroll = useRef<HTMLElement>(null);
@@ -196,13 +198,47 @@ export function NeoLive() {
     attachments.reading > 0;
   const pinPreview = (reference = previewContext) =>
     setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+  const fileIds = attachments.files.map((file) => file.id);
+  const frame = JSON.stringify([quote, fileIds, attachments.reading]);
+  const readVersion = useCallback(
+    () => JSON.stringify([editRevision.value, frame]),
+    [editRevision.value, frame]
+  );
+  const recoveryReady = useNeoDraftReloadRecovery(
+    neo.sessionId,
+    reloadBuffer,
+    () => draft ?? '',
+    (text, reference) => {
+      setRestoredPreview({
+        scope: neo.sessionId!,
+        reference: reference ?? undefined,
+        pinned: true,
+      });
+      writeDraft(text);
+    },
+    readVersion
+  );
+  const priorFrame = useRef({ scope: neo.sessionId, frame });
+  useLayoutEffect(() => {
+    const prior = priorFrame.current;
+    priorFrame.current = { scope: neo.sessionId, frame };
+    if (!recoveryReady && prior.scope === neo.sessionId && prior.frame !== frame)
+      captureDraft(draft ?? '', previewContext);
+  }, [neo.sessionId, frame, recoveryReady]);
   const draftLoadState = inputDraft.loadState;
   useLayoutEffect(() => {
-    if (!neo.sessionId || restoredPreview?.pinned) return;
+    if (!neo.sessionId || !recoveryReady || restoredPreview?.pinned) return;
     if (framedDraft) pinPreview();
     else if (previewCandidate && draftLoadState === 'ready' && previewCandidate !== previewContext)
       setRestoredPreview({ scope: neo.sessionId, reference: previewCandidate });
-  }, [neo.sessionId, framedDraft, previewCandidate, restoredPreview, draftLoadState]);
+  }, [
+    neo.sessionId,
+    framedDraft,
+    previewCandidate,
+    restoredPreview,
+    draftLoadState,
+    recoveryReady,
+  ]);
   const expandable = focusPreview && previewTarget?.kind !== 'reference';
   const expanded = expandable && previewExpanded;
   const previewMin = roomy ? 32 : 40;
@@ -252,19 +288,41 @@ export function NeoLive() {
   };
   const liveDraft = useRef(draft);
   liveDraft.current = draft;
+  const livePreview = useRef(previewContext);
+  livePreview.current = previewContext;
   const liveSession = useRef(neo.sessionId);
   liveSession.current = neo.sessionId;
   function writeDraft(text: string) {
     setDraft(text);
     if (currentScope.current === sceneScope) inputDraft.setContent(text);
   }
+  function captureDraft(text: string, reference: NeoPreviewReference | undefined) {
+    editRevision.value += 1;
+    const sessionId = neo.sessionId ?? '';
+    const base = inputDraft.readSavedDraft(sessionId);
+    if (!reloadBuffer.remember(sessionId, text, base, reference ?? null))
+      neo.setError(
+        'This edit could not be backed up for reload. Keep this page open until it is saved.'
+      );
+    writeDraft(text);
+  }
+  function bindPreview(reference?: NeoPreviewReference) {
+    setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+    captureDraft(draft ?? '', reference);
+  }
   useEffect(() => {
     if (sceneScope === null || draft === undefined) return;
     if (inputDraft.isSavedDraft(neo.sessionId ?? '', draft)) setDraft('');
     else inputDraft.setContent(draft);
   }, [sceneScope]);
-  useNeoVoiceRecovery(neo.sessionId, draft ?? '', () => draft ?? '', writeDraft, false);
-  useNeoDraftReloadRecovery(neo.sessionId, reloadBuffer, () => draft ?? '', writeDraft);
+  useNeoVoiceRecovery(
+    neo.sessionId,
+    draft ?? '',
+    () => draft ?? '',
+    writeDraft,
+    false,
+    recoveryReady
+  );
   const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
   const conversationReady =
@@ -657,7 +715,7 @@ export function NeoLive() {
                     : null
                 );
                 acceptedCleanups.delete(requestId);
-                writeDraft(restored.text);
+                captureDraft(restored.text, restored.previewContext);
                 setQuoted(
                   restored.quote ? { scope: restored.sessionId, quote: restored.quote } : null
                 );
@@ -687,7 +745,10 @@ export function NeoLive() {
                     ? { scope: sessionId, reference: ask.previewContext, pinned: true }
                     : null
                 );
-                writeDraft([liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'));
+                captureDraft(
+                  [liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'),
+                  ask.previewContext
+                );
               }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;
@@ -881,9 +942,9 @@ export function NeoLive() {
               quote={quote}
               previewContext={previewContext}
               previewCandidate={previewCandidate}
-              onRebindPreview={() => pinPreview(previewCandidate)}
-              onPreviewCapture={() => pinPreview()}
-              onCancelPreview={() => setRestoredPreview({ scope: neo.sessionId!, pinned: true })}
+              onRebindPreview={() => bindPreview(previewCandidate)}
+              onPreviewCapture={() => bindPreview(previewContext)}
+              onCancelPreview={() => bindPreview()}
               onCancelQuote={() => setQuoted(null)}
               key={neo.sessionId}
               store={neo.store}
@@ -892,23 +953,18 @@ export function NeoLive() {
               onPreferenceSaved={() => void neo.refresh()}
               draft={draft ?? ''}
               onDraft={(text) => {
-                if (text || quote || attachments.files.length || attachments.reading) pinPreview();
+                const framed = text || quote || attachments.files.length || attachments.reading;
+                if (framed) pinPreview();
                 else setRestoredPreview(null);
-                if (
-                  !reloadBuffer.remember(
-                    neo.sessionId ?? '',
-                    text,
-                    inputDraft.readSavedDraft(neo.sessionId ?? '')
-                  )
-                )
-                  neo.setError(
-                    'This edit could not be backed up for reload. Keep this page open until it is saved.'
-                  );
-                writeDraft(text);
+                captureDraft(text, framed ? previewContext : undefined);
               }}
-              onTranscript={(text) => writeDraft([draft, text].filter(Boolean).join('\n'))}
+              onTranscript={(text) => {
+                const content = [liveDraft.current, text].filter(Boolean).join('\n');
+                captureDraft(content, livePreview.current);
+              }}
               onError={neo.setError}
               onSend={(input) => {
+                editRevision.value += 1;
                 const submitted = draft ?? '';
                 const sessionId = neo.sessionId ?? '';
                 const captured = reloadBuffer.read(sessionId);

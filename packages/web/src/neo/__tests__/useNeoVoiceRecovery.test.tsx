@@ -1,4 +1,5 @@
-import { renderHook } from '@testing-library/preact';
+import { act, renderHook } from '@testing-library/preact';
+import { useLayoutEffect } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -59,6 +60,39 @@ describe('useNeoVoiceRecovery', () => {
     );
     return { draft, write, ...view };
   }
+
+  it('makes no reads or clears while captured Preview recovery is pending', async () => {
+    const enabled = signal(false);
+    const write = vi.fn();
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'Recovered reply' } } });
+    renderHook(() => useNeoVoiceRecovery('neo-1', '', () => '', write, false, enabled.value));
+    emit('session.voiceLanded', 'session:neo-1');
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+    expect(hubRequest).not.toHaveBeenCalled();
+    enabled.value = true;
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('Recovered reply'));
+  });
+
+  it('blocks old event handlers as soon as readiness closes, before passive cleanup', async () => {
+    const enabled = signal(true);
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+    const write = vi.fn();
+    renderHook(() => {
+      useNeoVoiceRecovery('neo-1', '', () => '', write, false, enabled.value);
+      useLayoutEffect(() => {
+        if (!enabled.value) emit('session.voiceLanded', 'session:neo-1');
+      }, [enabled.value]);
+    });
+    await vi.waitFor(() => expect(handlers).toHaveLength(1));
+    const reads = hubRequest.mock.calls.length;
+    await act(async () => {
+      enabled.value = false;
+    });
+    expect(hubRequest).toHaveBeenCalledTimes(reads);
+    expect(write).not.toHaveBeenCalled();
+  });
 
   it('adopts a staged voice transcript into the empty composer exactly once', async () => {
     hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });

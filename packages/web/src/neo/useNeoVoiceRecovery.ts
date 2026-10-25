@@ -7,8 +7,11 @@ export function useNeoVoiceRecovery(
   draftValue: string,
   readDraft: () => string,
   writeDraft: (text: string) => void,
-  persistRecoveredDraft = true
+  persistRecoveredDraft = true,
+  enabled = true
 ): void {
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const readRef = useRef(readDraft);
   readRef.current = readDraft;
   const writeRef = useRef(writeDraft);
@@ -22,7 +25,8 @@ export function useNeoVoiceRecovery(
 
   const clearDaemonDraft = (): Promise<void> => {
     const adopted = adoptedRef.current;
-    if (!sessionId || !adopted || adopted.sessionId !== sessionId) return Promise.resolve();
+    if (!enabledRef.current || !sessionId || !adopted || adopted.sessionId !== sessionId)
+      return Promise.resolve();
     if (readRef.current().trim() !== '') return Promise.resolve();
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return Promise.resolve();
@@ -39,17 +43,18 @@ export function useNeoVoiceRecovery(
 
   useEffect(() => {
     const adopted = adoptedRef.current;
-    if (!sessionId || !adopted || adopted.sessionId !== sessionId) return;
+    if (!enabled || !sessionId || !adopted || adopted.sessionId !== sessionId) return;
     if (draftValue.trim() !== '') return;
     void clearDaemonDraft();
-  }, [draftValue, sessionId]);
+  }, [draftValue, sessionId, enabled]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !enabled) return;
     let cancelled = false;
     let unsubEvent: (() => void) | null = null;
 
     const adopt = async (): Promise<void> => {
+      if (!enabledRef.current) return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
       try {
@@ -57,7 +62,7 @@ export function useNeoVoiceRecovery(
           'session.get',
           { sessionId }
         );
-        if (cancelled) return;
+        if (cancelled || !enabledRef.current || ownerRef.current !== sessionId) return;
         const composed = (response.session?.metadata?.inputDraft ?? '').trim();
         if (!composed) return;
         const adopted = adoptedRef.current;
@@ -105,5 +110,5 @@ export function useNeoVoiceRecovery(
       unsubscribeConnection();
       if (unsubEvent) unsubEvent();
     };
-  }, [sessionId, persistRecoveredDraft]);
+  }, [sessionId, persistRecoveredDraft, enabled]);
 }
