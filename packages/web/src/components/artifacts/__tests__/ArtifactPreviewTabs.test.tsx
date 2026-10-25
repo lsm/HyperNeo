@@ -312,43 +312,52 @@ describe('desktop preview file tabs', () => {
     );
   });
 
-  it('defers a suspended result and promotes it once without an intermediate reader', async () => {
-    const view = render(<ArtifactPreviewPanel fileTabs />);
-    const original = request.getMockImplementation()!;
-    let finish!: (value: unknown) => void;
-    request.mockImplementation((method, params) =>
-      params.name === 'artifact.reference.resolve'
-        ? new Promise((resolve) => {
-            finish = resolve;
-          })
-        : original(method, params)
-    );
-    act(() =>
-      openArtifactPreview({
-        kind: 'reference',
-        source: { kind: 'publication', id: 'p' },
-        reference: 'a.md',
-      })
-    );
-    await waitFor(() => expect(finish).toBeTypeOf('function'));
-    view.rerender(<ArtifactPreviewPanel fileTabs suspended />);
-    await act(async () => {
-      finish({ accepted: true, artifact: { artifactId: 'a' } });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    expect(artifactPreviewStack.value.at(-1)?.kind).toBe('reference');
-    expect(request.mock.calls.filter(([, call]) => call.name === 'artifact.file.get')).toHaveLength(
-      0
-    );
-    view.rerender(<ArtifactPreviewPanel fileTabs />);
-    await screen.findByRole('tab', { name: 'Report A' });
-    expect(
-      request.mock.calls.filter(([, call]) => call.name === 'artifact.reference.resolve')
-    ).toHaveLength(1);
-    expect(request.mock.calls.filter(([, call]) => call.name === 'artifact.file.get')).toHaveLength(
-      1
-    );
-  });
+  it.each([false, true])(
+    'settles equal-key loading re-taps with suspended=%s',
+    async (suspended) => {
+      const view = render(<ArtifactPreviewPanel fileTabs />);
+      const original = request.getMockImplementation()!;
+      let finish!: (value: unknown) => void;
+      request.mockImplementation((method, params) =>
+        params.name === 'artifact.reference.resolve'
+          ? new Promise((resolve) => {
+              finish = resolve;
+            })
+          : original(method, params)
+      );
+      act(() =>
+        openArtifactPreview({
+          kind: 'reference',
+          source: { kind: 'publication', id: 'p' },
+          reference: 'a.md',
+        })
+      );
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      const target = artifactPreviewStack.value.at(-1)!;
+      act(() => openArtifactPreview({ ...target }));
+      act(() => openArtifactPreview({ ...target }));
+      if (suspended) view.rerender(<ArtifactPreviewPanel fileTabs suspended />);
+      await act(async () => {
+        finish({ accepted: true, artifact: { artifactId: 'a' } });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      if (suspended) {
+        expect(artifactPreviewStack.value.at(-1)?.kind).toBe('reference');
+        expect(
+          request.mock.calls.filter(([, call]) => call.name === 'artifact.file.get')
+        ).toHaveLength(0);
+        view.rerender(<ArtifactPreviewPanel fileTabs />);
+      }
+      await screen.findByRole('tab', { name: 'Report A' });
+      expect(screen.getAllByRole('tab')).toHaveLength(1);
+      expect(
+        request.mock.calls.filter(([, call]) => call.name === 'artifact.reference.resolve')
+      ).toHaveLength(1);
+      expect(
+        request.mock.calls.filter(([, call]) => call.name === 'artifact.file.get')
+      ).toHaveLength(1);
+    }
+  );
 
   it('binds cached results to their target when a suspended reference is replaced', async () => {
     const view = render(<ArtifactPreviewPanel fileTabs suspended />);

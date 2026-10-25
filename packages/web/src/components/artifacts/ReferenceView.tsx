@@ -44,7 +44,7 @@ export function ReferenceView({
       .then((hub) => resolveArtifactReference(hub, target))
       .catch((): ArtifactResolution => ({ kind: 'state', state: 'daemon_unavailable' }))
       .then((next) => {
-        if (!current || artifactPreviewStack.peek().at(-1) !== target) return;
+        if (!current || JSON.stringify(artifactPreviewStack.peek().at(-1)) !== key) return;
         if (next.kind !== 'state') resolved.set(key, next);
         setSettled({ key, value: next });
       });
