@@ -36,5 +36,7 @@ its WebSocket, job processor, workers and daemon in finally.
 Run `neo-todo-gateway.test.ts`, `neo-settle-driver-work.test.ts`,
 `neo-todo-runner.test.ts` and `neo-coding-todo-prs.test.ts` from `packages/daemon`.
 They preserve recovery results, strict PR windows, links, unchanged-write results
-and notification ordering after status persistence. Todo/ask list conversion and
-its atomic mutation admission remain in #8711.
+and notification ordering after status persistence. Standalone todo/ask lists
+remain in #8711; reads embedded in mutation admission move with writes in #8712.
+Command parity units use the inline gateway seam under Node/Vitest; the isolated
+Bun helper above proves real worker routing.

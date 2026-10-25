@@ -13,7 +13,7 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
   const dir = mkdtempSync(join(tmpdir(), 'neo-todo-gateway-'));
   const path = join(dir, 'synthetic.db');
   const db = new Database(path);
-  const gateway = new DbGateway(path, null);
+  const gateway = new DbGateway(path, db);
   try {
     db.exec('PRAGMA journal_mode=WAL');
     runMigrations(db, () => {});

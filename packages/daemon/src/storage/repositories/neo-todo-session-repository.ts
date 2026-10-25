@@ -43,10 +43,9 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   read<K extends (typeof neoTodoSessionReads.methods)[number]>(
-    method: K,
-    ...args: Parameters<NeoTodoSessionRepository[K]>
+    method: K
   ): Promise<ReturnType<NeoTodoSessionRepository[K]>> {
-    return gatewayFor(this.db).run(neoTodoSessionReads, { method, args }) as Promise<
+    return gatewayFor(this.db).call(neoTodoSessionReads, method) as Promise<
       ReturnType<NeoTodoSessionRepository[K]>
     >;
   }
