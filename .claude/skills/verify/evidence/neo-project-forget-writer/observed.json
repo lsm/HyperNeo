@@ -13,32 +13,32 @@
   "bun": {
     "mainForgetSql": 0,
     "completedWriterCommands": 3,
-    "competingRpcMs": 4.184417000000053,
-    "maxLoopLagMs": 3.405291000000034,
+    "competingRpcMs": 4.973666000000094,
+    "maxLoopLagMs": 15.887958000000026,
     "oneWinner": true,
     "retainedWatches": [
       "kept/repo"
     ],
     "rollbackVerified": true,
     "contention": {
-      "healthMs": 0.3921669999999722,
-      "writeMs": 1210.820125,
+      "healthMs": 0.41433299999994233,
+      "writeMs": 1210.705959,
       "affectedWriteUnder250ms": false
     }
   },
   "deno": {
     "mainForgetSql": 0,
     "completedWriterCommands": 3,
-    "competingRpcMs": 2.853042000000187,
-    "maxLoopLagMs": 3.341957999999977,
+    "competingRpcMs": 3.3192079999998896,
+    "maxLoopLagMs": 2.8818750000000364,
     "oneWinner": true,
     "retainedWatches": [
       "kept/repo"
     ],
     "rollbackVerified": true,
     "contention": {
-      "healthMs": 0.5702080000000933,
-      "writeMs": 1224.8387920000005,
+      "healthMs": 0.660584000000199,
+      "writeMs": 1227.5552089999996,
       "affectedWriteUnder250ms": false
     }
   }
