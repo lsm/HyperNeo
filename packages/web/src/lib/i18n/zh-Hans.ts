@@ -251,6 +251,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.close': '关闭预览',
   'artifact.expand': '放大预览',
   'artifact.restore': '恢复并排',
+  'artifact.resize': '调整预览宽度',
+  'artifact.width': '预览宽度 {width}%',
   'artifact.closeFile': '关闭文件：{name}',
   'artifact.moreFiles': '其他文件（{count}）',
   'artifact.dismiss': '收起预览',

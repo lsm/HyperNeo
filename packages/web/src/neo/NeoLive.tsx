@@ -47,7 +47,8 @@ import {
   takeArtifactPreviewOpener,
   type ArtifactPreviewTarget,
 } from '../lib/artifact-preview-store.ts';
-import { artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
+import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
+import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
 export function NeoLive() {
@@ -58,6 +59,7 @@ export function NeoLive() {
   const [scenesOpen, setScenesOpenState] = useState(false);
   const [workReference, setWorkReference] = useState<ArtifactPreviewTarget | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [previewSize, setPreviewSize] = useState<number | null>(null);
   const [previewDesktop, setPreviewDesktop] = useState(
     () => window.matchMedia('(min-width: 720px)').matches
   );
@@ -168,10 +170,17 @@ export function NeoLive() {
     workReference?.kind === 'reference' &&
     workReference === artifactPreviewStack.value.at(-1);
   const focusPreview = columns && !chat && previewDesktop && previewOpen && !referenceWork;
-  const expandable = focusPreview && artifactPreviewStack.value.at(-1)?.kind !== 'reference';
+  const previewTarget = artifactPreviewStack.value.at(-1);
+  const expandable = focusPreview && previewTarget?.kind !== 'reference';
   const expanded = expandable && previewExpanded;
+  const previewMin = roomy ? 32 : 40;
+  const previewMax = roomy ? 46 : 68;
+  const previewWidth = Math.min(previewMax, Math.max(previewMin, previewSize ?? (roomy ? 44 : 56)));
   useLayoutEffect(() => {
-    if (!previewOpen || !previewDesktop) setPreviewExpanded(false);
+    if (!previewOpen || !previewDesktop) {
+      setPreviewExpanded(false);
+      setPreviewSize(null);
+    }
   }, [previewOpen, previewDesktop]);
   const previewWork = focusPreview && artifactPreviewStack.value.length === 0;
   const workHidden = focusPreview && (!roomy || expanded) && !previewWork;
@@ -410,6 +419,7 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
+      style={expandable ? { '--neo-preview-width': `${previewWidth}%` } : undefined}
       class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
     >
       {dragging && (
@@ -874,6 +884,19 @@ export function NeoLive() {
         </div>
       </footer>
       <ToastContainer />
+      {expandable && !expanded && (
+        <NeoPreviewResize
+          value={previewWidth}
+          min={previewMin}
+          max={previewMax}
+          controls={
+            previewTarget?.kind === 'artifact'
+              ? artifactTabIds(previewTarget.artifactId).panel
+              : 'neo-preview-work-panel'
+          }
+          onChange={setPreviewSize}
+        />
+      )}
       <ArtifactPreviewPanel
         fileTabs
         expansion={

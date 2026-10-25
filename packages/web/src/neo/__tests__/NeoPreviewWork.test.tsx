@@ -161,6 +161,41 @@ afterEach(() => {
 });
 
 describe('Neo preview Work layout', () => {
+  it('keeps custom width across tabs/expand, clamps at breakpoints and resets on phone/dismissal', async () => {
+    viewport = 900;
+    const { container } = mount();
+    await open('a');
+    const heading = screen.getByRole('heading', { name: 'Document a' });
+    const shell = container.querySelector<HTMLElement>('.neo-shell')!;
+    const handle = () => screen.getByRole('separator', { name: 'Adjust preview width' });
+    expect(handle().getAttribute('aria-valuenow')).toBe('56');
+    expect(document.getElementById(handle().getAttribute('aria-controls')!)).toBeTruthy();
+    fireEvent.keyDown(handle(), { key: 'End' });
+    expect(shell.style.getPropertyValue('--neo-preview-width')).toBe('68%');
+    fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
+    expect(handle().getAttribute('aria-controls')).toBe('neo-preview-work-panel');
+    fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
+    expect(screen.getByRole('heading', { name: 'Document a' })).toBe(heading);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
+    expect(screen.queryByRole('separator')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore side by side' }));
+    expect(handle().getAttribute('aria-valuenow')).toBe('68');
+    resize(1500);
+    expect(handle().getAttribute('aria-valuenow')).toBe('46');
+    fireEvent.keyDown(handle(), { key: 'Home' });
+    expect(shell.style.getPropertyValue('--neo-preview-width')).toBe('32%');
+    resize(900);
+    expect(handle().getAttribute('aria-valuenow')).toBe('40');
+    resize(719);
+    expect(screen.queryByRole('separator')).toBeNull();
+    resize(900);
+    expect(handle().getAttribute('aria-valuenow')).toBe('56');
+    fireEvent.keyDown(handle(), { key: 'End' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
+    await open('b');
+    expect(handle().getAttribute('aria-valuenow')).toBe('56');
+  });
+
   it.each([900, 1500])('expands and restores the same file/Work workspace at %s', async (width) => {
     viewport = width;
     const { container } = mount();

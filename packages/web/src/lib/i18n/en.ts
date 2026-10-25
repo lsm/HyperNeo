@@ -252,6 +252,8 @@ export const en = {
   'artifact.close': 'Close preview',
   'artifact.expand': 'Expand preview',
   'artifact.restore': 'Restore side by side',
+  'artifact.resize': 'Adjust preview width',
+  'artifact.width': '{width}% preview width',
   'artifact.closeFile': 'Close {name}',
   'artifact.moreFiles': 'Other files ({count})',
   'artifact.dismiss': 'Dismiss preview',
