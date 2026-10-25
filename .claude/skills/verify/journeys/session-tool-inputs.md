@@ -6,10 +6,11 @@ provider registration or GUI is required. The helper owns a fresh synthetic daem
 its WebSocket and an in-memory MCP protocol server exposing `navigate`. No external
 MCP executable or SDK query starts.
 
-This Build slice has no constructor, setter, SDK builder or UI caller. Supplied
+This helper checks preparation directly; initial-tool-defaults covers constructor
+and cache wiring. SDK and UI consumers remain later slices. Supplied
 canonical defaults must already represent the chosen global/Space/profile scope;
 that inheritance and legacy compatibility belong to 6c. Initial veto IDs are a
-required argument, supplied from captured session/workflow facts by later wiring.
+required argument, supplied from captured session/workflow facts at creation.
 Existing selections use projection directly and never reapply legacy preferences.
 
 Pass requires:
@@ -28,7 +29,8 @@ Pass requires:
 
 Read `evidence/session-tool-inputs.json`: pass=true, matching initial/rpcReadback,
 correct aliases and protocolTools, runtimeAndReservedMergePreserved=true, and
-explicit false activeConsumerWired/sdkApplyVerified/queryStarted flags.
+initialCreationWired=true and explicit false
+activeConsumerWired/sdkApplyVerified/queryStarted flags.
 
 Focused suites: session-tool-inputs.test.ts, session-tool-choice.test.ts,
 change-session-tool-choice.test.ts and query-options-builder.test.ts. They cover

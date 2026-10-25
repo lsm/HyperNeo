@@ -756,7 +756,7 @@ export class AgentSession
 
     if (!session) {
       session = AgentSession.createSessionFromInit(init, defaultModel);
-      await db.createSession(session);
+      await db.createSession(session, { initialSkillOverrides: init.skillOverrides });
     } else {
       const updates: Partial<Session> = {};
       let hasUpdates = false;

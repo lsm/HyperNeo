@@ -27,7 +27,7 @@ await mcp.connect(a);
 await client.connect(b);
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
 let transport:InstanceType<typeof WebSocketClientTransport>|undefined;
-const evidence:Record<string,unknown>={activeConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
+const evidence:Record<string,unknown>={initialCreationWired:true,activeConsumerWired:false,sdkApplyVerified:false,queryStarted:false};
 try {
   app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
   assert.notEqual(app.server.port,8399);
