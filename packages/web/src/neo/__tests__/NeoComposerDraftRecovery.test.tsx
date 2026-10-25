@@ -524,6 +524,85 @@ describe('Neo live preview binding', () => {
 });
 
 describe('Neo real composer draft recovery', () => {
+  it.each(['remove', 'rebind', 'edit'] as const)(
+    'captures a delayed transcript with the latest draft and binding after %s',
+    async (choice) => {
+      previewRoute();
+      voice.enabled = true;
+      let release!: (value: unknown) => void;
+      voice.submit.mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve;
+        })
+      );
+      const view = mount();
+      openPreview('report-a');
+      await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+      type('Draft before stopping');
+      voice.recording = true;
+      act(() => {
+        view.model.value = { ...view.model.value };
+      });
+      const stop = await screen.findByRole('button', {
+        name: 'Stop recording and add it to your draft',
+      });
+      voice.recording = false;
+      fireEvent.click(stop);
+      await waitFor(() => expect(voice.submit).toHaveBeenCalledOnce());
+      if (choice === 'remove') {
+        fireEvent.click(screen.getByRole('button', { name: 'Remove Preview context' }));
+      } else if (choice === 'rebind') {
+        openPreview('report-b');
+        fireEvent.click(await screen.findByRole('button', { name: 'Use current Preview' }));
+      } else {
+        act(() => {
+          view.model.value = {
+            ...view.model.value,
+            viewPublicConversation: {
+              ...view.model.value.viewPublicConversation,
+              entries: [
+                {
+                  kind: 'ask',
+                  key: 'voice-overlap',
+                  ask: {
+                    conversationId: root.slice(4),
+                    requestId: 'voice-overlap',
+                    askOrigin: { sessionId: root, messageId: 'voice-overlap' },
+                    content: 'Newly edited request',
+                    sequence: 1,
+                    createdAt: '2026-10-25T12:00:00Z',
+                    delivery: { state: 'failed' },
+                  },
+                },
+              ],
+            },
+          } as never;
+        });
+        fireEvent.click(await screen.findByRole('button', { name: 'Edit and send again' }));
+        await waitFor(() => expect(capturedDraft().text).toContain('Newly edited request'));
+      }
+      const latest = capturedDraft();
+      const expected = latest.previewContext;
+      expect(expected?.artifactId ?? null).toBe(choice === 'rebind' ? 'report-b' : null);
+      await act(async () =>
+        release({
+          kind: 'routed',
+          recordId: 'delayed-preview-transcript',
+          outcome: {
+            kind: 'insert',
+            transcript: 'Later voice addition',
+            autoSend: false,
+          },
+        })
+      );
+      await waitFor(() => expect(value()).toBe(`${latest.text}\nLater voice addition`));
+      expect(capturedDraft()).toMatchObject({ text: value(), previewContext: expected });
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      expect(view.model.value.send.mock.calls[0][0].previewContext).toEqual(expected ?? undefined);
+    }
+  );
+
   it.each([false, true])(
     'restores an unavailable persisted reference, voice draft: %s',
     async (withVoice) => {

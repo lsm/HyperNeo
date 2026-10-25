@@ -198,11 +198,8 @@ export function NeoLive() {
     attachments.reading > 0;
   const pinPreview = (reference = previewContext) =>
     setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
-  const frame = JSON.stringify([
-    quote,
-    attachments.files.map((file) => file.id),
-    attachments.reading,
-  ]);
+  const fileIds = attachments.files.map((file) => file.id);
+  const frame = JSON.stringify([quote, fileIds, attachments.reading]);
   const readVersion = useCallback(
     () => JSON.stringify([editRevision.value, frame]),
     [editRevision.value, frame]
@@ -291,6 +288,8 @@ export function NeoLive() {
   };
   const liveDraft = useRef(draft);
   liveDraft.current = draft;
+  const livePreview = useRef(previewContext);
+  livePreview.current = previewContext;
   const liveSession = useRef(neo.sessionId);
   liveSession.current = neo.sessionId;
   function writeDraft(text: string) {
@@ -959,9 +958,10 @@ export function NeoLive() {
                 else setRestoredPreview(null);
                 captureDraft(text, framed ? previewContext : undefined);
               }}
-              onTranscript={(text) =>
-                captureDraft([draft, text].filter(Boolean).join('\n'), previewContext)
-              }
+              onTranscript={(text) => {
+                const content = [liveDraft.current, text].filter(Boolean).join('\n');
+                captureDraft(content, livePreview.current);
+              }}
               onError={neo.setError}
               onSend={(input) => {
                 editRevision.value += 1;
