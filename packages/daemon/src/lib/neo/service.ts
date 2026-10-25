@@ -2,6 +2,7 @@ import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
+import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { createNeoWorkerQuestionWriter } from './question-operations.ts';
 import { publishDroppedWork } from './dropped-work.ts';
@@ -544,7 +545,7 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
-    await gatewayFor(this.db.getDatabase()).call(neoWakeQueueWrite, 'flushDue', Date.now());
+    await this.db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue, { flush: Date.now() });
     await runLagPhase('neo:driver:todo_refresh', () =>
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))
     );

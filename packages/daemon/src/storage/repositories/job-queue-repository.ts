@@ -911,14 +911,14 @@ export class JobQueueRepository {
     return result.changes > 0 ? this.getJob(jobId) : null;
   }
 
-  snapshotContent(jobId: string, content: unknown): unknown {
+  snapshotPayload(jobId: string, key: string, content: unknown): unknown {
     return this.db.transaction(() => {
       this.db
         .prepare(
-          "UPDATE job_queue SET payload=json_set(payload, '$.contentSnapshot', json(?)) WHERE id=? AND json_type(payload, '$.contentSnapshot') IS NULL"
+          'UPDATE job_queue SET payload=json_set(payload, ?, json(?)) WHERE id=? AND json_type(payload, ?) IS NULL'
         )
-        .run(JSON.stringify(content), jobId);
-      return this.getJob(jobId)?.payload.contentSnapshot;
+        .run(`$.${key}`, JSON.stringify(content), jobId, `$.${key}`);
+      return this.getJob(jobId)?.payload[key];
     })();
   }
 
@@ -1206,7 +1206,7 @@ export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueue
   'complete',
   'fail',
   'markDead',
-  'snapshotContent',
+  'snapshotPayload',
 ]);
 
 export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [

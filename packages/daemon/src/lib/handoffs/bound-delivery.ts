@@ -31,8 +31,9 @@ export const boundDeliveryContent = (superpipe({})('bound-batch-delivery') as Pi
         ...loaded,
         content: (await gatewayFor(db).call(
           jobQueueWrites,
-          'snapshotContent',
+          'snapshotPayload',
           job.id,
+          'contentSnapshot',
           content
         )) as DeliveryContent,
       };
