@@ -1,0 +1,179 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import type { SessionToolSelection } from '@hyperneo/shared/types/session-tool-choice';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { createTables } from '../../../../src/storage/schema/index.ts';
+import { createSpaceTables } from '../../helpers/space-test-db.ts';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
+import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository.ts';
+import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository.ts';
+import { ChangeRecorder } from '../../../../src/storage/db-gateway/db-op.ts';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
+import {
+  toolDefaultTransitions,
+  type ToolDefaultTransition,
+} from '../../../../src/storage/repositories/tool-default-transition.ts';
+import { createTestSession } from '../../../helpers/database.ts';
+
+let db: Database;
+let gateway: DbGateway;
+let sessions: SessionRepository;
+let spaces: SpaceRepository;
+let registry: AppMcpServerRepository;
+let overrides: McpEnablementRepository;
+const selection = (selected = false): SessionToolSelection => ({
+  version: 1,
+  choices: {
+    'mcp:browser': { selected, aliases: ['frozen-browser'] },
+    'skill:notes': { selected: false },
+  },
+});
+const readGlobal = () =>
+  JSON.parse(
+    (db.prepare('SELECT settings FROM global_settings WHERE id=1').get() as { settings: string })
+      .settings
+  ).toolSelectionDefaults;
+const readSpace = (id = 'space') =>
+  (spaces.getSpace(id)!.config as Record<string, unknown>).toolSelectionDefaults;
+const apply = (args: ToolDefaultTransition) => gateway.run(toolDefaultTransitions, args);
+const update = (enabled = true): ToolDefaultTransition => ({
+  mutations: [{ repository: 'registry', method: 'update', args: ['browser', { enabled }] }],
+  edits: [{ key: 'mcp:browser', selected: enabled }],
+});
+beforeEach(() => {
+  db = new Database(':memory:');
+  createTables(db);
+  createSpaceTables(db);
+  gateway = new DbGateway(':memory:', db);
+  const changes = new ChangeRecorder() as unknown as ReactiveDatabase;
+  sessions = new SessionRepository(db);
+  spaces = new SpaceRepository(db);
+  registry = new AppMcpServerRepository(db, changes);
+  overrides = new McpEnablementRepository(db, changes);
+  db.prepare(
+    "INSERT INTO app_mcp_servers (id,name,source_type,command,enabled) VALUES ('browser','registry-name','stdio','synthetic',0)"
+  ).run();
+  for (const [id, type, config] of [
+    ['wrapper', 'mcp_server', { type: 'mcp_server', appMcpServerId: 'browser' }],
+    ['notes', 'builtin', { type: 'builtin', commandName: 'notes' }],
+  ] as const)
+    db.prepare(
+      "INSERT INTO skills (id,name,display_name,description,source_type,config,enabled,created_at) VALUES (?,?,?,'',?,?,0,1)"
+    ).run(id, id, id, type, JSON.stringify(config));
+  db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+    JSON.stringify({ toolSelectionDefaults: selection(), keep: 'global' })
+  );
+  for (const id of ['space', 'other']) {
+    db.prepare(
+      'INSERT INTO spaces (id,slug,name,workspace_path,config,created_at,updated_at) VALUES (?,?,?,?,?,1,1)'
+    ).run(
+      id,
+      id,
+      id,
+      `/synthetic/${id}`,
+      JSON.stringify({ toolSelectionDefaults: selection(), keep: id })
+    );
+  }
+  sessions.createSession({
+    ...createTestSession('frozen'),
+    config: { ...createTestSession('frozen').config, toolSelection: selection() },
+  });
+});
+afterEach(async () => {
+  await gateway.close();
+  db.close();
+});
+
+describe('atomic tool default transition worker', () => {
+  it('commits catalog intent despite a legacy wrapper gate and preserves frozen sessions', async () => {
+    expect((await apply(update())).ok).toBe(true);
+    expect(registry.get('browser')!.enabled).toBe(true);
+    expect(readGlobal()).toEqual(selection(true));
+    expect(readSpace()).toEqual(selection(true));
+    expect(readSpace('other')).toEqual(selection(true));
+    expect(sessions.getSession('frozen')!.config.toolSelection).toEqual(selection());
+  });
+  it('preserves explicit Space vetoes on global edits and clears a Space override to canonical global defaults', async () => {
+    overrides.setOverride('space', 'space', 'browser', false);
+    expect((await apply(update())).ok).toBe(true);
+    expect(readSpace()).toEqual(selection());
+    expect(readSpace('other')).toEqual(selection(true));
+    expect(
+      (
+        await apply({
+          spaceId: 'space',
+          mutations: [
+            {
+              repository: 'overrides',
+              method: 'clearOverride',
+              args: ['space', 'space', 'browser'],
+            },
+          ],
+          edits: [{ key: 'mcp:browser', selected: null }],
+        })
+      ).ok
+    ).toBe(true);
+    expect(overrides.getOverride('space', 'space', 'browser')).toBeNull();
+    expect(readSpace()).toEqual(selection(true));
+    expect(readGlobal()).toEqual(selection(true));
+  });
+  it('rolls back every legacy write and default if a later target fails, publishing no changes', async () => {
+    const notices: unknown[] = [];
+    gateway.onChanges = (changes) => {
+      notices.push(changes);
+    };
+    db.exec(
+      "CREATE TRIGGER reject_space_default BEFORE UPDATE ON spaces BEGIN SELECT RAISE(ABORT,'synthetic default failure'); END"
+    );
+    await expect(apply(update())).rejects.toThrow('synthetic default failure');
+    expect(registry.get('browser')!.enabled).toBe(false);
+    expect(readGlobal()).toEqual(selection());
+    expect(readSpace()).toEqual(selection());
+    expect(notices).toEqual([]);
+  });
+  it('refuses present invalid defaults before mutating and preserves absent defaults on missing targets', async () => {
+    for (const value of [null, false, { version: 2, choices: {} }]) {
+      db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+        JSON.stringify({ toolSelectionDefaults: value })
+      );
+      expect(await apply(update())).toMatchObject({
+        ok: false,
+        reason: 'selection_version_unsupported',
+      });
+      expect(registry.get('browser')!.enabled).toBe(false);
+    }
+    db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run('{}');
+    expect(await apply({ ...update(), spaceId: 'missing' })).toMatchObject({
+      ok: false,
+      reason: 'default_target_not_found',
+    });
+    expect(readGlobal()).toBeUndefined();
+  });
+  it('commits a skill and registry batch atomically while preserving unrelated explicit offs', async () => {
+    expect(
+      (
+        await apply({
+          mutations: [
+            { repository: 'skills', method: 'setEnabled', args: ['notes', true] },
+            ...update().mutations,
+          ],
+          edits: [{ key: 'skill:notes', selected: true }, ...update().edits],
+        })
+      ).ok
+    ).toBe(true);
+    expect(readGlobal().choices['skill:notes'].selected).toBe(true);
+    expect(readGlobal().choices['mcp:browser'].selected).toBe(true);
+    expect(
+      (
+        await apply({
+          mutations: [
+            { repository: 'registry', method: 'update', args: ['browser', { name: 'renamed' }] },
+          ],
+          edits: [],
+        })
+      ).ok
+    ).toBe(true);
+    expect(readGlobal().choices['mcp:browser'].aliases).toEqual(['frozen-browser']);
+  });
+});
