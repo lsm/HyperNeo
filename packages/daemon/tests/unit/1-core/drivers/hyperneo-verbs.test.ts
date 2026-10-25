@@ -211,7 +211,7 @@ describe('hyperneo adapter send and status', () => {
       expect(handed).toEqual([
         {
           sessionId: id,
-          message: `after this turn\n\nReply with ${sessionReplyCall('sender')}, not SendMessage.`,
+          message: `after this turn\n\nReport milestones with ${sessionReplyCall('sender')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
           from: 'session:sender',
           messageUuid: expect.any(String),
           deliveryMode: 'defer',
@@ -550,7 +550,7 @@ describe('hyperneo adapter send and status', () => {
       caller: { source: 'rpc' },
     });
     expect(handed[0].message).toBe(
-      `go on\n\nReply with ${sessionReplyCall('daemon:imac::session:neo-root')}, not SendMessage.`
+      `go on\n\nReport milestones with ${sessionReplyCall('daemon:imac::session:neo-root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`
     );
   });
 
@@ -560,13 +560,13 @@ describe('hyperneo adapter send and status', () => {
     expect(handed).toEqual([
       {
         sessionId: 'idle',
-        message: `go on\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+        message: `go on\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
       {
         sessionId: 'busy',
-        message: `next\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+        message: `next\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
@@ -657,7 +657,7 @@ describe('hyperneo adapter start and stop', () => {
     });
     expect(events).toEqual(['create /focus/repo', 'worktree new', 'announce new']);
     expect(handed).toEqual([
-      `new: make it larger\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+      `new: make it larger\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
     ]);
     expect(result).toMatchObject({
       value: { receipt: { executionId: 'new', inputId: uuids[0] } },
@@ -672,7 +672,7 @@ describe('hyperneo adapter start and stop', () => {
     expect(events[0]).toBe('create /focus/notes on glm-5.3');
     expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3' } });
     expect(handed).toEqual([
-      `new: write it\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+      `new: write it\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
     ]);
   });
 
