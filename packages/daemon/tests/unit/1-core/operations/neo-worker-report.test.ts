@@ -384,6 +384,9 @@ test('repeating a large ambiguous report shares one wake despite fresh published
         files: [expect.objectContaining({ byteLength: Buffer.byteLength(legacy.text) })],
       },
     });
+    const wake = db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })[0];
+    expect(JSON.stringify(wake.payload)).not.toContain(JSON.stringify(legacy.text).slice(1, -1));
+    expect(JSON.stringify(wake.payload)).toContain('handoff.read');
     expect(await send(legacy)).toEqual(first);
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })

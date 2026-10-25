@@ -70,7 +70,7 @@ async function workerSend(input: unknown) {
   });
   receipts.push({ name: 'session-door:message.send', result });
   assert.equal(result.kind, 'completed', JSON.stringify(result));
-  return result.value as { kind: string; mailboxId: string; messageId: string; files?: { byteLength: number }[] };
+  return result.value as { kind: string; mailboxId: string; messageId: string; files?: { byteLength: number; sha256: string }[] };
 }
 try {
   await app.spaceRuntimeService.ready();
@@ -162,10 +162,14 @@ try {
     assert.equal(triage.files![0].byteLength, Buffer.byteLength(legacy.text));
     assert.deepEqual(await workerSend(legacy), triage);
     assert.equal(wakes().length, 1);
+    const rawReport = JSON.stringify(legacy.text).slice(1, -1);
+    assert(!JSON.stringify(wakes()[0].payload).includes(rawReport), 'the wake must retain the prepared handoff stub, not re-inline the full report');
     app.jobProcessor.start();
     const triageDeadline = Date.now() + 45000;
     while ((modelTurns < 2 || app.db.getJobQueueRepo().getLatestByPayload('mailbox', { id: triage.mailboxId })?.status !== 'completed') && Date.now() < triageDeadline) await Bun.sleep(100);
     assert.equal(modelTurns, 2);
+    assert(!coordinatorBodies.at(-1)!.includes(rawReport));
+    assert(coordinatorBodies.at(-1)!.includes(triage.files![0].sha256));
     await Bun.sleep(1000);
     await app.jobProcessor.stop();
     assert.deepEqual(await workerSend(legacy), triage);
