@@ -1,4 +1,9 @@
 export const en = {
+  'drawer.appearance': 'Appearance',
+  'drawer.theme': 'Theme',
+  'drawer.theme.light': 'Light',
+  'drawer.theme.dark': 'Dark',
+  'drawer.theme.system': 'Follow system',
   'goalDetails.failed': 'Could not read goal details',
   'goalDetails.journal': 'Journal',
   'goalDetails.worked': 'What worked',

@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { setupFocusTrap } from '../components/ui/Modal.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
+import { setTheme, themeSetting, type ThemeSetting } from '../lib/theme.ts';
+import { t } from '../lib/i18n/index.ts';
 
 const CONNECTION_TEXT: Record<ConnectionState, string> = {
   connected: 'Connected',
@@ -109,6 +111,24 @@ export function NeoDrawer({
               Refresh Neo
             </button>
           </div>
+        </section>
+        <section aria-label={t('drawer.appearance')} class="mb-6">
+          <h3 class="mb-2 text-sm font-medium text-fg-muted">{t('drawer.appearance')}</h3>
+          <label class="flex items-center gap-3 text-sm" for="neo-theme-setting">
+            <span>{t('drawer.theme')}</span>
+            <select
+              id="neo-theme-setting"
+              value={themeSetting.value}
+              onChange={(event) => setTheme(event.currentTarget.value as ThemeSetting)}
+              class="neo-drawer-action h-11 min-w-0 flex-1 appearance-auto bg-surface text-fg"
+            >
+              {(['light', 'dark', 'system'] as const).map((value) => (
+                <option key={value} value={value}>
+                  {t(`drawer.theme.${value}`)}
+                </option>
+              ))}
+            </select>
+          </label>
         </section>
         <PendingDevices connection={connection} />
       </aside>
