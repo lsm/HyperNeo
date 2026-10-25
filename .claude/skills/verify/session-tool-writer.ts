@@ -49,7 +49,19 @@ try {
   const notices:string[]=[];
   const write=createSessionToolPreferenceWriter(app.db,async id=>{notices.push(id);});
   const tools={disabledSkills:[],useClaudeCodePreset:false};
-  const saved=await write(sessionId,{kind:'skills',disabledSkills:[]},tools);
+  const mainTransaction=raw.transaction;
+  const mainPrepare=raw.prepare;
+  const forbidMainSql=()=>{throw new Error('preference coordinator used main-thread SQLite');};
+  raw.transaction=forbidMainSql;
+  raw.prepare=forbidMainSql;
+  let saved:Awaited<ReturnType<typeof write>>;
+  try {
+    saved=await write(sessionId,{kind:'skills',disabledSkills:[]},tools);
+  } finally {
+    raw.transaction=mainTransaction;
+    raw.prepare=mainPrepare;
+  }
+  evidence.captureAndCommitOffMain=true;
   assert(saved.ok);
   assert.equal(saved.selection.choices[`mcp:${server.id}`]?.selected,true);
   assert.equal(saved.selection.choices[`skill:${instruction.id}`]?.selected,true);
