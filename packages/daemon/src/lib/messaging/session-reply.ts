@@ -3,7 +3,7 @@ import { parseAddress, parseRemoteAddress } from '../mailbox/address.ts';
 
 export const REPLY_ORIGIN_MAX = 500;
 const CLI_PREFIX =
-  'Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send ';
+  'Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ';
 const CLI_SUFFIX = ' "<text>" (not SendMessage). Keep working after you send.';
 
 export function replyMessageBodyLength(message: string): number {

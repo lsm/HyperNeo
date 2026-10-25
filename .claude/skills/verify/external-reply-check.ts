@@ -127,7 +127,7 @@ try {
   const opened = await rpc('neo.open', {});
   const neo = String(opened.sessionId);
   assert(neo.startsWith('neo:'), JSON.stringify(opened));
-  const line = `Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send ${neo} "<text>" (not SendMessage). Keep working after you send.`;
+  const line = `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${neo} "<text>" (not SendMessage). Keep working after you send.`;
   const ref = { adapter: 'claude-code', id: peer.sessionId };
   const seed = new Database(join(data, 'daemon.db'));
   try {
@@ -178,7 +178,7 @@ try {
   assert(!received[2].includes('hyperneo send'));
   const reply = spawnSync(
     process.execPath,
-    ['packages/cli/main.ts', 'send', neo, 'Mid-work progress from the peer.'],
+    ['packages/cli/main.ts', 'send', neo, 'Blocked: synthetic peer needs a decision.'],
     {
       cwd: root,
       env: {
@@ -199,14 +199,14 @@ try {
         .prepare(
           "SELECT 1 FROM sdk_messages WHERE session_id = ? AND message_type = 'user' AND sdk_message LIKE ? AND sdk_message LIKE ? LIMIT 1"
         )
-        .get(neo, '%Mid-work progress from the peer.%', `%claude-code:${peer.sessionId}%`);
+        .get(neo, '%Blocked: synthetic peer needs a decision.%', `%claude-code:${peer.sessionId}%`);
       if (persisted) break;
       await pause();
     }
   } finally {
     db.close();
   }
-  assert(persisted, 'CLI progress did not reach Neo transcript');
+  assert(persisted, 'CLI blocker did not reach Neo transcript');
   const evidence = {
     neo,
     ref,

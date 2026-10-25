@@ -10,6 +10,14 @@ import {
 } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('root Neo system prompt', () => {
+  test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
+    const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+    expect(prompt).toContain('Message Neo only at milestones');
+    expect(prompt).toContain('PR opened, merged or closed; blocked; a question; done; failed');
+    expect(prompt).toContain('no acknowledgments and no progress pings');
+    expect(prompt).toContain('Never ask workers to confirm or acknowledge');
+  });
+
   test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
     expect(neoPrompt([])).toBe(
       `${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n${NEO_ROOT_TURN_END}`
@@ -109,13 +117,13 @@ describe('root Neo system prompt', () => {
 describe('coding worker rules', () => {
   test('requires concise public PR descriptions and issues while retaining full reports to Neo', () => {
     expect(
-      NEO_PACK_CODING_WORKER_RULES.trimEnd().endsWith(`10. Write PR descriptions and issues for a person to read in 30 seconds.
+      NEO_PACK_CODING_WORKER_RULES
+    ).toContain(`10. Write PR descriptions and issues for a person to read in 30 seconds.
     - First, 2–3 sentences: what this is (bug fix, feature, cleanup) and why. For a bug, say what was wrong as a user sees it. Link the issue if there is one (keep \`Closes #N\`).
     - Then how, in a few short bullets: the change, not the search that found it.
     - Then \`Verified:\` in one or two lines: what you ran and what you saw.
     - Nothing else: no file-by-file audits, test counts, lists of what you didn't touch, or merge instructions. Your full report (rule 9) goes to Neo, not into the PR.
     - In a public repo: no local paths, machine names, session ids or private repo names.
-    An issue states the problem and what done looks like, in a few sentences.`)
-    ).toBe(true);
+    An issue states the problem and what done looks like, in a few sentences.`);
   });
 });

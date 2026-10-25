@@ -6,6 +6,7 @@ import { globalSettings } from '../../lib/state.ts';
 import { formatRelativeTime } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
+import { PairPhoneFlow } from './PairPhoneFlow.tsx';
 import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 
 type Kind = 'human' | 'relay' | 'daemon';
@@ -180,6 +181,7 @@ export function DevicesSettings() {
   return (
     <>
       {error && <div class="px-1 text-xs text-danger">{error}</div>}
+      <PairPhoneFlow onPaired={() => void reload()} />
       <SettingsSection
         title="Waiting for Allow"
         description="Codes made on the Mac's CLI pair only after a paired device allows them."

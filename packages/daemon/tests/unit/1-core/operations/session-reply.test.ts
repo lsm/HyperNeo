@@ -55,7 +55,7 @@ describe('external CLI reply arguments', () => {
 
   test('a quoted template is not mistaken for an actionable reply line to the real sender', () => {
     const template =
-      'Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send <the sending Neo id> "<text>" (not SendMessage). Keep working after you send.';
+      'Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send <the sending Neo id> "<text>" (not SendMessage). Keep working after you send.';
     const actual = withReplyLine(template, 'session:neo%3Aroot', 'cli');
     expect(actual).toEndWith(
       'hyperneo send neo:root "<text>" (not SendMessage). Keep working after you send.'
