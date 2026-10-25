@@ -1,0 +1,23 @@
+{
+  "fixture": "fresh synthetic daemon, 40 projects, real WebSocket RPC",
+  "baseline": {
+    "mainReservationSql": 243,
+    "coldRpcMs": 100.29683399999999
+  },
+  "fixed": {
+    "mainReservationSql": 0,
+    "wholeWriterCommands": 4,
+    "coldRpcMs": 95.82224999999994,
+    "maxLoopLagMs": 4.271334000000024,
+    "contention": {
+      "healthMs": 0.42212500000005093,
+      "writeMs": 1204.10225,
+      "affectedWriteUnder250ms": false
+    }
+  },
+  "limits": [
+    "Writer contention misses 250 ms affected-write target",
+    "No Deno installed locally",
+    "Standalone test typecheck fails with existing cross-package errors; production check passes through typecheck"
+  ]
+}

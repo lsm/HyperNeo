@@ -1,4 +1,5 @@
 import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
+import { reserveNeoHomeProjects } from '../repositories/neo-home-reservation.ts';
 import {
   neoTodoSessionReads,
   neoTodoSessionWrites,
@@ -61,6 +62,7 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    reserveNeoHomeProjects,
     neoTodoSessionReads,
     neoTodoSessionWrites,
     codingTodoPrReads,
