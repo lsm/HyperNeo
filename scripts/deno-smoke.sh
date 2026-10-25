@@ -406,6 +406,15 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
     const committed = await gateway.call(neoTodoWrites, "commitState", stateId, {}, 11, {state:"done",evidence:"Complete"});
     if (committed.todo.state !== "done" || committed.startNext !== nextId || committed.todo.report !== body || questionRead() !== "retired" || db.prepare("SELECT state FROM neo_todos WHERE id=?").get(nextId).state !== "todo") Deno.exit(1);
     console.log("[deno-smoke] todo state, pruning and ask stamps commit together; next work is returned without dispatch");
+    for (const missingId of ["deno-unknown-state", "deno-deleted-state"]) {
+      if (missingId === "deno-deleted-state") {
+        db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,created_at,updated_at) VALUES(?,?,2,?,?,1,1)").run(missingId, "deno-state-ask", "Deleted step", "Observed");
+        db.prepare("DELETE FROM neo_todos WHERE id=?").run(missingId);
+      }
+      const missing = await gateway.call(neoTodoWrites, "commitState", missingId, {}, 20, {state:"done",evidence:"Late completion"});
+      if (missing.todo !== null || missing.startNext !== null || stateRead() !== "done" || questionRead() !== "retired") Deno.exit(1);
+    }
+    console.log("[deno-smoke] missing and deleted todo state commands return empty results without changing siblings");
   } finally { db.close(); await gateway.close(); }
 '; then
   dump_log

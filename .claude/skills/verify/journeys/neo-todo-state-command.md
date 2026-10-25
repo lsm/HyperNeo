@@ -29,6 +29,11 @@ the trigger must commit completion and pruning, return `{todo, startNext}` and
 leave the successor pending. The command cannot invoke external work or carry
 an advance callback. The complete report bytes and SHA-256 must survive its
 reply; evidence records reply bytes, round trips, RSS delta and WAL growth.
+Unknown and hard-deleted IDs must resolve to `{todo: null, startNext: null}`
+without changing other todos, questions or the ask. The snapshot must retain
+the completed predecessor and pending successor after those no-op commands.
+Run `missing-before` on the review pre-fix command head to capture the opaque
+`askId` dereference error for both inputs, then `verify` after the guard.
 
 Run `before` on the test-first pre-fix commit in the same checkout and save to
 another evidence directory. It uses the legacy recompute boundary and records

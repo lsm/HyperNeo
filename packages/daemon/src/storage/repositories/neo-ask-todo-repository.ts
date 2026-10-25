@@ -622,8 +622,9 @@ export class NeoAskTodoRepository {
     change: NeoTodoPatch,
     now: number,
     judgement: NeoTodoJudgement
-  ): { todo: NeoTodo; startNext: string | null } {
-    const current = this.getTodo(todoId)!;
+  ): { todo: NeoTodo | null; startNext: string | null } {
+    const current = this.getTodo(todoId);
+    if (!current) return { todo: null, startNext: null };
     this.pruneQuestions(current.askId, now);
     if (current.state === 'removed') return { todo: current, startNext: null };
     return recomputeTodoState(
