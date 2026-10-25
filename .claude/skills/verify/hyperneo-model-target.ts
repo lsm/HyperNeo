@@ -90,6 +90,10 @@ try {
     const result = await start('Unique other offer'); assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(app.sessionManager.getSessionFromDB(result.value.ref.id)!.config.provider, 'custom:same-id');
   });
+  await check('shared exact id retains catalog precedence', async () => {
+    const result = await start('swe-2-high'); assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(app.sessionManager.getSessionFromDB(result.value.ref.id)!.config.provider, 'custom:synthetic');
+  });
   await check('effort applies to HyperNeo before its input is handed off', async () => {
     const result = await start('swe-2-high', 'high'); assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.value.effort, 'high');

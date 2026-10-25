@@ -421,6 +421,24 @@ describe('createDriverSession model', () => {
     ]);
   });
 
+  test('exact shared ids retain catalog precedence while a unique name selects its provider', async () => {
+    const { created, manager } = sessionManager(false);
+    const models = async () => [
+      offers()[0],
+      {
+        ...offers()[0],
+        provider: 'custom:other',
+        name: 'Other SWE offer',
+      },
+    ];
+    await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', models);
+    await createDriverSession(manager as never, '/notes', 'task', 'Other SWE offer', models);
+    expect(created.map((entry) => entry.config)).toEqual([
+      { model: 'swe-2-high', provider: 'custom:synthetic' },
+      { model: 'swe-2-high', provider: 'custom:other' },
+    ]);
+  });
+
   test('refuses a named model that is not available instead of using the default', async () => {
     const { created, manager } = sessionManager(false);
     await expect(
