@@ -303,34 +303,36 @@ function externalDelivery(
   );
 }
 
-test.each([{ delivered: true }, { delivered: false, queuedSubmissionId: 'accepted-queue' }])(
-  'an accepted external answer releases its hold once: %j',
-  async (delivery) => {
-    const f = await externalFixture();
-    const sent: unknown[] = [];
-    const flush = externalDelivery(f, async (_caller, name, input) => {
-      expect(name).toBe('work.send');
-      expect(input.ref).toMatchObject({ adapter: 'codex-desktop', id: 'worker' });
-      expect(input.message).toContain('Staging');
-      sent.push(input);
-      return { kind: 'completed', value: { ok: true, value: delivery } };
-    });
-    try {
-      await flush();
-      await flush();
-      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
-      expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
-      expect(sent).toHaveLength(1);
-    } finally {
-      f.db.close();
-    }
+test.each([
+  { delivered: true },
+  { delivered: false },
+  { delivered: false, queuedSubmissionId: 'accepted-queue' },
+])('an accepted external answer releases its hold once: %j', async (delivery) => {
+  const f = await externalFixture();
+  const sent: unknown[] = [];
+  const flush = externalDelivery(f, async (_caller, name, input) => {
+    expect(name).toBe('work.send');
+    expect(input.ref).toMatchObject({ adapter: 'codex-desktop', id: 'worker' });
+    expect(input.message).toContain('Staging');
+    sent.push(input);
+    return { kind: 'completed', value: { ok: true, value: delivery } };
+  });
+  try {
+    await flush();
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+    await flush();
+    expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+    expect(sent).toHaveLength(1);
+  } finally {
+    f.db.close();
   }
-);
+});
 
 test.each([
   { reason: 'not_delivered', notSent: true },
   { reason: 'not_open' },
   { reason: 'not_found' },
+  { reason: 'busy' },
 ])('a definite external refusal retries without releasing the hold: %j', async (failure) => {
   const f = await externalFixture();
   let attempts = 0;
