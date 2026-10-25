@@ -7,8 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { ProviderService } from '../../../packages/daemon/src/lib/provider-service.ts';
-import { neoWakeQueueWrite } from '../../../packages/daemon/src/storage/repositories/neo-wake-queue-repository.ts';
-import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
+import { sdkNeoWakeQueue } from '../../../packages/daemon/src/storage/repositories/sdk-message-transactions.ts';
 
 const run = resolve(process.argv[2] ?? '');
 assert(process.argv[2] && process.env.NODE_ENV === 'test');
@@ -101,7 +100,7 @@ try {
       const heldDeadline = Date.now() + 15000;
       while (Date.now() < heldDeadline && !app.jobQueue.getLatestByPayload('neo_notes', { messageUuid: noteIds.at(-1) })) await Bun.sleep(25);
       assert(app.jobQueue.getLatestByPayload('neo_notes', { messageUuid: noteIds.at(-1) }));
-      if (large) await gatewayFor(app.db.getDatabase()).call(neoWakeQueueWrite, 'flushDue', Date.now() + 15 * 60_000);
+      if (large) await app.db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue, { flush: Date.now() + 15 * 60_000 });
       else assert.equal((await hub.request<{kind:string}>('operation.invoke', { name: 'message.send', input: { to: root, from: 'session:synthetic-worker', kind: 'blocked', text: 'Automatic wake decision needed.' } })).kind, 'accepted');
       const automaticDeadline = Date.now() + 45000;
       let consumed = false;

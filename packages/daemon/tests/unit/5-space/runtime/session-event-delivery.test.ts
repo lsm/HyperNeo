@@ -223,7 +223,8 @@ describe('mailSessionEvent', () => {
             id,
             entry.origin === 'chat' ||
               !!entry.message.workerReportKind ||
-              !!entry.message.neoWakeEvent
+              !!entry.message.neoWakeEvent,
+            { sdkMessageRepo: db.sdkMessageRepo, jobQueue: db.jobQueue, hold: 'immediate' }
           ),
       });
       await handler(db.jobQueue.dequeue('mailbox')[0]);

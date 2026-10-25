@@ -79,8 +79,9 @@ try {
     const packet = app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': root, messageUuid: receipt.messageId })[0].payload as unknown as MailboxEntry;
     app.jobProcessor.start();
     const deadline = Date.now() + 45000;
-    while (modelTurns === before && Date.now() < deadline) await Bun.sleep(100);
-    assert.equal(modelTurns, before + 1, `${kind} must start Neo immediately`);
+    const expected = before + (kind === 'blocked' ? 2 : 1);
+    while ((modelTurns < expected || !app.db.getMessageByStatusAndUuid(root, 'consumed', receipt.messageId)) && Date.now() < deadline) await Bun.sleep(100);
+    assert.equal(modelTurns, expected, `${kind} must start Neo immediately after its separate batch`);
     await Bun.sleep(1000);
     if (kind === 'blocked') {
       const source = app.db.getSDKMessageRepo().getStoredPromptsByUuid(root, receipt.messageId)[0];
@@ -94,7 +95,7 @@ try {
       writeFileSync(join(run, 'evidence/batch-retry.json'), JSON.stringify(retryJob()));
       assert.equal(retryJob().status, 'completed');
       assert.equal(retryJob().error, null);
-      assert.equal(modelTurns, before + 1);
+      assert.equal(modelTurns, expected);
       const readStatuses = [];
       for (const note of replies as { messageId: string }[]) readStatuses.push(await hub.request('operation.invoke', { name: 'message.status', input: { sessionId: root, messageId: note.messageId } }));
       writeFileSync(join(run, 'evidence/read-statuses.json'), JSON.stringify(readStatuses));
@@ -108,16 +109,17 @@ try {
     assert(at > previous, 'the first model request must contain every queued note in order');
     previous = at;
   }
-  assert(firstRequest.indexOf('Ordinary words for blocked') > previous);
+  assert(!firstRequest.includes('Ordinary words for blocked'));
+  assert(JSON.stringify(coordinatorBodies[1]).includes('Ordinary words for blocked'));
   for (const text of ['human-queued-a', 'human-queued-b']) await hub.request('operation.invoke', { name: 'message.send', input: { to: root, text, from: 'session:synthetic-worker' } });
   const human = await hub.request<{ok: boolean}>('operation.invoke', { name: 'neo.message.send', input: { sessionId: root, requestId: crypto.randomUUID(), content: 'Human asks now.' } });
   assert(human.ok);
   const humanDeadline = Date.now() + 45000;
-  while (modelTurns < 4 && Date.now() < humanDeadline) await Bun.sleep(100);
-  assert.equal(modelTurns, 4);
-  const workerRequest = JSON.stringify(coordinatorBodies[2]);
+  while (modelTurns < 5 && Date.now() < humanDeadline) await Bun.sleep(100);
+  assert.equal(modelTurns, 5);
+  const workerRequest = JSON.stringify(coordinatorBodies[3]);
   assert(workerRequest.includes('human-queued-a') && !workerRequest.includes('Human asks now.'));
-  const humanRequest = JSON.stringify(coordinatorBodies[3]);
+  const humanRequest = JSON.stringify(coordinatorBodies[4]);
   assert(humanRequest.includes('human-queued-a') && humanRequest.includes('human-queued-b') && humanRequest.includes('Human asks now.'));
   await Bun.sleep(1000);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ burst, orderedNotesInFirstRequest: 20, blocked: 1, question: 1, humanWithPendingBatch: 1, finalTurns: modelTurns }));

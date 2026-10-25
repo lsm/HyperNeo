@@ -22,6 +22,11 @@ beforeEach(async () => {
   queue = new NeoWakeQueueRepository(db.getDatabase());
 });
 afterEach(() => db.close());
+const options = () => ({
+  sdkMessageRepo: db.getSDKMessageRepo(),
+  jobQueue: db.getJobQueueRepo(),
+  hold: 'immediate' as const,
+});
 const note = (text: string) =>
   createMailboxEntry({
     to: { kind: 'session', sessionId: root },
@@ -43,7 +48,7 @@ test('a structured wake delivers a public worker input before the unchanged even
     sdkMessageRepo: db.getSDKMessageRepo(),
     getSession: async () => ({}),
     isSessionArchived: () => false,
-    prepareEntry: async (entry, id) => queue.prepare(entry, id, true),
+    prepareEntry: async (entry, id) => queue.prepare(entry, id, true, options()),
   });
   await deliver(mail);
   expect(
@@ -74,11 +79,11 @@ test('the fifteen-minute fallback delivers one visible batch without a placehold
   const oldest = db
     .getJobQueueRepo()
     .listActiveByPayload('neo_notes', { 'to.sessionId': root })[0].createdAt;
-  queue.flushDue(oldest + 15 * 60_000 - 1);
+  queue.flushDue(oldest + 15 * 60_000 - 1, options());
   expect(
     db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId: root })
   ).toHaveLength(0);
-  new NeoWakeQueueRepository(db.getDatabase()).flushDue(oldest + 15 * 60_000);
+  new NeoWakeQueueRepository(db.getDatabase()).flushDue(oldest + 15 * 60_000, options());
   const jobs = db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId: root });
   expect(jobs).toHaveLength(1);
   const batch = db
@@ -91,7 +96,7 @@ test('the fifteen-minute fallback delivers one visible batch without a placehold
   expect(new NeoSessionMessageRepository(db.getDatabase()).latest(root.slice(4), 10)).toHaveLength(
     1
   );
-  queue.flushDue(oldest + 30 * 60_000);
+  queue.flushDue(oldest + 30 * 60_000, options());
   expect(
     db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId: root })
   ).toHaveLength(1);
