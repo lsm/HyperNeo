@@ -3,8 +3,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
-import { SkillRepository } from '../../../../src/storage/repositories/skill-repository.ts';
-import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository.ts';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
 import { createTestSession } from '../../../helpers/database.ts';
@@ -16,7 +15,7 @@ import {
 
 let db: Database;
 let repo: SessionRepository;
-let data: PreferenceDatabase;
+let data: PreferenceDatabase & { mcpEnablement: McpEnablementRepository };
 let write: SessionToolPreferenceWriter;
 let notices: string[];
 const ID = 'writer-fixture';
@@ -54,11 +53,8 @@ beforeEach(() => {
       "INSERT INTO skills (id,name,display_name,description,source_type,config,enabled,created_at) VALUES (?,?,?,'',?,?,0,1)"
     ).run(id, id, id, type, JSON.stringify(config));
   data = {
-    getDatabase: () => db,
-    captureSessionRuntimeSettings: (id) => repo.captureSessionRuntimeSettings(id),
+    gateway: gatewayFor(db),
     casSessionToolPreferences: async (...args) => repo.casSessionToolPreferences(...args),
-    skills: new SkillRepository(db, changes),
-    appMcpServers: new AppMcpServerRepository(db, changes),
     mcpEnablement: new McpEnablementRepository(db, changes),
   };
   notices = [];

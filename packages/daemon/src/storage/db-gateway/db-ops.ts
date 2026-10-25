@@ -44,6 +44,7 @@ import {
 import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
+import { sessionToolPreferenceReads } from '../repositories/session-tool-preference-read.ts';
 import { spaceTaskWrites } from '../repositories/space-task-repository.ts';
 import { createStandaloneTask } from '../tasks/create-task.ts';
 import { editStandaloneTaskWithDependencies } from '../tasks/set-task-dependencies.ts';
@@ -68,6 +69,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     readLatestSessionPrState,
     deleteWorkFeedBatch,
     sessionWrites,
+    sessionToolPreferenceReads,
     spaceTaskWrites,
     createStandaloneTask,
     transitionStandaloneTask,
