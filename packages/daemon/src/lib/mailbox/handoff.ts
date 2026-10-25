@@ -1,7 +1,8 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { type MailboxAddress, parseAddress } from './address.ts';
-import { enqueueMailboxEntry } from './enqueue.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { enqueueMailboxAdmission } from '../../storage/repositories/mailbox-admission-write.ts';
 import {
   createMailboxEntry,
   type MailboxDeliveryMode,
@@ -71,8 +72,8 @@ export function createEntryStage(
 export function enqueueStage(
   jobQueue: JobQueueRepository,
   entry: MailboxEntry
-): MailboxHandoffOutcome {
-  return enqueueMailboxEntry(jobQueue, entry);
+): Promise<MailboxHandoffOutcome> {
+  return gatewayFor(jobQueue.db).run(enqueueMailboxAdmission, entry);
 }
 
 export function crashHandler(error: unknown): MailboxHandoffOutcome {

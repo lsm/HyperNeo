@@ -1,3 +1,4 @@
+import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write.ts';
 import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
 import { reserveNeoHomeProjects } from '../repositories/neo-home-reservation.ts';
 import {
@@ -62,6 +63,7 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    enqueueMailboxAdmission,
     reserveNeoHomeProjects,
     neoTodoSessionReads,
     neoTodoSessionWrites,
