@@ -16,11 +16,14 @@ import {
   type SessionToolChoiceInput,
 } from './session-tool-choice.ts';
 
-export interface SessionToolChoiceChange {
-  sessionId: string;
+interface ChoiceEdit {
   key: SessionToolChoiceKey;
   selected: boolean;
 }
+export type SessionToolChoiceChange = { sessionId: string } & (
+  | ChoiceEdit
+  | { changes: readonly ChoiceEdit[] }
+);
 export interface SessionToolChoiceChangeDependencies {
   capture: (id: string) => SessionRuntimeSettingsSnapshot | null;
   commit: (
@@ -80,24 +83,32 @@ function prepareChoice(
     ...(!current ? deps.pinnedSlotVetoes(snapshot) : []),
   ];
   const original = current ?? projectLegacySessionToolSelection(catalog);
-  const saved = original.choices[input.key];
+  const changes = 'changes' in input ? input.changes : [input];
+  if (new Set(changes.map((edit) => edit.key)).size !== changes.length)
+    return { reason: { ok: false, reason: 'ambiguous-alias' } };
   const selection: SessionToolSelection = {
     ...original,
-    choices: { ...original.choices, [input.key]: { ...saved, selected: input.selected } },
+    choices: { ...original.choices },
   };
-  const target = resolveSessionToolChoices(catalog, selection).find(
-    (choice) => choice.key === input.key
+  for (const edit of changes)
+    selection.choices[edit.key] = { ...original.choices[edit.key], selected: edit.selected };
+  const targets = new Map(
+    resolveSessionToolChoices(catalog, selection).map((choice) => [choice.key, choice])
   );
-  if (!target || target.reason === 'missing-definition')
-    return { reason: { ok: false, reason: 'missing-definition' } };
-  if (input.selected && target.reason !== 'selected')
-    return { reason: { ok: false, reason: target.reason } };
-  const aliases = saved?.aliases?.length
-    ? saved.aliases
-    : target.aliases.length === 1
-      ? target.aliases
-      : [];
-  selection.choices[input.key] = { selected: input.selected, aliases: [...aliases] };
+  for (const edit of changes) {
+    const saved = original.choices[edit.key];
+    const target = targets.get(edit.key);
+    if (!target || target.reason === 'missing-definition')
+      return { reason: { ok: false, reason: 'missing-definition' } };
+    if (edit.selected && target.reason !== 'selected')
+      return { reason: { ok: false, reason: target.reason } };
+    const aliases = saved?.aliases?.length
+      ? saved.aliases
+      : target.aliases.length === 1
+        ? target.aliases
+        : [];
+    selection.choices[edit.key] = { selected: edit.selected, aliases: [...aliases] };
+  }
   return { value: { snapshot, selection, changed: !isDeepStrictEqual(current, selection) } };
 }
 async function commitChoice(

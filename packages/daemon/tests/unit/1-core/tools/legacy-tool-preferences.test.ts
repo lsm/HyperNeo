@@ -4,6 +4,7 @@ import type { SessionToolSelection } from '@hyperneo/shared/types/session-tool-c
 import {
   translateLegacyToolPreference,
   projectLegacyToolDefaultUpdate,
+  selectSessionToolDefaults,
 } from '../../../../src/lib/tools/legacy-tool-preferences.ts';
 import type { SessionToolChoiceInput } from '../../../../src/lib/tools/session-tool-choice.ts';
 import {
@@ -175,7 +176,7 @@ describe('legacy default edits', () => {
     const after = catalog({ registry: [{ ...before.registry[0], enabled: false }] });
     const previous = selection();
     previous.choices['mcp:browser']!.selected = true;
-    expect(projectLegacyToolDefaultUpdate(before, after, previous)).toEqual({
+    expect(projectLegacyToolDefaultUpdate(before, after, [], previous)).toEqual({
       ok: true,
       selection: selection(),
     });
@@ -184,7 +185,7 @@ describe('legacy default edits', () => {
   it('adds new defaults without rewriting existing choices', () => {
     const before = catalog();
     const after = catalog({ skills: [...before.skills, skill('new')] });
-    const result = projectLegacyToolDefaultUpdate(before, after, selection());
+    const result = projectLegacyToolDefaultUpdate(before, after, [], selection());
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.reason);
     expect(result.selection.choices['skill:new']?.selected).toBe(true);
@@ -195,14 +196,14 @@ describe('legacy default edits', () => {
     const after = catalog({ registry: [], skills: [skill('notes')] });
     const previous = selection();
     previous.choices['mcp:browser']!.selected = true;
-    const result = projectLegacyToolDefaultUpdate(before, after, previous);
+    const result = projectLegacyToolDefaultUpdate(before, after, [], previous);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.reason);
     expect(result.selection.choices['mcp:browser']).toEqual({
       selected: false,
       aliases: ['frozen-browser'],
     });
-    const initial = projectLegacyToolDefaultUpdate(before, before);
+    const initial = projectLegacyToolDefaultUpdate(before, before, []);
     expect(initial.ok).toBe(true);
     if (!initial.ok) throw new Error(initial.reason);
     expect(initial.selection.choices['skill:notes']?.selected).toBe(true);
@@ -212,17 +213,20 @@ describe('legacy default edits', () => {
     const after = catalog({
       skills: [skill('notes'), { ...skill('wrapper', true), name: 'renamed' }],
     });
-    expect(projectLegacyToolDefaultUpdate(before, after, selection())).toEqual({
+    expect(projectLegacyToolDefaultUpdate(before, after, [], selection())).toEqual({
       ok: true,
       selection: selection(),
     });
     expect(
-      projectLegacyToolDefaultUpdate(before, after, { ...selection(), version: 2 as 1 })
+      projectLegacyToolDefaultUpdate(before, after, [], { ...selection(), version: 2 as 1 })
     ).toEqual({ ok: false, reason: 'selection_version_unsupported' });
   });
 });
 let db: Database | undefined;
-afterEach(() => db?.close());
+afterEach(() => {
+  db?.close();
+  db = undefined;
+});
 function database() {
   db = new Database(':memory:');
   createTables(db);
@@ -355,5 +359,41 @@ describe('atomic legacy choice batches', () => {
       )
     ).toEqual({ ok: false, reason: 'superseded' });
     expect(repo.getSession('fixture')!.config.toolSelection).toEqual(selection());
+  });
+});
+
+describe('session default scope selection', () => {
+  it('uses a matching Space template before global defaults and never inherits another Space', () => {
+    const global = selection();
+    const space = { id: 'space', selection: { ...selection(), choices: {} } };
+    expect(selectSessionToolDefaults({ id: 'inbox' }, global, space)).toBe(global);
+    expect(
+      selectSessionToolDefaults({ id: 'worker', context: { spaceId: 'space' } }, global, space)
+    ).toBe(space.selection);
+    expect(
+      selectSessionToolDefaults({ id: 'worker', context: { spaceId: 'other' } }, global, space)
+    ).toBe(global);
+    expect(
+      selectSessionToolDefaults({ id: 'worker', context: { spaceId: 'space' } }, undefined, space)
+    ).toBe(space.selection);
+    expect(selectSessionToolDefaults({ id: 'inbox' })).toBeUndefined();
+  });
+});
+
+describe('explicit catalog default intent', () => {
+  it('honors a registry toggle even when the old wrapper gate masks the effective delta', () => {
+    const before = catalog({ skills: [{ ...skill('wrapper', true), enabled: false }] });
+    const after = { ...before, registry: [{ ...before.registry[0], enabled: false }] };
+    const defaults = selection();
+    defaults.choices['mcp:browser']!.selected = true;
+    const result = projectLegacyToolDefaultUpdate(
+      before,
+      after,
+      [{ key: 'mcp:browser', selected: false }],
+      defaults
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.selection.choices['mcp:browser']?.selected).toBe(false);
   });
 });
