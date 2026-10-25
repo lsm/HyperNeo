@@ -954,6 +954,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             message: { role: 'user', content: RESTART_RECOVERY_NOTE },
             parent_tool_use_id: null,
             inputKind: 'system',
+            neoWakeEvent: true,
           },
           jobQueue: db.getJobQueueRepo(),
         });

@@ -93,6 +93,7 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
           message: { role: 'user', content: message },
           parent_tool_use_id: null,
           inputKind: 'system',
+          neoWakeEvent: true,
         },
         jobQueue: queue,
       });
