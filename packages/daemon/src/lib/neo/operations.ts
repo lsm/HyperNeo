@@ -1,97 +1,98 @@
-import { existsSync } from 'node:fs';
-import { hostname } from 'node:os';
-import { THINKING_LEVELS } from '@hyperneo/shared';
-import type { NeoProject } from '@hyperneo/shared/types/neo-context';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import {
-  NEO_STANDING_RULE_MAX_CHARS,
-  NEO_STANDING_RULES_MAX,
-  type NeoSettings,
-  neoStandingRules,
-} from '@hyperneo/shared/types/settings';
-import superpipe, { type PipelineAPI } from 'superpipe';
-import { z } from 'zod';
-import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
+import { readNeoReply } from './intake.ts';
+import { receivedNeoHumanInput } from './human-input.ts';
+import { readNeoMessageStatuses, type NeoMessageStatusPresenter } from './message-status.ts';
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import { createNeoRuleQuestions } from './rule-questions.ts';
+import { createPackPreferenceQuestions } from './preference-questions.ts';
+import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import {
   NeoConversationWakeRepository,
   NeoConversationWakeSchema,
 } from '../../storage/repositories/neo-conversation-wake-repository.ts';
-import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
-import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
-import { createArtifactRefReader } from '../artifacts/read-operations.ts';
-import { isTempCwd } from '../drivers/claude-feed.ts';
-import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import type { PlaceGroup } from '../drivers/types.ts';
-import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
-import { isLocalUser } from '../operations/caller.ts';
-import { invokeOperation } from '../operations/invoke.ts';
-import type { OperationCaller } from '../operations/registry.ts';
-import { defineOperation } from '../operations/registry.ts';
-import { hashString32 } from '../runtime-hash.ts';
-import {
-  createNeoAskReadOperation,
-  createNeoDoneTodosOperation,
-  NeoAskEntrySchema,
-  neoSnapshotAskEntries,
-  projectNeoAskEntries,
-} from './ask-entries.ts';
-import { createNeoAskRecordOperations } from './ask-record-operations.ts';
-import {
-  createNeoConversationAskReadOperation,
-  createNeoConversationImageReadOperation,
-} from './conversation-ask-read-operation.ts';
-import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
-import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
-import { neoFolderPath } from './folder.ts';
-import { receivedNeoHumanInput } from './human-input.ts';
-import { createNeoIntakeOperation, readNeoReply } from './intake.ts';
-import { type NeoMessageStatusPresenter, readNeoMessageStatuses } from './message-status.ts';
-import { createNeoPreferenceOperation } from './model-preference.ts';
-import {
-  createPackPreferenceOperations,
-  listPackPreferences,
-  PackSettingSchema,
-} from './preference-operations.ts';
-import { createPackPreferenceQuestions } from './preference-questions.ts';
-import { neoMirroredAliases } from './project-cleanup.ts';
-import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
-import { createNeoProjectForgetOperation } from './project-forget-operation.ts';
-import { readNeoProjectIdentities } from './project-merge.ts';
+import { readNeoWorking } from './working.ts';
+import { hostname } from 'node:os';
 import {
   backfillNeoRepositoryIdentities,
   isNeoPlumbingFolder,
   neoProjectFolders,
 } from './project-mirror.ts';
+import { neoFolderPath } from './folder.ts';
+import { isTempCwd } from '../drivers/claude-feed.ts';
+import { createNeoProjectForgetOperation } from './project-forget-operation.ts';
+import { neoMirroredAliases } from './project-cleanup.ts';
+import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
+import type { PlaceGroup } from '../drivers/types.ts';
+import { existsSync } from 'node:fs';
+import { NEO_SNAPSHOT_UNCHANGED_GUIDANCE } from './snapshot-read.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { THINKING_LEVELS } from '@hyperneo/shared';
+import { z } from 'zod';
+import type { OperationCaller } from '../operations/registry.ts';
+import { defineOperation } from '../operations/registry.ts';
+import { isLocalUser } from '../operations/caller.ts';
+import { hashString32 } from '../runtime-hash.ts';
+import type { NeoService } from './service.ts';
+import type { NeoProject } from '@hyperneo/shared/types/neo-context';
+import { type NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  NEO_STANDING_RULE_MAX_CHARS,
+  NEO_STANDING_RULES_MAX,
+  neoStandingRules,
+  type NeoSettings,
+} from '@hyperneo/shared/types/settings';
+import { createNeoIntakeOperation } from './intake.ts';
+import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
+import { readNeoProjectIdentities } from './project-merge.ts';
+import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
+import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
+import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
-import { createNeoQuestionOperations } from './question-operations.ts';
-import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
-import { createNeoRuleQuestions } from './rule-questions.ts';
-import { planNeoRuleEdit } from './saved-rules.ts';
-import type { NeoService } from './service.ts';
 import {
-  findNeoSessionNotice,
-  requireNeoTrackableSession,
-  requireNeoTrackRoot,
-} from './session-track.ts';
-import {
-  latestNeoSessionNoticeGroups,
-  NEO_SESSION_MUTES_MAX,
-  type NeoSessionNotice,
-  NeoSessionNoticeGroupSchema,
-  NeoSessionNoticeSchema,
-  neoSessionNoticeLine,
-  planNeoSessionMutes,
-} from './session-watch.ts';
+  createNeoConversationAskReadOperation,
+  createNeoConversationImageReadOperation,
+} from './conversation-ask-read-operation.ts';
+import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
 import {
   fitNeoSnapshotBudget,
   NEO_MCP_SNAPSHOT_BUDGET,
   neoSnapshotOmitted,
 } from './snapshot-compact.ts';
-import { NEO_SNAPSHOT_UNCHANGED_GUIDANCE } from './snapshot-read.ts';
+import { invokeOperation } from '../operations/invoke.ts';
+import {
+  NEO_SESSION_MUTES_MAX,
+  NeoSessionNoticeGroupSchema,
+  NeoSessionNoticeSchema,
+  latestNeoSessionNoticeGroups,
+  neoSessionNoticeLine,
+  planNeoSessionMutes,
+  type NeoSessionNotice,
+} from './session-watch.ts';
+import {
+  findNeoSessionNotice,
+  requireNeoTrackRoot,
+  requireNeoTrackableSession,
+} from './session-track.ts';
+import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
-import { readNeoWorking } from './working.ts';
+import { createArtifactRefReader } from '../artifacts/read-operations.ts';
+import { createNeoAskRecordOperations } from './ask-record-operations.ts';
+import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
+import {
+  createNeoDoneTodosOperation,
+  createNeoAskReadOperation,
+  NeoAskEntrySchema,
+  neoSnapshotAskEntries,
+  projectNeoAskEntries,
+} from './ask-entries.ts';
+import {
+  createPackPreferenceOperations,
+  listPackPreferences,
+  PackSettingSchema,
+} from './preference-operations.ts';
+import { createNeoPreferenceOperation } from './model-preference.ts';
+import { planNeoRuleEdit } from './saved-rules.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 

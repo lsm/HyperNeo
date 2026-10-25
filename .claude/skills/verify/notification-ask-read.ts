@@ -50,6 +50,10 @@ try {
   assert.equal(target.entry.todos[0].id, 't0');
   assert.equal(target.entry.todos[0].report, 'Exact failure evidence');
   assert.equal(target.entry.questions[0].id, 'q0');
+  for (const child of [{ todoId: 't0' }, { questionId: 'q0' }]) {
+    const parent = await rpc('neo.ask.read', child);
+    assert.equal(parent.entry.ask.id, 'a0');
+  }
   const gone = await rpc('neo.ask.read', { askId: 'missing' });
   assert.equal(gone.ok, false);
   assert(gone.reason.startsWith('not_found:'));

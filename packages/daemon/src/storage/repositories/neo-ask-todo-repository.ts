@@ -1,3 +1,17 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
+import { NeoPublicationRepository } from './neo-publication-repository.ts';
+import { neoDerivedId } from '../../lib/neo/derived-id.ts';
+import {
+  recomputeTodoState,
+  recomputeTodoStateAsync,
+  type TodoStateFacts,
+} from '../../lib/neo/todo-state.ts';
+import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
+import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
+import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 import type {
   NeoAsk,
   NeoQuestion,
@@ -5,22 +19,8 @@ import type {
   NeoTodo,
   NeoTodoCheck,
 } from '@hyperneo/shared/types/neo-ask';
-import type { LanguageSetting } from '@hyperneo/shared/types/settings';
-import { neoDerivedId } from '../../lib/neo/derived-id.ts';
-import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
 import { neoStartQuestionTitle } from '../../lib/neo/start-question.ts';
-import {
-  recomputeTodoState,
-  recomputeTodoStateAsync,
-  type TodoStateFacts,
-} from '../../lib/neo/todo-state.ts';
-import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { NeoPublicationRepository } from './neo-publication-repository.ts';
-import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
-import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
-import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'>;
 

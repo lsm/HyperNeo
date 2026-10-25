@@ -13,14 +13,14 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoPack } from './pack-contract.ts';
-import { NeoQuestionSchema } from './question-operations.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import {
   NeoStatusCodesSchema,
-  type NeoStatusLine,
   neoStatusLine,
   neoTextStatus,
+  type NeoStatusLine,
 } from './status-codes.ts';
+import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
 
 const NEO_TODO_STATUS_EN = {

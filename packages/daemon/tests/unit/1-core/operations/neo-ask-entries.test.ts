@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { describe, expect, test } from 'bun:test';
 import type {
   NeoAsk,
@@ -6,20 +7,14 @@ import type {
   NeoTodo,
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import {
-  createNeoAskReadOperation,
   createNeoDoneTodosOperation,
+  createNeoAskReadOperation,
   neoAskEntryState,
   neoSnapshotAskEntries,
   neoTodoStatusLine,
   projectNeoAskEntries,
 } from '../../../../src/lib/neo/ask-entries.ts';
-import {
-  fitNeoSnapshotBudget,
-  neoSnapshotOmitted,
-} from '../../../../src/lib/neo/snapshot-compact.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import {
   NeoTodoSessionRepository,
@@ -27,6 +22,11 @@ import {
 } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import {
+  fitNeoSnapshotBudget,
+  neoSnapshotOmitted,
+} from '../../../../src/lib/neo/snapshot-compact.ts';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 
 const todo = (patch: Partial<NeoTodo>): NeoTodo =>
   ({
