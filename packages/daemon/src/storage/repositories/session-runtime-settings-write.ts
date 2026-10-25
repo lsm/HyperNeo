@@ -1,4 +1,5 @@
 import type { SQLiteValue } from '../types.ts';
+import type { SessionToolSelection } from '@hyperneo/shared/types/session-tool-choice';
 export const ACP_METADATA_CLEAR_PATHS = ['$.acpContextUsageEstimate', '$.acpSessionCommand'];
 
 export interface SessionRuntimeSettingsSnapshot {
@@ -23,6 +24,7 @@ export interface SessionRuntimeSettingsSnapshot {
 }
 
 export interface RuntimeSettingsPatch {
+  readonly toolSelection?: SessionToolSelection;
   readonly model?: string;
   readonly provider?: string;
   readonly thinkingLevel?: string;
