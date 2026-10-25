@@ -327,30 +327,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           Date.now()
         ),
       };
-    const recorded = target.verb === 'send' ? sessions.readCard(todo.id) : null;
-    sessions.recordRef(
-      todo.id,
-      result.ref,
-      result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
-      result.link,
-      {
-        model: result.model ?? recorded?.model ?? undefined,
-        effort: result.effort ?? recorded?.effort ?? undefined,
-      }
-    );
     const opening = messageOpening(message);
-    sessions.recordSent(
-      todo.id,
-      probe
+    const committed = await sessions.write('recordDispatch', {
+      todoId: todo.id,
+      askId: ask.id,
+      ref: result.ref,
+      startedAt: result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
+      link: result.link,
+      observed: { model: result.model, effort: result.effort },
+      keepIdentity: target.verb === 'send',
+      sent: probe
         ? probe.sent && { ...probe.sent, receipt: result.receipt, delivery: result.delivery }
         : opening
           ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
-          : null
-    );
-    if (store.getAsk(ask.id)?.status !== 'open')
+          : null,
+    });
+    if (!committed.askOpen)
       await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
     deps.changed();
-    return { ok: true as const, todo: store.getTodo(todo.id) ?? todo };
+    return { ok: true as const, todo: committed.todo ?? todo };
   };
 
   const start = (superpipe({})('neo.todo.start') as PipelineAPI)
