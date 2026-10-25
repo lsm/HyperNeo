@@ -71,6 +71,18 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test('Neo saves and commits with an untracked evidence folder in its home', async () => {
+    await mkdir(join(root, 'evidence'));
+    await writeFile(join(root, 'evidence', 'run.json'), '{"observed":true}');
+    const result = await save(
+      { path: 'runbook.md', content: 'Neo owns this document.' },
+      { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+    );
+    expect(result).toMatchObject({ ok: true, commit: await git('rev-parse', 'HEAD') });
+    expect(await git('show', 'HEAD:runbook.md')).toBe('Neo owns this document.');
+    expect(await git('ls-files', 'evidence')).toBe('');
+    expect(await readFile(join(root, 'evidence', 'run.json'), 'utf8')).toBe('{"observed":true}');
+  });
   test.each(['first save', 'legacy ignore'])('preserves runtime folders on %s', async (state) => {
     const prior = process.env.GIT_CONFIG_GLOBAL;
     try {
