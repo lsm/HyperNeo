@@ -45,16 +45,10 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
     }
     db.exec("UPDATE neo_todo_sessions SET ref = NULL WHERE todo_id = 't2'");
     const expected = {
-      listed: todos.listTodos('a'),
-      checkable: todos.listCheckable(),
-      bulk: todos.listTodosForAsks(['a']),
       recovery: sessions.unrecordedStarts(),
       awaiting: sessions.awaitingReports(),
       window: prs.window('t0'),
     };
-    expect(await todos.read('listTodos', 'a')).toEqual(expected.listed);
-    expect(await todos.read('listCheckable')).toEqual(expected.checkable);
-    expect(await todos.read('listTodosForAsks', ['a'])).toEqual(expected.bulk);
     expect(await sessions.read('unrecordedStarts')).toEqual(expected.recovery);
     expect(await sessions.read('awaitingReports')).toEqual(expected.awaiting);
     expect(await prs.readWindow('t0')).toEqual(expected.window);

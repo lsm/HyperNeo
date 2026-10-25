@@ -1,3 +1,8 @@
+import {
+  neoTodoSessionReads,
+  neoTodoSessionWrites,
+} from '../repositories/neo-todo-session-repository.ts';
+import { codingTodoPrReads } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
 import { neoWakeQueueWrite } from '../repositories/neo-wake-queue-repository.ts';
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
@@ -54,6 +59,9 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    neoTodoSessionReads,
+    neoTodoSessionWrites,
+    codingTodoPrReads,
     sdkMessageWrites,
     neoWakeQueueWrite,
     ...SDK_MESSAGE_TRANSACTIONS,

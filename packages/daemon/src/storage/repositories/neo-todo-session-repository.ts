@@ -1,3 +1,5 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
@@ -40,6 +42,22 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 }
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
+  read<K extends (typeof neoTodoSessionReads.methods)[number]>(
+    method: K,
+    ...args: Parameters<NeoTodoSessionRepository[K]>
+  ): Promise<ReturnType<NeoTodoSessionRepository[K]>> {
+    return gatewayFor(this.db).run(neoTodoSessionReads, { method, args }) as Promise<
+      ReturnType<NeoTodoSessionRepository[K]>
+    >;
+  }
+
+  write(
+    method: 'recordLive',
+    ...args: Parameters<NeoTodoSessionRepository['recordLive']>
+  ): Promise<boolean> {
+    return gatewayFor(this.db).call(neoTodoSessionWrites, method, ...args);
+  }
+
   readonly inputs: WorkDeliveryInputRepository;
   constructor(db: Database) {
     super(db, 'neo_todo_sessions', 'todo_id');
@@ -139,3 +157,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ).map((row) => ({ todoId: row.todoId, ref: JSON.parse(row.ref) as WorkRef }));
   }
 }
+
+export const neoTodoSessionReads = defineRepositoryOp(
+  'neo.todoSessionReads',
+  'read',
+  NeoTodoSessionRepository,
+  ['unrecordedStarts', 'awaitingReports']
+);
+export const neoTodoSessionWrites = defineRepositoryOp(
+  'neo.todoSessionWrites',
+  'write',
+  NeoTodoSessionRepository,
+  ['recordLive']
+);
