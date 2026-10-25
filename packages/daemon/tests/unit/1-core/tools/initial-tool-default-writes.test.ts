@@ -106,6 +106,14 @@ describe('initial canonical tool default writes', () => {
     expect(session.config.toolSelection?.choices['mcp:browser'].selected).toBe(false);
     expect(session.config.toolSelection?.choices['skill:notes'].selected).toBe(true);
   });
+  it('captures session veto arrays before the queued write can observe caller mutations', async () => {
+    const disabledSkills = ['wrapper'];
+    const session = make('captured-session-veto', { tools: { disabledSkills } });
+    const pending = db.createSession(session);
+    disabledSkills.length = 0;
+    await pending;
+    expect(session.config.toolSelection?.choices['mcp:browser'].selected).toBe(false);
+  });
   it('does not publish a caller snapshot if insertion fails', async () => {
     const session = make('rejected-insert');
     db.getDatabase().exec(
