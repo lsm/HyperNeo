@@ -138,6 +138,7 @@ describe('KimiProvider', () => {
               data: [
                 { id: 'kimi-k3.1-pro', object: 'model' },
                 { id: 'kimi-k3.1-pro-highspeed', object: 'model' },
+                { id: 'kimi-k3.1-flash', object: 'model' },
               ],
             }),
             { status: 200 }
@@ -150,9 +151,11 @@ describe('KimiProvider', () => {
       const chinaModels = await provider.getModels();
       expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
       expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro-highspeed');
+      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-flash');
 
       const chinaRemote = await provider.listRemoteModels({ force: true });
       expect(chinaRemote.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+      expect(chinaRemote.map((m) => m.id)).not.toContain('kimi-k3.1-flash');
 
       provider.setDefaultRegion('global');
       const globalModels = await provider.getModels();
@@ -184,11 +187,14 @@ describe('KimiProvider', () => {
       expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro')).toBe(false);
       expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro-highspeed')).toBe(false);
       expect(provider.isCuratedModelVisible?.('k3.1-pro')).toBe(false);
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-flash')).toBe(false);
       expect(provider.isCuratedModelVisible?.('kimi-for-coding')).toBe(true);
+      expect(provider.isCuratedModelVisible?.('kimi-k3[1m]')).toBe(true);
 
       provider.setDefaultRegion('global');
       expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro')).toBe(true);
       expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro-highspeed')).toBe(true);
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-flash')).toBe(true);
     });
 
     it('gates cached curated K3.1 entries by region', async () => {
