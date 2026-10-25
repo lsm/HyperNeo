@@ -9,6 +9,7 @@ import { handoffPromptToMailbox } from '../../../packages/daemon/src/lib/mailbox
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { jobQueueWrites, JobQueueRepository } from '../../../packages/daemon/src/storage/repositories/job-queue-repository.ts';
 import { neoWakeQueueWrite } from '../../../packages/daemon/src/storage/repositories/neo-wake-queue-repository.ts';
+import { sdkDeliveryTeardown } from '../../../packages/daemon/src/storage/repositories/sdk-message-transactions.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
 const run = resolve(process.argv[2] ?? '');
@@ -34,6 +35,24 @@ try {
   assert(opened.ok);
   const root = opened.sessionId;
   const writer = gatewayFor(app.db.getDatabase());
+  await handoffPromptToMailbox({ to: `session:${encodeURIComponent(root)}`, origin: 'session:synthetic-worker', messageUuid: 'in-flight', message: { type: 'user', parent_tool_use_id: null, message: { content: 'Already admitted report.' } }, jobQueue: app.jobQueue });
+  const [inFlight] = await writer.call(jobQueueWrites, 'dequeue', 'mailbox', 1);
+  const inFlightEntry = parseMailboxEntry(inFlight.payload);
+  assert(inFlightEntry);
+  await writer.call(neoWakeQueueWrite, 'prepare', inFlightEntry, inFlight.id, true);
+  const note = (messageUuid: string, content: string) => createMailboxEntry({ to: { kind: 'session' as const, sessionId: root }, origin: 'session:synthetic-worker' as const, messageUuid, message: { type: 'user' as const, parent_tool_use_id: null, message: { content } } });
+  await writer.call(neoWakeQueueWrite, 'hold', note('later-note', 'Later queued note.'));
+  await writer.call(neoWakeQueueWrite, 'flushDue', Date.now() + 15 * 60_000);
+  const timed = app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': root }, ['pending']);
+  assert.equal(timed.length, 1);
+  const timedContent = JSON.stringify(timed[0].payload.message);
+  assert(timedContent.includes('Later queued note.'));
+  await writer.call(neoWakeQueueWrite, 'hold', note('cancelled-report', 'Cancelled report.'));
+  const cancelled = await writer.run(sdkDeliveryTeardown, { sessionId: root });
+  await writer.call(neoWakeQueueWrite, 'flushDue', Date.now() + 15 * 60_000);
+  const reviewObserved = { processingReportExcluded: !timedContent.includes('Already admitted report.'), cancellationIncludesParkedNote: cancelled.deleted.some((row) => JSON.parse(row.payload).messageUuid === 'cancelled-report'), noBatchAfterCancellation: app.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': root }).length === 0 };
+  writeFileSync(join(run, 'evidence/review-cases.json'), JSON.stringify(reviewObserved, null, 2));
+  assert.deepEqual(reviewObserved, { processingReportExcluded: true, cancellationIncludesParkedNote: true, noBatchAfterCancellation: true });
   for (let index = 0; index < 20; index++) {
     const entry = createMailboxEntry({ to: { kind: 'session', sessionId: root }, origin: 'session:synthetic-worker', messageUuid: `note-${index}`, message: { type: 'user', parent_tool_use_id: null, message: { content: `message-body-${String(index).padStart(2, '0')}` } } });
     await writer.call(neoWakeQueueWrite, 'hold', entry);

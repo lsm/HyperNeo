@@ -101,4 +101,30 @@ describe('Neo queued worker reports', () => {
       })
     ).toThrow('different content');
   });
+
+  test('a timed batch does not copy an already admitted processing message', async () => {
+    enqueueMailboxEntry(mailbox.jobQueue, entry('already admitted'));
+    const [processing] = mailbox.jobQueue.dequeue('mailbox');
+    await handler(true)(processing);
+    queue.hold(entry('later queued note'));
+    queue.flushDue(Date.now() + 15 * 60_000);
+    const [batch] = mailbox.jobQueue.dequeue('mailbox');
+    await handler(true)(batch);
+    const messages = mailbox.sdkRows().map((row) => JSON.parse(row.sdk_message));
+    expect(messages).toHaveLength(2);
+    expect(messages[0].message.content).toBe('already admitted');
+    expect(JSON.stringify(messages[1])).toContain('later queued note');
+    expect(JSON.stringify(messages[1])).not.toContain('already admitted');
+    expect(mailbox.jobQueue.isClaimCurrent(processing.id, processing.claimToken)).toBe(true);
+  });
+
+  test('session cancellation includes parked notes and prevents a later timed batch', () => {
+    queue.hold(entry('cancelled report'));
+    const cancelled = mailbox.jobQueue.cancelMailboxForSession(root);
+    expect(cancelled.map((row) => JSON.parse(row.payload).messageUuid)).toEqual([
+      'cancelled report',
+    ]);
+    queue.flushDue(Date.now() + 15 * 60_000);
+    expect(mailbox.jobQueue.dequeue('mailbox')).toHaveLength(0);
+  });
 });
