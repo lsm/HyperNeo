@@ -137,13 +137,15 @@ describe('Neo note queue', () => {
       harness.sessionId,
       'w1:stall:7',
       'stalled',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     await harness.service.deliverForward(
       harness.sessionId,
       'neo-ask-evidence:a1:new',
       'evidence',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     expect(statusOf(harness, 'w1:done-check:1')).toBe('enqueued');
     expect(statusOf(harness, 'neo-ask-evidence:a1:old')).toBe('enqueued');
@@ -160,13 +162,15 @@ describe('Neo note queue', () => {
       harness.sessionId,
       'w-done:done-check:4',
       'check',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     await harness.service.deliverForward(
       harness.sessionId,
       'neo-ask-evidence:a-done:x',
       'evidence',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     expect(mailboxed(harness, 'w-done:done-check:4')).toBe(1);
     expect(mailboxed(harness, 'neo-ask-evidence:a-done:x')).toBe(1);
@@ -187,7 +191,8 @@ describe('Neo note queue', () => {
       harness.sessionId,
       'w3:stall:1',
       'new fact',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     expect(facts.map((uuid) => statusOf(harness, uuid))).toEqual(['enqueued', 'enqueued']);
     for (const uuid of facts) {
@@ -203,7 +208,13 @@ describe('Neo note queue', () => {
   it('keeps delivery retry identity without suppressing messages by subject', async () => {
     const harness = await makeHarness('neo:retry');
     for (const id of ['w1:stall:1', 'w1:stall:1', 'w1:stall:2']) {
-      await harness.service.deliverForward(harness.sessionId, id, 'fact', harness.sessionId);
+      await harness.service.deliverForward(
+        harness.sessionId,
+        id,
+        'fact',
+        harness.sessionId,
+        'event'
+      );
     }
     expect(mailboxed(harness, 'w1:stall:1')).toBe(1);
     expect(mailboxed(harness, 'w1:stall:2')).toBe(1);
