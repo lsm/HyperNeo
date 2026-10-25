@@ -56,7 +56,7 @@ beforeEach(() => {
   skills = new SkillRepository(db, noOpReactiveDb);
   registry = new AppMcpServerRepository(db, noOpReactiveDb);
   jobs = new JobQueueRepository(db);
-  manager = new SkillsManager(skills, registry, jobs);
+  manager = new SkillsManager(skills, registry, { gateway }, jobs);
   sessions = new SessionRepository(db);
   skills.insert({
     id: 'notes',
