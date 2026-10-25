@@ -19,6 +19,16 @@ routine activity and a completion judgement must leave the todo blocked with
 its needs-human hold and the card still readable. The free-text answer route
 is the existing card reply control; no new card UI is introduced.
 
+The helper then seeds a persisted human answer without delivering it, attempts
+an ordinary doing update, and restarts again. RPC must show the answered card
+while the todo retains its needs-human hold. This is the staged contract from
+the approved design: answering a card is not acknowledgement that its worker
+received the answer. Slice 1 builds storage only; slice 2 wires reports and
+nudges; #8732 (slice 3) adds retry-safe answer delivery and releases the hold
+only after accepted delivery and dependency checks. Missing/open/retired card
+state alone must never release it. The internal storage entry point has no
+production caller until the later wiring slices land.
+
 `evidence/observed.json` retains the replies and persisted hold;
 `evidence/cleanup.json` confirms owned daemon cleanup. This proves storage and
 RPC projection, not GUI rendering, message routing, nudges, wakes or answer

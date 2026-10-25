@@ -79,9 +79,21 @@ try {
   const after = await rpc('neo.question.get', { questionId: first.question.id });
   assert.equal(after.question.state, 'open');
   assert.deepEqual(after.question.sourceSession, source);
-  const hold = restored.getTodo(todo.id);
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, refused, repeats: repeats.length, hold, restartRetained: true }, null, 2));
-  console.log('PASS: Chinese card and validated source visible over RPC; ten repeats share one card; restart and routine completion retain needs-human hold');
+  restored.answerQuestion(restored.getQuestion(first.question.id)!, [report.options[0]], 'button', 11);
+  restored.updateTodo(restored.getTodo(todo.id)!, { state: 'doing' }, 12);
+  assert.equal(restored.getTodo(todo.id)?.blockedBy, 'needs-human');
+  await app.cleanup();
+  app = await createDaemonApp({ config, verbose: false });
+  await app.spaceRuntimeService.ready();
+  const answered = await rpc('neo.question.get', { questionId: first.question.id });
+  assert.equal(answered.question.state, 'answered');
+  assert.deepEqual(answered.question.answer, [report.options[0]]);
+  assert.equal(answered.answeredByHuman, true);
+  const hold = new NeoAskTodoRepository(app.db.getDatabase()).getTodo(todo.id);
+  assert.equal(hold?.state, 'blocked');
+  assert.equal(hold?.blockedBy, 'needs-human');
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, refused, repeats: repeats.length, hold, restartRetained: true, persistedAnswerWithoutDelivery: true }, null, 2));
+  console.log('PASS: RPC card/source, repeat reuse and distinct-question refusal; restart retains needs-human even after an answer is stored without delivery');
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true }));
