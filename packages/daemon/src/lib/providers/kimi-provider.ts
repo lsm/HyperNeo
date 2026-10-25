@@ -466,7 +466,7 @@ export class KimiProvider implements Provider {
     let models: ModelInfo[];
     let discoveredIds: ReadonlySet<string> | undefined;
     try {
-      const discovered = await this.listRemoteModels();
+      const discovered = await this.listRemoteModels({ discoveryOnly: true });
       discoveredIds = new Set(discovered.map((model) => model.id));
       models = mergeDiscoveredModels(KimiProvider.baseModelsForRegion(region), discovered);
     } catch {

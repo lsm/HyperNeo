@@ -157,6 +157,20 @@ describe('KimiProvider', () => {
       expect(highspeed?.thinkingModes).toBe('granular');
     });
 
+    it('does not let a curated K3.1 entry pass the china attestation gate', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
+      provider.setCuratedModels([{ id: 'kimi-k3.1-pro' }, { id: 'kimi-for-coding' }]);
+
+      const chinaModels = await provider.getModels();
+      expect(chinaModels.map((m) => m.id)).not.toContain('kimi-k3.1-pro');
+      expect(chinaModels.map((m) => m.id)).toContain('kimi-for-coding');
+
+      provider.setDefaultRegion('global');
+      const globalModels = await provider.getModels();
+      expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
+    });
+
     it('gates cached curated K3.1 entries by region', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();
