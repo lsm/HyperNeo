@@ -127,7 +127,7 @@ try {
   const opened = await rpc('neo.open', {});
   const neo = String(opened.sessionId);
   assert(neo.startsWith('neo:'), JSON.stringify(opened));
-  const line = `Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send ${neo} "<text>" (not SendMessage). Keep working after you send.`;
+  const line = `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${neo} "<text>" (not SendMessage). Keep working after you send.`;
   const ref = { adapter: 'claude-code', id: peer.sessionId };
   const seed = new Database(join(data, 'daemon.db'));
   try {

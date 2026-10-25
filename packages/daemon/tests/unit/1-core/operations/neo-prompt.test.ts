@@ -9,6 +9,14 @@ import {
 } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('root Neo system prompt', () => {
+  test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
+    const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+    expect(prompt).toContain('Message Neo only at milestones');
+    expect(prompt).toContain('PR opened, merged or closed; blocked; a question; done; failed');
+    expect(prompt).toContain('no acknowledgments and no progress pings');
+    expect(prompt).toContain('Never ask workers to confirm or acknowledge');
+  });
+
   test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
     expect(neoPrompt([])).toBe(
       `${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n${NEO_ROOT_TURN_END}`
