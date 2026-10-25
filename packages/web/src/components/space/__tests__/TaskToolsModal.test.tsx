@@ -194,6 +194,28 @@ describe('TaskToolsModal', () => {
     expect(getByText('current-tool')).toBeTruthy();
   });
 
+  it('hides previous tool names when a refresh fails and recovers on a later read', async () => {
+    mockInventoryRequest.mockResolvedValue(observed(['browser']));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.getByText('Observed tool names (1)')).toBeTruthy());
+    fireEvent.click(view.getByText('Observed tool names (1)'));
+    expect(view.getByText('Read')).toBeTruthy();
+    mockInventoryRequest.mockRejectedValue(new Error('Synthetic read failure'));
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() =>
+      expect(view.getByText('Could not verify running tools. Try Refresh.')).toBeTruthy()
+    );
+    expect(view.queryByText('Observed tool names (1)')).toBeNull();
+    expect(view.queryByText('Read')).toBeNull();
+    expect(view.queryByText('browser')).toBeNull();
+    mockInventoryRequest.mockResolvedValue(observed(['recovered-browser']));
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() => expect(view.getByText('recovered-browser')).toBeTruthy());
+    expect(view.getByText('Observed tool names (1)')).toBeTruthy();
+  });
+
   it('retains confirmed servers through a pending refresh', async () => {
     mockInventoryRequest.mockResolvedValue(observed(['browser']));
     const view = render(
