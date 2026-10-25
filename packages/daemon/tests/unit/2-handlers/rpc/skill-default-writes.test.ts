@@ -48,6 +48,15 @@ const create = (enabled = true) => ({
     enabled,
   },
 });
+const wrapper = async (name: string, serverId: string, enabled = true) =>
+  (await call('skill.create', {
+    params: {
+      ...create(enabled).params,
+      name,
+      sourceType: 'mcp_server',
+      config: { type: 'mcp_server', appMcpServerId: serverId },
+    },
+  })) as { skill: AppSkill };
 beforeEach(() => {
   db = new Database(':memory:');
   createTables(db);
@@ -202,6 +211,95 @@ describe('skill default RPC writes', () => {
     expect(defaults().choices[`mcp:${second.id}`].selected).toBe(true);
     expect(defaults().choices[`mcp:${first.id}`].selected).toBe(false);
     expect(defaults(true).choices[`mcp:${second.id}`].selected).toBe(true);
+  });
+  it.each(['rebind', 'delete'])(
+    '%s clears an enabled wrapper’s previous server default atomically',
+    async (action) => {
+      const first = registry.create({
+        name: 'first',
+        sourceType: 'stdio',
+        command: 'synthetic',
+        enabled: false,
+      });
+      const second = registry.create({
+        name: 'second',
+        sourceType: 'stdio',
+        command: 'synthetic',
+        enabled: false,
+      });
+      const { skill } = await wrapper('moving', first.id);
+      expect(defaults().choices[`mcp:${first.id}`].selected).toBe(true);
+      if (action === 'delete') await call('skill.delete', { id: skill.id });
+      else
+        await call('skill.update', {
+          id: skill.id,
+          params: { config: { type: 'mcp_server', appMcpServerId: second.id } },
+        });
+      for (const scoped of [false, true]) {
+        expect(defaults(scoped).choices[`mcp:${first.id}`].selected).toBe(false);
+        if (action === 'rebind')
+          expect(defaults(scoped).choices[`mcp:${second.id}`].selected).toBe(true);
+      }
+      expect(sessions.getSession('frozen')!.config.toolSelection).toEqual(original);
+    }
+  );
+  it('keeps a shared server on when a disabled sibling is created, toggled or removed', async () => {
+    const server = registry.create({
+      name: 'shared',
+      sourceType: 'stdio',
+      command: 'synthetic',
+      enabled: false,
+    });
+    const { skill: first } = await wrapper('first-wrapper', server.id);
+    const { skill: second } = await wrapper('second-wrapper', server.id, false);
+    expect(defaults().choices[`mcp:${server.id}`].selected).toBe(true);
+    await call('skill.setEnabled', { id: second.id, enabled: true });
+    await call('skill.setEnabled', { id: first.id, enabled: false });
+    expect(defaults().choices[`mcp:${server.id}`].selected).toBe(true);
+    await call('skill.delete', { id: first.id });
+    expect(defaults().choices[`mcp:${server.id}`].selected).toBe(true);
+    await call('skill.setEnabled', { id: second.id, enabled: false });
+    expect(defaults().choices[`mcp:${server.id}`].selected).toBe(false);
+    expect(defaults(true).choices[`mcp:${server.id}`].selected).toBe(false);
+  });
+  it('rebinds one enabled sibling without disabling the other and rolls back a refused rebind', async () => {
+    const first = registry.create({
+      name: 'first',
+      sourceType: 'stdio',
+      command: 'synthetic',
+      enabled: false,
+    });
+    const second = registry.create({
+      name: 'second',
+      sourceType: 'stdio',
+      command: 'synthetic',
+      enabled: false,
+    });
+    await wrapper('staying', first.id);
+    const { skill: moving } = await wrapper('moving', first.id);
+    await call('skill.update', {
+      id: moving.id,
+      params: { config: { type: 'mcp_server', appMcpServerId: second.id } },
+    });
+    expect(defaults().choices[`mcp:${first.id}`].selected).toBe(true);
+    expect(defaults().choices[`mcp:${second.id}`].selected).toBe(true);
+    db.exec(
+      "CREATE TRIGGER reject_wrapper_rebind BEFORE UPDATE ON spaces BEGIN SELECT RAISE(ABORT,'synthetic rebind failure'); END"
+    );
+    const before = defaults();
+    publish.mockClear();
+    await expect(
+      call('skill.update', {
+        id: moving.id,
+        params: { config: { type: 'mcp_server', appMcpServerId: first.id } },
+      })
+    ).rejects.toThrow('synthetic rebind failure');
+    expect(defaults()).toEqual(before);
+    expect(skills.get(moving.id)!.config).toEqual({
+      type: 'mcp_server',
+      appMcpServerId: second.id,
+    });
+    expect(publish).not.toHaveBeenCalled();
   });
   it('keeps config validation, built-in deletion and missing-id admission', async () => {
     await expect(
