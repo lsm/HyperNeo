@@ -468,6 +468,51 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
+  test.each([
+    [
+      '<heartbeat><automation_id>reviewbot-test</automation_id><decision>DONT_NOTIFY</decision><message>Healthy</message></heartbeat>',
+      false,
+    ],
+    [
+      '<heartbeat>\n <automation_id>reviewbot-test</automation_id>\n <decision>NOTIFY</decision>\n <message>Failed</message>\n</heartbeat>',
+      true,
+    ],
+    [
+      'Example: <heartbeat><automation_id>test</automation_id><decision>DONT_NOTIFY</decision><message>Healthy</message></heartbeat>',
+      true,
+    ],
+    [
+      '<heartbeat><automation_id>test</automation_id><decision>DONT_NOTIFY</decision><message>Healthy</message></heartbeat> extra',
+      true,
+    ],
+    [
+      '<heartbeat><automation_id>test</automation_id><decision>DONT_NOTIFY</decision><decision>NOTIFY</decision><message>Healthy</message></heartbeat>',
+      true,
+    ],
+    ['<heartbeat><decision>DONT_NOTIFY</decision><message>Healthy</message></heartbeat>', true],
+    ['Worker blocked; <decision>DONT_NOTIFY</decision>', true],
+  ])(
+    'preserves final messages while exposing heartbeat wake admission: %s',
+    async (message, notify) => {
+      writeFileSync(
+        join(dir, 'finished.jsonl'),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: new Date(NOW).toISOString(),
+          payload: {
+            type: 'task_complete',
+            turn_id: 'heartbeat-turn',
+            last_agent_message: message,
+          },
+        })
+      );
+      const detail = await adapter().status!(ref('idle'), NOW - 1);
+      const parsed = WorkDetailSchema.parse(detail.ok ? detail.value : null);
+      expect(parsed.turnEnds?.[0].message).toBe(message);
+      expect((parsed.turnEnds?.[0] as { notify?: boolean }).notify !== false).toBe(notify);
+    }
+  );
+
   test('work.send steers a running Codex turn instead of queuing it', async () => {
     const calls: string[] = [];
     const driver = adapter(0, '', async () => ({

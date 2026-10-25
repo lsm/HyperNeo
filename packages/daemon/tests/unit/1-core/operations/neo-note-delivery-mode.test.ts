@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
+import { z } from 'zod';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   InternalEventBus,
@@ -14,14 +19,31 @@ describe('Neo daemon notes', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: ReturnType<typeof createNeoService>;
   let events: InternalEventBus<DaemonInternalEventMap>;
+  let workerStatus: string;
+  let turnEnds: { id: string; at: number; message: string; notify?: false }[];
 
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
     await db.createSession({ ...createTestSession(rootId), workspacePath: null });
+    turnEnds = [];
+    workerStatus = 'running';
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.status',
+        description: 'Synthetic worker status',
+        inputSchema: z.unknown(),
+        resultSchema: z.unknown(),
+        policy: { safetyClass: 'read' },
+        execute: async () => ({
+          ok: true,
+          value: { status: workerStatus, lastActivityAt: Date.now(), turnEnds },
+        }),
+      }),
+    ]);
     service = createNeoService(
       db,
-      {} as unknown as SessionManager,
+      { getOperationRegistry: () => registry } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
       events
     );
@@ -52,6 +74,121 @@ describe('Neo daemon notes', () => {
     await service.deliverForward(rootId, 'note-idle', 'A card reported.', rootId);
     expect(queued('note-idle')).toEqual(['immediate']);
   });
+
+  test.each(['focused', 'heartbeat', 'failed', 'needs_you'])(
+    '%s status uses its wake policy',
+    async (kind) => {
+      const now = Date.now();
+      const ref = { adapter: 'hyperneo', id: 'discussion' };
+      const ask = service.todos.openAsk({
+        id: 'focused-ask',
+        projectId: null,
+        sessionId: rootId,
+        originMessageId: 'human-request',
+        title: 'Discuss',
+        request: 'Prepare a discussion',
+        createdAt: now,
+      });
+      if (kind !== 'heartbeat')
+        service.todos.focusAsk(
+          ask.id,
+          {
+            ...ref,
+            name: 'Discussion',
+            label: 'Discussion',
+            provider: 'Anthropic',
+            link: '/session/discussion',
+          },
+          now
+        );
+      const todo = service.todos.addTodo(
+        'focused-todo',
+        ask.id,
+        {
+          title: 'Discuss',
+          doneWhen: 'Human decides',
+          instruction: null,
+          named: null,
+          check: null,
+        },
+        now
+      );
+      service.todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
+      service.todoSessions.bind(todo.id, ref, now);
+      const dispatch = await service.todoSessions.inputs.accept(
+        todo.id,
+        rootId,
+        { verb: 'send', ref },
+        'Prepare a discussion',
+        now
+      );
+      await service.todoSessions.inputs.recordOutcome(dispatch, { ref }, now);
+      turnEnds = [
+        {
+          id: 'discussion-turn',
+          at: now + 1,
+          message: 'Prepared the discussion.',
+          ...(kind === 'heartbeat' ? { notify: false as const } : {}),
+        },
+      ];
+      if (['failed', 'needs_you'].includes(kind)) workerStatus = kind;
+      await service.todoRunner.refresh((message, error) => {
+        throw new Error(message, { cause: error });
+      });
+      const key = `neo-todo-turn:${todo.id}:${dispatch}:discussion-turn`;
+      if (['failed', 'needs_you'].includes(kind)) {
+        expect(queued(key)).toEqual(['immediate']);
+        return;
+      }
+      expect(queued(key)).toEqual([]);
+      expect(db.getSDKMessageRepo().findMessageIdByUuid(rootId, key)).toBeTruthy();
+    }
+  );
+
+  const storedCount = (messageId: string) =>
+    (
+      db
+        .getDatabase()
+        .prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?')
+        .get(rootId, messageId) as { n: number }
+    ).n;
+
+  test.each(['focused_status', 'quiet_heartbeat'] as const)(
+    '%s retry preserves one pending urgent delivery',
+    async (kind) => {
+      const id = 'pending-urgent';
+      const urgent = service.deliverForward(rootId, id, 'Worker failed.', rootId);
+      await service.deliverForward(rootId, id, 'Quiet retry.', rootId, kind);
+      await urgent;
+      expect(storedCount(id)).toBe(0);
+      expect(queued(id)).toEqual(['immediate']);
+    }
+  );
+
+  test.each(['focused_status', 'quiet_heartbeat'] as const)(
+    '%s retry preserves one queued urgent delivery',
+    async (kind) => {
+      const id = 'queued-urgent';
+      await service.deliverForward(rootId, id, 'Worker failed.', rootId);
+      await service.deliverForward(rootId, id, 'Quiet retry.', rootId, kind);
+      expect(storedCount(id)).toBe(0);
+      expect(queued(id)).toEqual(['immediate']);
+    }
+  );
+
+  test.each(['focused_status', 'quiet_heartbeat'] as const)(
+    '%s concurrent retries record one history row without a wake',
+    async (kind) => {
+      const id = 'concurrent-quiet';
+      await Promise.all(
+        Array.from({ length: 10 }, () =>
+          service.deliverForward(rootId, id, 'Quiet report.', rootId, kind)
+        )
+      );
+      expect(storedCount(id)).toBe(1);
+      expect(queued(id)).toEqual([]);
+    }
+  );
 
   test('a message to a busy ordinary chat is not deferred', async () => {
     await db.createSession(createTestSession('chat-1'));

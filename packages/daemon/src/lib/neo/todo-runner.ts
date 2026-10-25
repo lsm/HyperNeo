@@ -51,7 +51,13 @@ export interface NeoTodoRunnerDeps {
     input: Record<string, unknown>
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
-  tell(ask: NeoAsk, todo: NeoTodo, note: string, key?: string): Promise<void>;
+  tell(
+    ask: NeoAsk,
+    todo: NeoTodo,
+    note: string,
+    key?: string,
+    kind?: 'focused_status' | 'quiet_heartbeat'
+  ): Promise<void>;
   changed(): void;
 }
 
@@ -505,16 +511,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       });
       const focused = ask.focusedSession;
-      const report =
-        focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon
-          ? `Focused discussion status only (ask ${ask.id}, todo ${id}, dispatch ${dispatch?.id}). Do not act, reply, forward or treat this as approval.`
-          : `Worker turn report (todo ${id}, dispatch ${dispatch?.id}):`;
+      const statusOnly =
+        focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon;
+      const urgent = ['failed', 'needs_you'].includes(readDriverLive(outcome)?.status ?? '');
+      const report = statusOnly
+        ? `Focused discussion status only (ask ${ask.id}, todo ${id}, dispatch ${dispatch?.id}). Do not act, reply, forward or treat this as approval.`
+        : `Worker turn report (todo ${id}, dispatch ${dispatch?.id}):`;
       if (dispatch)
         await deps.tell(
           ask,
           todo,
           `${report}\n\n${turn.message || 'worker ended its turn with no reply'}`,
-          `neo-todo-turn:${id}:${dispatch.id}:${turn.id}`
+          `neo-todo-turn:${id}:${dispatch.id}:${turn.id}`,
+          urgent
+            ? undefined
+            : statusOnly
+              ? 'focused_status'
+              : turn.notify === false
+                ? 'quiet_heartbeat'
+                : undefined
         );
     }
   };
