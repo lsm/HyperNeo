@@ -1554,8 +1554,9 @@ describe('KimiProvider', () => {
     });
 
     it('includes Kimi K3.1 Pro and Highspeed with 1M context and granular thinking', () => {
-      const pro = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3.1-pro');
-      const highspeed = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3.1-pro-highspeed');
+      expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k3.1-pro')).toBeUndefined();
+      const pro = KimiProvider.K31_MODELS.find((m) => m.id === 'kimi-k3.1-pro');
+      const highspeed = KimiProvider.K31_MODELS.find((m) => m.id === 'kimi-k3.1-pro-highspeed');
       expect(pro?.name).toBe('Kimi K3.1 Pro');
       expect(pro?.alias).toBe('k3.1');
       expect(pro?.contextWindow).toBe(1_048_576);
