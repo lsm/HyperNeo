@@ -16,11 +16,11 @@ const delayed = source.replace(
   "['build', '--compile',",
   `['-e', ${JSON.stringify(wrapper)}, 'build', '--compile',`
 );
-assert.notEqual(delayed, source, 'must inject delay into the actual compiler child');
+assert(delayed !== source, 'must inject delay into the actual compiler child');
 const configured = reproduce
-  ? delayed.replace(/(\n\s*)(50_000)(\s*\n\);\s*)$/, '$15000$3')
+  ? delayed.replace(/\}, 50_000\);\s*$/, '}, 5000);\n')
   : delayed;
-if (reproduce) assert.notEqual(configured, delayed, 'must restore the explicit 5-second limit');
+if (reproduce) assert(configured !== delayed, 'must restore the explicit 5-second limit');
 writeFileSync(fixture, configured);
 try {
   const result = spawnSync(

@@ -58,4 +58,4 @@ test('source and compiled node workers execute TypeScript entrypoints as JavaScr
   } finally {
     rmSync(run, { recursive: true, force: true });
   }
-});
+}, 50_000);
