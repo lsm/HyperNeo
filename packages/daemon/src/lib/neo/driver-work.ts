@@ -304,7 +304,7 @@ export function messageOpening(message: string): string {
   return message.trim().split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
-function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
+export function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
   return parseDriverStatus(outcome)?.recentInputs ?? null;
 }
 

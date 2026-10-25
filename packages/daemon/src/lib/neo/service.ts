@@ -1,3 +1,4 @@
+import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -673,7 +674,21 @@ export class NeoService {
     this.notifyChanged();
   }
 
+  deliverQuestionAnswers(): Promise<void> {
+    const warn = (error: unknown) => this.log.warn('Worker answer delivery pending', error);
+    return createNeoQuestionAnswerDelivery(
+      this.todos,
+      this.todoSessions,
+      (caller, name, input) =>
+        invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
+      this.deliverForward.bind(this),
+      this.todoRunner.recompute,
+      warn
+    )().catch(warn);
+  }
+
   async refreshDriverWork(): Promise<void> {
+    await this.deliverQuestionAnswers();
     await this.db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue, { flush: Date.now() });
     await runLagPhase('neo:driver:todo_refresh', () =>
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))

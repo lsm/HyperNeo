@@ -88,7 +88,14 @@ async function deliveryFixture(adapter = 'hyperneo') {
     if (name === 'work.status')
       return {
         kind: 'completed',
-        value: { ok: true, value: { recentInputs: inputs.map((text) => ({ text, at: 5 })) } },
+        value: {
+          ok: true,
+          value: {
+            status: 'running',
+            lastActivityAt: 5,
+            recentInputs: inputs.map((text) => ({ text, at: 5 })),
+          },
+        },
       };
     if (failed)
       return {

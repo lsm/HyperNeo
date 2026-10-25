@@ -83,7 +83,7 @@ try {
   for (const server of servers) await rpc('rpc:mcp.registry.setEnabled', { id: server.id, enabled: false });
   await rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Loopback', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
   const root = (await rpc('neo.open', {})).sessionId;
-  await app.db.createSession({ id: 'synthetic-worker', title: 'Synthetic worker', workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: {}, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  await app.db.createSession({ id: 'synthetic-worker', title: 'Synthetic worker', workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'claude-sonnet-4-6', provider: 'anthropic', maxTokens: 8192, temperature: 1 }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   let store = new NeoAskTodoRepository(app.db.getDatabase());
   const links = new NeoTodoSessionRepository(app.db.getDatabase());
   const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
@@ -149,10 +149,17 @@ try {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, button, chat, failed, recovered, delivered, counts, hold: store.getTodo(todo.id), modelTurns, restartRetained: true }, null, 2));
   console.log('PASS: button/chat answers consumed once by worker SDK; failed delivery stays held; restart retries and resumes; Neo sees answers');
 } finally {
+  const ownPort = app.server.port;
   await app.cleanup();
   model.stop(true);
   QueryOptionsBuilder.prototype.build = build;
   Date.now = realNow;
+  for (const port of [ownPort, 8000]) {
+    const probe = Bun.serve({ hostname: '127.0.0.1', port, fetch: () => new Response('closed listener check') });
+    probe.stop(true);
+  }
   for (const name of ['data', 'home', 'tmp', 'bin', 'workspace']) rmSync(join(run, name), { recursive: true, force: true });
-  writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true, temporaryDataDeleted: true }));
+  writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true, temporaryDataDeleted: true, listenersClosed: true }));
 }
+
+process.exit(0);

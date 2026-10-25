@@ -53,10 +53,38 @@ export class NeoQuestionAnswerRepository {
     return this.project(this.rows()).filter((route) => route.state === 'pending');
   }
 
-  accept(id: string, receipt: string, now: number): boolean {
+  accept(id: string, receipt: string, now: number, expected?: string): boolean {
+    return this.change(id, receipt, now, expected);
+  }
+
+  claim(id: string, key: string): boolean {
+    return this.change(id, key, null, null);
+  }
+
+  retry(id: string, key: string): boolean {
+    return this.change(id, null, null, key);
+  }
+
+  delivered(todoId: string, ref: string | null): boolean {
+    const route = this.project(this.rows()).find((route) => route.todoId === todoId);
+    const assigned = ref ? JSON.parse(ref) : null;
+    return (
+      route?.state === 'accepted' &&
+      assigned?.adapter === route.sourceSession.adapter &&
+      assigned.id === route.sourceSession.id &&
+      assigned.daemon === route.sourceSession.daemon
+    );
+  }
+
+  private change(
+    id: string,
+    receipt: string | null,
+    now: number | null,
+    expected?: string | null
+  ): boolean {
     return this.atomic(() => {
       const route = this.pending().find((route) => route.id === id);
-      if (!route) return false;
+      if (!route || (expected !== undefined && route.receipt !== expected)) return false;
       const routes = JSON.parse(this.rows(route.questionId)[0].routes!) as StoredRoute[];
       this.write(
         route.questionId,
@@ -74,7 +102,7 @@ export class NeoQuestionAnswerRepository {
     return this.db
       .prepare(`SELECT id, answer, answered_by AS answeredBy,
       answered_at AS answeredAt, worker_answers_json AS routes FROM neo_questions
-      WHERE ${id ? 'id = ?' : 'answer IS NOT NULL AND worker_answers_json IS NOT NULL'} ORDER BY id`)
+      WHERE ${id ? 'id = ?' : 'worker_answers_json IS NOT NULL'} ORDER BY rowid DESC`)
       .all(...(id ? [id] : [])) as AnswerRow[];
   }
 
