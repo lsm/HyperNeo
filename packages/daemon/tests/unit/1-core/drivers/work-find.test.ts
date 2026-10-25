@@ -322,7 +322,7 @@ describe('hyperneo adapter against the sessions table', () => {
   let db: Database;
   beforeEach(() => {
     db = new Database(':memory:');
-    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT, metadata TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT)`);
     db.exec(`CREATE TABLE workspace_history (path TEXT, last_used_at INTEGER)`);
     const insert =
