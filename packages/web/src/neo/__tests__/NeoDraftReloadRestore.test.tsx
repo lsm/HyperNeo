@@ -572,6 +572,109 @@ describe('NeoLive reload draft restore', () => {
     }
   );
 
+  it.each([
+    ['', 'storage failure'],
+    ['With submitted text', 'storage failure'],
+    ['', 'superseded'],
+    ['With submitted text', 'superseded'],
+  ])('releases attachment-send recovery for %j after %s', async (submitted, outcome) => {
+    remember('Original reload capture', null, root, reference);
+    let release!: (value: unknown) => void;
+    recover.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type(submitted);
+    act(() => {
+      expect(restoreNeoImages(root, [{ data: 'cGhvdG8=', media_type: 'image/png' }])).toBe(true);
+    });
+    const capture = read();
+    if (outcome === 'storage failure') {
+      const storage = window.sessionStorage;
+      vi.spyOn(window, 'sessionStorage', 'get').mockReturnValue(
+        new Proxy(storage, {
+          get(target, name) {
+            if (name === 'setItem')
+              return () => {
+                throw new Error('Synthetic storage failure');
+              };
+            const value = Reflect.get(target, name);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        })
+      );
+    }
+    view.model.value.send.mockResolvedValueOnce({ ok: false, reason: 'Synthetic refusal' });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0].images).toEqual([
+      { data: 'cGhvdG8=', media_type: 'image/png' },
+    ]);
+    await act(async () =>
+      release(outcome === 'superseded' ? { ok: false, reason: 'superseded' } : { ok: true })
+    );
+    if (outcome === 'storage failure') expect(read()).toEqual(capture);
+    persisted.set(root, 'Dictation after an attachment send');
+    for (const [name, callback] of seams.event.mock.calls) {
+      if (name === 'session.voiceLanded')
+        await act(async () => callback({ sessionId: root }, { channel: `session:${root}` }));
+    }
+    await waitFor(() => expect(value()).toBe('Dictation after an attachment send'));
+    expect(view.model.value.send).toHaveBeenCalledOnce();
+  });
+
+  it('preserves new attachments and text entered during an attachment-send handoff', async () => {
+    remember('Original reload capture', null, root, reference);
+    let release!: (value: unknown) => void;
+    recover.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    let finishClear!: (value: unknown) => void;
+    const clear = new Promise((resolve) => {
+      finishClear = resolve;
+    });
+    const request = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.clearInputDraftIf') await clear;
+      return request(method, input);
+    });
+    const view = mount();
+    await waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    type('Submitted with the first photo');
+    act(() => {
+      restoreNeoImages(root, [{ data: 'Zmlyc3Q=', media_type: 'image/png' }]);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    await act(async () => release({ ok: true }));
+    await waitFor(() =>
+      expect(seams.request.mock.calls.some(([name]) => name === 'session.clearInputDraftIf')).toBe(
+        true
+      )
+    );
+    act(() => {
+      restoreNeoImages(root, [{ data: 'c2Vjb25k', media_type: 'image/png' }]);
+    });
+    type('New text with the second photo');
+    const latest = read();
+    await act(async () => finishClear({}));
+    expect(value()).toBe('New text with the second photo');
+    expect(read()).toEqual(latest);
+    expect(useNeoAttachments(root).files).toMatchObject([
+      { kind: 'image', image: { data: 'c2Vjb25k' } },
+    ]);
+    expect(view.model.value.send).toHaveBeenCalledOnce();
+    expect(view.model.value.send.mock.calls[0][0].images).toEqual([
+      { data: 'Zmlyc3Q=', media_type: 'image/png' },
+    ]);
+    expect(screen.queryByText(/To Neo.*Original report/)).toBeNull();
+  });
+
   it('resumes adoption after returning from another edited session before send cleanup finishes', async () => {
     remember('Original reload capture', null, root, reference);
     metadataGate = new Promise(() => {});

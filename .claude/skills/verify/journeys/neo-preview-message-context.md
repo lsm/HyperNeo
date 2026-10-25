@@ -106,6 +106,10 @@ and real-composer tests cover send refusal/storage cleanup failure, delayed
 metadata, ordered recovery RPC completion, same-text rebinds during cleanup,
 failed durable captures, reconnect and scope changes. Returning during pending
 cleanup after editing another session must release adoption, while a failed
-local edit remains guarded across the same round trip. The original browser
+local edit remains guarded across the same round trip. Attachment-only and
+text-with-attachment sends must release adoption after a superseded recovery or
+failed browser write; the send's own attachment removal is not a human edit.
+New text and attachments added during that handoff must survive its completion.
+The original browser
 capture remains until acceptance or explicit discard. Pending immutable request
 identity persistence remains in #8707; handoff alone does not complete it.

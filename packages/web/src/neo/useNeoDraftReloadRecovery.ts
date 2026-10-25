@@ -19,13 +19,8 @@ type RecoveryFlight = {
   promise: Promise<unknown>;
   handoff?: SendHandoff;
 };
-type SendHandoff = {
-  id?: string;
-  version: unknown;
-  changed?: boolean;
-  done: boolean;
-  pending?: Promise<void>;
-};
+type SendHandoff = { id?: string; version: unknown; done: boolean; pending?: Promise<void> };
+const invalidatedHandoff = Symbol('invalidated-handoff');
 export type NeoDraftRecoverySettlement = 'restore' | 'forget' | 'keep';
 
 export function admitNeoDraftRecovery(
@@ -76,10 +71,10 @@ export function useNeoDraftReloadRecovery(
   const captures = useRef(new Map<string, { id: string; version: unknown }>());
   const flights = useRef(new Map<string, RecoveryFlight>());
   const activeHandoff = sessionId ? flights.current.get(sessionId)?.handoff : null;
-  if (activeHandoff && !activeHandoff.done) {
+  if (activeHandoff && !activeHandoff.done && activeHandoff.version !== invalidatedHandoff) {
     const version = versionRef.current();
     if (owner.current !== sessionId) activeHandoff.version = version;
-    else if (activeHandoff.version !== version) activeHandoff.changed = true;
+    else if (activeHandoff.version !== version) activeHandoff.version = invalidatedHandoff;
   }
   owner.current = sessionId;
   const connected = connectionState.value === 'connected';
@@ -188,7 +183,7 @@ export function useNeoDraftReloadRecovery(
     flight.handoff = claim;
     const untouched = () =>
       flights.current.get(scope)?.handoff === claim &&
-      !claim.changed &&
+      claim.version !== invalidatedHandoff &&
       (!buffer.read(scope) || buffer.read(scope)?.id === claim.id) &&
       (owner.current !== scope || versionRef.current() === claim.version);
     const pending: Promise<void> = flight.promise

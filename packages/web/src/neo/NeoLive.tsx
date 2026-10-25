@@ -200,10 +200,7 @@ export function NeoLive() {
     setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
   const fileIds = attachments.files.map((file) => file.id);
   const frame = JSON.stringify([quote, fileIds, attachments.reading]);
-  const readVersion = useCallback(
-    () => JSON.stringify([editRevision.value, frame]),
-    [editRevision.value, frame]
-  );
+  const readVersion = useCallback(() => editRevision.value, [editRevision.value]);
   const recovery = useNeoDraftReloadRecovery(
     neo.sessionId,
     reloadBuffer,
@@ -966,6 +963,7 @@ export function NeoLive() {
               onError={neo.setError}
               onSend={(input) => {
                 editRevision.value += 1;
+                priorFrame.current.frame = JSON.stringify([quote, [], 0]);
                 const handoff = recovery.handoff().catch((error: unknown) => {
                   if (currentScope.current === sceneScope)
                     neo.setError(error instanceof Error ? error.message : String(error));
