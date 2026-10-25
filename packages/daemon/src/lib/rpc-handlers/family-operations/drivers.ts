@@ -122,7 +122,8 @@ export async function createDriverSession(
   availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels,
   provider?: string,
   effort?: string,
-  inPlace = false
+  inPlace = false,
+  prepared?: { sessionId: string; projectPath: string }
 ): Promise<string> {
   const gitRoot = inPlace
     ? null
@@ -135,6 +136,9 @@ export async function createDriverSession(
     sessionManager.createSession({
       workspacePath,
       title,
+      ...(prepared
+        ? { sessionId: prepared.sessionId, executionProjectPath: prepared.projectPath }
+        : {}),
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
       ...(config || thinkingLevel
         ? { config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
@@ -222,7 +226,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
       return { ok: true, value: { archived: true } };
     },
-    create: (workspacePath, title, model, provider, effort, inPlace) =>
+    create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
       createDriverSession(
         sessionManager,
         workspacePath,
@@ -231,7 +235,8 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         readAvailableModels,
         provider,
         effort,
-        inPlace
+        inPlace,
+        prepared
       ),
     resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
     effort: (sessionId) =>
