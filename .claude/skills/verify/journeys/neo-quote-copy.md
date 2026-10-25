@@ -15,7 +15,10 @@ synthetic publications to the isolated database. It visits the real `/neo` page
 at desktop and touch widths in light and dark mode, copies a formatted quote
 using Enter and a nested quote using click or tap, and reads the real clipboard.
 It asserts paragraph boundaries, no Markdown syntax, feedback expiry, a 44px
-touch target, and a gutter separating text from the button. Inspect the four
+touch target, and a gutter separating text from the button. The quote also
+contains a highlighted Python fence with indentation and multiple blank lines,
+plus a math formula: the clipboard must keep the code whitespace and contain
+the formula source exactly once. Inspect the four
 screenshots for each phase and retain the JSON observations.
 
 The component regression also expands a collapsed card and copies its quote.
