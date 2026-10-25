@@ -171,6 +171,19 @@ describe('KimiProvider', () => {
       expect(globalModels.map((m) => m.id)).toContain('kimi-k3.1-pro');
     });
 
+    it('marks curated K3.1 ids invisible to generic synthesis only in the china region', () => {
+      provider = new KimiProvider();
+
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro')).toBe(false);
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro-highspeed')).toBe(false);
+      expect(provider.isCuratedModelVisible?.('k3.1-pro')).toBe(false);
+      expect(provider.isCuratedModelVisible?.('kimi-for-coding')).toBe(true);
+
+      provider.setDefaultRegion('global');
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro')).toBe(true);
+      expect(provider.isCuratedModelVisible?.('kimi-k3.1-pro-highspeed')).toBe(true);
+    });
+
     it('gates cached curated K3.1 entries by region', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = makeProbeOkProvider();

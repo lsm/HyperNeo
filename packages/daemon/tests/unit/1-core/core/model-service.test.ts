@@ -2429,6 +2429,34 @@ describe('Model Service', () => {
   });
 
   describe('model curation', () => {
+    it('does not re-synthesize a curated model the provider hides on forced refresh', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'kimi',
+        displayName: 'Kimi',
+        isAvailable: async () => true,
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        isCuratedModelVisible: (id: string) => id !== 'kimi-k3.1-pro',
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as ProviderLike);
+      getProviderRegistry().setCuratedModels('kimi', [
+        { id: 'kimi-k3.1-pro' },
+        { id: 'kimi-visible' },
+      ]);
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      const kimiIds = getAvailableModels('global')
+        .filter((model) => model.provider === 'kimi')
+        .map((model) => model.id);
+      expect(kimiIds).not.toContain('kimi-k3.1-pro');
+      expect(kimiIds).toContain('kimi-visible');
+    });
+
     it('filters cached and fallback models to the configured provider subset', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
