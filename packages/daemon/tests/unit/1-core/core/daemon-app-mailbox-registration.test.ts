@@ -16,6 +16,12 @@ import { createDefaultSessionResolutionDeps } from '../../../../src/lib/session-
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { createTestSession } from '../../../helpers/database';
+import { createMailboxEntry } from '../../../../src/lib/mailbox/entry';
+import { enqueueMailboxEntry } from '../../../../src/lib/mailbox/enqueue';
+import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules';
+import { createScheduleDelivery } from '../../../../src/lib/scheduler/session-schedule-delivery';
+import * as restartRecovery from '../../../../src/lib/agent/restart-turn-recovery';
 
 if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') {
   (globalThis as { Bun?: unknown }).Bun = { serve: () => ({ stop() {} }) };
@@ -36,6 +42,7 @@ describe('Daemon app mailbox registration', () => {
     args: Parameters<JobQueueProcessor['register']>;
   }>;
   let lifecycle: string[];
+  let recoveryDeps: restartRecovery.RestartRecoveryDeps;
 
   function sharedLookup() {
     const db = app!.db.getDatabase();
@@ -65,6 +72,11 @@ describe('Daemon app mailbox registration', () => {
     spyOn(Bun, 'serve').mockImplementation(() => ({ stop() {} }) as never);
     registrations = [];
     lifecycle = [];
+    const recover = restartRecovery.recoverRestartCutTurns;
+    spyOn(restartRecovery, 'recoverRestartCutTurns').mockImplementation((ids, deps) => {
+      recoveryDeps = deps;
+      return recover(ids, deps);
+    });
     const register = JobQueueProcessor.prototype.register;
     spyOn(JobQueueProcessor.prototype, 'register').mockImplementation(function (...args) {
       registrations.push({ owner: this, args });
@@ -147,6 +159,67 @@ describe('Daemon app mailbox registration', () => {
     expect(deliveryDeps.db).toBe(app!.db.getDatabase());
     expect(deliveryDeps.sdkMessageRepo).toBe(app!.db.getSDKMessageRepo());
     expect(failureDeps.sdkMessageRepo).toBe(deliveryDeps.sdkMessageRepo);
+  });
+
+  async function recipient(neo: boolean) {
+    const id = neo ? 'neo:root' : 'ordinary';
+    await app!.db.createSession(createTestSession(id));
+    if (neo)
+      app!.db
+        .getDatabase()
+        .prepare("INSERT INTO neo_session_bindings(session_id,kind) VALUES (?,'neo')")
+        .run(id);
+    spyOn(app!.sessionManager, 'getCachedSession').mockReturnValue(lookupSession());
+    return id;
+  }
+
+  test('an ordinary recipient still receives an untyped worker message immediately', async () => {
+    const id = await recipient(false);
+    enqueueMailboxEntry(
+      app!.jobQueue,
+      createMailboxEntry({
+        to: { kind: 'session', sessionId: id },
+        origin: 'session:worker',
+        messageUuid: 'ordinary-report',
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: 'Ordinary report' },
+        },
+      })
+    );
+    await deliveryHandler(app!.jobQueue.dequeue('mailbox')[0]);
+    expect(app!.db.getSDKMessageRepo().findMessageIdByUuid(id, 'ordinary-report')).not.toBeNull();
+  });
+
+  test('a scheduled Neo reminder reaches delivery immediately', async () => {
+    const id = await recipient(true);
+    const scheduler = new SessionScheduler(app!.db.getDatabase(), app!.jobQueue);
+    const schedule = scheduler.create({
+      target: { adapter: 'hyperneo', id },
+      sourceKind: 'reminder',
+      sourceId: 'neo-check',
+      note: 'Check now',
+      nudgeEvery: 1,
+      cadence: { kind: 'every', everyMs: 60000 },
+      createdBySession: null,
+    });
+    await createScheduleDelivery(app!.db, () => app!.sessionManager.getOperationRegistry()).deliver(
+      schedule,
+      'scheduled-report',
+      'Check now'
+    );
+    await deliveryHandler(app!.jobQueue.dequeue('mailbox')[0]);
+    expect(app!.db.getSDKMessageRepo().findMessageIdByUuid(id, 'scheduled-report')).not.toBeNull();
+  });
+
+  test('the actual restart-recovery note producer wakes Neo immediately', async () => {
+    const id = await recipient(true);
+    await recoveryDeps.sendNote(id, 'cut-off-prompt');
+    await deliveryHandler(app!.jobQueue.dequeue('mailbox')[0]);
+    expect(
+      app!.db.getSDKMessageRepo().findMessageIdByUuid(id, 'restart-recovery:cut-off-prompt')
+    ).not.toBeNull();
   });
 
   test('publishes delivery, deferred and failure status using the current event bus', async () => {

@@ -8,6 +8,10 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import type { SessionManager } from '../../../packages/daemon/src/lib/session/session-manager.ts';
+import { SessionScheduler } from '../../../packages/daemon/src/lib/scheduler/session-schedules.ts';
+import { createScheduleDelivery } from '../../../packages/daemon/src/lib/scheduler/session-schedule-delivery.ts';
+import { createSessionScheduleFire } from '../../../packages/daemon/src/lib/scheduler/session-schedule-fire.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
 const run = resolve(process.argv[2] ?? '');
 assert(process.argv[2] && process.env.NODE_ENV === 'test');
@@ -41,7 +45,8 @@ QueryOptionsBuilder.prototype.build = async function (...args) {
   const options = await build.apply(this, args);
   return { ...options, sandbox: { enabled: false } };
 };
-const app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
+const options = { config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false };
+let app = await createDaemonApp(options);
 const hub = new MessageHub({ defaultSessionId: 'global' });
 const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
 hub.registerTransport(transport);
@@ -62,6 +67,34 @@ try {
     ['PR owner tell', () => service!.sendToRef({ adapter: 'hyperneo', id: root }, 'proof-pr-owner', 'Synthetic PR owner event')],
     ['urgent GitHub feedback', () => mailSessionEvent(app.jobQueue, { sessionId: root, messageUuid: 'proof-github-feedback', text: 'Synthetic GitHub review requires action', mode: 'immediate' })],
     ['human Track', () => service!.trackSession(root, { key: 'proof-track', ref: { adapter: 'hyperneo', id: 'synthetic-worker' }, title: 'Synthetic tracked work', kind: 'failed', at: Date.now() }, Date.now())],
+    ['scheduled Neo reminder', async () => {
+      await app.jobProcessor.stop();
+      try {
+        const scheduler = new SessionScheduler(app.db.getDatabase(), app.jobQueue);
+        const row = scheduler.create({ target: { adapter: 'hyperneo', id: root }, sourceKind: 'reminder', sourceId: 'neo-proof', note: 'Check the scheduled work.', nudgeEvery: 1, cadence: { kind: 'every', everyMs: 60000 }, createdBySession: null }, Date.now() - 60000);
+        const fire = createSessionScheduleFire({ scheduler, ...createScheduleDelivery(app.db, () => app.sessionManager.getOperationRegistry()) });
+        assert.deepEqual(await fire(app.jobQueue.getJob(row.pendingJobId!)!), { outcome: 'fired' });
+        assert.equal(scheduler.repo.get(row.id)?.lastOutcome, 'fired');
+      } finally {
+        app.jobProcessor.start();
+      }
+    }],
+    ['restart recovery', async () => {
+      const evidence = app.db.getSDKMessageRepo().readRestartRecoveryEvidence(root);
+      assert(evidence?.workedAfter, 'fixture needs a consumed prompt with assistant work');
+      service!.dispose();
+      service = undefined;
+      await transport.close();
+      await app.cleanup();
+      const fixture = new Database(join(run, 'data/daemon.db'));
+      try {
+        fixture.prepare('UPDATE sessions SET processing_state=? WHERE id=?').run(JSON.stringify({ status: 'processing', messageId: evidence.promptUuid }), root);
+      } finally {
+        fixture.close();
+      }
+      app = await createDaemonApp(options);
+      assert.notEqual(app.server.port, 8399);
+    }],
   ];
   for (const [event, action] of actions) {
     const before = modelTurns;
@@ -70,9 +103,9 @@ try {
     while (modelTurns === before && Date.now() < deadline) await Bun.sleep(100);
     observations.push({ event, turns: modelTurns - before });
     writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observations, null, 2));
-    assert.equal(modelTurns, before + 1, `${event} must wake immediately`);
     await Bun.sleep(500);
   }
+  assert(observations.every((value) => value.turns === 1), 'every explicit event must wake once immediately');
   console.log(JSON.stringify(observations));
 } finally {
   service?.dispose();
