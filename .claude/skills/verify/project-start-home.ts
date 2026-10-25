@@ -79,6 +79,17 @@ try {
   assert(new NeoConversationAskRepository(db).append({ conversationId: projects.conversationId(), requestId: messageId, askOrigin: { sessionId: sender, messageId }, content: `Please create the session in ${named}` }).accepted);
   open('named', `Please create the session in ${named}`);
   const namedReply = await add('named', { place: { machine: hostname(), folder: named, name: 'User named folder' }, createFolder: true });
+  const rejectedFolder = join(run, 'home/refused-model');
+  const rejectedMessageId = crypto.randomUUID();
+  assert(new NeoConversationAskRepository(db).append({ conversationId: projects.conversationId(), requestId: rejectedMessageId, askOrigin: { sessionId: sender, messageId: rejectedMessageId }, content: `Please use ${rejectedFolder}` }).accepted);
+  open('refused-model', `Please use ${rejectedFolder}`);
+  const rejectedReply = await add('refused-model', { place: { machine: hostname(), folder: rejectedFolder, name: 'Refused model' }, createFolder: true, model: 'synthetic-model-does-not-exist' });
+  const missingParent = join(run, 'home/missing-parent');
+  const nestedFolder = join(missingParent, 'child');
+  const nestedMessageId = crypto.randomUUID();
+  assert(new NeoConversationAskRepository(db).append({ conversationId: projects.conversationId(), requestId: nestedMessageId, askOrigin: { sessionId: sender, messageId: nestedMessageId }, content: `Please use ${nestedFolder}` }).accepted);
+  open('missing-parent', `Please use ${nestedFolder}`);
+  const nestedReply = await add('missing-parent', { place: { machine: hostname(), folder: nestedFolder, name: 'Missing parent' }, createFolder: true });
   const workspace = join(run, 'workspace/inside');
   open('workspace', 'Organize my life admin');
   const workspaceReply = await add('workspace', { place: { machine: hostname(), folder: workspace, name: 'Inside workspace' }, createFolder: true });
@@ -91,6 +102,8 @@ try {
   const intake = db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox'").all() as { payload: string }[];
   const workerIntake = intake.map(row => JSON.parse(row.payload)).filter(entry => entry.to?.sessionId === defaultReply.todo?.worker?.id);
   const checks = {
+    refusedModelNoFolder: rejectedReply.todo?.state === 'failed' && !existsSync(rejectedFolder) && !starts.some(start => start.title === 'refused-model'),
+    namedParentGuard: nestedReply.todo?.state === 'failed' && !existsSync(missingParent),
     coordinatorGuidance: coordinatorPrompt.includes(NEO_ROOT_PROMPT) && coordinatorPrompt.includes(NEO_FOCUSED_DISCUSSION) && coordinatorPrompt.includes('~/HyperNeo') && coordinatorPrompt.includes('旅行/2026圣诞') && NEO_ROOT_PROMPT.split(/\s+/).length < 260 && NEO_FOCUSED_DISCUSSION.split(/\s+/).length < 250,
     coordinatorSeparate: app.db.getSession(sender)?.workspacePath === join(run, 'data/Neo') && expectedHome !== join(run, 'data/Neo'),
     codingUnchanged: codingReply.ok === true && codingStart?.folder === codingFolder && codingStart?.mode === 'worktree',

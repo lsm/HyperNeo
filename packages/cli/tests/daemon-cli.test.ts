@@ -119,3 +119,13 @@ describe('getDaemonHelpText', () => {
     expect(help).toContain('hyperneod');
   });
 });
+
+describe('getDaemonHelpText workspace contract', () => {
+  test('explains the Neo user-folder override and environment setting', () => {
+    const help = getDaemonHelpText();
+    expect(help).toContain('Neo user folder');
+    expect(help).toContain('file indexing');
+    expect(help).toContain('~/HyperNeo');
+    expect(help).toContain('HYPERNEO_WORKSPACE_PATH');
+  });
+});

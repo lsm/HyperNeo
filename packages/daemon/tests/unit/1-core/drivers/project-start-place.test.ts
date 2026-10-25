@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { vi } from 'vitest';
+import { selectLocalStartFolder } from '../../../../src/lib/drivers/start-folder.ts';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
 import { neoStartPlace } from '../../../../src/lib/neo/start-place.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -82,16 +83,38 @@ async function start(
           id: 'synthetic',
           capabilities: ['start'],
           find: () => [],
-          start: async (input) => ({
-            ok: true,
-            value: {
-              ref: { adapter: 'synthetic', id: 'worker' },
-              title: input.title,
-              place: input.place,
-              status: 'running',
-              lastActivityAt: 1,
-            },
-          }),
+          supportsStartEffort: true,
+          start: async (input) => {
+            if (input.model === 'unavailable' || input.effort === 'invalid')
+              return {
+                ok: false,
+                reason: input.model ? 'unsupported_model' : 'unsupported_effort',
+                detail: 'Synthetic configuration refused',
+              };
+            const folder = selectLocalStartFolder(
+              input,
+              {
+                machine: 'local',
+                folderExists: existsSync,
+                makeFolder: (path) => {
+                  mkdirSync(path);
+                },
+                homeDir: join(root, 'home'),
+              },
+              'Choose a folder'
+            );
+            if ('reason' in folder) return folder.reason;
+            return {
+              ok: true,
+              value: {
+                ref: { adapter: 'synthetic', id: 'worker' },
+                title: input.title,
+                place: input.place,
+                status: 'running',
+                lastActivityAt: 1,
+              },
+            };
+          },
         },
       ],
       daemonName: 'local',
@@ -159,6 +182,32 @@ describe('shared non-coding work.start home', () => {
     });
     expect(existsSync(folder)).toBe(false);
   });
+  test.each([{ model: 'unavailable' }, { effort: 'invalid' }])(
+    'refused configuration creates no named folder: %j',
+    async (extra) => {
+      const folder = join(root, 'home/refused');
+      named(folder);
+      expect(await start(folder, extra)).toMatchObject({ ok: false });
+      expect(existsSync(folder)).toBe(false);
+      const shared = join(root, 'new-shared');
+      expect(await start(undefined, extra, shared)).toMatchObject({ ok: false });
+      expect(existsSync(shared)).toBe(false);
+    }
+  );
+  test.each([
+    'outside/child',
+    'home/.hidden/child',
+    'home/Library/child',
+    'home/Applications/child',
+    'home/missing/child',
+  ])('keeps creation guards for a human-named folder: %s', async (path) => {
+    const folder = join(root, path);
+    if (!path.includes('/missing/')) mkdirSync(dirname(folder), { recursive: true });
+    named(folder);
+    expect(await start(folder)).toMatchObject({ ok: false, reason: 'invalid_place' });
+    expect(existsSync(folder)).toBe(false);
+    if (path.includes('/missing/')) expect(existsSync(dirname(folder))).toBe(false);
+  });
   test('defaults to visible ~/HyperNeo under the isolated HOME', async () => {
     const folder = join(root, 'home/HyperNeo');
     expect(existsSync(folder)).toBe(false);
@@ -174,7 +223,7 @@ describe('shared non-coding work.start home', () => {
     expect(await start(folder)).toMatchObject({ ok: false, reason: 'invalid_place' });
   });
   test('allows a path named in persisted human input', async () => {
-    const folder = join(root, 'named');
+    const folder = join(root, 'home/named');
     named(folder);
     expect(await start(folder)).toMatchObject({ ok: true, value: { place: { folder } } });
     expect(existsSync(folder)).toBe(true);
@@ -229,7 +278,7 @@ describe('shared non-coding work.start home', () => {
   });
   test('human path authorization survives a fresh repository reader and later intake pages', async () => {
     for (let index = 0; index < 101; index++) named(join(root, `unrelated-${index}`));
-    const folder = join(root, 'named-later');
+    const folder = join(root, 'home/named-later');
     named(folder);
     expect(await start(folder)).toMatchObject({ ok: true, value: { place: { folder } } });
   });
