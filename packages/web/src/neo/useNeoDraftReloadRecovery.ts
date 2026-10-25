@@ -12,6 +12,7 @@ import {
 
 type Buffer = ReturnType<typeof createNeoDraftReloadBuffer>;
 type Recovery = { ok: true } | { ok: false; reason: string };
+type RecoveryFlight = { confirmed?: string; promise: Promise<unknown> };
 export type NeoDraftRecoverySettlement = 'restore' | 'forget' | 'keep';
 
 export function admitNeoDraftRecovery(
@@ -59,6 +60,7 @@ export function useNeoDraftReloadRecovery(
   const versionRef = useRef(readVersion);
   versionRef.current = readVersion;
   const captures = useRef(new Map<string, { id: string; version: unknown }>());
+  const flights = useRef(new Map<string, RecoveryFlight>());
   const connected = connectionState.value === 'connected';
   const key = JSON.stringify([sessionId, connected]);
   const generation = useRef({ key, ticket: 0 });
@@ -67,7 +69,12 @@ export function useNeoDraftReloadRecovery(
   const ticket = generation.current.ticket;
   const [settled, setSettled] = useState(() => (sessionId && buffer.read(sessionId) ? -1 : ticket));
 
+  const pendingId = sessionId && settled !== ticket ? buffer.read(sessionId)?.id : null;
+  const origin = useRef({ ticket, id: pendingId });
+  if (origin.current.ticket !== ticket) origin.current = { ticket, id: pendingId };
+
   useLayoutEffect(() => {
+    if (settled === ticket) return;
     const entry = sessionId ? buffer.read(sessionId) : null;
     if (!entry) {
       setSettled(ticket);
@@ -85,11 +92,27 @@ export function useNeoDraftReloadRecovery(
       generation.current.ticket === ticket &&
       versionRef.current() === version &&
       buffer.read(sessionId)?.id === entry.id;
-    void invokeOperation<unknown>(hub, 'neo.draft.recover', neoDraftRecoveryInput(entry))
+    const flight: RecoveryFlight = flights.current.get(sessionId) ?? {
+      promise: Promise.resolve(null),
+    };
+    const promise = flight.promise
+      .catch(() => null)
+      .then(() => {
+        if (!current()) return null;
+        const input = neoDraftRecoveryInput(entry);
+        if (flight.confirmed !== undefined) input.base = flight.confirmed;
+        return invokeOperation<unknown>(hub, 'neo.draft.recover', input).then((response) => {
+          if ('value' in admitNeoDraftRecovery(response)) flight.confirmed = entry.text.trim();
+          return response;
+        });
+      });
+    flight.promise = promise;
+    flights.current.set(sessionId, flight);
+    void promise
       .then(async (result) => {
         if (!current()) return;
         const settlement = settleNeoDraftRecovery(result, entry, readRef.current());
-        if (settlement === 'restore') {
+        if (settlement === 'restore' && entry.id === origin.current.id) {
           let reference = entry.previewContext;
           if (reference) {
             const metadata = await loadArtifactMetadata(hub, reference.artifactId);
@@ -111,6 +134,6 @@ export function useNeoDraftReloadRecovery(
     return () => {
       active = false;
     };
-  }, [sessionId, connected, ticket]);
+  }, [sessionId, connected, ticket, pendingId]);
   return !sessionId || !buffer.read(sessionId) || settled === ticket;
 }
