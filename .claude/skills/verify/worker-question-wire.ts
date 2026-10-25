@@ -20,12 +20,13 @@ mkdirSync(join(run, 'bin'), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
 let modelTurns = 0;
+const coordinatorBodies: string[] = [];
 let requests = 0;
 const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request) {
   if (new URL(request.url).pathname !== '/v1/messages') return Response.json({ data: [], has_more: false });
   const body = await request.json();
   writeFileSync(join(run, `evidence/model-${++requests}.json`), JSON.stringify(body, null, 2));
-  if (body.tools?.some((tool: { name: string }) => tool.name === 'mcp__hyperneo-operations__invoke')) modelTurns++;
+  if (body.tools?.some((tool: { name: string }) => tool.name === 'mcp__hyperneo-operations__invoke')) { modelTurns++; coordinatorBodies.push(JSON.stringify(body)); }
   const start = { id: `msg_${requests}`, type: 'message', role: 'assistant', content: [], model: 'claude-sonnet-4-6', stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } };
   const events = [
     ['message_start', { type: 'message_start', message: start }],
@@ -127,7 +128,7 @@ try {
     assert.notDeepEqual(firstImage, secondImage, 'distinct media reports must not share an empty-text incident');
     assert.equal(wakes().length, 2);
     for (const [receipt, image] of [[firstImage, imageA], [secondImage, imageB]] as const) {
-      const payload = app.db.getJobQueueRepo().getJob(receipt.mailboxId)!.payload as { message: { message: { content: unknown[] } } };
+      const payload = app.db.getJobQueueRepo().getLatestByPayload('mailbox', { id: receipt.mailboxId })!.payload as { message: { message: { content: unknown[] } } };
       assert(payload.message.message.content.some((block) => JSON.stringify(block) === JSON.stringify(image)));
     }
     assert.deepEqual(await workerSend(report(imageA)), firstImage);
@@ -135,6 +136,8 @@ try {
     const mediaDeadline = Date.now() + 45000;
     while ((modelTurns < 3 || wakes().length) && Date.now() < mediaDeadline) await Bun.sleep(100);
     assert.equal(modelTurns, 3);
+    assert(coordinatorBodies.some((body) => body.includes(imageA.source.data)));
+    assert(coordinatorBodies.some((body) => body.includes(imageB.source.data)));
     await Bun.sleep(1000);
     await app.jobProcessor.stop();
     assert.equal(timeline?.text, input.text, 'card report remains in the conversation timeline');
@@ -149,7 +152,7 @@ try {
     assert.equal(wakes().length, 1);
     app.jobProcessor.start();
     const triageDeadline = Date.now() + 45000;
-    while ((modelTurns < 2 || app.db.getJobQueueRepo().getJob(triage.mailboxId)?.status !== 'completed') && Date.now() < triageDeadline) await Bun.sleep(100);
+    while ((modelTurns < 2 || app.db.getJobQueueRepo().getLatestByPayload('mailbox', { id: triage.mailboxId })?.status !== 'completed') && Date.now() < triageDeadline) await Bun.sleep(100);
     assert.equal(modelTurns, 2);
     await Bun.sleep(1000);
     await app.jobProcessor.stop();
@@ -179,7 +182,7 @@ try {
   const read = await rpc('neo.question.get', { questionId: question.id });
   assert.equal(read.question.state, 'open');
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, question, hold: restored.getTodo(todo.id), reminders, consumedWakeId: wake.id, modelTurns, expectedTurns, oldCard: process.argv[3] === 'old', restartRetained: true }, null, 2));
-  console.log('PASS: message.send creates a held card and one real Neo turn; repeats and restart do not re-wake; held todo receives no runner nudge');
+  console.log(`PASS: held card; ${modelTurns} real Neo turns for ${expectedTurns} incidents; repeats/restart add none; no held-todo nudge`);
 } finally {
   await app.cleanup();
   model.stop(true);

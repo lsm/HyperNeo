@@ -437,6 +437,7 @@ export class NeoService {
         retry: Parameters<SessionReportHandler>[2]
       ) => {
         const content = input.message.message.content;
+        const media = typeof content === 'string' ? [] : content.filter((b) => b.type === 'image');
         const text =
           input.handoff?.text ??
           (typeof content === 'string'
@@ -446,6 +447,7 @@ export class NeoService {
         const jobs = this.db.getJobQueueRepo();
         let receipt: z.infer<typeof SendMessageResultSchema> | null = null;
         const wake = (incident: string, note: string) => {
+          if (files.length) note += `\n${JSON.stringify({ handoffFiles: files })}`;
           const key = `worker-question:${incident}`;
           const submit = () =>
             jobs.commitSubmissionReceipt(key, key, () => {
@@ -463,9 +465,11 @@ export class NeoService {
                     workerReportKind: input.kind,
                     message: {
                       content: wrapSessionContent(
-                        files.length ? `${note}\n${JSON.stringify({ handoffFiles: files })}` : note,
+                        media.length
+                          ? [{ type: 'text', text: note || 'Worker report' }, ...media]
+                          : note,
                         { sessionId: sender, name: null }
-                      ) as string,
+                      ) as MailboxMessageContent,
                     },
                   },
                 })
@@ -485,7 +489,7 @@ export class NeoService {
         if (!input.question) {
           wake(
             neoDerivedId(
-              JSON.stringify([origin, input.sessionId, text, files.map((f) => f.sha256)])
+              JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
             ),
             text
           );

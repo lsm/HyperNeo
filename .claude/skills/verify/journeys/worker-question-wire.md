@@ -39,6 +39,12 @@ publish fresh references with the same hash but reuse the original receipt and
 never add another wake. This run has two model turns total, one for the todo card
 and one for the separate ambiguous incident; restart adds none.
 
+Use `media` in another fresh run for envelope-form image-only reports. Two valid
+PNG reports must retain their image blocks, receive different incident receipts,
+and produce two separate Neo turns; repeating an image reuses its receipt.
+Together with the initial card, this run has three turns. The initial handled
+card report must also retain its original conversation record before returning.
+
 Keep evidence/observed.json, the model request files, cleanup.json and the proof
 log. This proves RPC, durable queue, SDK wake and synthetic runner behavior.
 GUI rendering, real-worker language compliance, answer delivery and hold release

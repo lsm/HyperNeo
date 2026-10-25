@@ -238,7 +238,7 @@ export async function reportSessionSend(
       messageId: receipt.messageId,
       fromSession,
       toSession: admitted.sessionId,
-      text: plainText(admitted.message.message.content),
+      text: admitted.handoff?.text ?? plainText(admitted.message.message.content),
       at: Date.now(),
     });
 }
@@ -519,12 +519,14 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
       input: SendInput,
       origin: string,
       retry: Retry | undefined,
-      report: SessionReportHandler
+      report: SessionReportHandler,
+      sent: SessionSentObserver
     ) => {
       const handled = await report(input, origin, retry);
+      if (handled) await reportSessionSend(handled, input, origin, sent);
       return handled ? { reason: handled } : { value: input };
     },
-    ['receipt', 'origin', 'retry', 'report'],
+    ['receipt', 'origin', 'retry', 'report', 'sent'],
     'result:receipt'
   )
   .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle'], 'outgoing')
