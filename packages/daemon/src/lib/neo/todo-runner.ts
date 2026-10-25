@@ -396,12 +396,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     live: ReturnType<typeof readDriverLive>
   ) => {
     if (!live || live.status !== 'needs_you') return;
-    const since = sessions.readNeedsYouSince(todoId);
-    const todo = store.getTodo(todoId);
-    const followed =
-      todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
-    if (since !== null || !todo || !followed) return;
-    sessions.recordNeedsYouSince(todoId, Date.now());
+    const todo = await sessions.write('claimNeedsYou', todoId, Date.now());
+    if (!todo) return;
     await deps.tell(ask, todo, neoTodoNeedsYouNote(todo, live));
   };
 

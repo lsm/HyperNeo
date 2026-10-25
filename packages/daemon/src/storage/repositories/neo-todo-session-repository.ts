@@ -111,6 +111,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return changed;
   }
 
+  claimNeedsYou(todoId: string, now: number) {
+    const since = this.readNeedsYouSince(todoId);
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    const followed =
+      todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
+    if (since !== null || !todo || !followed) return null;
+    this.recordNeedsYouSince(todoId, now);
+    return todo;
+  }
+
   readNudge(todoId: string): { since: number; nudges: number } | null {
     const row = this.db
       .prepare(
@@ -215,5 +225,5 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
   'write',
   NeoTodoSessionRepository,
-  ['recordLive', 'recordDispatch', 'recordProgress']
+  ['recordLive', 'recordDispatch', 'recordProgress', 'claimNeedsYou']
 );

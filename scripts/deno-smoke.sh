@@ -355,6 +355,20 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
     row = read();
     if (!refused || row.startedAt !== 1 || row.checkedAt !== 43 || row.live !== "needs_you" || row.needs !== 900) Deno.exit(1);
     console.log("[deno-smoke] worker progress commits and rolls back all timestamps, status and incident state together");
+    db.prepare("UPDATE neo_todos SET state=? WHERE id=?").run("doing", id);
+    db.prepare("UPDATE neo_todo_sessions SET needs_you_since=NULL WHERE todo_id=?").run(id);
+    const claims = await Promise.all([gateway.call(neoTodoSessionWrites, "claimNeedsYou", id, 10), gateway.call(neoTodoSessionWrites, "claimNeedsYou", id, 11)]);
+    if (claims.filter(Boolean).length !== 1 || claims.find(Boolean).id !== id || read().needs !== 10) Deno.exit(1);
+    db.prepare("UPDATE neo_todo_sessions SET needs_you_since=NULL WHERE todo_id=?").run(id);
+    db.exec("CREATE TRIGGER reject_needs_you BEFORE UPDATE OF needs_you_since ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, \u0027synthetic incident refusal\u0027); END");
+    refused = false;
+    try { await gateway.call(neoTodoSessionWrites, "claimNeedsYou", id, 12); }
+    catch (error) { refused = String(error).includes("synthetic incident refusal"); }
+    db.exec("DROP TRIGGER reject_needs_you");
+    if (!refused || read().needs !== null) Deno.exit(1);
+    db.prepare("UPDATE neo_todos SET state=? WHERE id=?").run("done", id);
+    if (await gateway.call(neoTodoSessionWrites, "claimNeedsYou", id, 13) !== null || read().needs !== null) Deno.exit(1);
+    console.log("[deno-smoke] needs-you writer admits one notice and refuses failed or closed incidents");
   } finally { db.close(); await gateway.close(); }
 '; then
   dump_log
