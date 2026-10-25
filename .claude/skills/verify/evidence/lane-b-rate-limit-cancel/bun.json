@@ -1,0 +1,65 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 736,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "cancel": {
+    "success": true
+  },
+  "status": {
+    "status": "failed"
+  },
+  "nextStatus": {
+    "status": "queued"
+  },
+  "owningJob": null,
+  "nextJob": {
+    "id": "52af84d5-f690-4ff2-8722-e38096544e63",
+    "queue": "message_delivery",
+    "status": "pending",
+    "payload": {
+      "sessionId": "0250ad36-a174-47e3-b85e-04ee0aea2e8b",
+      "messageUuid": "synthetic-next-input",
+      "origin": "chat"
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792961189617,
+    "createdAt": 1792961189613,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": null
+  },
+  "state": "idle",
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 753,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 0
+}

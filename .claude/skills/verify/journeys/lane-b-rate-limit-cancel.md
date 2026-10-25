@@ -14,5 +14,11 @@ SQL. The baseline must fail with one forbidden main write and an unsettled episo
 
 Evidence is evidence/rate-limit-cancel.json. The helper closes its own transport
 and daemon and removes temporary home, workspace and data after saving evidence.
+Unit tests hold the writer boundary before fallback-owner lookup, reject a writer
+failure without inline fallback, and inject a settlement error to prove the job
+deletion rolls back. They retain consumed status, other-session isolation and
+idempotent notification, reject a released claim's old heartbeat, and delay
+publication and cooldown clearing to check their ordering outside the transaction.
+
 This journey does not exercise a provider turn, other cancellation paths, reclaim,
 manual retry, shutdown recovery, or performance and contention targets.

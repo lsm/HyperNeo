@@ -922,7 +922,7 @@ export function setupSessionHandlers(
     if (!agentSession) {
       throw new Error('Session not found');
     }
-    agentSession.cancelRateLimitRetry();
+    await agentSession.cancelRateLimitRetry();
     return { success: true };
   });
 
