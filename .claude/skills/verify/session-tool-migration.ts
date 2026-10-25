@@ -31,6 +31,7 @@ try {
     const now = new Date().toISOString();
     await seed.createSession({ id, title: id, workspacePath: join(run, 'workspace'), createdAt: now, lastActiveAt: now, status: 'paused', config: { model: 'haiku', maxTokens: 8192, temperature: 1, queryMode: 'manual', tools: { disabledSkills: index === 1 ? [skillId] : [] }, sdkToolsPreset: ['Read'] }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 }, ...(index >= 2 ? {context: {spaceId}} : {}) }, { enforceWorkspaceOwnership: false });
   }
+  seed.getDatabase().prepare('INSERT INTO sessions (id,title,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?)').run('corrupt-config', 'Synthetic corrupt row', new Date().toISOString(), new Date().toISOString(), 'paused', '{broken', '{}');
 } finally { await seed.close(); }
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
@@ -45,6 +46,8 @@ for (const boot of [1, 2]) {
   hub.registerTransport(transport);
   try {
     await transport.initialize();
+    assert.deepEqual(app.db.getDatabase().prepare('SELECT config FROM sessions WHERE id=?').get('corrupt-config'), { config: '{broken' });
+    evidence.corruptRowDoesNotBlockStartup = true;
     const sessions: Session[] = [];
     for (const sessionId of ids) sessions.push((await hub.request<{session: Session}>('session.get', {sessionId})).session);
     const snapshots = sessions.map(session => session.config.toolSelection);

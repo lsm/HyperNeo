@@ -217,9 +217,55 @@ describe('legacy tool selection migration', () => {
     expect(global.toolSelectionDefaults.choices['skill:space-skill'].selected).toBe(false);
     expect(space.toolSelectionDefaults.choices['skill:space-skill'].selected).toBe(true);
   });
-  it('rolls back the whole migration when a stored configuration cannot be parsed', () => {
+  it('skips malformed or non-object configs while migrating healthy rows', () => {
     session('good');
-    db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?)').run('bad', '{broken', '{}', '{}');
+    const invalid = ['{broken', 'null', '[]', '42', '"text"'];
+    for (const [index, raw] of invalid.entries())
+      db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?)').run(`bad-${index}`, raw, '{}', '{}');
+    expect(migrateSessionToolSelections(db, catalog)).toBe(3);
+    expect(selected('good')).toBe(true);
+    for (const [index, raw] of invalid.entries())
+      expect(db.prepare('SELECT config FROM sessions WHERE id=?').get(`bad-${index}`)).toEqual({
+        config: raw,
+      });
+  });
+
+  it('uses empty context and metadata for malformed or non-object values without rewriting them', () => {
+    const invalid = ['{broken', 'null', '[]', '42', '"text"'];
+    for (const [index, raw] of invalid.entries())
+      db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?)').run(
+        `context-${index}`,
+        '{}',
+        raw,
+        raw
+      );
+    expect(migrateSessionToolSelections(db, catalog)).toBe(7);
+    for (const [index, raw] of invalid.entries()) {
+      expect(selected(`context-${index}`)).toBe(true);
+      expect(
+        db
+          .prepare('SELECT session_context, metadata FROM sessions WHERE id=?')
+          .get(`context-${index}`)
+      ).toEqual({ session_context: raw, metadata: raw });
+    }
+  });
+
+  it('leaves malformed Space and global configs unchanged without blocking session migration', () => {
+    session('good');
+    db.prepare('UPDATE spaces SET config=?').run('{broken');
+    db.prepare('UPDATE global_settings SET settings=?').run('null');
+    expect(migrateSessionToolSelections(db, catalog)).toBe(1);
+    expect(selected('good')).toBe(true);
+    expect(db.prepare('SELECT config FROM spaces').get()).toEqual({ config: '{broken' });
+    expect(db.prepare('SELECT settings FROM global_settings').get()).toEqual({ settings: 'null' });
+  });
+
+  it('rolls back all writes if a database write fails', () => {
+    session('good');
+    session('bad');
+    db.exec(
+      "CREATE TRIGGER refuse_selection BEFORE UPDATE ON sessions WHEN NEW.id='bad' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END"
+    );
     expect(() => migrateSessionToolSelections(db, catalog)).toThrow();
     expect(read('good').toolSelection).toBeUndefined();
     expect(
