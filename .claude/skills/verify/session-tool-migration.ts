@@ -80,6 +80,13 @@ for (const boot of [1, 2]) {
         ['settings.global.update', { updates: { toolSelectionDefaults: { version: 1, choices: {} } } }],
       ] as const) await assert.rejects(hub.request(method, params), /toolSelectionDefaults.*daemon/);
       evidence.ordinarySettingsPreserveDefaults = true;
+      const repairRepo = new SpaceRepository(app.db.getDatabase());
+      const repairSpace = repairRepo.createSpace({ name: 'Synthetic config repair', slug: 'synthetic-config-repair', workspacePath: join(run, 'repair-workspace') });
+      app.db.getDatabase().prepare('UPDATE spaces SET config=? WHERE id=?').run('{broken', repairSpace.id);
+      const repaired = repairRepo.updateSpace(repairSpace.id, { config: { maxConcurrentTasks: 5 } });
+      assert.deepEqual(repaired?.config, { maxConcurrentTasks: 5 });
+      assert.deepEqual(repairRepo.getSpace(repairSpace.id)?.config, { maxConcurrentTasks: 5 });
+      evidence.repositoryCanReplaceMalformedSpaceConfig = true;
       await hub.request('skill.setEnabled', { id: skillId, enabled: false });
       await hub.request('mcp.registry.setEnabled', { id: serverId, enabled: false });
     } else assert.deepEqual(snapshots, prior);

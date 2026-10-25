@@ -137,6 +137,21 @@ describe('SpaceRepository', () => {
   });
 
   describe('updateSpace', () => {
+    it('can replace malformed stored config with a valid ordinary config', () => {
+      const space = repo.createSpace({
+        workspacePath: '/workspace/corrupt',
+        slug: 'corrupt',
+        name: 'Corrupt config',
+      });
+      for (const raw of ['{broken', '']) {
+        db.prepare('UPDATE spaces SET config=? WHERE id=?').run(raw, space.id);
+        const updated = repo.updateSpace(space.id, { config: { maxConcurrentTasks: 5 } });
+        expect(updated?.config).toEqual({ maxConcurrentTasks: 5 });
+        expect(updated?.maxConcurrentTasks).toBe(5);
+        expect(repo.getSpace(space.id)?.config).toEqual({ maxConcurrentTasks: 5 });
+      }
+    });
+
     it('preserves daemon-owned defaults while replacing ordinary config', () => {
       const space = repo.createSpace({
         workspacePath: '/workspace/frozen',
