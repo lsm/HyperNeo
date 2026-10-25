@@ -1,0 +1,136 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 550,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "withdraw": {
+    "ok": true,
+    "value": {
+      "queuedSubmissionId": "01M5TFAVX3V3GDHBKZZN026BPK",
+      "withdrawn": true
+    }
+  },
+  "pendingJob": {
+    "id": "65a006f9-e35f-4230-8eb2-42e2c51121c1",
+    "queue": "mailbox",
+    "status": "dead",
+    "payload": {
+      "id": "01M5TFAVX3V3GDHBKZZN026BPK",
+      "to": {
+        "kind": "session",
+        "sessionId": "faf86c93-15a4-4a71-85b4-8fcfae6b075d"
+      },
+      "origin": "chat",
+      "message": {
+        "type": "user",
+        "message": {
+          "content": "Withdraw this queued input",
+          "role": "user"
+        },
+        "parent_tool_use_id": null
+      },
+      "messageUuid": "7253c7d9-b94b-4ab5-aebd-a47eca6415c3",
+      "status": "enqueued",
+      "policy": {
+        "ttlMs": 86400000,
+        "maxAttempts": 5,
+        "priority": 0
+      },
+      "deliveryMode": "defer"
+    },
+    "result": null,
+    "error": "driver_input_withdrawn",
+    "priority": 0,
+    "maxRetries": 4,
+    "retryCount": 0,
+    "runAt": 1792963604388,
+    "createdAt": 1792963604388,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": 1792963604393,
+    "claimToken": null
+  },
+  "retry": {
+    "ok": true,
+    "value": {
+      "queuedSubmissionId": "01M5TFAVX3V3GDHBKZZN026BPK",
+      "withdrawn": true
+    }
+  },
+  "materialized": {
+    "ok": true,
+    "value": {
+      "queuedSubmissionId": "01M5TFAVXBP2ZTN1GPHAVR5SQ8",
+      "withdrawn": true
+    }
+  },
+  "retainedMessageId": null,
+  "materializedJob": {
+    "id": "5b7fafb4-2436-4c26-94a3-167d417e09a5",
+    "queue": "mailbox",
+    "status": "dead",
+    "payload": {
+      "id": "01M5TFAVXBP2ZTN1GPHAVR5SQ8",
+      "to": {
+        "kind": "session",
+        "sessionId": "faf86c93-15a4-4a71-85b4-8fcfae6b075d"
+      },
+      "origin": "chat",
+      "message": {
+        "type": "user",
+        "message": {
+          "content": "Withdraw a materialized deferred input",
+          "role": "user"
+        },
+        "parent_tool_use_id": null
+      },
+      "messageUuid": "cb4b8443-4ce2-4226-b728-9abc1caa642d",
+      "status": "enqueued",
+      "policy": {
+        "ttlMs": 86400000,
+        "maxAttempts": 5,
+        "priority": 0
+      },
+      "deliveryMode": "defer"
+    },
+    "result": null,
+    "error": "driver_input_withdrawn",
+    "priority": 0,
+    "maxRetries": 4,
+    "retryCount": 0,
+    "runAt": 1792963604395,
+    "createdAt": 1792963604395,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": 1792963604403,
+    "claimToken": null
+  },
+  "removedDbId": "f8bc8a5f-93a7-482e-a056-fc32bfca97bc",
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 565,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 0
+}

@@ -46,7 +46,7 @@ try {
   const prepare = raw.prepare;
   let mainSqlAttempts = 0;
   raw.prepare = (...args) => {
-    if ((new Error().stack ?? '').includes('/drivers/owned-input-withdrawal.ts')) {
+    if (/\/(?:drivers\/owned-input-withdrawal|repositories\/owned-input-withdrawal-write)\.ts/.test(new Error().stack ?? '')) {
       mainSqlAttempts++;
       throw new Error('owned-input withdrawal admission SQL reached main connection');
     }
