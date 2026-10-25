@@ -5,6 +5,8 @@ Use the shared isolated in-process setup in SKILL.md with
 registration, SDK query or GUI is used. The helper first creates a fresh synthetic
 legacy database, then starts and stops two owned ephemeral daemons against it.
 It never reads or copies an existing database.
+A paused synthetic session has malformed config: both daemons must still start,
+healthy session RPCs must work, and the malformed source value must stay unchanged.
 
 Pass requires `session.get` over the real WebSocket RPC door to report version-1
 canonical selections for four pre-existing sessions: on, session skill veto off,
@@ -28,7 +30,8 @@ Focused tests are `session-tool-selection-migration.test.ts`,
 `session-tool-choice.test.ts`, `create-session-config.test.ts`,
 `resolve-mcp-servers.test.ts` and `query-options-builder.test.ts`. They also cover
 pinned workflow-slot vetoes, preservation of future versions and unrelated config,
-newly found legacy sessions, and malformed input leaving all rows untouched.
+newly found legacy sessions, malformed/non-object configs skipped without rewriting,
+empty fallback for malformed context/metadata, and transaction rollback on write failure.
 
 This slice persists choices only. Existing SDK tool building and settings setters
 still own active behavior; canonical activation, new-session creation from these

@@ -1,4 +1,4 @@
-import type { SessionConfig } from '@hyperneo/shared';
+import { parseJson, type SessionConfig } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PromptProvenanceInit } from '../../lib/agent/agent-session.ts';
 import {
@@ -29,9 +29,15 @@ interface ConfigRow {
   metadata?: string | null;
 }
 
+function parseObject<T extends object>(raw: string | null | undefined): T | null {
+  const value = parseJson<unknown>(raw ?? '{}', null);
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as T) : null;
+}
+
 function pinnedSlotVetoes(db: Database, metadata: string | null | undefined): string[] {
-  const provenance = (JSON.parse(metadata ?? '{}') as { promptProvenance?: PromptProvenanceInit })
-    .promptProvenance;
+  const provenance = parseObject<{ promptProvenance?: PromptProvenanceInit }>(
+    metadata
+  )?.promptProvenance;
   if (!provenance?.workflowRunId || !provenance.nodeId) return [];
   const run = new SpaceWorkflowRunRepository(db).getRun(provenance.workflowRunId);
   const workflow = run ? new SpaceWorkflowRepository(db).getWorkflowForRun(run) : null;
@@ -48,9 +54,12 @@ function planSelections(db: Database, catalog: ToolSelectionCatalog): SelectionW
   for (const row of db
     .prepare('SELECT id, config, session_context, metadata FROM sessions')
     .all() as ConfigRow[]) {
-    const config = JSON.parse(row.config ?? '{}') as SessionConfig;
-    if (Object.hasOwn(config, 'toolSelection')) continue;
-    const session = { id: String(row.id), context: JSON.parse(row.session_context ?? '{}') };
+    const config = parseObject<SessionConfig>(row.config);
+    if (!config || Object.hasOwn(config, 'toolSelection')) continue;
+    const session = {
+      id: String(row.id),
+      context: parseObject<{ spaceId?: string }>(row.session_context) ?? {},
+    };
     const toolSelection = projectLegacySessionToolSelection({
       ...catalog,
       session,
@@ -68,8 +77,8 @@ function planSelections(db: Database, catalog: ToolSelectionCatalog): SelectionW
     });
   }
   for (const row of db.prepare('SELECT id, config FROM spaces').all() as ConfigRow[]) {
-    const config = JSON.parse(row.config ?? '{}') as Record<string, unknown>;
-    if (Object.hasOwn(config, 'toolSelectionDefaults')) continue;
+    const config = parseObject<Record<string, unknown>>(row.config);
+    if (!config || Object.hasOwn(config, 'toolSelectionDefaults')) continue;
     const toolSelectionDefaults = projectLegacySessionToolSelection({
       ...catalog,
       session: { id: `defaults:space:${row.id}`, context: { spaceId: String(row.id) } },
@@ -87,8 +96,8 @@ function planSelections(db: Database, catalog: ToolSelectionCatalog): SelectionW
     .prepare('SELECT id, settings AS config FROM global_settings WHERE id=1')
     .get() as ConfigRow | null;
   if (global) {
-    const config = JSON.parse(global.config ?? '{}') as Record<string, unknown>;
-    if (!Object.hasOwn(config, 'toolSelectionDefaults')) {
+    const config = parseObject<Record<string, unknown>>(global.config);
+    if (config && !Object.hasOwn(config, 'toolSelectionDefaults')) {
       const toolSelectionDefaults = projectLegacySessionToolSelection({
         ...catalog,
         session: { id: 'defaults:global' },
