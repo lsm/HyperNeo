@@ -219,10 +219,12 @@ describe('skill default RPC writes', () => {
   it('validation completion waits for its commit and leaves canonical intent intact', async () => {
     const handle = createSkillValidateHandler(manager, registry);
     const job = jobs.enqueue({ queue: 'skill.validate', payload: { skillId: 'notes' } });
+    skills.setValidationStatus('notes', 'pending');
     db.exec(
-      "CREATE TRIGGER reject_skill_validation BEFORE UPDATE OF validation_status ON skills BEGIN SELECT RAISE(ABORT,'synthetic validation failure'); END"
+      "CREATE TRIGGER reject_skill_validation BEFORE UPDATE OF validation_status ON skills WHEN NEW.validation_status='valid' BEGIN SELECT RAISE(ABORT,'synthetic validation failure'); END"
     );
     await expect(handle(job)).rejects.toThrow('synthetic validation failure');
+    expect(skills.get('notes')!.validationStatus).toBe('pending');
     expect(defaults()).toEqual(original);
   });
 });

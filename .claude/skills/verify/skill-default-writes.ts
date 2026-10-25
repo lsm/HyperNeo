@@ -49,6 +49,26 @@ try {
   await hub.request('skill.update', { id: skill.id, params: { enabled: true, config: { type: 'builtin', commandName: 'reworded-fixture' } } });
   assert.equal(readChoice(skill.id), true); assert.equal(readChoice(skill.id, true), true);
   evidence.skillCrudAndIntent = true;
+  const { server: first } = await hub.request<{ server: { id: string } }>('mcp.registry.create', { name: 'skill-first', sourceType: 'stdio', command: 'not-executed', enabled: false });
+  const { server: second } = await hub.request<{ server: { id: string } }>('mcp.registry.create', { name: 'skill-second', sourceType: 'stdio', command: 'not-executed', enabled: false });
+  const { skill: wrapper } = await hub.request<{ skill: AppSkill }>('skill.create', { params: { ...params, name: 'binding-fixture', sourceType: 'mcp_server', config: { type: 'mcp_server', appMcpServerId: first.id }, enabled: false } });
+  await Promise.all([
+    hub.request('skill.update', { id: wrapper.id, params: { config: { type: 'mcp_server', appMcpServerId: second.id } } }),
+    hub.request('skill.setEnabled', { id: wrapper.id, enabled: true }),
+  ]);
+  assert.equal(readDefault().choices[`mcp:${second.id}`].selected, true);
+  assert.equal(readDefault().choices[`mcp:${first.id}`].selected, false);
+  evidence.concurrentWrapperBinding = true;
+  let resolveSkills!: (rows: AppSkill[]) => void;
+  let rejectSkills!: (error: Error) => void;
+  const snapshot = new Promise<AppSkill[]>((resolve, reject) => { resolveSkills = resolve; rejectSkills = reject; });
+  const timer = setTimeout(() => rejectSkills(new Error('skills snapshot missing')), 5000);
+  const stopSkills = hub.onEvent<{ subscriptionId: string; rows: AppSkill[] }>('liveQuery.snapshot', event => { if (event.subscriptionId === 'skill-default-proof') resolveSkills(event.rows); });
+  try {
+    await hub.request('liveQuery.subscribe', { queryName: 'skills.list', params: [], subscriptionId: 'skill-default-proof' });
+    assert.equal((await snapshot).find(row => row.id === wrapper.id)!.enabled, true);
+  } finally { clearTimeout(timer); stopSkills(); await hub.request('liveQuery.unsubscribe', { subscriptionId: 'skill-default-proof' }); }
+  evidence.skillLiveQueryReadback = true;
   let notices = 0; stopEvents = app.internalEventBus.subscribe('skills.changed', () => { notices++; }, { subscriberName: 'skill-default-proof' });
   const before = readDefault();
   const jobsBefore = raw.prepare("SELECT count(*) AS n FROM job_queue WHERE queue='skill.validate'").get()!.n;
@@ -56,11 +76,16 @@ try {
   await assert.rejects(hub.request('skill.create', { params: { ...params, name: 'rejected-fixture' } }), /synthetic skill default failure/);
   assert.equal(app.db.skills.getByName('rejected-fixture'), null); assert.deepEqual(readDefault(), before); assert.equal(notices, 0);
   assert.equal(raw.prepare("SELECT count(*) AS n FROM job_queue WHERE queue='skill.validate'").get()!.n, jobsBefore);
+  await assert.rejects(hub.request('skill.installFromGit', { repoUrl: installUrl, commandName: 'rejected-install' }), /synthetic skill default failure/);
+  assert.equal(app.db.skills.getByName('rejected-install'), null);
+  assert.equal(existsSync(join(run, 'data/skill-plugins/rejected-install')), false);
+  assert.deepEqual(readDefault(), before); assert.equal(notices, 0);
+  evidence.rejectedInstallNotPublished = true;
   raw.exec('DROP TRIGGER reject_skill_defaults'); evidence.rollbackBeforeEnqueueOrNotice = true;
   const { skill: installed } = await hub.request<{ skill: AppSkill }>('skill.installFromGit', { repoUrl: installUrl, commandName: 'installed-fixture' });
   assert.equal(readChoice(installed.id), true); assert.match(readFileSync(join(run, 'data/skills/installed-fixture/SKILL.md'), 'utf8'), /Synthetic skill/);
   const repeated = await hub.request<{ skill: AppSkill }>('skill.installFromGit', { repoUrl: installUrl, commandName: 'installed-fixture' });
-  assert.equal(repeated.skill.id, installed.id); assert.equal(fetches, 1); evidence.syntheticInstallAndIdempotence = true;
+  assert.equal(repeated.skill.id, installed.id); assert.equal(fetches, 2); evidence.syntheticInstallAndIdempotence = true;
   await assert.rejects(hub.request('skill.create', { params: { ...params, name: 'invalid-fixture', config: { type: 'builtin', commandName: '' } } }), /commandName/);
   await hub.request('skill.delete', { id: skill.id }); assert.equal(readChoice(skill.id), false); assert.equal(app.db.skills.get(skill.id), null);
   await app.sessionManager.interruptInMemorySession(sessionId);

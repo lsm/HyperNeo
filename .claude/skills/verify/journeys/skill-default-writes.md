@@ -9,12 +9,19 @@ in process; it does not fetch skill files from the network.
 Before wiring, skill.create succeeds but its canonical default is absent. Preserve
 that failing reproduction. With wiring, require evidence/skill-default-writes.json
 pass=true, skillCrudAndIntent, rollbackBeforeEnqueueOrNotice,
-syntheticInstallAndIdempotence, frozenSessionPreserved and restartRetainedDefaults:
+syntheticInstallAndIdempotence, rejectedInstallNotPublished, concurrentWrapperBinding,
+skillLiveQueryReadback, frozenSessionPreserved and restartRetainedDefaults:
 
 - Real skill create/update/enable/delete RPCs change catalog and global/Space
   defaults together. Inspect the synthetic DB alongside RPC replies.
 - Inject a later Space write failure. The catalog row and global defaults roll
   back, with no validation job or skills.changed success notice.
+- A concurrent wrapper rebind then enable chooses the committed backing server,
+  with no default accidentally enabled for the old server. Read the wrapper
+  through the same skills.list LiveQuery snapshot as the web.
+- Refuse an install at the same transactional boundary: no catalog/default row,
+  plugin wrapper or success notice is published. Downloaded fixture files remain
+  preparatory input and do not make the skill available.
 - Install a synthetic SKILL.md, read the saved file, repeat the RPC and require
   the same ID without a second fetch. Invalid config still fails admission.
 - Cold session.get preserves its frozen choices and native Read preset. The

@@ -2,7 +2,7 @@ import { getDataDir } from './data-dir.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { access, cp, mkdir, writeFile } from 'node:fs/promises';
-import { generateUUID, isBuiltinSkillConfig, isMcpServerSkillConfig } from '@hyperneo/shared';
+import { generateUUID, isBuiltinSkillConfig } from '@hyperneo/shared';
 import type {
   AppSkill,
   AppSkillConfig,
@@ -536,9 +536,7 @@ export class SkillsManager {
           ? []
           : [
               {
-                key: isMcpServerSkillConfig(skill.config)
-                  ? `mcp:${skill.config.appMcpServerId}`
-                  : `skill:${skill.id}`,
+                key: `skill:${skill.id}`,
                 selected: enabled,
               },
             ],

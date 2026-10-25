@@ -132,6 +132,12 @@ function commit(
       results.push(result);
     }
     const after = catalog(prepared.repos);
+    const requested = request.edits.map((edit) => {
+      const skill = after.skills.find((skill) => `skill:${skill.id}` === edit.key);
+      return skill?.config.type === 'mcp_server'
+        ? { ...edit, key: `mcp:${skill.config.appMcpServerId}` as const }
+        : edit;
+    });
     const inherited =
       prepared.defaults.get(1) ??
       projectLegacySessionToolSelection({
@@ -145,7 +151,7 @@ function commit(
         id: `defaults:${spaceId ?? 'global'}`,
         context: spaceId ? { spaceId } : {},
       };
-      const edits = request.edits
+      const edits = requested
         .filter(
           (edit) =>
             edit.selected !== null ||
