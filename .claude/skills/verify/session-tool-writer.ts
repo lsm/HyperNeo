@@ -51,9 +51,15 @@ try {
   const tools={disabledSkills:[],useClaudeCodePreset:false};
   const mainTransaction=raw.transaction;
   const mainPrepare=raw.prepare;
-  const forbidMainSql=()=>{throw new Error('preference coordinator used main-thread SQLite');};
-  raw.transaction=forbidMainSql;
-  raw.prepare=forbidMainSql;
+  let mainSqlAttempts=0;
+  const checkMainSql=()=>{
+    if (/\/(?:write-session-tool-preferences|session-tool-preference-read)\.ts/.test(new Error().stack??'')) {
+      mainSqlAttempts++;
+      throw new Error('preference coordinator used main-thread SQLite');
+    }
+  };
+  raw.transaction=(...args)=>{checkMainSql();return Reflect.apply(mainTransaction,raw,args);};
+  raw.prepare=(...args)=>{checkMainSql();return Reflect.apply(mainPrepare,raw,args);};
   let saved:Awaited<ReturnType<typeof write>>;
   try {
     saved=await write(sessionId,{kind:'skills',disabledSkills:[]},tools);
@@ -61,6 +67,7 @@ try {
     raw.transaction=mainTransaction;
     raw.prepare=mainPrepare;
   }
+  assert.equal(mainSqlAttempts,0);
   evidence.captureAndCommitOffMain=true;
   assert(saved.ok);
   assert.equal(saved.selection.choices[`mcp:${server.id}`]?.selected,true);
@@ -101,7 +108,7 @@ try {
   assert.equal(app.db.mcpEnablement.getOverride('session',sessionId,server.id),null);
   function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};}
   const captured=deferred();const held=deferred();
-  const data:PreferenceDatabase={getDatabase:()=>raw,captureSessionRuntimeSettings:id=>app!.db.captureSessionRuntimeSettings(id),casSessionToolPreferences:async(...args)=>{captured.resolve();await held.promise;return app!.db.casSessionToolPreferences(...args);},skills:app.db.skills,appMcpServers:app.db.appMcpServers,mcpEnablement:app.db.mcpEnablement};
+  const data:PreferenceDatabase={gateway:app.db.gateway,casSessionToolPreferences:async(...args)=>{captured.resolve();await held.promise;return app!.db.casSessionToolPreferences(...args);}};
   const racingWrite=createSessionToolPreferenceWriter(data,async()=>{throw new Error('stale write must not notify');});
   const pending=racingWrite(sessionId,{kind:'mcp',serverId:server.id,enabled:true});
   void pending.catch(()=>{});
