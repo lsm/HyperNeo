@@ -1,5 +1,5 @@
 {
-  "stage": "local draft; not ready for PR",
+  "stage": "historical unit-only draft under the disk hold; superseded by observed.json",
   "base": "fc0f3bdcc06a152dea5060630bd0d5b7d39d712c",
   "regressionCommit": "0da4d96baf86066338b10f98eb404dffe645260c",
   "red": {
@@ -38,5 +38,6 @@
   "notes": [
     "The initial async-read draft broke a legacy coalescing assertion under contention; moving coalescing ahead of the snapshot fixes it without weakening the assertion.",
     "Draft commits defer repository-wide hooks under the explicit disk hold."
-  ]
+  ],
+  "supersededBy": "observed.json"
 }
