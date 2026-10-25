@@ -15,6 +15,8 @@ type AdmissionMessage = SDKUserMessage & {
   referenceMetadata?: ReferenceMetadata;
   taskKickoff?: boolean;
   workerReportKind?: MailboxMessage['workerReportKind'];
+  neoWakeEvent?: MailboxMessage['neoWakeEvent'];
+  neoBatchContent?: MailboxMessage['neoBatchContent'];
 };
 
 export interface MailboxAdmissionPlan {

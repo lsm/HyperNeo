@@ -1,4 +1,6 @@
 import { captureDirectMailboxAdmission } from '../tasks/direct-mailbox-admission.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
@@ -92,6 +94,16 @@ function registerDelivery(
       jobQueue: deps.jobQueue,
       db: deps.db.getDatabase(),
       sdkMessageRepo: deps.db.getSDKMessageRepo(),
+      prepareEntry: (entry, jobId) =>
+        gatewayFor(deps.db.getDatabase()).call(
+          neoWakeQueueWrite,
+          'prepare',
+          entry,
+          jobId,
+          entry.origin === 'chat' ||
+            !!entry.message.workerReportKind ||
+            !!entry.message.neoWakeEvent
+        ),
       getSession: deps.getSession,
       captureAdmission: (entry) => captureDirectMailboxAdmission(deps.db.getDatabase(), entry),
       isSessionArchived: deps.isSessionArchived,

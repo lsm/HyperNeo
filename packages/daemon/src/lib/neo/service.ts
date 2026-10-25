@@ -1,4 +1,7 @@
 import type { UUID } from 'node:crypto';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
+import { createMailboxEntry } from '../mailbox/entry.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
@@ -521,6 +524,7 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
+    await gatewayFor(this.db.getDatabase()).call(neoWakeQueueWrite, 'flushDue', Date.now());
     await runLagPhase('neo:driver:todo_refresh', () =>
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))
     );
@@ -649,14 +653,14 @@ export class NeoService {
     messageId: string,
     content: MailboxMessageContent,
     fromSessionId: string,
-    kind?: 'focused_status' | 'quiet_heartbeat'
+    kind?: 'focused_status' | 'quiet_heartbeat' | 'event'
   ): Promise<void> {
     return this.deliver(
       sessionId,
       messageId,
       content,
       fromSessionId,
-      !!kind && this.repo.getBindingBySession(sessionId)?.kind === 'neo'
+      kind !== 'event' && this.repo.getBindingBySession(sessionId)?.kind === 'neo'
     );
   }
 
@@ -696,6 +700,21 @@ export class NeoService {
     )
       return;
     if (recordOnly) {
+      await gatewayFor(this.db.getDatabase()).call(
+        neoWakeQueueWrite,
+        'hold',
+        createMailboxEntry({
+          to: { kind: 'session', sessionId },
+          origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
+          messageUuid: messageId,
+          message: {
+            type: 'user',
+            parent_tool_use_id: null,
+            message: { content },
+            inputKind: 'system',
+          },
+        })
+      );
       const message = {
         type: 'user' as const,
         uuid: messageId as UUID,
@@ -716,6 +735,7 @@ export class NeoService {
         message: { role: 'user', content },
         parent_tool_use_id: null,
         inputKind: 'system',
+        neoWakeEvent: true,
       },
       deliveryMode: 'immediate',
       jobQueue: queue,

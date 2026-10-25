@@ -217,7 +217,14 @@ describe('mailSessionEvent', () => {
         sdkMessageRepo: db.sdkMessageRepo,
         getSession: async () => ({}),
         isSessionArchived: () => false,
-        prepareEntry: async (entry, id) => new NeoWakeQueueRepository(db.db).prepare(entry, id, entry.origin === 'chat' || !!entry.message.workerReportKind || !!entry.message.neoWakeEvent),
+        prepareEntry: async (entry, id) =>
+          new NeoWakeQueueRepository(db.db).prepare(
+            entry,
+            id,
+            entry.origin === 'chat' ||
+              !!entry.message.workerReportKind ||
+              !!entry.message.neoWakeEvent
+          ),
       });
       await handler(db.jobQueue.dequeue('mailbox')[0]);
       expect(db.sdkRows().map((row) => row.sdk_uuid)).toEqual(['urgent-review']);

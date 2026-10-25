@@ -116,6 +116,7 @@ export async function mailSessionEvent(
       message: { role: 'user' as const, content: delivery.text },
       parent_tool_use_id: null,
       inputKind: 'system' as const,
+      neoWakeEvent: true,
     },
   };
   const digest = (value: unknown) =>
