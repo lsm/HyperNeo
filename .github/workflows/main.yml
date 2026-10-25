@@ -97,6 +97,15 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Fetch previous dev tip for the DB baseline ratchet
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        env:
+          PREVIOUS_DEV: ${{ github.event.before }}
+        run: git fetch --no-tags --depth=1 origin "$PREVIOUS_DEV"
+
+      - name: Test main-thread DB ratchet CLI
+        run: bun run test:db-main-thread
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -150,6 +159,8 @@ jobs:
       # chain. strip-comments.ts enumerates files via `git ls-files`
       # (index-only), so the shallow checkout is fine.
       - name: Run make check
+        env:
+          DB_RATCHET_BASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.event.before || 'origin/dev' }}
         run: make check
 
       - name: Verify exact version pins
