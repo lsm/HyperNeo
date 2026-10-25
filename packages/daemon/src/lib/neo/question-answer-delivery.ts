@@ -17,7 +17,14 @@ const NotSent = z.union([
   z.object({ ok: z.literal(false), notSent: z.literal(true) }),
   z.object({
     ok: z.literal(false),
-    reason: z.enum(['not_open', 'not_found', 'unsupported', 'not_supported', 'unknown_adapter']),
+    reason: z.enum([
+      'not_open',
+      'not_found',
+      'unsupported',
+      'not_supported',
+      'unknown_adapter',
+      'busy',
+    ]),
   }),
 ]);
 
@@ -99,14 +106,7 @@ export function createNeoQuestionAnswerDelivery(
           const result = await invoke(caller, 'work.send', { ref, message: text });
           const value = result.kind === 'completed' ? result.value : null;
           const sent = Sent.safeParse(value);
-          if (
-            sent.success &&
-            !sent.data.value.unconfirmed &&
-            (sent.data.value.delivered ||
-              sent.data.value.receipt ||
-              sent.data.value.queuedSubmissionId)
-          )
-            receipt = key;
+          if (sent.success && !sent.data.value.unconfirmed) receipt = key;
           else if (NotSent.safeParse(value).success) store.questionAnswers.retry(route.id, key);
         } else {
           const status = await invoke(caller, 'work.status', { ref });
