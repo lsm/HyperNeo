@@ -114,7 +114,7 @@ test.skipIf(process.platform === 'win32')(
       args[0] = join(root, 'missing-executable');
     });
     try {
-      await expect(releaseWorkerSandbox(root)).rejects.toThrow();
+      await expect(releaseWorkerSandbox(root)).rejects.toThrow('missing-executable');
       expect(existsSync(env.TMPDIR)).toBe(true);
       expect(existsSync(env.XDG_CACHE_HOME)).toBe(true);
     } finally {
@@ -147,6 +147,34 @@ test.skipIf(process.platform === 'win32').each(['file', 'symlink'])(
     } finally {
       await releaseWorkerSandbox(root);
       rmSync(fixture, { recursive: true, force: true });
+    }
+  }
+);
+
+test.skipIf(process.platform === 'win32').each([1, 8192])(
+  'cleanup failure preserves bounded stderr and exit status (%s output chunks)',
+  async (chunks) => {
+    const root = mkdtempSync(join(tmpdir(), 'worker-cleanup-diagnostic-'));
+    mkdirSync(join(root, '.git'));
+    const env = await prepareWorkerSandbox(root);
+    beforeLaunch.mockImplementation((args) => {
+      args[args.indexOf('/bin/sh') + 2] = `printf 'synthetic cleanup mount diagnostic:' >&2
+      i=0; while [ "$i" -lt ${chunks} ]; do printf '0123456789abcdef' >&2; i=$((i+1)); done
+      printf 'diagnostic-end' >&2; exit 23`;
+    });
+    try {
+      const failure = await releaseWorkerSandbox(root).catch((error) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure.message).toContain('synthetic cleanup mount diagnostic:');
+      expect(failure.message).toContain('23');
+      expect(failure.message.length).toBeLessThan(4600);
+      if (chunks === 8192) expect(failure.message).not.toContain('diagnostic-end');
+      expect(existsSync(env.TMPDIR)).toBe(true);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(true);
+    } finally {
+      beforeLaunch.mockReset();
+      await releaseWorkerSandbox(root);
+      rmSync(root, { recursive: true, force: true });
     }
   }
 );
