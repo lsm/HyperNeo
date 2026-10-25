@@ -1,3 +1,5 @@
+import { vi } from 'vitest';
+import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import { prepareWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { existsSync } from 'node:fs';
 import { requireClaudeReplyDestination } from '../../../../src/lib/drivers/claude-inbox-submit';
@@ -544,6 +546,41 @@ describe('claude-desktop adapter against the app session records', () => {
         .flatMap((group) => group.work)
         .map((work) => work.ref.id)
     ).not.toContain(ref.id);
+  });
+
+  test('keeps the Claude record unarchived when runtime removal fails', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const failure = vi
+      .spyOn(sandbox, 'releaseWorkerSandbox')
+      .mockRejectedValue(new Error('synthetic EBUSY'));
+    try {
+      await expect(
+        adapter([]).archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+      ).rejects.toThrow('synthetic EBUSY');
+      expect(JSON.parse(readFileSync(path, 'utf8')).isArchived).not.toBe(true);
+    } finally {
+      failure.mockRestore();
+    }
+  });
+
+  test('retries runtime release for an already archived Claude session', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const env = await prepareWorkerSandbox(root);
+    writeFileSync(
+      path,
+      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: root, isArchived: true })
+    );
+    try {
+      expect(
+        await adapter([]).archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+      ).toEqual({ ok: true, value: { archived: false } });
+      expect(existsSync(env.TMPDIR)).toBe(false);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+    } finally {
+      await sandbox.releaseWorkerSandbox(root);
+    }
   });
 
   test.each(['busy', 'waiting', 'unknown'])(

@@ -2,7 +2,7 @@ import { releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/w
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -190,7 +190,17 @@ try {
   writeFileSync(join(run, 'sdk-finish'), 'done');
   await new Promise<void>(resolve => sdkModel!.once('exit', () => resolve()));
   sdkModel = undefined;
-  const archived = await rpc('rpc:session.archive', { sessionId: sdk.value.ref.id, confirmed: true });
+  const locked = join(sdkTemp, 'locked');
+  assert(existsSync(locked), 'Real SDK Bash must create its locked runtime directory');
+  let archived: unknown;
+  try {
+    archived = await rpc('rpc:session.archive', { sessionId: sdk.value.ref.id, confirmed: true });
+  } catch (error) {
+    writeFileSync(join(run, 'evidence/archive-error.json'), JSON.stringify({ error: String(error), status: app.db.getSession(sdk.value.ref.id)?.status, runtimeRetained: existsSync(sdkSettings.env.TMPDIR) }, null, 2));
+    throw error;
+  } finally {
+    if (existsSync(locked)) chmodSync(locked, 0o700);
+  }
   assert.equal(app.db.getSession(sdk.value.ref.id)?.status, 'archived');
   assert(!existsSync(sdkSettings.env.TMPDIR), 'Archive must release private temp root');
   assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'Archive must release private cache root');
@@ -201,7 +211,7 @@ try {
   assert(!existsSync(sdkSettings.env.TMPDIR), 'A later sibling must not resurrect archived temp roots');
   assert(!existsSync(sdkSettings.env.XDG_CACHE_HOME), 'A later sibling must not resurrect archived cache roots');
   await rpc('rpc:session.archive', { sessionId: afterArchive.value.ref.id, confirmed: true });
-  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, tempReleased: true, cacheReleased: true, cloneRetained: true, notResurrectedByLaterSibling: true }, null, 2));
+  writeFileSync(join(run, 'evidence/runtime-cleanup.json'), JSON.stringify({ archived, lockedNonemptyDirectoryReleased: true, tempReleased: true, cacheReleased: true, cloneRetained: true, notResurrectedByLaterSibling: true }, null, 2));
   console.log(`PASS Codex Desktop, Claude Desktop and real HyperNeo SDK outside refusal + inside/Git/temp/cache/network: ${run}/evidence`);
 
 

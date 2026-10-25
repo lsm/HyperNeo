@@ -21,6 +21,7 @@ printf 'temp-status=%s\\n' "$?"
 protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine != 'codex' else []
 policy_before = {path: path.read_bytes() for path in protected}
 if engine == 'sdk':
+    with probe.open('a') as script: script.write('mkdir -p "$TMPDIR/locked"; printf synthetic > "$TMPDIR/locked/file"; chmod 000 "$TMPDIR/locked"\n')
     with probe.open('a') as script: script.write('printf synthetic-report > "$HYPERNEO_HANDOFF_DIR/sandbox-report.txt"\n')
 with probe.open('a') as script:
     for path in protected: script.write(f"rm '{path}'\n")
