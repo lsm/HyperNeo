@@ -1,4 +1,6 @@
 import { describe, test, expect } from 'bun:test';
+import { THINKING_LEVEL_LABELS } from '@hyperneo/shared';
+import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -112,6 +114,33 @@ describe('coding stage facts', () => {
 });
 
 describe('coding provenance policy', () => {
+  test.each(Object.values(THINKING_LEVEL_LABELS).map((label) => label.toLowerCase()))(
+    'accepts the emitted HyperNeo signature with recorded effort %s',
+    (effort) => {
+      const { db, ledger } = setup();
+      try {
+        const body = withCodingWorkerProvenance('Write the PR.', {
+          model: 'gpt-6.1-sol',
+          effort,
+          harness: 'hyperneo',
+        });
+        expect(body).toContain(`Agent: gpt-6.1-sol (effort: ${effort}) via HyperNeo`);
+        expect(ledger.reviewerPolicy('synthetic/stages', body, reviewer)).toMatchObject({
+          qualifies: true,
+          preferred: true,
+          reason: 'different_model',
+        });
+        expect(
+          ledger.reviewerPolicy('synthetic/stages', body, {
+            ...reviewer,
+            model: 'openai/gpt-6.1',
+          })
+        ).toMatchObject({ qualifies: false, reason: 'same_model' });
+      } finally {
+        db.close();
+      }
+    }
+  );
   test('requires an exact id and effort for independent review', () => {
     const { db, ledger } = setup();
     try {

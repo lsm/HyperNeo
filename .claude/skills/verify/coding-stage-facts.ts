@@ -64,6 +64,17 @@ try {
         assert.equal(messages.length, 1);
         assert(messages[0].includes('Agent: gpt-6.1-sol (effort: high) via Codex'));
         evidence.push({ workerInbox: messages[0] });
+        for (const effort of ['extra high', 'off']) {
+          const hyperneoRef = { ...ref, adapter: 'hyperneo' };
+          db.prepare('UPDATE neo_todo_sessions SET ref = ?, target = ?, actual_effort = ? WHERE todo_id = ?').run(JSON.stringify(hyperneoRef), JSON.stringify({ verb: 'send', ref: hyperneoRef }), effort, 'todo-7');
+          const followed = await rpc('neo.todo.continue', { todoId: 'todo-7', message: 'Copy the recorded signature.' }) as { ok: boolean };
+          assert.equal(followed.ok, true);
+          const body = messages.at(-1)!;
+          assert(body.includes(`Agent: gpt-6.1-sol (effort: ${effort}) via HyperNeo`));
+          const policy = ledger.reviewerPolicy('synthetic/stages', body, reviewer);
+          assert.equal(policy.qualifies, true, `Recorded effort ${effort}: ${policy.reason}`);
+          evidence.push({ effort, workerInbox: body, policy });
+        }
         for (const body of ['Agent: GPT-6 via Codex', 'Agent: gpt-6.1-sol via Codex', 'Agent: GPT-6 (effort: high) via Codex']) {
           const repair = ledger.reviewerPolicy('synthetic/stages', body, reviewer);
           assert.equal(repair.qualifies, false);
