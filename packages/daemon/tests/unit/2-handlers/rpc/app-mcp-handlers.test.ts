@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { AppMcpServer, MessageHub } from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import { createTables } from '../../../../src/storage/schema';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { registerAppMcpHandlers } from '../../../../src/lib/rpc-handlers/app-mcp-handlers';
@@ -10,6 +12,7 @@ import { noOpReactiveDb } from '../../../helpers/reactive-database';
 type RequestHandler = (data: unknown, context?: unknown) => unknown;
 
 let db: BunDatabase;
+let gateway: DbGateway;
 let appMcpServers: AppMcpServerRepository;
 let handlers: Map<string, RequestHandler>;
 
@@ -27,17 +30,22 @@ function createMockHub(): MessageHub {
 beforeEach(() => {
   db = new BunDatabase(':memory:');
   createTables(db);
+  createSpaceTables(db);
+  gateway = new DbGateway(':memory:', db);
   appMcpServers = new AppMcpServerRepository(db, noOpReactiveDb);
   handlers = new Map();
   registerAppMcpHandlers(createMockHub(), {
-    db: { appMcpServers },
+    db: { appMcpServers, gateway },
     internalEventBus: {
       publish: mock(async () => {}),
       subscribe: mock(() => () => {}),
     } as unknown as InternalEventBus<never>,
   });
 });
-afterEach(() => db.close());
+afterEach(async () => {
+  await gateway.close();
+  db.close();
+});
 
 function call(method: string, data: unknown) {
   const handler = handlers.get(method);

@@ -36,7 +36,7 @@ const readGlobal = () =>
   ).toolSelectionDefaults;
 const readSpace = (id = 'space') =>
   (spaces.getSpace(id)!.config as Record<string, unknown>).toolSelectionDefaults;
-const apply = (args: ToolDefaultTransition) => gateway.run(toolDefaultTransitions, args);
+const apply = (args: ToolDefaultTransition) => gateway.call(toolDefaultTransitions, 'apply', args);
 const update = (enabled = true): ToolDefaultTransition => ({
   mutations: [{ repository: 'registry', method: 'update', args: ['browser', { enabled }] }],
   edits: [{ key: 'mcp:browser', selected: enabled }],
