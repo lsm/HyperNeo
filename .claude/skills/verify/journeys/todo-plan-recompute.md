@@ -3,7 +3,8 @@
 Read the shared isolation rules in SKILL.md. This journey needs no provider,
 model, HTTP mock or GUI. It owns a real test daemon on an ephemeral non-8399
 port, a fresh SQLite database/home, a refusing GitHub PR fixture executable,
-and a synthetic Codex app-server Unix socket. Nothing uses a real app or DB.
+and a synthetic Codex app-server Unix socket. Its local `ps` stub reports no
+running Desktop app so host GUI state cannot divert sends to native IPC. Nothing uses a real app or DB.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-todo-plan-XXXXXX)
