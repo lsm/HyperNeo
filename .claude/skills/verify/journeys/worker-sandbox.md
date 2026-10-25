@@ -255,3 +255,11 @@ bubblewrap installation on a native Linux host. Test-first commit `72efec8b96`
 records the old opaque RPC failure. Focused real-child tests additionally cover
 missing executables and output larger than a pipe buffer: diagnostics identify the
 executable and exit status, retain at most 4 KiB of stderr, and drain the rest.
+
+
+The Linux CI startup probe in `8b458741c6` exposed the preceding failures as
+`bwrap: setting up uid map: Permission denied`, before any application test ran.
+The disposable Ubuntu runner now permits that mapping before the probe. Both
+startup and the actual cleanup write-boundary tests must pass; installing the
+binary alone is insufficient. Native worker containment on Linux remains a
+separate unverified claim even when Linux cleanup-policy tests pass.

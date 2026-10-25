@@ -353,6 +353,7 @@ jobs:
       - name: Install cleanup sandbox
         run: |
           sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
 
       - name: Install dependencies
@@ -438,6 +439,7 @@ jobs:
       - name: Install cleanup sandbox
         run: |
           sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
 
       - name: Install dependencies
