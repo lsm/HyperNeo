@@ -9,13 +9,13 @@ It waits for the isolated database's startup body copy before submitting reports
 
 Send twenty distinct free-form worker messages through the real message.send
 operation. All twenty must be accepted, with zero coordinator model requests.
-Send an explicit kind=blocked report: exactly one coordinator request must arrive,
-containing all twenty queued messages in order followed by the blocker. Send a
-kind=question report and observe one more request immediately. Send two further
+Send an explicit kind=blocked report: a separate batch request must contain all
+twenty queued messages in order, followed by the unchanged blocker in its own
+request. Send a kind=question report and observe one more request immediately. Send two further
 free-form messages and immediately submit human input through neo.message.send;
 both pending messages must arrive in a separate system-forwarded batch request
 before the unchanged human request. These add two coordinator requests; the
-final count is four. The human request may retain the prior batch in history.
+final count is five. The human request may retain the prior batch in history.
 
 Before the blocker, message.status must report queued for all twenty parked
 notes. After the blocker is consumed, it must report delivered for those notes.

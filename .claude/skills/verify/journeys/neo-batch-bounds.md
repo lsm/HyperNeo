@@ -8,10 +8,12 @@ disabled only for this transport proof.
 
 Send 120 free-form reports, each with 2,048 repeated payload bytes and a unique
 sequence label, then an explicit blocked report. All must be accepted. The
-coordinator must start once with at most 64 KiB of user prompt content. Read the
+coordinator must receive one batch with at most 64 KiB of user prompt content,
+then the unchanged blocker in its own request. Read the
 complete reference actually present in that model request through the real
 handoff.read operation, following nextOffset until complete. Every sequence
-label and its full payload must survive in order, followed by the blocker.
+label and its full payload must survive in order; the blocker stays outside
+the file. Two requests/results must complete in total.
 
 Retain evidence/bounds.json, evidence/observed.json, model request JSON files
 and proof.log. The pre-fix journey fails with an oversized prompt. This verifies

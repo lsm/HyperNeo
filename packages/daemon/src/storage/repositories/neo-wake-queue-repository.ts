@@ -5,14 +5,8 @@ import {
   type PersistPromptArgs,
 } from '../../lib/agent/message-delivery-outbox.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
-import {
-  createMailboxEntry,
-  type MailboxEntry,
-  type MailboxMessageContent,
-} from '../../lib/mailbox/entry.ts';
-import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
+import { type MailboxEntry, type MailboxMessageContent } from '../../lib/mailbox/entry.ts';
 import { decodeUlidTimestamp } from '../../lib/mailbox/ulid.ts';
-import { planMailboxAdmission } from '../../lib/mailbox/admission-plan.ts';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, PromptContentConflictError } from '../../lib/agent/prompt-comparison.ts';
 
@@ -29,11 +23,13 @@ export class NeoWakeQueueRepository {
       'sdkMessageRepo' | 'jobQueue' | 'hold' | 'deferPostSaveSideEffects'
     > & {
       at: number;
+      before?: string;
+      pendingOnly?: boolean;
     }
   ): void {
     const uuid = randomUUID();
     const empty: MailboxMessageContent = [];
-    const batch = this.attach(sessionId, empty, undefined, uuid);
+    const batch = this.attach(sessionId, empty, options.before, uuid, options.pendingOnly);
     if (batch === empty) return;
     const content = [
       {
@@ -137,7 +133,12 @@ export class NeoWakeQueueRepository {
     ];
   }
 
-  prepare(entry: MailboxEntry, jobId: string, wake: boolean): MailboxEntry | null {
+  prepare(
+    entry: MailboxEntry,
+    jobId: string,
+    wake: boolean,
+    options: Omit<Parameters<NeoWakeQueueRepository['release']>[1], 'at'>
+  ): MailboxEntry | null {
     if (entry.to.kind !== 'session') return entry;
     return this.db.transaction(() => {
       if (!wake) {
@@ -146,60 +147,28 @@ export class NeoWakeQueueRepository {
       }
       const job = new JobQueueRepository(this.db).getJob(jobId)!;
       if (job.payload.neoBatchAttached) return entry;
-      const batch = this.attach(
-        entry.to.kind === 'session' ? entry.to.sessionId : '',
-        entry.message.message.content,
-        entry.id,
-        planMailboxAdmission({ ...entry, to: entry.to as { kind: 'session'; sessionId: string } })
-          .message.uuid
-      );
-      const message =
-        batch === entry.message.message.content
-          ? entry.message
-          : { ...entry.message, neoBatchContent: batch };
-      this.db
-        .prepare(
-          "UPDATE job_queue SET payload=json_set(payload, '$.message', json(?), '$.neoBatchAttached', 1) WHERE id=?"
-        )
-        .run(JSON.stringify(message), jobId);
-      return { ...entry, message };
+      this.release(entry.to.kind === 'session' ? entry.to.sessionId : '', {
+        ...options,
+        before: entry.id,
+        at: decodeUlidTimestamp(entry.id) - 1,
+      });
+      new JobQueueRepository(this.db).snapshotPayload(jobId, 'neoBatchAttached', true);
+      return entry;
     })();
   }
 
-  flushDue(now: number): void {
+  flushDue(
+    now: number,
+    options: Omit<Parameters<NeoWakeQueueRepository['release']>[1], 'at'>
+  ): void {
     this.db.transaction(() => {
       const rows = this.db
         .prepare(
           "SELECT json_extract(payload, '$.to.sessionId') AS sessionId FROM job_queue WHERE queue=? AND status='pending' GROUP BY 1 HAVING MIN(created_at)<=?"
         )
         .all(LANE, now - INTERVAL) as { sessionId: string }[];
-      for (const { sessionId } of rows) {
-        const messageUuid = randomUUID();
-        const entry = createMailboxEntry({
-          messageUuid,
-          to: { kind: 'session', sessionId },
-          origin: 'system',
-          message: {
-            type: 'user',
-            parent_tool_use_id: null,
-            inputKind: 'system',
-            neoWakeEvent: true,
-            message: { content: 'Queued worker report batch.' },
-            neoBatchContent: this.attach(
-              sessionId,
-              'Queued worker report batch.',
-              undefined,
-              messageUuid,
-              true
-            ),
-          },
-        });
-        const result = enqueueMailboxEntry(
-          new JobQueueRepository(this.db),
-          Object.assign(entry, { neoBatchAttached: true })
-        );
-        if (result.kind === 'rejected') throw new Error(result.reason);
-      }
+      for (const { sessionId } of rows)
+        this.release(sessionId, { ...options, at: Date.now(), pendingOnly: true });
     })();
   }
 }
@@ -208,5 +177,5 @@ export const neoWakeQueueWrite = defineRepositoryOp(
   'neo.wake-queue.write',
   'write',
   NeoWakeQueueRepository,
-  ['hold', 'prepare', 'flushDue']
+  ['hold']
 );

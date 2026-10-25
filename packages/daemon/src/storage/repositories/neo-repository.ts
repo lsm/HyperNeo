@@ -1,3 +1,5 @@
+import { neoProjectCleanupWrites } from './neo-project-cleanup-writes.ts';
+import type { NeoProjectCleanup } from '../../lib/neo/project-cleanup.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { reserveNeoHomeProjects } from './neo-home-reservation.ts';
 import { createHash } from 'node:crypto';
@@ -46,6 +48,11 @@ export class NeoRepository {
       section: !!row.section,
       aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
     }));
+  }
+
+  async applyCleanup(step: NeoProjectCleanup): Promise<void> {
+    await gatewayFor(this.db).call(neoProjectCleanupWrites, 'apply', step);
+    this.notify();
   }
 
   deleteEmptyProject(projectId: string): void {

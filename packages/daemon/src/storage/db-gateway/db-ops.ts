@@ -1,5 +1,6 @@
 import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write.ts';
 import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
+import { neoProjectCleanupWrites } from '../repositories/neo-project-cleanup-writes.ts';
 import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
 import { reserveNeoHomeProjects } from '../repositories/neo-home-reservation.ts';
 import {
@@ -64,7 +65,7 @@ import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
-    enqueueMailboxAdmission,
+    neoProjectCleanupWrites,
     reserveNeoHomeProjects,
     neoTodoSessionReads,
     neoTodoSessionWrites,
@@ -110,5 +111,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
     jobEnqueueWrites,
+    enqueueMailboxAdmission,
   ].map((op) => [op.name, op])
 );

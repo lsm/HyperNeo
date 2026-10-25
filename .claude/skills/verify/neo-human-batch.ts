@@ -7,6 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { ProviderService } from '../../../packages/daemon/src/lib/provider-service.ts';
+import { sdkNeoWakeQueue } from '../../../packages/daemon/src/storage/repositories/sdk-message-transactions.ts';
 
 const run = resolve(process.argv[2] ?? '');
 assert(process.argv[2] && process.env.NODE_ENV === 'test');
@@ -86,11 +87,30 @@ try {
   for (const large of [false, true]) {
     const tag = large ? 'large' : 'small';
     const notes = Array.from({ length: large ? 35 : 2 }, (_, index) => `${tag} worker note ${String(index).padStart(2, '0')} ${large ? 'x'.repeat(2048) : ''}`);
+    const noteIds: string[] = [];
     for (const [index, text] of notes.entries()) {
       const input = !large && index === 0
         ? { sessionId: root, message: { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'text', text }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageData } }] } }, from: 'session:synthetic-worker' }
         : { to: root, text, from: 'session:synthetic-worker' };
-      assert.equal((await hub.request<{kind:string}>('operation.invoke', { name: 'message.send', input })).kind, 'accepted');
+      const receipt = await hub.request<{kind:string;messageId:string}>('operation.invoke', { name: 'message.send', input });
+      assert.equal(receipt.kind, 'accepted');
+      noteIds.push(receipt.messageId);
+    }
+    if (process.argv.includes('--automatic')) {
+      const heldDeadline = Date.now() + 15000;
+      while (Date.now() < heldDeadline && !app.jobQueue.getLatestByPayload('neo_notes', { messageUuid: noteIds.at(-1) })) await Bun.sleep(25);
+      assert(app.jobQueue.getLatestByPayload('neo_notes', { messageUuid: noteIds.at(-1) }));
+      if (large) await app.db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue, { flush: Date.now() + 15 * 60_000 });
+      else assert.equal((await hub.request<{kind:string}>('operation.invoke', { name: 'message.send', input: { to: root, from: 'session:synthetic-worker', kind: 'blocked', text: 'Automatic wake decision needed.' } })).kind, 'accepted');
+      const automaticDeadline = Date.now() + 45000;
+      let consumed = false;
+      while (Date.now() < automaticDeadline) {
+        const id = app.jobQueue.getLatestByPayload('neo_notes', { messageUuid: noteIds[0] })?.payload.neoBatchUuid;
+        consumed = typeof id === 'string' && !!app.db.getMessageByStatusAndUuid(root, 'consumed', id);
+        if (consumed && app.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle') break;
+        await Bun.sleep(100);
+      }
+      assert(consumed, 'automatic wake must deliver the worker batch before human input');
     }
     const requestId = crypto.randomUUID();
     const human = `  Human ${tag}: keep these exact words inline.\n第二行。  `;
