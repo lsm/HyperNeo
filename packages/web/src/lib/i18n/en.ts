@@ -300,6 +300,7 @@ export const en = {
   'artifact.scriptsDisabled': 'Scripts disabled',
   'artifact.htmlFrame': 'Static HTML preview',
   'artifact.externalLinks': 'External links',
+  'artifact.htmlPreviewUnavailable': 'This HTML document cannot be previewed.',
   'artifact.htmlSourceOnly': 'HTML preview unavailable. View the original source.',
   'artifact.loadingSource': 'Loading source…',
 } as const;

@@ -115,8 +115,17 @@ describe('desktop preview file tabs', () => {
     expect(screen.getAllByRole('tab').length).toBe(2);
     const b = screen.getByRole('tab', { name: 'Report B' });
     expect(screen.getByRole('tabpanel').id).toBe(b.getAttribute('aria-controls'));
-    expect(document.querySelectorAll('#artifact-title-a').length).toBe(1);
-    expect(document.querySelectorAll('#artifact-title-b').length).toBe(1);
+    expect(screen.getByRole('dialog').getAttribute('aria-labelledby')).toBe(b.id);
+    expect(screen.getAllByText('Report B').length).toBe(1);
+    expect(screen.queryByRole('button', { name: 'Back', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Source', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Preview', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download complete file' })).toBeNull();
+    expect(
+      within(screen.getByRole('tabpanel')).getByText(
+        `Markdown · ${ref('b').byteLength} B · snapshot ffffffff`
+      )
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Open preview: Report A' }));
     await waitFor(() =>
       expect(screen.getByRole('tab', { name: 'Report A' }).getAttribute('aria-selected')).toBe(
@@ -126,18 +135,22 @@ describe('desktop preview file tabs', () => {
     expect(screen.getAllByRole('tab').length).toBe(2);
   });
 
-  it('retains a viewer mode and scroll position across file switches without reloading it', async () => {
+  it('retains rendered content and scroll position across file switches without reloading it', async () => {
     render(<ArtifactPreviewPanel fileTabs />);
     await open('a');
-    fireEvent.click(
-      within(screen.getByRole('tabpanel')).getByRole('button', { name: 'Source', exact: true })
-    );
-    const source = screen.getByRole('tabpanel').querySelector('pre')!;
-    source.parentElement!.scrollTop = 73;
+    const source = within(screen.getByRole('tabpanel')).getByRole('heading', {
+      name: 'Document a',
+    });
+    const scroller = screen.getByRole('tabpanel').querySelector('.overflow-auto')!;
+    scroller.scrollTop = 73;
     await open('b');
     fireEvent.click(screen.getByRole('tab', { name: 'Report A' }));
-    await waitFor(() => expect(screen.getByRole('tabpanel').querySelector('pre')).toBe(source));
-    expect(source.parentElement!.scrollTop).toBe(73);
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('tabpanel')).getByRole('heading', { name: 'Document a' })
+      ).toBe(source)
+    );
+    expect(scroller.scrollTop).toBe(73);
     expect(
       request.mock.calls.filter(
         ([, params]) => params.name === 'artifact.file.get' && params.input.artifactId === 'a'
@@ -274,6 +287,12 @@ describe('desktop preview file tabs', () => {
     await open('a');
     await open('b');
     expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Report B' }).id).toBe(
+      screen.getByRole('dialog').getAttribute('aria-labelledby')
+    );
+    expect(screen.queryByRole('button', { name: 'Back', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Source', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download complete file' })).toBeNull();
     expect(screen.getAllByRole('heading', { name: /Document/ }).length).toBe(1);
     expect(screen.queryByRole('heading', { name: 'Document a' })).toBeNull();
     desktop = true;

@@ -298,6 +298,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.scriptsDisabled': '脚本已禁用',
   'artifact.htmlFrame': '静态 HTML 预览',
   'artifact.externalLinks': '外部链接',
+  'artifact.htmlPreviewUnavailable': '无法预览此 HTML 文档。',
   'artifact.htmlSourceOnly': '无法预览 HTML，请查看原始源码。',
   'artifact.loadingSource': '正在加载源码…',
 };
