@@ -82,9 +82,14 @@ try {
   assert(first.tools.includes('mcp__browser__navigate1'));
   assert.deepEqual(first.mcpServers, [{ name: 'browser', status: 'connected', tools: ['navigate'] }]);
   assert(!JSON.stringify(first).match(/secret|private|config|error/));
-  if (process.argv.includes('--show-panel')) {
+  if (process.argv.includes('--show-panel') || process.argv.includes('--show-task-panel')) {
     process.once('SIGUSR1', () => queries[0].finish.resolve());
-    process.once('SIGUSR2', () => { queries[0].status = async () => {
+    process.once('SIGUSR2', () => {
+      if (process.argv.includes('--fail-inventory')) {
+        app.sessionManager.getSession(sessionId)!.getToolInventory = async () => { throw new Error('Synthetic inventory read failure'); };
+        return;
+      }
+      queries[0].status = async () => {
       if (process.argv.includes('--slow-status')) await new Promise(done => setTimeout(done, 2500));
       return [{ name: 'browser', status: 'needs-auth' }];
     }; });
@@ -94,6 +99,24 @@ try {
     }
     const agent = app.sessionManager.getSession(sessionId)!;
     agent.getSessionData().config.mcpServers = { ...agent.getSessionData().config.mcpServers, 'configured-only': { type: 'sdk', name: 'configured-only', instance: {} as never } };
+    let panelPath = `/session/${sessionId}`;
+    if (process.argv.includes('--show-task-panel')) {
+      await app.jobProcessor.stop();
+      const { SpaceRepository } = await import('../../../packages/daemon/src/storage/repositories/space-repository.ts');
+      const { SpaceTaskRepository } = await import('../../../packages/daemon/src/storage/repositories/space-task-repository.ts');
+      const db = app.db.getDatabase();
+      const space = new SpaceRepository(db).createSpace({ name: 'Synthetic Tools Space', slug: 'synthetic-tools', workspacePath: join(run, 'workspace') });
+      const tasks = new SpaceTaskRepository(db);
+      const task = tasks.createTask({ spaceId: space.id, title: 'Synthetic observed Tools task', status: 'in_progress' });
+      db.prepare('UPDATE space_tasks SET post_approval_session_id=? WHERE id=?').run(sessionId, task.id);
+      const data = agent.getSessionData();
+      data.type = 'worker';
+      data.context = { spaceId: space.id, taskId: task.id };
+      data.metadata = { ...data.metadata, promptProvenance: { nodeId: 'synthetic-node', agentName: 'Coder' } };
+      await app.db.updateSession(sessionId, { type: data.type, context: data.context, metadata: data.metadata });
+      panelPath = `/space/${space.id}/task/${task.id}`;
+      evidence.taskFixture = { spaceId: space.id, taskId: task.id, sessionId, dispatchStopped: true };
+    }
     const { Hono } = await import(Bun.resolveSync('hono', resolve(import.meta.dir, '../../../packages/cli')));
     const { serveStatic } = await import(Bun.resolveSync('hono/bun', resolve(import.meta.dir, '../../../packages/cli')));
     const { createWebSocketHandlers } = await import('../../../packages/daemon/src/routes/setup-websocket.ts');
@@ -111,7 +134,7 @@ try {
       }
       return web.fetch(request);
     }, websocket: createWebSocketHandlers(app.transport, app.sessionManager) });
-    console.log(`PANEL: http://127.0.0.1:${preview.port}/session/${sessionId} PID=${process.pid}`);
+    console.log(`PANEL: http://127.0.0.1:${preview.port}${panelPath} PID=${process.pid}`);
     await new Promise<void>(done => process.once('SIGTERM', done));
     evidence.panelAwaitedManualInspection = true;
   } else {

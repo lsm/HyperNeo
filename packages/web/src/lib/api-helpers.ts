@@ -281,16 +281,6 @@ export async function updateGlobalSettings(
   }>('settings.global.update', { updates }, options);
 }
 
-export async function listRuntimeMcpServers(
-  sessionId: string
-): Promise<import('@hyperneo/shared').ListRuntimeMcpServersResponse> {
-  const hub = await connectionManager.getHub();
-  return await hub.request<import('@hyperneo/shared').ListRuntimeMcpServersResponse>(
-    'session.listRuntimeMcpServers',
-    { sessionId }
-  );
-}
-
 export async function getRewindPoints(sessionId: string): Promise<{
   rewindPoints: Array<{ uuid: string; timestamp: number; content: string; turnNumber: number }>;
   error?: string;
