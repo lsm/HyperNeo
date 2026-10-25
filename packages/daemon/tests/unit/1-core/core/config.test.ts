@@ -202,6 +202,13 @@ describe('getConfig', () => {
     expect(config.workspaceRoot).toBe('/cli/workspace');
   });
 
+  test('HYPERNEO_WORKSPACE_PATH selects the instance user folder and CLI wins', () => {
+    process.env.HYPERNEO_WORKSPACE_PATH = '/synthetic/HyperNeo-Rui';
+    process.env.HYPERNEO_WORKSPACE_ROOT = '/old/workspace';
+    expect(getConfig().workspaceRoot).toBe('/synthetic/HyperNeo-Rui');
+    expect(getConfig({ workspaceRoot: '/cli/HyperNeo' }).workspaceRoot).toBe('/cli/HyperNeo');
+  });
+
   test('DB_PATH env var takes precedence over default path', () => {
     process.env.DB_PATH = '/custom/database.db';
 

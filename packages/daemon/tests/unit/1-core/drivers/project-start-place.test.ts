@@ -23,6 +23,8 @@ const caller = { source: 'mcp', role: 'neo', sessionId } as const;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'project-start-place-'));
   vi.stubEnv('HYPERNEO_DATA_DIR', join(root, 'data'));
+  vi.stubEnv('HOME', join(root, 'home'));
+  mkdirSync(join(root, 'home'));
   mkdirSync(join(root, 'workspace'));
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -68,7 +70,11 @@ function named(path: string, owner = sessionId) {
   ).toBe(true);
 }
 
-async function start(folder?: string, extra: Record<string, unknown> = {}) {
+async function start(
+  folder?: string,
+  extra: Record<string, unknown> = {},
+  workspaceRoot: string | null = join(root, 'workspace')
+) {
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [
@@ -96,7 +102,11 @@ async function start(folder?: string, extra: Record<string, unknown> = {}) {
         },
       },
       isOpenTodo: (id, owner) => id === 'todo' && owner === sessionId,
-      startPlace: neoStartPlace({ db, machine: 'local', workspaceRoot: join(root, 'workspace') }),
+      startPlace: neoStartPlace({
+        db,
+        machine: 'local',
+        workspaceRoot: workspaceRoot ?? undefined,
+      }),
     })
   );
   const outcome = await invokeOperation(
@@ -120,7 +130,7 @@ async function start(folder?: string, extra: Record<string, unknown> = {}) {
 
 describe('shared non-coding work.start home', () => {
   test('shares one default home across non-coding projects without assigning project homes', async () => {
-    const folder = join(root, 'workspace/home');
+    const folder = join(root, 'workspace');
     expect(await start()).toMatchObject({
       ok: true,
       value: { place: { folder, machine: 'local' } },
@@ -148,6 +158,20 @@ describe('shared non-coding work.start home', () => {
       reason: 'unknown_adapter',
     });
     expect(existsSync(folder)).toBe(false);
+  });
+  test('defaults to visible ~/HyperNeo under the isolated HOME', async () => {
+    const folder = join(root, 'home/HyperNeo');
+    expect(existsSync(folder)).toBe(false);
+    expect(await start(undefined, {}, null)).toMatchObject({
+      ok: true,
+      value: { place: { folder } },
+    });
+    expect(existsSync(folder)).toBe(true);
+  });
+  test('never uses the home root even when the human names it', async () => {
+    const folder = join(root, 'home');
+    named(folder);
+    expect(await start(folder)).toMatchObject({ ok: false, reason: 'invalid_place' });
   });
   test('allows a path named in persisted human input', async () => {
     const folder = join(root, 'named');
@@ -188,7 +212,7 @@ describe('shared non-coding work.start home', () => {
       value: { place: { folder } },
     });
     expect(await start()).toMatchObject({ ok: false, reason: 'invalid_place' });
-    expect(existsSync(join(root, 'workspace/home'))).toBe(false);
+    expect(existsSync(join(root, 'home/HyperNeo'))).toBe(false);
   });
   test('an existing non-coding place also requires a human-named path', async () => {
     const folder = join(root, 'existing');
@@ -213,7 +237,7 @@ describe('shared non-coding work.start home', () => {
     db.prepare('UPDATE neo_asks SET project_id = NULL WHERE id = ?').run('ask');
     expect(await start()).toMatchObject({
       ok: true,
-      value: { place: { folder: join(root, 'workspace/home') } },
+      value: { place: { folder: join(root, 'workspace') } },
     });
   });
 });

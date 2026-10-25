@@ -70,6 +70,17 @@ describe('ChatHeader', () => {
   });
 
   describe('Basic Rendering', () => {
+    it('shows the visible user folder path in the session header', () => {
+      const { getByTestId } = render(
+        <ChatHeader
+          {...defaultProps}
+          session={{ ...mockSession, workspacePath: '/synthetic/HyperNeo', worktree: undefined }}
+        />
+      );
+      const folder = getByTestId('chat-header-folder');
+      expect(folder.textContent).toBe('/synthetic/HyperNeo');
+      expect(folder.getAttribute('title')).toBe('/synthetic/HyperNeo');
+    });
     it('should render session title', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 

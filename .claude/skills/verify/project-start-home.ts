@@ -17,12 +17,13 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'workspace'), { recursive: true });
-const workspaceRoot = process.argv[3] === 'without-workspace' ? undefined : join(run, 'workspace');
-const expectedHome = workspaceRoot ? join(workspaceRoot, 'home') : join(run, 'data/Neo/projects/home');
+const workspaceRoot = process.argv[3] === 'without-workspace' ? undefined : join(run, 'HyperNeo-Rui');
+if (process.argv[3] === 'env-workspace') process.env.HYPERNEO_WORKSPACE_PATH = workspaceRoot;
+const expectedHome = workspaceRoot ?? join(run, 'home/HyperNeo');
 const evidence: unknown[] = [];
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
-const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot }), verbose: false });
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: process.argv[3] === 'env-workspace' ? undefined : workspaceRoot }), verbose: false });
 try {
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
@@ -35,7 +36,8 @@ try {
   projects.saveProject({ id: 'project:synthetic-life', title: 'Life admin', summary: '', context: '' }, 0);
   const store = new NeoAskTodoRepository(db);
   const starts: { folder: string; title: string; mode?: string }[] = [];
-  execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '-q', workspaceRoot ?? join(run, 'data/Neo')]);
+  execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '-q', process.argv[3] === 'without-workspace' ? join(run, 'home') : run]);
+  assert(!existsSync(expectedHome));
   app.sessionManager.createSession = async (input) => {
     const id = crypto.randomUUID();
     assert(input.workspacePath);
