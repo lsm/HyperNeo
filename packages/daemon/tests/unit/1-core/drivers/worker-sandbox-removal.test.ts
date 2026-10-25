@@ -1,7 +1,17 @@
 import { spawnSync } from 'node:child_process';
 import { expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -100,6 +110,41 @@ test.skipIf(process.platform !== 'darwin')(
       spawnSync('/usr/bin/chflags', ['-RP', 'nouchg', join(env.TMPDIR, '..')]);
       await releaseWorkerSandbox(root);
       rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test.skipIf(process.platform === 'win32')(
+  'cleanup never changes an unlisted directory after a worker symlink swap',
+  async () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'worker-swap-'));
+    const root = join(fixture, 'clone');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const env = await prepareWorkerSandbox(root);
+    const swap = join(env.TMPDIR, 'swap');
+    mkdirSync(swap);
+    const outside = join(fixture, 'outside');
+    const child = join(outside, 'child');
+    mkdirSync(child, { recursive: true });
+    chmodSync(outside, 0o755);
+    chmodSync(child, 0o750);
+    let swapped = false;
+    beforeOperation.mockImplementation(async (operation, path) => {
+      if (operation === 'chmod' && String(path) === swap && !swapped) {
+        swapped = true;
+        renameSync(swap, join(env.XDG_CACHE_HOME, 'moved'));
+        symlinkSync(outside, swap, 'dir');
+      }
+    });
+    try {
+      await releaseWorkerSandbox(root).catch(() => {});
+      expect(swapped).toBe(true);
+      expect(statSync(outside).mode & 0o777).toBe(0o755);
+      expect(statSync(child).mode & 0o777).toBe(0o750);
+    } finally {
+      beforeOperation.mockReset();
+      await releaseWorkerSandbox(root);
+      rmSync(fixture, { recursive: true, force: true });
     }
   }
 );
