@@ -394,12 +394,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     ask: NeoAsk,
     live: ReturnType<typeof readDriverLive>
   ) => {
-    if (!live) return;
+    if (!live || live.status !== 'needs_you') return;
     const since = sessions.readNeedsYouSince(todoId);
-    if (live.status !== 'needs_you') {
-      if (since !== null) sessions.recordNeedsYouSince(todoId, null);
-      return;
-    }
     const todo = store.getTodo(todoId);
     const followed =
       todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
@@ -426,16 +422,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       await observe(card.id, outcome, ref);
       return outcome;
     },
-    recordStartedAt: (id, at) => sessions.recordStartedAt(id, at),
-    recordLive: (id, status, live) => {
-      if (status !== 'needs_you' && sessions.readNeedsYouSince(id) !== null)
-        sessions.recordNeedsYouSince(id, null);
-      return sessions.write('recordLive', id, status, live.link, live.remoteLink);
-    },
-    recordCheck: (id, read, now) => {
-      sessions.recordCardCheck(id, { checkedAt: now, unchecked: !read });
-      return false;
-    },
+    recordProgress: (id, progress, now) => sessions.write('recordProgress', id, progress, now),
     notifyChanged: () => deps.changed(),
     noteUnsettled: (card, _ref, outcome) => noteNeedsYou(card.id, ask, readDriverLive(outcome)),
     forgetActivity: () => {},
@@ -568,10 +555,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         });
         await observe(todo.id, outcome, target.ref);
         const live = readDriverLive(outcome);
-        if (live)
-          await sessions.write('recordLive', todo.id, live.status, live.link, live.remoteLink);
+        await sessions.write(
+          'recordProgress',
+          todo.id,
+          { landed: null, live, cardStatus: live?.status ?? null },
+          now
+        );
         await noteNeedsYou(todo.id, target.ask, live);
-        sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
         if (
           todo.state === 'blocked' &&
           (live?.status === 'running' ||

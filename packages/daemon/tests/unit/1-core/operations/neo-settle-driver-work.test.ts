@@ -126,12 +126,11 @@ describe('settleNeoDriverWork', () => {
         calls.push(`status since ${since}`);
         return outcome;
       },
-      recordStartedAt: (_id, at) => calls.push(`started ${at}`),
-      recordLive: (_id, cardStatus) => {
-        calls.push(`live ${cardStatus}`);
-        return true;
+      recordProgress: (_id, progress) => {
+        if (progress.landed !== null) calls.push(`started ${progress.landed}`);
+        if (progress.live && progress.cardStatus) calls.push(`live ${progress.cardStatus}`);
+        return !!progress.live && !!progress.cardStatus;
       },
-      recordCheck: () => false,
       notifyChanged: () => calls.push('changed'),
       noteUnsettled: async () => {
         calls.push('note');
@@ -156,7 +155,7 @@ describe('settleNeoDriverWork', () => {
     const entered = new Promise<void>((resolve) => {
       started = resolve;
     });
-    deps.recordLive = () => {
+    deps.recordProgress = () => {
       started();
       return new Promise<boolean>((resolve) => {
         release = resolve;
@@ -174,8 +173,8 @@ describe('settleNeoDriverWork', () => {
   test('a failed status read is recorded as unchecked and tells the UI once it flips', async () => {
     const { deps, calls } = harness({ kind: 'failed', error: 'offline' } as never, null);
     const checks: Array<[string, boolean]> = [];
-    deps.recordCheck = (id, read) => {
-      checks.push([id, read]);
+    deps.recordProgress = (id, progress) => {
+      checks.push([id, progress.live !== null]);
       return true;
     };
     expect(await settleNeoDriverWork(deps, work, ref)).toBe('unsettled');
