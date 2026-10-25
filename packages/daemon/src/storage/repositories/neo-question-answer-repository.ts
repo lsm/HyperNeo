@@ -19,12 +19,23 @@ type AnswerRow = {
 export class NeoQuestionAnswerRepository {
   constructor(
     private readonly db: Database,
-    private readonly write: (id: string, routes: string) => void
+    private readonly write: (id: string, routes: string) => void,
+    private readonly atomic: <T>(work: () => T) => T
   ) {}
+
+  snapshot<T>(id: string, question: () => T) {
+    return this.atomic(() => ({ question: question(), answerDelivery: this.list(id) }));
+  }
 
   bind(questionId: string, todoId: string, sourceSession: NeoQuestionSource): void {
     const routes = JSON.parse(this.rows(questionId)[0]?.routes ?? '[]') as StoredRoute[];
-    if (routes.some((route) => route.todoId === todoId)) return;
+    const existing = routes.find((route) => route.todoId === todoId);
+    if (existing) {
+      if (existing.acceptedAt !== null) return;
+      existing.sourceSession = sourceSession;
+      this.write(questionId, JSON.stringify(routes));
+      return;
+    }
     this.write(
       questionId,
       JSON.stringify([
@@ -43,18 +54,20 @@ export class NeoQuestionAnswerRepository {
   }
 
   accept(id: string, receipt: string, now: number): boolean {
-    const route = this.pending().find((route) => route.id === id);
-    if (!route) return false;
-    const routes = JSON.parse(this.rows(route.questionId)[0].routes!) as StoredRoute[];
-    this.write(
-      route.questionId,
-      JSON.stringify(
-        routes.map((stored) =>
-          stored.id === id ? { ...stored, receipt, acceptedAt: now } : stored
+    return this.atomic(() => {
+      const route = this.pending().find((route) => route.id === id);
+      if (!route) return false;
+      const routes = JSON.parse(this.rows(route.questionId)[0].routes!) as StoredRoute[];
+      this.write(
+        route.questionId,
+        JSON.stringify(
+          routes.map((stored) =>
+            stored.id === id ? { ...stored, receipt, acceptedAt: now } : stored
+          )
         )
-      )
-    );
-    return true;
+      );
+      return true;
+    });
   }
 
   private rows(id?: string): AnswerRow[] {

@@ -18,6 +18,12 @@ behind the one-time migration marker; ordinary startup must not synthesize route
 `evidence/manual-restart.json` retains both RPC reads. Retire this fixture-only
 manual card and send a new validated worker report before continuing below.
 
+Rebind that todo to a second synthetic worker through `neo.todo.bind`, then
+report its blocker through the validated writer. The open card ID must stay
+the same while answerDelivery points to the replacement worker. Record that
+read in `evidence/rebind.json`; the answer admission below targets that worker.
+An already accepted route must preserve its worker and receipt on later binds.
+
 Answer the card through the real `neo.question.answer` RPC. The same read must
 show the human's immutable answer, button provenance and a pending delivery.
 The todo must retain its needs-human hold: this build slice stores the answer;
@@ -35,6 +41,10 @@ return the original admission.
 Unit contracts additionally cover chat answers, competing answers, answer/route
 write rollback, rejecting premature acknowledgement, and upgrading historical
 held cards without overwriting accepted receipts on repeated upgrades.
+Two-connection SQLite regressions interleave a peer answer with the card read
+and competing acknowledgements with receipt writes. Reads must return a coherent
+question/answerDelivery snapshot, and only one acknowledgement may succeed;
+the losing attempt cannot replace the accepted receipt.
 
 `evidence/observed.json` contains RPC receipts and before/after route reads.
 `evidence/cleanup.json` confirms shutdown and immediate deletion of the synthetic

@@ -729,12 +729,12 @@ export function createNeoQuestionOperations(
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },
-      execute: async (input) => ({
-        ...readNeoQuestion(store.getQuestion(input.questionId)),
-        ...(store.getQuestion(input.questionId)
-          ? { answerDelivery: store.questionAnswers.list(input.questionId) }
-          : {}),
-      }),
+      execute: async (input) => {
+        const { question, answerDelivery } = store.questionAnswers.snapshot(input.questionId, () =>
+          store.getQuestion(input.questionId)
+        );
+        return { ...readNeoQuestion(question), ...(question ? { answerDelivery } : {}) };
+      },
     }),
     defineOperation({
       name: 'neo.question.answer',

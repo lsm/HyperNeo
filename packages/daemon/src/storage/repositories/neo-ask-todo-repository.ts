@@ -180,9 +180,13 @@ export interface NeoCardReplyContext {
 
 export class NeoAskTodoRepository {
   get questionAnswers() {
-    return new NeoQuestionAnswerRepository(this.db, (id, routes) => {
-      this.changeQuestion(id, { worker_answers_json: routes });
-    });
+    return new NeoQuestionAnswerRepository(
+      this.db,
+      (id, routes) => {
+        this.changeQuestion(id, { worker_answers_json: routes });
+      },
+      (work) => this.db.transaction(work, 'immediate')()
+    );
   }
 
   read<K extends (typeof neoTodoReads.methods)[number]>(
