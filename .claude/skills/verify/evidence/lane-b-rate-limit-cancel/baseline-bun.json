@@ -1,0 +1,85 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 415,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "cancel": {
+    "success": true
+  },
+  "status": {
+    "status": "queued"
+  },
+  "nextStatus": {
+    "status": "queued"
+  },
+  "owningJob": {
+    "id": "26921544-dad4-48fb-b41b-372b7071881f",
+    "queue": "message_delivery",
+    "status": "pending",
+    "payload": {
+      "sessionId": "9f246ae9-3c6c-4bbc-bce1-4b04d4b5c8ba",
+      "messageUuid": "synthetic-cancelled-episode",
+      "origin": "chat"
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792960779597,
+    "createdAt": 1792960719601,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": null
+  },
+  "nextJob": {
+    "id": "fdcafcf2-fd88-4892-a2dd-9abc2acd72d5",
+    "queue": "message_delivery",
+    "status": "pending",
+    "payload": {
+      "sessionId": "9f246ae9-3c6c-4bbc-bce1-4b04d4b5c8ba",
+      "messageUuid": "synthetic-next-input",
+      "origin": "chat"
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792960779597,
+    "createdAt": 1792960719601,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": null
+  },
+  "state": "idle",
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 420,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 1
+}

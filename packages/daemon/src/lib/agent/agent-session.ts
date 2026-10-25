@@ -1446,9 +1446,9 @@ export class AgentSession
     }
   }
 
-  cancelRateLimitRetry(): void {
+  async cancelRateLimitRetry(): Promise<void> {
     this.networkPause.stop();
-    runRateLimitManualCancel({
+    await runRateLimitManualCancel({
       db: this.db,
       sessionId: this.session.id,
       getLiveEpisodeMessageUuid: () => this.rateLimitWatchdog.getState().lastUserMessage?.uuid,
@@ -1456,11 +1456,9 @@ export class AgentSession
         this.rateLimitWatchdog.getPersistedEpisodeMessageUuid?.() ?? undefined,
       cancelWatchdog: () => this.rateLimitWatchdog.cancel(false),
       isInMemoryCooldown: () => this.stateManager.getState().status === 'rate_limit_cooldown',
-      clearCooldown: () => {
-        void this.stateManager.setIdle();
-      },
-      publishStatusesFailed: (messageIds) => {
-        void this.internalEventBus
+      clearCooldown: () => this.stateManager.setIdle(),
+      publishStatusesFailed: async (messageIds) => {
+        await this.internalEventBus
           .publish('messages.statusChanged', {
             sessionId: this.session.id,
             messageIds,

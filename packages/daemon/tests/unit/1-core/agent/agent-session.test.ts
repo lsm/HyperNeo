@@ -999,6 +999,25 @@ describe('AgentSession', () => {
     let mockGetApiKey: () => Promise<string | null>;
     let agentSession: AgentSession;
 
+    function attachCancelWriter() {
+      const raw = {} as SqliteDatabase;
+      const commit = mock(
+        async (_input: {
+          sessionId: string;
+          episodeMessageUuid?: string;
+        }): Promise<string | null> => 'db-episode'
+      );
+      bindGateway(raw, {
+        call: async (op, method, sessionId, episodeMessageUuid) => {
+          expect(op.name).toBe('jobs.cancelRateLimitDelivery');
+          expect(method).toBe('cancel');
+          return commit({ sessionId, episodeMessageUuid });
+        },
+      } as unknown as DbGateway);
+      mockDb.getDatabase = () => raw;
+      return commit;
+    }
+
     beforeEach(() => {
       mockSession = {
         id: 'test-session-id',
@@ -1238,8 +1257,7 @@ describe('AgentSession', () => {
     });
 
     it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
-      const cancelDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         getState: mock(() => ({
@@ -1247,9 +1265,12 @@ describe('AgentSession', () => {
         })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
+      await agentSession.cancelRateLimitRetry();
 
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-episode',
+      });
     });
 
     it('a turn that ends without a network failure closes the outage clock', async () => {
@@ -1626,8 +1647,7 @@ describe('AgentSession', () => {
     });
 
     it('cancelRateLimitRetry uses the restored episode id from the persisted arm', async () => {
-      const cancelDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         getState: mock(() => ({ lastUserMessage: null })),
@@ -1640,15 +1660,17 @@ describe('AgentSession', () => {
         messageId: 'msg-arm-episode',
       });
 
-      agentSession.cancelRateLimitRetry();
+      await agentSession.cancelRateLimitRetry();
 
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-arm-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-arm-episode',
+      });
       await agentSession.stateManager.setIdle();
     });
 
     it('cancelRateLimitRetry clears a persisted cooldown left by a restart', async () => {
-      const cancelDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      const commit = attachCancelWriter();
       mockDb.getSession = mock(
         () =>
           ({
@@ -1665,20 +1687,19 @@ describe('AgentSession', () => {
         getState: mock(() => ({ lastUserMessage: null })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.cancelRateLimitRetry();
 
       expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
         processingState: JSON.stringify({ status: 'idle' }),
       });
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-persisted-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-persisted-episode',
+      });
     });
 
     it('cancelRateLimitRetry cancels the episode delivery behind a persisted cooldown', async () => {
-      const cancelDelivery = mock(() => true);
-      const markDeliveryFailedByUuid = mock(() => 'db-episode');
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
-      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
+      const commit = attachCancelWriter();
       mockDb.getSession = mock(
         () =>
           ({
@@ -1695,28 +1716,19 @@ describe('AgentSession', () => {
         getState: mock(() => ({ lastUserMessage: null })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.cancelRateLimitRetry();
 
       expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
         processingState: JSON.stringify({ status: 'idle' }),
       });
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-episode',
+      });
     });
 
     it('cancelRateLimitRetry settles the episode message and reschedules the session', async () => {
-      const cancelDelivery = mock(() => true);
-      const rescheduleSessionDeliveries = mock(() => true);
-      const markDeliveryFailedByUuid = mock((uuid: string) => `db-${uuid}`);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            cancelDelivery,
-            rescheduleSessionDeliveries,
-          }) as never
-      );
-      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
+      const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         getState: mock(() => ({
@@ -1724,15 +1736,17 @@ describe('AgentSession', () => {
         })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
+      await agentSession.cancelRateLimitRetry();
 
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-      expect(rescheduleSessionDeliveries).toHaveBeenCalledWith(
-        'test-session-id',
-        expect.any(Number)
-      );
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-episode',
+      });
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-episode'],
+        status: 'failed',
+      });
     });
 
     it('retryNowAfterRateLimit reports failure when the session-wide release misses', async () => {

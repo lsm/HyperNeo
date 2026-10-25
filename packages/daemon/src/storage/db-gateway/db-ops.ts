@@ -69,6 +69,7 @@ import { editStandaloneTaskWithDependencies } from '../tasks/set-task-dependenci
 import { transitionStandaloneTask } from '../tasks/transition-task.ts';
 import { deleteWorkFeedBatch } from '../work-feed.ts';
 import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write.ts';
+import { cancelRateLimitDelivery } from '../repositories/rate-limit-cancel-write.ts';
 import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
@@ -127,5 +128,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     recordWorkDeliveryOutcome,
     jobEnqueueWrites,
     enqueueMailboxAdmission,
+    cancelRateLimitDelivery,
   ].map((op) => [op.name, op])
 );

@@ -1,23 +1,14 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { cancelRateLimitDelivery } from '../../storage/repositories/rate-limit-cancel-write.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
 import {
   readRateLimitPersistedCooldown,
-  resolveRateLimitEpisodeDeliveryUuid,
   type RateLimitManualRetryDb,
 } from './rate-limit-manual-retry.ts';
 
 export interface RateLimitManualCancelDb extends RateLimitManualRetryDb {
-  getJobQueueRepo: () =>
-    | {
-        getActiveDeliveryMessageUuid?: (sessionId: string) => string | null;
-        cancelDelivery: (sessionId: string, messageUuid: string) => boolean;
-        rescheduleSessionDeliveries?: (sessionId: string, runAt: number) => boolean;
-      }
-    | null
-    | undefined;
-  getSDKMessageRepo?: () =>
-    | { markDeliveryFailedByUuid?: (sessionId: string, uuid: string) => string | null }
-    | null
-    | undefined;
+  getDatabase: () => Database;
 }
 
 export interface RateLimitManualCancelCtx {
@@ -27,8 +18,8 @@ export interface RateLimitManualCancelCtx {
   getPersistedArmMessageUuid: () => string | undefined;
   cancelWatchdog: () => void;
   isInMemoryCooldown: () => boolean;
-  clearCooldown: () => void;
-  publishStatusesFailed: (messageIds: string[]) => void;
+  clearCooldown: () => Promise<void> | void;
+  publishStatusesFailed: (messageIds: string[]) => Promise<void> | void;
   onPersistedCooldownReadError: () => void;
   onDeliveryCancelError: (error: unknown) => void;
   episodeMessageUuid?: string;
@@ -56,31 +47,28 @@ export function captureEpisodeStage(ctx: RateLimitManualCancelCtx): RateLimitMan
   };
 }
 
-export function settleOwningDeliveryStage(ctx: RateLimitManualCancelCtx): RateLimitManualCancelCtx {
-  const owningMessageUuid = resolveRateLimitEpisodeDeliveryUuid(
-    ctx.db,
-    ctx.sessionId,
-    ctx.episodeMessageUuid
-  );
-  if (!owningMessageUuid) return ctx;
+export async function settleOwningDeliveryStage(
+  ctx: RateLimitManualCancelCtx
+): Promise<RateLimitManualCancelCtx> {
   try {
-    const jobQueue = ctx.db.getJobQueueRepo();
-    const sdkRepo = ctx.db.getSDKMessageRepo?.();
-    jobQueue?.cancelDelivery(ctx.sessionId, owningMessageUuid);
-    const settledDbId = sdkRepo?.markDeliveryFailedByUuid?.(ctx.sessionId, owningMessageUuid);
-    if (settledDbId) {
-      ctx.publishStatusesFailed([settledDbId]);
-    }
-    jobQueue?.rescheduleSessionDeliveries?.(ctx.sessionId, Date.now());
+    const settledDbId = await gatewayFor(ctx.db.getDatabase()).call(
+      cancelRateLimitDelivery,
+      'cancel',
+      ctx.sessionId,
+      ctx.episodeMessageUuid
+    );
+    if (settledDbId) await ctx.publishStatusesFailed([settledDbId]);
   } catch (error) {
     ctx.onDeliveryCancelError(error);
   }
   return ctx;
 }
 
-export function clearCooldownStage(ctx: RateLimitManualCancelCtx): RateLimitManualCancelCtx {
+export async function clearCooldownStage(
+  ctx: RateLimitManualCancelCtx
+): Promise<RateLimitManualCancelCtx> {
   if (ctx.cooldownClearPending) {
-    ctx.clearCooldown();
+    await ctx.clearCooldown();
   }
   return ctx;
 }
@@ -90,10 +78,10 @@ const runRateLimitManualCancelPipeline = (superpipe()('rate-limit-manual-cancel'
   .pipe(captureEpisodeStage, 'ctx', 'ctx')
   .pipe(settleOwningDeliveryStage, 'ctx', 'ctx')
   .pipe(clearCooldownStage, 'ctx', 'ctx')
-  .end('ctx') as (ctx: RateLimitManualCancelCtx) => RateLimitManualCancelCtx;
+  .endAsync('ctx') as (ctx: RateLimitManualCancelCtx) => Promise<RateLimitManualCancelCtx>;
 
-export function runRateLimitManualCancel(
+export async function runRateLimitManualCancel(
   input: Omit<RateLimitManualCancelCtx, 'episodeMessageUuid' | 'cooldownClearPending'>
-): void {
-  runRateLimitManualCancelPipeline({ ...input, cooldownClearPending: false });
+): Promise<void> {
+  await runRateLimitManualCancelPipeline({ ...input, cooldownClearPending: false });
 }
