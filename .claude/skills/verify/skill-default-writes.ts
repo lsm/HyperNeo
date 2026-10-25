@@ -63,12 +63,14 @@ try {
   let rejectSkills!: (error: Error) => void;
   const snapshot = new Promise<AppSkill[]>((resolve, reject) => { resolveSkills = resolve; rejectSkills = reject; });
   const timer = setTimeout(() => rejectSkills(new Error('skills snapshot missing')), 5000);
-  const stopSkills = hub.onEvent<{ subscriptionId: string; rows: AppSkill[] }>('liveQuery.snapshot', event => { if (event.subscriptionId === 'skill-default-proof') resolveSkills(event.rows); });
+  const acceptRows = (rows: AppSkill[]) => { if (rows.some(row => row.id === wrapper.id && row.enabled && row.validationStatus === 'valid')) resolveSkills(rows); };
+  const stopSkills = hub.onEvent<{ subscriptionId: string; rows: AppSkill[] }>('liveQuery.snapshot', event => { if (event.subscriptionId === 'skill-default-proof') acceptRows(event.rows); });
+  const stopDelta = hub.onEvent<{ subscriptionId: string; added?: AppSkill[]; updated?: AppSkill[] }>('liveQuery.delta', event => { if (event.subscriptionId === 'skill-default-proof') acceptRows([...(event.added ?? []), ...(event.updated ?? [])]); });
   try {
     await hub.request('liveQuery.subscribe', { queryName: 'skills.list', params: [], subscriptionId: 'skill-default-proof' });
     assert.equal((await snapshot).find(row => row.id === wrapper.id)!.enabled, true);
-  } finally { clearTimeout(timer); stopSkills(); await hub.request('liveQuery.unsubscribe', { subscriptionId: 'skill-default-proof' }); }
-  evidence.skillLiveQueryReadback = true;
+  } finally { clearTimeout(timer); stopSkills(); stopDelta(); await hub.request('liveQuery.unsubscribe', { subscriptionId: 'skill-default-proof' }); }
+  evidence.skillLiveQueryReadback = true; evidence.validationThroughLiveQuery = true;
   let notices = 0; stopEvents = app.internalEventBus.subscribe('skills.changed', () => { notices++; }, { subscriberName: 'skill-default-proof' });
   const before = readDefault();
   const jobsBefore = raw.prepare("SELECT count(*) AS n FROM job_queue WHERE queue='skill.validate'").get()!.n;
