@@ -186,4 +186,21 @@ describe('MCP default RPC writes', () => {
     ).rejects.toThrow('reserved');
     expect(publish).not.toHaveBeenCalled();
   });
+  it.each(['mcp.enablement.setOverride', 'mcp.enablement.clearOverride'])(
+    '%s identifies a missing Space without writing or publishing',
+    async (method) => {
+      await expect(
+        call(method, {
+          scopeType: 'space',
+          scopeId: 'missing-space',
+          serverId: 'browser',
+          enabled: true,
+        })
+      ).rejects.toThrow('Space not found: missing-space');
+      expect(overrides.listForScope('space', 'missing-space')).toEqual([]);
+      expect(globalDefaults()).toEqual(selection());
+      expect(spaceDefaults()).toEqual(selection());
+      expect(publish).not.toHaveBeenCalled();
+    }
+  );
 });

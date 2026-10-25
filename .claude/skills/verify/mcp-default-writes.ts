@@ -47,6 +47,9 @@ try {
   app.db.mcpEnablement.setOverride('space',fixtures[1].id,server.id,false);
   const readDefault=(id?:string)=>{const target=captureToolPreferenceRow(raw,id?{table:'spaces',id}:{table:'global_settings',id:1});return JSON.parse(String(target.row![id?'config':'settings'])).toolSelectionDefaults as SessionToolSelection;};
   const selected=(id:string|undefined,key=server.id)=>readDefault(id).choices[`mcp:${key}`]!.selected;
+  for(const method of ['mcp.enablement.setOverride','mcp.enablement.clearOverride'])await assert.rejects(hub.request(method,{scopeType:'space',scopeId:'missing-proof-space',serverId:server.id,enabled:true}),/Space not found: missing-proof-space/);
+  assert.deepEqual(app.db.mcpEnablement.listForScope('space','missing-proof-space'),[]);
+  evidence.contextualMissingSpace=true;
   await hub.request('mcp.registry.setEnabled',{id:server.id,enabled:true});
   assert.equal(selected(undefined),true);assert.equal(selected(fixtures[0].id),true);assert.equal(selected(fixtures[1].id),false);
   await hub.request('mcp.enablement.setOverride',{scopeType:'space',scopeId:fixtures[1].id,serverId:server.id,enabled:true});
