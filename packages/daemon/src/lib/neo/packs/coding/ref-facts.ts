@@ -1,5 +1,7 @@
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import { withBusyRetry } from '../../../../storage/busy-retry.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { callCodingBranchDb } from './branch-facts-db.ts';
+import { codingRefReads, codingRefWrites } from './ref-facts-db.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { readGithubRefStates, type NeoRef, type NeoRefState } from './ask-prs.ts';
@@ -17,6 +19,15 @@ const pending = new WeakMap<
   Database,
   Map<string, Promise<ReturnType<CodingRefFactsRepository['read']>>>
 >();
+
+function refRequests(db: Database) {
+  let reads = pending.get(db);
+  if (!reads) {
+    reads = new Map();
+    pending.set(db, reads);
+  }
+  return reads;
+}
 
 export class CodingRefFactsRepository {
   constructor(private readonly db: Database) {}
@@ -67,28 +78,60 @@ export class CodingRefFactsRepository {
     };
   }
 
+  readCurrent(ref: NeoRef, at = Date.now(), maxAgeMs = 120_000) {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingRefReads, 'read', ref, at, maxAgeMs),
+      'coding.ref.db'
+    );
+  }
+
   refresh(
     ref: NeoRef,
     spawn: SpawnFn = spawnProcess,
-    now = Date.now
+    now = Date.now,
+    reuseTerminal = false
   ): Promise<ReturnType<CodingRefFactsRepository['read']>> {
-    const canonical = this.canonical(ref),
-      key = JSON.stringify(canonical);
-    let reads = pending.get(this.db);
-    if (!reads) {
-      reads = new Map();
-      pending.set(this.db, reads);
-    }
+    const reads = refRequests(this.db);
+    const key = `${reuseTerminal ? 'read' : 'refresh'}:${JSON.stringify({
+      owner: ref.owner.toLowerCase(),
+      repo: ref.repo.toLowerCase(),
+      number: ref.number,
+    })}`;
     const held = reads.get(key);
     if (held) return held;
-    const revision = this.row(key)?.observation_revision ?? 0;
+    const request = this.collectCurrent(ref, spawn, now, reuseTerminal).finally(() =>
+      reads.delete(key)
+    );
+    reads.set(key, request);
+    return request;
+  }
+
+  private async collectCurrent(
+    ref: NeoRef,
+    spawn: SpawnFn,
+    now: () => number,
+    reuseTerminal: boolean
+  ) {
+    const current = await this.readCurrent(ref, now());
+    if (
+      reuseTerminal &&
+      current.view.status === 'known' &&
+      current.view.value.kind === 'pr' &&
+      current.view.value.done
+    )
+      return current;
+    const canonical = current.ref,
+      key = JSON.stringify(canonical);
+    const reads = refRequests(this.db);
+    const held = reads.get(key);
+    if (held) return held;
+    const revision = current.observationRevision;
     const request = this.collect(canonical, revision, spawn, now).finally(() => reads!.delete(key));
     reads.set(key, request);
     return request;
   }
 
   private async collect(ref: NeoRef, revision: number, spawn: SpawnFn, now: () => number) {
-    const key = JSON.stringify(ref);
     let value: NeoRefState | null = null,
       requests = 0;
     try {
@@ -99,29 +142,33 @@ export class CodingRefFactsRepository {
       value = (await readGithubRefStates([ref], measured, true))?.[0] ?? null;
     } catch {}
     log.info('PR ledger reference GitHub read', { ref, lookups: requests, ok: value !== null });
-    const persist = this.db.transaction(() => {
-      const before = this.row(key);
-      if ((before?.observation_revision ?? 0) !== revision) return;
-      const at = now(),
-        json = value ? JSON.stringify(value) : (before?.value_json ?? null);
-      this.db
-        .prepare(`INSERT INTO pack_coding_ref_facts
-        (subject,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)
-        VALUES(?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET
-        fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,
-        value_json=excluded.value_json,observed_at=excluded.observed_at,
-        attempted_at=excluded.attempted_at,reason=excluded.reason`)
-        .run(
-          key,
-          (before?.fact_revision ?? 0) + (value && json !== before?.value_json ? 1 : 0),
-          revision + 1,
-          json,
-          value ? at : (before?.observed_at ?? null),
-          at,
-          value ? null : 'failed'
-        );
-    }, 'immediate');
-    withBusyRetry(persist);
-    return this.read(ref, now());
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingRefWrites, 'observe', ref, revision, value, now()),
+      'coding.ref.db'
+    );
+  }
+
+  observe(ref: NeoRef, revision: number, value: NeoRefState | null, at: number) {
+    const key = JSON.stringify(ref);
+    const before = this.row(key);
+    if ((before?.observation_revision ?? 0) !== revision) return this.read(ref, at);
+    const json = value ? JSON.stringify(value) : (before?.value_json ?? null);
+    this.db
+      .prepare(`INSERT INTO pack_coding_ref_facts
+      (subject,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET
+      fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,
+      value_json=excluded.value_json,observed_at=excluded.observed_at,
+      attempted_at=excluded.attempted_at,reason=excluded.reason`)
+      .run(
+        key,
+        (before?.fact_revision ?? 0) + (value && json !== before?.value_json ? 1 : 0),
+        revision + 1,
+        json,
+        value ? at : (before?.observed_at ?? null),
+        at,
+        value ? null : 'failed'
+      );
+    return this.read(ref, at);
   }
 }

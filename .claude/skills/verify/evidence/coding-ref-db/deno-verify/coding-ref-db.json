@@ -1,0 +1,264 @@
+{
+  "mode": "verify",
+  "fanout": [
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    }
+  ],
+  "initialRequests": [
+    {
+      "phase": "initial",
+      "family": "ask-reference",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged mergedAt baseRefName}}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-rules",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/rules/branches/dev",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    }
+  ],
+  "refLookups": 1,
+  "firstStored": {
+    "subject": "{\"owner\":\"synthetic\",\"repo\":\"ledger\",\"number\":7}",
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "value_json": "{\"url\":\"https://github.com/synthetic/ledger/pull/7\",\"kind\":\"pr\",\"state\":\"OPEN\",\"at\":null,\"done\":false,\"closedBy\":null,\"base\":\"dev\",\"defaultBase\":\"dev\"}",
+    "observed_at": 1792959574720,
+    "attempted_at": 1792959574720,
+    "reason": null
+  },
+  "issue": {
+    "ok": true,
+    "kind": "issue",
+    "url": "https://github.com/synthetic/ledger/issues/3",
+    "state": "CLOSED",
+    "closedAs": "completed",
+    "closedBy": "https://github.com/synthetic/ledger/pull/7",
+    "parent": "https://github.com/synthetic/ledger/issues/1"
+  },
+  "section": {
+    "ok": false,
+    "reason": "section_workspace_mismatch"
+  },
+  "mainSql": [],
+  "commands": [
+    "coding.ref.snapshot",
+    "coding.ref.observe",
+    "coding.ref.snapshot",
+    "coding.ref.observe"
+  ],
+  "rpcMetrics": [
+    {
+      "name": "neo.github.read",
+      "durationMs": 876.6953330000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 876.4759170000002
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 876.4374170000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 876.4347079999998
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 876.4402500000006
+    },
+    {
+      "name": "neo.project.section",
+      "durationMs": 362.95445800000016
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 363.029708
+    }
+  ],
+  "maxLagMs": 16.90495800000008,
+  "requests": [
+    {
+      "phase": "initial",
+      "family": "ask-reference",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged mergedAt baseRefName}}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-rules",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/rules/branches/dev",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "issue",
+      "family": "issue-reference",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged mergedAt baseRefName}}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=3",
+        "--include"
+      ],
+      "graphqlCost": null
+    }
+  ]
+}
