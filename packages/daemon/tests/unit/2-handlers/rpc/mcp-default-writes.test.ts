@@ -203,4 +203,52 @@ describe('MCP default RPC writes', () => {
       expect(publish).not.toHaveBeenCalled();
     }
   );
+  it.each(['mcp.enablement.clearOverride', 'space.mcp.clearOverride'])(
+    '%s does not invent a local choice for an unchanged clear after a legacy import',
+    async (method) => {
+      db.prepare("DELETE FROM skills WHERE id='wrapper'").run();
+      registry.update('browser', { enabled: true });
+      const global = { version: 1, choices: {} };
+      db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+        JSON.stringify({ toolSelectionDefaults: global })
+      );
+      for (const config of [{}, { toolSelectionDefaults: { version: 1, choices: {} } }]) {
+        db.prepare("UPDATE spaces SET config=?,updated_at=777 WHERE id='space'").run(
+          JSON.stringify(config)
+        );
+        expect(
+          await call(method, {
+            scopeType: 'space',
+            scopeId: 'space',
+            spaceId: 'space',
+            serverId: 'browser',
+          })
+        ).toEqual(method === 'space.mcp.clearOverride' ? { ok: true } : { deleted: false });
+        expect(spaces.getSpace('space')!.config).toEqual(config);
+        expect(spaces.getSpace('space')!.updatedAt).toBe(777);
+        expect(globalDefaults()).toEqual(global);
+        expect(publish).not.toHaveBeenCalled();
+      }
+    }
+  );
+  it('keeps an absent global key off when clearing an actual local choice', async () => {
+    db.prepare("DELETE FROM skills WHERE id='wrapper'").run();
+    registry.update('browser', { enabled: true });
+    db.prepare('UPDATE global_settings SET settings=? WHERE id=1').run(
+      JSON.stringify({ toolSelectionDefaults: { version: 1, choices: {} } })
+    );
+    db.prepare("UPDATE spaces SET config=? WHERE id='space'").run(
+      JSON.stringify({ toolSelectionDefaults: selection(true) })
+    );
+    overrides.setOverride('space', 'space', 'browser', true);
+    expect(
+      await call('mcp.enablement.clearOverride', {
+        scopeType: 'space',
+        scopeId: 'space',
+        serverId: 'browser',
+      })
+    ).toEqual({ deleted: true });
+    expect(spaceDefaults()).toEqual(selection());
+    expect(publish).toHaveBeenCalled();
+  });
 });

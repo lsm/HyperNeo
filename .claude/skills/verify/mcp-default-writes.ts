@@ -47,6 +47,21 @@ try {
   app.db.mcpEnablement.setOverride('space',fixtures[1].id,server.id,false);
   const readDefault=(id?:string)=>{const target=captureToolPreferenceRow(raw,id?{table:'spaces',id}:{table:'global_settings',id:1});return JSON.parse(String(target.row![id?'config':'settings'])).toolSelectionDefaults as SessionToolSelection;};
   const selected=(id:string|undefined,key=server.id)=>readDefault(id).choices[`mcp:${key}`]!.selected;
+  const legacy=app.db.appMcpServers.create({name:'legacy-bypass',sourceType:'stdio',command:'not-executed',enabled:true});
+  const implicit=spaces.createSpace({slug:'implicit',name:'Implicit',workspacePath:join(run,'implicit')});
+  raw.prepare('UPDATE spaces SET stopped=1,updated_at=777 WHERE id=?').run(implicit.id);
+  let notices=0;stopEvents=app.internalEventBus.subscribe('mcp.registry.changed',()=>{notices++;},{subscriberName:'mcp-default-proof'});
+  for(const method of ['mcp.enablement.clearOverride','space.mcp.clearOverride']){
+    assert.deepEqual(await hub.request(method,{scopeType:'space',scopeId:implicit.id,spaceId:implicit.id,serverId:legacy.id}),method==='space.mcp.clearOverride'?{ok:true}:{deleted:false});
+    assert.equal(Object.hasOwn(spaces.getSpace(implicit.id)!.config??{},'toolSelectionDefaults'),false);
+    assert.equal(spaces.getSpace(implicit.id)!.updatedAt,777);assert.equal(notices,0);
+  }
+  raw.prepare('UPDATE spaces SET config=? WHERE id=?').run(JSON.stringify({toolSelectionDefaults:{version:1,choices:{[`mcp:${legacy.id}`]:{selected:true,aliases:['legacy-bypass']}}}}),implicit.id);
+  app.db.mcpEnablement.setOverride('space',implicit.id,legacy.id,true);
+  assert.deepEqual(await hub.request('mcp.enablement.clearOverride',{scopeType:'space',scopeId:implicit.id,serverId:legacy.id}),{deleted:true});
+  assert.equal(selected(implicit.id,legacy.id),false);
+  app.db.appMcpServers.delete(legacy.id);
+  evidence.unchangedImportClearPreserved=true;evidence.canonicalMissingKeyRemainsOff=true;
   for(const method of ['mcp.enablement.setOverride','mcp.enablement.clearOverride'])await assert.rejects(hub.request(method,{scopeType:'space',scopeId:'missing-proof-space',serverId:server.id,enabled:true}),/Space not found: missing-proof-space/);
   assert.deepEqual(app.db.mcpEnablement.listForScope('space','missing-proof-space'),[]);
   evidence.contextualMissingSpace=true;
@@ -64,7 +79,7 @@ try {
   assert.equal(selected(undefined,other.id),true);
   const results=await Promise.allSettled([hub.request('mcp.registry.setEnabled',{id:server.id,enabled:true}),hub.request('mcp.registry.setEnabled',{id:other.id,enabled:false})]);
   assert.deepEqual(results.map(result=>result.status),['fulfilled','fulfilled']);assert.equal(selected(undefined),true);assert.equal(selected(undefined,other.id),false);
-  let notices=0;stopEvents=app.internalEventBus.subscribe('mcp.registry.changed',()=>{notices++;},{subscriberName:'mcp-default-proof'});
+  notices=0;
   raw.exec("CREATE TRIGGER reject_mcp_default BEFORE UPDATE ON spaces BEGIN SELECT RAISE(ABORT,'synthetic RPC default failure'); END");
   const before=readDefault();
   await assert.rejects(hub.request('mcp.registry.update',{id:server.id,enabled:false}),/synthetic RPC default failure/);
