@@ -148,6 +148,12 @@ function commit(
       const edits = request.edits
         .filter(
           (edit) =>
+            edit.selected !== null ||
+            prepared.local.changes.length > 0 ||
+            prepared.defaults.get(target.key.id)?.choices[edit.key] !== undefined
+        )
+        .filter(
+          (edit) =>
             request.spaceId ||
             !spaceId ||
             !prepared.before.overrides.some(
