@@ -21,6 +21,7 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
 process.env.PATH = `${run}/bin:${process.env.PATH}`;
 const coordinatorBodies: { messages: { role: string; content: unknown }[] }[] = [];
 let workerStatus = 'running';
+let waitingFor: string | undefined;
 let modelTurns = 0;
 let modelRequests = 0;
 const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(req) {
@@ -64,7 +65,7 @@ try {
   const registry = createOperationRegistry([{ ...status, execute: async () => ({ ok: true, value: {
     ref: { adapter: 'codex-desktop', id: 'synthetic-worker' }, title: 'Synthetic worker',
     place: { machine: 'local', name: 'Synthetic' }, status: workerStatus,
-    lastActivityAt: Date.now(), turnEnds,
+    lastActivityAt: Date.now(), turnEnds, ...(waitingFor !== undefined ? { waitingFor } : {}),
   } }) }]);
   service = createNeoService(app.db, { getOperationRegistry: () => registry } as unknown as SessionManager, app.messageHub, app.internalEventBus);
   const readOnlyQuiet = [];
@@ -143,14 +144,17 @@ try {
   turnEnds = [{ id: 'focused', at: now + 4, message: 'Prepared discussion. New reason.' }];
   await expectTurns('changedReasonSameTransportId', 5);
   assert(latestInput().includes('Prepared discussion. New reason.'));
-  workerStatus = 'needs_you';
+  workerStatus = 'queued';
   await expectTurns('changedWorkerStatus', 6);
+  waitingFor = 'A different owner decision.';
+  await expectTurns('changedStructuredReason', 7);
+  assert(latestInput().includes('Waiting for: A different owner decision.'));
   const second = service.todos.addTodo('other-todo', ask.id, { title: 'Other', doneWhen: 'Human decides', instruction: null, named: null, check: null }, now);
   service.todos.updateTodo(second, { state: 'doing', startedAt: now }, now);
   service.todoSessions.bind(second.id, ref, now);
   const secondDispatch = await service.todoSessions.inputs.accept(second.id, root, { verb: 'send', ref }, 'Other', now);
   await service.todoSessions.inputs.recordOutcome(secondDispatch, { ref }, now);
-  await expectTurns('sameReportDifferentTodo', 7);
+  await expectTurns('sameReportDifferentTodo', 8);
   await app.jobProcessor.stop();
   const historyCount = (id: string) => (app.db.getDatabase().prepare(
     'SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND sdk_uuid=?'
@@ -170,11 +174,11 @@ try {
   }
   app.jobProcessor.start();
   const overlapDeadline = Date.now() + 45000;
-  while (results().n < 9 && Date.now() < overlapDeadline) await Bun.sleep(100);
-  assert.equal(results().n, 9);
-  assert.equal(modelTurns, 9);
+  while (results().n < 10 && Date.now() < overlapDeadline) await Bun.sleep(100);
+  assert.equal(results().n, 10);
+  assert.equal(modelTurns, 10);
   for (const phase of ['pending', 'queued']) assert.equal(historyCount(`synthetic-urgent-${phase}`), 1);
-  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 7, urgentHistoryRows: 2 });
+  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 8, urgentHistoryRows: 2, finalTurns: modelTurns, finalResults: results().n });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
 } finally {

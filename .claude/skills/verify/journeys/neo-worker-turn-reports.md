@@ -8,8 +8,8 @@ status-only authority warning and every byte of the worker's report.
 
 Check an exact repeat under a different transport ID/time, including after a
 NeoService restart, adds no request. A changed reason under a reused ID,
-changed status, or a different todo adds one request each. Do not infer kinds
-from report text. The unit contracts also check whitespace changes and empty
+changed status, a changed structured waiting reason, or a different todo adds one
+request each. Do not infer kinds from report text. The unit contracts also check whitespace changes and empty
 text versus the literal no-reply fallback; neither is an exact repeat.
 
 Keep observed.json, readonly-quiet.json, overlaps.json, all model request bodies

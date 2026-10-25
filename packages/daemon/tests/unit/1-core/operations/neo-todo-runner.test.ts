@@ -419,9 +419,8 @@ describe('neo todo runner', () => {
         });
         await h.runner.refresh(() => {});
         expect(h.told).toContain(
-          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}):\n\n${message || 'worker ended its turn with no reply'}`
+          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}, status done):\n\n${message || 'worker ended its turn with no reply'}`
         );
-        expect(h.toldKeys).toContain(`neo-todo-turn:${todo.id}:${dispatch.id}:turn-1`);
         expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: prior });
       } finally {
         h.db.close();

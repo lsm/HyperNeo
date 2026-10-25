@@ -20,15 +20,16 @@ instruction not to act, forward, reply or treat it as approval.
 
 An exact report repeat with a different transport turn ID/time produces no new
 request, including after recreating NeoService against the same SQLite DB.
-Changed text under a reused transport ID, changed worker status, and another
-todo's identical report must each produce one new request, reaching seven.
+Changed text under a reused transport ID, changed worker status, a changed
+structured waiting reason, and another todo's identical report must each
+produce one new request, reaching eight.
 The unit contracts also distinguish whitespace and empty text from the literal
 fallback sentence. Preserve observed.json and the model request JSON files.
 
 Finally pause only this daemon's job processor. Deliver two urgent notes and
 retry each with a quiet kind while pending or queued. Each must retain one
 mailbox job and no premature history row. Resume the owned processor; the two
-reports add exactly two requests and history rows, reaching nine results.
+reports add exactly two requests and history rows, reaching ten results.
 Retain overlaps.json and readonly-quiet.json. Ordinary quiet notices remain
 queued; only structured worker turn reports use the immediate report path.
 
