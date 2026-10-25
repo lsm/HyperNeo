@@ -1,5 +1,6 @@
+import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { strict as assert } from 'node:assert';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -48,6 +49,15 @@ for (const name of ['open', 'gh']) writeFileSync(join(run, 'bin', name), '#!/bin
 const evidence: unknown[] = [];
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
+let sdkModel: ReturnType<typeof spawn> | undefined;
+const buildOptions = QueryOptionsBuilder.prototype.build;
+let sdkBaseUrl = '';
+QueryOptionsBuilder.prototype.build = async function (...args) {
+  const options = await buildOptions.apply(this, args);
+  assert(sdkBaseUrl, 'SDK model endpoint must be loopback');
+  writeFileSync(join(run, 'evidence/sdk-options.json'), JSON.stringify({ cwd: options.cwd, sandbox: options.sandbox, temp: options.env?.TMPDIR }, null, 2));
+  return { ...options, spawnClaudeCodeProcess: (child) => spawn(child.command, child.args, { cwd: child.cwd, env: { ...child.env, ANTHROPIC_BASE_URL: sdkBaseUrl }, stdio: ['pipe', 'pipe', 'pipe'], signal: child.signal }) };
+};
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
@@ -65,7 +75,7 @@ try {
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
     ws!.addEventListener('message', receive);
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: name.startsWith('rpc:') ? name.slice(4) : 'operation.invoke', data: name.startsWith('rpc:') ? input : { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const request = {
     adapter: 'claude-desktop',
@@ -108,10 +118,48 @@ try {
   });
   const codexResult = await codex.start!(request, { from: 'synthetic', caller: { source: 'rpc' } });
   assert(codexResult.ok, JSON.stringify(codexResult));
-  console.log(`PASS installed Claude and Codex outside refusal + inside/temp writes: ${run}/evidence`);
+  await app.jobProcessor.stop();
+  const registry = await rpc('rpc:mcp.registry.list', {}) as { servers: { id: string }[] };
+  for (const server of registry.servers) await rpc('rpc:mcp.registry.setEnabled', { id: server.id, enabled: false });
+  await rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Loopback', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-synthetic-loopback-only' } });
+  const sdk = await rpc('work.start', { ...request, adapter: 'hyperneo', title: 'SDK sandbox' }) as Result<WorkStarted>;
+  assert(sdk.ok, JSON.stringify(sdk));
+  const sdkWorker = app.db.getSession(sdk.value.ref.id)!.workspacePath!;
+  assert(sdkWorker !== source);
+  sdkModel = spawn('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, sdkWorker, 'sdk'], { stdio: 'ignore' });
+  const wait = async (predicate: () => boolean) => {
+    const deadline = Date.now() + 60000;
+    while (!predicate()) {
+      assert(Date.now() < deadline, 'SDK probe timed out');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  };
+  await wait(() => existsSync(join(run, 'evidence/sdk-port')));
+  sdkBaseUrl = `http://127.0.0.1:${readFileSync(join(run, 'evidence/sdk-port'), 'utf8')}`;
+  app.jobProcessor.start();
+  await wait(() => existsSync(join(sdkWorker, 'network-sdk.txt')) && readFileSync(join(sdkWorker, 'network-sdk.txt'), 'utf8') === 'synthetic-network-ok');
+  const sdkSettings = JSON.parse(readFileSync(join(sdkWorker, '.claude/settings.local.json'), 'utf8'));
+  const sdkTemp = readFileSync(join(sdkWorker, 'observed-temp-sdk.txt'), 'utf8');
+  const observed = {
+    insideAllowed: readFileSync(join(sdkWorker, 'inside-sdk.txt'), 'utf8') === 'inside',
+    outsideRefused: !existsSync(join(run, 'sdk-outside/escaped.txt')),
+    gitAllowed: existsSync(join(sdkWorker, '.git/hyperneo-probe-sdk')),
+    tempAllowed: sdkTemp.startsWith(sdkSettings.env.TMPDIR + '/') && existsSync(join(sdkTemp, 'probe-sdk')),
+    cacheAllowed: existsSync(join(sdkSettings.env.XDG_CACHE_HOME, 'probe-sdk')),
+    networkAllowed: true,
+  };
+  writeFileSync(join(run, 'evidence/sdk-observed.json'), JSON.stringify(observed, null, 2));
+  assert(Object.values(observed).every(Boolean), JSON.stringify(observed));
+  await wait(() => existsSync(join(run, 'evidence/sdk-requests.json')) && /Operation not permitted|Permission denied/.test(readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8')) && readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8').includes('outside-status=1'));
+  writeFileSync(join(run, 'sdk-finish'), 'done');
+  await new Promise<void>(resolve => sdkModel!.once('exit', () => resolve()));
+  sdkModel = undefined;
+  console.log(`PASS Codex Desktop, Claude Desktop and real HyperNeo SDK outside refusal + inside/Git/temp/cache/network: ${run}/evidence`);
 
 
 } finally {
+  QueryOptionsBuilder.prototype.build = buildOptions;
+  sdkModel?.kill();
   ws?.close();
   await app?.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

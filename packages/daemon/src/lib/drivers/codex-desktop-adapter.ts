@@ -2,6 +2,7 @@ import {
   codexWorkerSandbox,
   prepareWorkerSandbox,
   releaseWorkerSandbox,
+  resumeWorkerSandbox,
 } from './worker-sandbox.ts';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { Logger } from '../logger.ts';
@@ -891,6 +892,7 @@ async function tryDesktopCodexSend(
   deps: CodexDesktopAdapterDeps,
   mode: 'auto' | 'steer'
 ): Promise<CodexSendGate<'app-server'>> {
+  await resumeWorkerSandbox(detail.thread.folder);
   return steerCodexDesktopTurn(
     deps.desktopSocketPath,
     deps.spawn,

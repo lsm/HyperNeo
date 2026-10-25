@@ -1,7 +1,7 @@
 import { releaseWorkerSandbox } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
-import { installClaudeNativeWrites } from './claude-native-writes.ts';
+import { installClaudeNativeWrites, readClaudeWorkerSandbox } from './claude-native-writes.ts';
 import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
 import { readClaudeReceiverMode } from './claude-receiver-mode.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -1215,8 +1215,9 @@ export async function resumeIdleClaudeSession(
 ): Promise<{ value: readonly ClaudeLiveSession[] } | { reason: Result<WorkDelivery> }> {
   const running = (sessions: readonly ClaudeLiveSession[]) =>
     sessions.some((session) => session.sessionId === record.cliSessionId && session.pid);
-  if (running(liveSessions)) return { value: liveSessions };
   const folder = record.cwd ?? record.originCwd ?? deps.homeDir;
+  const sandbox = await readClaudeWorkerSandbox(folder);
+  if (running(liveSessions)) return { value: liveSessions };
   if (!deps.folderExists(folder))
     return {
       reason: reject(
@@ -1240,7 +1241,17 @@ export async function resumeIdleClaudeSession(
   const recheck = await deps.liveSessions().catch(() => liveSessions);
   if (running(recheck)) return { value: recheck };
   const turn = await runClaudeTurn(
-    ['claude', '-p', '--resume', record.cliSessionId, '--permission-mode', mode, '--', message],
+    [
+      'claude',
+      '-p',
+      '--resume',
+      record.cliSessionId,
+      '--permission-mode',
+      mode,
+      ...(sandbox ? ['--settings', join(folder, '.claude/settings.local.json')] : []),
+      '--',
+      message,
+    ],
     folder,
     record,
     message,
@@ -1412,9 +1423,19 @@ export async function launchInClaudeDesktop(
   deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
 ): Promise<number> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const sandbox = await readClaudeWorkerSandbox(cwd);
   try {
     const proc = deps.spawn(
-      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId],
+      [
+        'script',
+        '-q',
+        '/dev/null',
+        'claude',
+        '--desktop',
+        '--resume',
+        cliSessionId,
+        ...(sandbox ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
+      ],
       {
         cwd,
         stdout: 'ignore',
@@ -1590,6 +1611,7 @@ export async function startClaudeSession(
       '--mcp-config',
       '{"mcpServers":{}}',
       ...(worktree ? ['--worktree', worktree] : []),
+      ...(prepared ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],

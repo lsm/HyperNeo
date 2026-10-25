@@ -204,6 +204,7 @@ describe('codex-desktop start', () => {
 
   test('starts in the prepared location instead of another HEAD worktree and keeps its resource', async () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
+    mkdirSync(join(dir, '.git'));
     const prepared: unknown[] = [];
     let released = false;
     const { instance, calls, spawned } = adapter(
@@ -257,6 +258,7 @@ describe('codex-desktop start', () => {
 
   test('failed preparation creates no thread and a failed thread start releases the prepared directory', async () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
+    mkdirSync(join(dir, '.git'));
     let released = false;
     for (const failedPreparation of [true, false]) {
       const { instance, calls, spawned } = adapter(

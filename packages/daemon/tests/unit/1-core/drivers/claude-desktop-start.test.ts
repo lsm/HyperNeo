@@ -1,6 +1,7 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  existsSync,
   appendFileSync,
   mkdirSync,
   mkdtempSync,
@@ -499,6 +500,8 @@ describe('claude-desktop start', () => {
     });
     const sibling = join(dir, 'data/claude-worktrees/source/second');
     mkdirSync(join(sibling, '.git/info'), { recursive: true });
+    const firstRuntime = JSON.parse(initial).env.TMPDIR;
+    rmSync(join(firstRuntime, '..'), { recursive: true, force: true });
     const secondDriver = adapter({
       prepareExecution: async () => ({
         ok: true,
@@ -519,6 +522,7 @@ describe('claude-desktop start', () => {
     ).toBe(true);
     const readPolicy = (root: string) =>
       JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
+    expect(existsSync(firstRuntime)).toBe(true);
     expect(readPolicy(first).env.TMPDIR).not.toBe(readPolicy(sibling).env.TMPDIR);
     expect(readPolicy(first).env.XDG_CACHE_HOME).not.toBe(readPolicy(sibling).env.XDG_CACHE_HOME);
     expect(readPolicy(first).sandbox.filesystem.denyWrite).toContain(sibling);
@@ -528,11 +532,35 @@ describe('claude-desktop start', () => {
     expect(
       spawned
         .filter((args) => args.includes('--desktop'))
-        .every((args) => args.join(' ') === 'script -q /dev/null claude --desktop --resume u1')
+        .every(
+          (args) =>
+            args.slice(0, 7).join(' ') === 'script -q /dev/null claude --desktop --resume u1' &&
+            args.includes('--settings')
+        )
     ).toBe(true);
     const reloaded = adapter();
     expect((await reloaded.status!({ adapter: 'claude-desktop', id: 'local_u1' })).ok).toBe(true);
     expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+  });
+
+  test('resuming a prepared worker recreates purged runtime directories and passes its policy', async () => {
+    const directory = join(dir, 'prepared');
+    const driver = adapter({
+      prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
+    });
+    expect(
+      (await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user))
+        .ok
+    ).toBe(true);
+    const settings = join(directory, '.claude/settings.local.json');
+    const runtime = JSON.parse(readFileSync(settings, 'utf8')).env.TMPDIR;
+    rmSync(join(runtime, '..'), { recursive: true, force: true });
+    expect(
+      (await driver.send!({ adapter: 'claude-desktop', id: 'local_u1' }, 'Synthetic resume', user))
+        .ok
+    ).toBe(true);
+    expect(existsSync(runtime)).toBe(true);
+    expect(spawned.at(-1)).toContain(settings);
   });
 
   test('worker repository contents cannot grant Neo write access into a prepared clone', async () => {

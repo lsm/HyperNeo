@@ -1,3 +1,4 @@
+import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';
 import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   CanUseTool,
@@ -382,6 +383,7 @@ export class QueryOptionsBuilder {
   }): Promise<Options> {
     const session = overrides?.session ?? this.ctx.session;
     const config = this.admittedConfig(session);
+    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd());
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
@@ -525,7 +527,7 @@ export class QueryOptionsBuilder {
             ...neoReadSandbox(),
             filesystem: readAccess.filesystem,
           }
-        : (config.sandbox as Options['sandbox']),
+        : (workerSandbox?.sandbox ?? (config.sandbox as Options['sandbox'])),
 
       mcpServers: mergedMcpServers as Options['mcpServers'],
       strictMcpConfig: true,
@@ -541,7 +543,8 @@ export class QueryOptionsBuilder {
       env: {
         ...mergedEnv,
         ...compactEnv,
-        HYPERNEO_HANDOFF_DIR: handoffDirectory,
+        HYPERNEO_HANDOFF_DIR: workerSandbox?.env.TMPDIR ?? handoffDirectory,
+        ...workerSandbox?.env,
         ...readAccess?.env,
       },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),

@@ -14,7 +14,10 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
 The helper owns an isolated daemon on an ephemeral non-8399 port and synthetic
 Git repositories. Actual `work.start` RPC prepares the Claude clone and installs
 its policy. Desktop registration uses a synthetic peer, never the human's GUI.
-The installed Claude CLI runs that generated policy against a loopback model.
+The installed Claude CLI loads that actual file through `--settings <path>` and
+`--setting-sources local`, without injecting worker temp/cache variables into its
+environment. Merely enabling the local source leaves protected env keys unapplied;
+production creation, Desktop handoff and headless resume must pass the file too.
 Codex uses the production desktop adapter with a synthetic bootstrap/handoff peer;
 the real Codex CLI runs its generated thread configuration. This proves real OS
 shell denial with adapter-generated policy, not native Desktop IPC or UI persistence.
@@ -25,7 +28,21 @@ shell's OS denial and nonzero outside status. Temp paths must stay inside each
 worker's private root, including Claude's per-uid child directory. Long paths
 cause Claude to fall back to shared `/tmp/claude-<uid>` and must fail this proof.
 `codex-launch.json` and `codex-turn.json` retain both startup and opening policies.
-The daemon closes in finally; no mock API ports or provider registration are needed.
+The same run invokes `work.start` for the HyperNeo adapter and runs a real SDK
+Bash turn. `sdk-observed.json` and `sdk-options.json` prove its private clone is
+sandboxed too; `sdk-requests.json` retains the actual OS-denial tool result. The
+helper stores only a synthetic provider key through RPC in its disposable DB,
+disables external registry MCP servers, and routes SDK child traffic explicitly
+to its own loopback model. No policy/env injection occurs in the SDK transport
+wrapper. The daemon and model process close in finally; no fixed mock port is used.
+All three routes also curl the synthetic server through the sandbox's configured
+HTTP proxy. This proves HTTP network access, not real GitHub push/authentication.
+Claude allows HTTP(S) hosts explicitly but grants no SSH-agent/Unix sockets; HTTPS
+repository-token remotes are the supported path. SSH push is not verified.
+
+Focused tests remove runtime roots before creating a sibling and before resuming
+a Claude worker or building SDK options; each path must recreate the private dirs.
+Codex sends re-ensure only clones carrying the prepared-worker marker.
 
 Commit `ab59e77f7d` contains the failing reproduction before enforcement: real
 Claude writes the synthetic outside file. The regression helper exits nonzero.

@@ -11,7 +11,7 @@ const editRule = (path: string, tree = false) =>
 let pending: Promise<void> = Promise.resolve();
 
 function policy(root: string, roots: string[], siblings: string[]) {
-  return JSON.stringify({
+  return {
     env: workerSandboxPaths(root),
     sandbox: {
       enabled: true,
@@ -23,7 +23,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
         allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
         denyWrite: [...roots, ...siblings.filter((sibling) => sibling !== root)],
       },
-      network: { allowUnixSockets: [], allowAllUnixSockets: false },
+      network: { allowedDomains: ['*'], allowUnixSockets: [], allowAllUnixSockets: false },
     },
     permissions: {
       allow: [editRule(root, true)],
@@ -36,7 +36,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       ],
       disableBypassPermissionsMode: 'disable',
     },
-  });
+  };
 }
 
 async function install(root: string, roots: string[]) {
@@ -58,14 +58,20 @@ async function install(root: string, roots: string[]) {
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');
-  await writeFile(settingsPath(root), policy(root, roots, siblings), { flag: 'wx', mode: 0o600 });
+  await writeFile(settingsPath(root), JSON.stringify(policy(root, roots, siblings)), {
+    flag: 'wx',
+    mode: 0o600,
+  });
   await appendFile(join(root, '.git/info/exclude'), '\n/.claude/settings.local.json\n');
   await writeFile(markerPath(root), JSON.stringify({ roots }), { flag: 'wx', mode: 0o600 });
   for (const worker of workers) {
+    await prepareWorkerSandbox(worker.root);
     if (!(await lstat(join(worker.root, '.claude'))).isDirectory())
       throw new Error('Native write policy requires an in-clone .claude directory');
     const temporary = `${settingsPath(worker.root)}.hyperneo-tmp`;
-    await writeFile(temporary, policy(worker.root, worker.roots, siblings), { mode: 0o600 });
+    await writeFile(temporary, JSON.stringify(policy(worker.root, worker.roots, siblings)), {
+      mode: 0o600,
+    });
     await rename(temporary, settingsPath(worker.root));
   }
 }
@@ -76,4 +82,18 @@ export function installClaudeNativeWrites(directory: string, roots: string[]): P
     .then(() => install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))]));
   pending = next;
   return next;
+}
+
+export async function readClaudeWorkerSandbox(directory: string | undefined) {
+  if (!directory) return null;
+  const marker = await readFile(markerPath(directory), 'utf8').catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+      throw error;
+    }
+  );
+  if (marker === null) return null;
+  const { roots } = Marker.parse(JSON.parse(marker));
+  await prepareWorkerSandbox(directory);
+  return policy(directory, roots, []);
 }

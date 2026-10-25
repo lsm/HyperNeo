@@ -1,3 +1,5 @@
+import { installClaudeNativeWrites } from './claude-native-writes.ts';
+import { releaseWorkerSandbox } from './worker-sandbox.ts';
 import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
@@ -575,20 +577,24 @@ export async function createHyperneoSession(
   if (prepared && !prepared.ok) return { reason: prepared };
   let sessionId: string | undefined;
   try {
+    if (prepared) await installClaudeNativeWrites(prepared.value.directory, [folder]);
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,
       request.model,
       request.provider,
       request.effort,
-      request.inPlace
+      prepared ? true : request.inPlace
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)
       return { reason: reject('unsupported_model', error.message) };
     throw error;
   } finally {
-    if (!sessionId) await prepared?.value.release();
+    if (!sessionId && prepared) {
+      await prepared.value.release();
+      await releaseWorkerSandbox(prepared.value.directory);
+    }
   }
   if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
     await deps.sessions.chooseWorktree(sessionId);

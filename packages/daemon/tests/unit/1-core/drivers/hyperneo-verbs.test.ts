@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
@@ -225,10 +228,12 @@ describe('hyperneo adapter send and status', () => {
   });
 
   test('creates the native session in the prepared directory without another worktree choice', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-'));
+    mkdirSync(join(directory, '.git/info'), { recursive: true });
     const driver = adapter(async () => ({
       ok: true,
       value: {
-        directory: '/fresh/remote-base',
+        directory,
         release: async () => {
           throw new Error('Live resource released');
         },
@@ -245,7 +250,12 @@ describe('hyperneo adapter send and status', () => {
         { from: 'user', caller: { source: 'rpc' } }
       )
     ).toMatchObject({ ok: true });
-    expect(events).toEqual(['create /fresh/remote-base', 'announce new']);
+    expect(events).toEqual([`create ${directory}`, 'announce new']);
+    expect(
+      JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8')).sandbox
+        .enabled
+    ).toBe(true);
+    rmSync(directory, { recursive: true, force: true });
     expect(handed).toHaveLength(1);
   });
 

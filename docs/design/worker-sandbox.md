@@ -87,10 +87,16 @@ tokens, never grant Alpaca/trading keys. No credential contents were read for th
 ## Implementation slices
 
 Slice 2 (#8203) prepares coding work in private Git clones. Slice 3 (#8627)
-adds OS write enforcement to prepared workers: Codex `workspace-write` at thread
+adds OS write enforcement to prepared workers (including HyperNeo SDK sessions): Codex `workspace-write` at thread
 creation and the opening turn, Claude's Bash sandbox without unsandboxed retry,
 and private short temp/cache roots. Existing Claude native-file path rules remain.
 Codex 0.160.1 `workspaceWrite` has no per-path read-deny configuration; it does
 not enforce the secret-read boundary in section 3. Secret-read isolation is a
 separate later slice, #8630. Neither slice 3 nor Claude Bash sandboxing claims
 OS containment of native file tools or arbitrary MCP/helper processes.
+
+Prepared Claude starts/resumes explicitly pass the clone's generated settings file;
+local-source loading alone does not apply its protected environment variables.
+Runtime roots are re-created on resume/query and sibling-policy refresh. Claude
+HTTP(S) hosts are allowed through its proxy; SSH-agent/Unix sockets are not granted,
+so use HTTPS repository-token remotes. Live GitHub push/authentication is unverified.

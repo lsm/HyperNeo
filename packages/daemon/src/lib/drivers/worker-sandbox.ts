@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, rm } from 'node:fs/promises';
+import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function workerSandboxPaths(root: string) {
@@ -39,6 +40,7 @@ export async function prepareWorkerSandbox(root: string) {
         throw new Error('Worker runtime roots must be private directories');
     })
   );
+  await writeFile(join(root, '.git/hyperneo-worker-sandbox'), 'restricted');
   return env;
 }
 
@@ -64,4 +66,8 @@ export function codexWorkerSandbox(root: string) {
       networkAccess: true,
     },
   };
+}
+
+export async function resumeWorkerSandbox(root: string) {
+  if (existsSync(join(root, '.git/hyperneo-worker-sandbox'))) await prepareWorkerSandbox(root);
 }
