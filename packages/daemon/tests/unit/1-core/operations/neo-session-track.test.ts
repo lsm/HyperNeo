@@ -147,6 +147,16 @@ describe('neo.session.track', () => {
     db.close();
   });
 
+  test('a human Track tap immediately queues a Neo kickoff', async () => {
+    await service.trackSession('neo:root', notice(), Date.now());
+    expect(
+      db
+        .getJobQueueRepo()
+        .listActiveByPayload('mailbox', { 'to.sessionId': 'neo:root' })
+        .map((job) => job.payload.deliveryMode)
+    ).toEqual(['immediate']);
+  });
+
   test('a tap opens an ask whose todo follows the session and stays doing when it stops', async () => {
     Object.assign(service, { deliver: async () => {} });
     const tapped = Date.now();

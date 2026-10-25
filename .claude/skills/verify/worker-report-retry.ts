@@ -54,7 +54,7 @@ try {
   assert(opened.ok);
   const root = opened.sessionId;
   const args = { to: `session:${encodeURIComponent(root)}`, origin: 'session:synthetic-worker', messageUuid: crypto.randomUUID(), jobQueue: app.jobQueue };
-  const message = { type: 'user' as const, parent_tool_use_id: null, inputKind: 'task' as const, message: { content: 'Synthetic identical worker report.' } };
+  const message = { type: 'user' as const, parent_tool_use_id: null, inputKind: 'task' as const, workerReportKind: 'done' as const, message: { content: 'Synthetic identical worker report.' } };
   await handoffPromptToMailbox({ ...args, message });
   const firstDeadline = Date.now() + 45000;
   const results = () => (app.db.getDatabase().prepare("SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND message_type='result'").get(root) as { n: number }).n;
@@ -66,7 +66,9 @@ try {
   const job = () => app.db.getDatabase().prepare("SELECT status,error FROM job_queue WHERE queue='mailbox' AND json_extract(payload, '$.id')=?").get(retry.id) as {status: string; error: string | null};
   const retryDeadline = Date.now() + 10000;
   while (job().status !== 'completed' && !job().error && Date.now() < retryDeadline) await Bun.sleep(50);
-  const observed = { retry: job(), coordinatorTurns: modelTurns, results: results() };
+  const historyRows = (app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND sdk_uuid=?').get(root, args.messageUuid) as { n: number }).n;
+  const observed = { retry: job(), coordinatorTurns: modelTurns, results: results(), historyRows };
+  assert.equal(historyRows, 1);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   assert.equal(observed.retry.error, null);
   assert.equal(observed.retry.status, 'completed');

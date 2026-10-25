@@ -135,7 +135,7 @@ try {
   const overlaps = [];
   for (const phase of ['pending', 'queued']) {
     const id = `synthetic-urgent-${phase}`;
-    const urgent = service.deliverForward(root, id, `Worker failed (${phase}).`, root);
+    const urgent = service.deliverForward(root, id, `Worker failed (${phase}).`, root, 'event');
     if (phase === 'queued') await urgent;
     await service.deliverForward(root, id, 'Status-only retry.', root, 'focused_status');
     await urgent;
