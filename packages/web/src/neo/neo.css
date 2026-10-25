@@ -785,3 +785,24 @@
     width: calc((100% - var(--artifact-preview-width)) * 0.58);
   }
 }
+@media (min-width: 720px) {
+  .neo-shell.neo-preview-expanded :is(.neo-float-dock, .neo-chat-rail, .neo-composer-dock) {
+    visibility: hidden;
+  }
+  .neo-shell.neo-preview-focus.neo-preview-expanded > .artifact-preview-panel {
+    position: absolute;
+    grid-area: auto;
+    inset: 12px;
+    margin: 0;
+    width: auto;
+  }
+  .neo-shell.neo-preview-focus.neo-preview-expanded .neo-scene-list {
+    position: absolute;
+    grid-area: auto;
+    inset: calc(12px + 4rem) 12px 12px;
+    margin: 0;
+    padding: 16px;
+    border-radius: 0 0 24px 24px;
+    background: var(--surface);
+  }
+}

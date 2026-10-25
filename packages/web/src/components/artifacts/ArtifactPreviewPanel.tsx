@@ -22,11 +22,13 @@ export function ArtifactPreviewPanel({
   fileTabs = false,
   work,
   suspended = false,
+  expansion,
 }: {
   markdownClass?: string;
   fileTabs?: boolean;
   work?: { id: string; showTab: boolean; count: number };
   suspended?: boolean;
+  expansion?: { expanded: boolean; toggle: () => void };
 } = {}) {
   const stack = artifactPreviewStack.value;
   const top = stack.at(-1);
@@ -178,8 +180,38 @@ export function ArtifactPreviewPanel({
         >
           ×
         </button>
+        {tabbed && expansion && (
+          <button
+            type="button"
+            aria-label={t(expansion.expanded ? 'artifact.restore' : 'artifact.expand')}
+            title={t(expansion.expanded ? 'artifact.restore' : 'artifact.expand')}
+            aria-pressed={expansion.expanded}
+            onClick={expansion.toggle}
+            class="absolute right-12 top-1 z-10 flex h-11 w-11 items-center justify-center rounded-full text-fg-muted hover:bg-fill-soft hover:text-fg"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path
+                d={
+                  expansion.expanded
+                    ? 'M3 9h6V3M9 9 3 3m18 12h-6v6m0-6 6 6'
+                    : 'M9 3H3v6M3 3l6 6m6 12h6v-6m0 6-6-6'
+                }
+              />
+            </svg>
+          </button>
+        )}
         {tabbed && (selectedId || workActive || showWork) && (
-          <div class="flex shrink-0 px-3 py-3 pr-14">
+          <div class={`flex shrink-0 px-3 py-3 ${expansion ? 'pr-24' : 'pr-14'}`}>
             <ArtifactPreviewTabs
               files={selectedId || workActive ? files : []}
               selectedId={selectedId}
