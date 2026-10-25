@@ -85,6 +85,26 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test('work.send preserves explicit no-send evidence across its operation result', async () => {
+    const failure = {
+      ok: false as const,
+      reason: 'not_delivered' as const,
+      detail: 'No transport request made',
+      notSent: true as const,
+    };
+    const adapter: WorkAdapter = { ...desktop, send: async () => failure };
+    expect(
+      await call(
+        'work.send',
+        { ref: { adapter: adapter.id, id: 'worker' }, message: 'answer' },
+        undefined,
+        { source: 'rpc' },
+        [adapter]
+      )
+    ).toEqual(failure);
+    expect(SendWorkResultSchema.parse(failure)).toEqual(failure);
+  });
+
   test.each(['steer', 'queue'] as const)('work.send honors explicit %s intent', async (mode) => {
     const adapter: WorkAdapter = {
       ...desktop,

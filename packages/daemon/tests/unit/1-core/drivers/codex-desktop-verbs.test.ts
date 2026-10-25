@@ -1327,6 +1327,32 @@ describe('codex-desktop adapter status and send', () => {
     expect(spawned).toEqual([]);
   });
 
+  test.each(['thread/turns/list', 'thread/resume', 'turn/start'])(
+    'distinguishes a pre-send refusal from a lost acknowledgement at %s',
+    async (phase) => {
+      const accepted: string[] = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          if (method === 'turn/start') accepted.push(JSON.stringify(params.input));
+          if (method === phase) throw new Error('Synthetic connection lost');
+          if (method === 'thread/turns/list') return { data: [] };
+          if (method === 'thread/resume') return {};
+          throw new Error(`Unexpected ${method}`);
+        },
+        close: () => {},
+      }));
+      const reply = await driver.send!(ref('idle'), 'answer the worker', user);
+      expect(reply).toMatchObject({ ok: false, reason: 'not_delivered' });
+      if (phase === 'turn/start') {
+        expect(reply).not.toHaveProperty('notSent');
+        expect(accepted).toHaveLength(1);
+      } else {
+        expect(reply).toHaveProperty('notSent', true);
+        expect(accepted).toEqual([]);
+      }
+    }
+  );
+
   test.each([false, true])(
     'resumes saved idle work before sending, or reports resume failure: %s',
     async (resumeFails) => {

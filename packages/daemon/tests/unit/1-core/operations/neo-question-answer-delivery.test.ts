@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { Database as DaemonDatabase } from '../../../../src/storage/database.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -274,36 +277,172 @@ test('an old accepted answer cannot release a newer unanswered worker card', asy
   }
 });
 
-test('external answer routes stay pending for the separately tracked delivery path', async () => {
-  const f = await fixture();
+async function externalFixture(path = ':memory:') {
+  const f = await fixture(path);
+  const peer = { ...f.source, adapter: 'codex-desktop' };
+  new NeoTodoSessionRepository(f.db).bind('todo', peer, 3);
+  await f.write(peer, f.report);
+  f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+  return { ...f, peer };
+}
+
+function externalDelivery(
+  f: Awaited<ReturnType<typeof fixture>>,
+  invoke: NeoTodoRunnerDeps['invoke'],
+  warn: (error: unknown) => void = (error) => {
+    throw error;
+  }
+) {
+  return createNeoQuestionAnswerDelivery(
+    f.store,
+    new NeoTodoSessionRepository(f.db),
+    invoke,
+    async () => {},
+    async (todo) => f.store.recompute(todo, {}, 8, { state: 'no_opinion' }, async () => {}),
+    warn
+  );
+}
+
+test.each([{ delivered: true }, { delivered: false, queuedSubmissionId: 'accepted-queue' }])(
+  'an accepted external answer releases its hold once: %j',
+  async (delivery) => {
+    const f = await externalFixture();
+    const sent: unknown[] = [];
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      expect(name).toBe('work.send');
+      expect(input.ref).toMatchObject({ adapter: 'codex-desktop', id: 'worker' });
+      expect(input.message).toContain('Staging');
+      sent.push(input);
+      return { kind: 'completed', value: { ok: true, value: delivery } };
+    });
+    try {
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+      expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+      expect(sent).toHaveLength(1);
+    } finally {
+      f.db.close();
+    }
+  }
+);
+
+test.each([
+  { reason: 'not_delivered', notSent: true },
+  { reason: 'not_open' },
+  { reason: 'not_found' },
+])('a definite external refusal retries without releasing the hold: %j', async (failure) => {
+  const f = await externalFixture();
+  let attempts = 0;
+  const flush = externalDelivery(f, async (_caller, name) => {
+    expect(name).toBe('work.send');
+    return {
+      kind: 'completed',
+      value:
+        ++attempts === 1
+          ? { ok: false, detail: 'Synthetic refusal', ...failure }
+          : { ok: true, value: { delivered: true } },
+    };
+  });
   try {
-    const peer = { ...f.source, adapter: 'codex-desktop' };
-    new NeoTodoSessionRepository(f.db).bind('todo', peer, 3);
-    await f.write(peer, f.report);
-    f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
-    const calls: string[] = [];
-    await createNeoQuestionAnswerDelivery(
-      f.store,
-      new NeoTodoSessionRepository(f.db),
-      async (_caller, name) => {
-        calls.push(name);
-        throw new Error('No external dispatch in this slice');
-      },
-      async () => {
-        calls.push('context');
-      },
-      async (todo) => f.store.recompute(todo, {}, 8, { state: 'no_opinion' }, async () => {}),
-      (error) => {
-        throw error;
-      }
-    )();
-    expect(calls).toEqual([]);
-    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending', receipt: null }] });
+    await flush();
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
     expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    await flush();
+    expect(attempts).toBe(2);
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+    expect(f.store.getTodo('todo')?.state).toBe('doing');
   } finally {
     f.db.close();
   }
 });
+
+test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
+  'an uncertain external %s reconciles after restart without resending',
+  async (mode) => {
+    const run = mkdtempSync(join(tmpdir(), 'external-answer-restart-'));
+    const path = join(run, 'daemon.db');
+    const f = await externalFixture(path);
+    let sends = 0;
+    let message = '';
+    let visible = false;
+    const warnings: unknown[] = [];
+    const invoke: NeoTodoRunnerDeps['invoke'] = async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        message = String(input.message);
+        if (mode === 'lost-reply') throw new Error('Synthetic reply lost after peer acceptance');
+        return {
+          kind: 'completed',
+          value:
+            mode === 'unconfirmed'
+              ? {
+                  ok: true,
+                  value: {
+                    delivered: false,
+                    unconfirmed: true,
+                    receipt: { executionId: 'worker', inputId: 'queued' },
+                  },
+                }
+              : { ok: false, reason: 'not_delivered', detail: 'Reply lost' },
+        };
+      }
+      expect(name).toBe('work.status');
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            status: 'running',
+            lastActivityAt: 9,
+            recentInputs: [
+              { at: 9, text: visible ? message : 'unrelated answer [worker-answer:other]' },
+            ],
+          },
+        },
+      };
+    };
+    let reopened: Database | undefined;
+    try {
+      await externalDelivery(f, invoke, (error) => warnings.push(error))();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      f.db.close();
+      reopened = new Database(path);
+      const store = new NeoAskTodoRepository(reopened);
+      const get = createNeoQuestionOperations(
+        store,
+        async () => {},
+        async () => ({ ok: true })
+      ).find((op) => op.name === 'neo.question.get')!;
+      const flush = createNeoQuestionAnswerDelivery(
+        store,
+        new NeoTodoSessionRepository(reopened),
+        invoke,
+        async () => {},
+        async (todo) => store.recompute(todo, {}, 10, { state: 'no_opinion' }, async () => {}),
+        (error) => {
+          throw error;
+        }
+      );
+      await flush();
+      expect(sends).toBe(1);
+      expect(store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      visible = true;
+      await flush();
+      await flush();
+      expect(await get.execute({ questionId: f.question.id }, { source: 'rpc' })).toMatchObject({
+        answerDelivery: [{ state: 'accepted' }],
+      });
+      expect(store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+      expect(sends).toBe(1);
+    } finally {
+      if (reopened) reopened.close();
+      else f.db.close();
+      rmSync(run, { recursive: true, force: true });
+    }
+  }
+);
 
 test('a button answer never waits for an unrelated unavailable HyperNeo session', async () => {
   const f = await fixture();
