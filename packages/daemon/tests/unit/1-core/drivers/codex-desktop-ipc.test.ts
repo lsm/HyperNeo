@@ -764,7 +764,7 @@ describe('withCodexDesktopIpc', () => {
         value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
       });
       expect(f.seen.at(-1)?.params?.restoreMessage).toMatchObject({
-        text: 'use the parser\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo "<text>" (not SendMessage). Keep working after you send.\n[HyperNeo agent input]',
+        text: 'use the parser\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.\n[HyperNeo agent input]',
       });
     });
 
