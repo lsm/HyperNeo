@@ -325,37 +325,44 @@ describe('Neo preview Work layout', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it.each([false, true])('keeps reference navigation intact with existingFile=%s', async (file) => {
-    viewport = 900;
-    mount();
-    if (file) await open('a');
-    const handler = request.getMockImplementation()!;
-    request.mockImplementation((method, params) =>
-      params.name === 'artifact.reference.resolve'
-        ? Promise.resolve({ accepted: true, artifact: { artifactId: 'reference' } })
-        : handler(method, params)
-    );
-    act(() =>
-      pushArtifactPreview({
-        kind: 'reference',
-        source: { kind: 'publication', id: 'synthetic-publication' },
-        reference: 'reference.md',
-      })
-    );
-    expect(screen.queryByRole('tablist')).toBeNull();
-    await screen.findByRole('heading', { name: 'Document reference' });
-    expect(screen.queryByRole('tablist')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-    if (file) {
-      await screen.findByRole('heading', { name: 'Document a' });
-      expect(screen.getByRole('tab', { name: 'Your work · 1' })).toBeTruthy();
-      expect(
-        request.mock.calls.filter(
-          ([, { name, input }]) => name === 'artifact.file.get' && input.artifactId === 'a'
-        )
-      ).toHaveLength(1);
-    } else await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  });
+  it.each([false, true])(
+    'promotes direct references into the Work workspace with existingFile=%s',
+    async (file) => {
+      viewport = 900;
+      mount();
+      if (file) await open('a');
+      const handler = request.getMockImplementation()!;
+      request.mockImplementation((method, params) =>
+        params.name === 'artifact.reference.resolve'
+          ? Promise.resolve({ accepted: true, artifact: { artifactId: 'reference' } })
+          : handler(method, params)
+      );
+      act(() =>
+        pushArtifactPreview({
+          kind: 'reference',
+          source: { kind: 'publication', id: 'synthetic-publication' },
+          reference: 'reference.md',
+        })
+      );
+      expect(screen.queryByRole('tablist')).toBeNull();
+      await screen.findByRole('heading', { name: 'Document reference' });
+      await screen.findByRole('tab', { name: 'File reference' });
+      expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Close File reference' }));
+      if (file) {
+        await screen.findByRole('heading', { name: 'Document a' });
+        expect(screen.getByRole('tab', { name: 'Your work · 1' })).toBeTruthy();
+        expect(
+          request.mock.calls.filter(
+            ([, { name, input }]) => name === 'artifact.file.get' && input.artifactId === 'a'
+          )
+        ).toHaveLength(1);
+      } else
+        expect(
+          screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')
+        ).toBe('true');
+    }
+  );
 
   it('reuses Work and composer state while switching files/Work and wide/compact layouts', async () => {
     const { container } = mount();

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import {
   artifactPreviewWorkspace,
+  artifactPreviewStack,
   closeArtifactPreview,
   openArtifactPreview,
   pushArtifactPreview,
@@ -238,7 +239,7 @@ describe('desktop preview file tabs', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('keeps references in their existing view and returns to the mounted file viewer', async () => {
+  it('promotes a resolved reference into a tab and closes back to the mounted file', async () => {
     render(
       <>
         <button>Reference source</button>
@@ -264,8 +265,9 @@ describe('desktop preview file tabs', () => {
     );
     await screen.findByRole('heading', { name: 'Document b' });
     expect(document.activeElement).toBe(screen.getByRole('dialog'));
-    expect(screen.queryByRole('tablist')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
+    await screen.findByRole('tab', { name: 'Report B' });
+    expect(screen.queryByRole('button', { name: 'Back', exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Report B' }));
     await screen.findByRole('tablist');
     expect(screen.getByRole('heading', { name: 'Document a' })).toBe(heading);
     const a = screen.getByRole('tab', { name: 'Report A' });
@@ -279,6 +281,211 @@ describe('desktop preview file tabs', () => {
     expect(document.activeElement).toBe(a);
     fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
     await waitFor(() => expect(document.activeElement).toBe(source));
+  });
+
+  it('reuses a known artifact for the same reference without reloading its viewer', async () => {
+    render(<ArtifactPreviewPanel fileTabs />);
+    await open('a');
+    const heading = screen.getByRole('heading', { name: 'Document a' });
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (method, params) =>
+      params.name === 'artifact.reference.resolve'
+        ? { accepted: true, artifact: { artifactId: 'a' } }
+        : original(method, params)
+    );
+    const target = {
+      kind: 'reference' as const,
+      source: { kind: 'publication' as const, id: 'p' },
+      reference: 'a.md',
+    };
+    act(() => pushArtifactPreview(target));
+    await screen.findByRole('tab', { name: 'Report A' });
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.getByRole('heading', { name: 'Document a' })).toBe(heading);
+    act(() => pushArtifactPreview({ ...target }));
+    await screen.findByRole('tab', { name: 'Report A' });
+    expect(
+      request.mock.calls.filter(([, call]) => call.name === 'artifact.reference.resolve')
+    ).toHaveLength(1);
+    expect(request.mock.calls.filter(([, call]) => call.name === 'artifact.file.get')).toHaveLength(
+      1
+    );
+  });
+
+  it.each([false, true])(
+    'settles equal-key loading re-taps with suspended=%s',
+    async (suspended) => {
+      const view = render(<ArtifactPreviewPanel fileTabs />);
+      const original = request.getMockImplementation()!;
+      let finish!: (value: unknown) => void;
+      request.mockImplementation((method, params) =>
+        params.name === 'artifact.reference.resolve'
+          ? new Promise((resolve) => {
+              finish = resolve;
+            })
+          : original(method, params)
+      );
+      act(() =>
+        openArtifactPreview({
+          kind: 'reference',
+          source: { kind: 'publication', id: 'p' },
+          reference: 'a.md',
+        })
+      );
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      const target = artifactPreviewStack.value.at(-1)!;
+      act(() => openArtifactPreview({ ...target }));
+      act(() => openArtifactPreview({ ...target }));
+      if (suspended) view.rerender(<ArtifactPreviewPanel fileTabs suspended />);
+      await act(async () => {
+        finish({ accepted: true, artifact: { artifactId: 'a' } });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      if (suspended) {
+        expect(artifactPreviewStack.value.at(-1)?.kind).toBe('reference');
+        expect(
+          request.mock.calls.filter(([, call]) => call.name === 'artifact.file.get')
+        ).toHaveLength(0);
+        view.rerender(<ArtifactPreviewPanel fileTabs />);
+      }
+      await screen.findByRole('tab', { name: 'Report A' });
+      expect(screen.getAllByRole('tab')).toHaveLength(1);
+      expect(
+        request.mock.calls.filter(([, call]) => call.name === 'artifact.reference.resolve')
+      ).toHaveLength(1);
+      expect(
+        request.mock.calls.filter(([, call]) => call.name === 'artifact.file.get')
+      ).toHaveLength(1);
+    }
+  );
+
+  it('binds cached results to their target when a suspended reference is replaced', async () => {
+    const view = render(<ArtifactPreviewPanel fileTabs suspended />);
+    const original = request.getMockImplementation()!;
+    const pending = new Map<string, (value: unknown) => void>();
+    request.mockImplementation((method, params) =>
+      params.name === 'artifact.reference.resolve'
+        ? new Promise((resolve) => pending.set(params.input.reference, resolve))
+        : original(method, params)
+    );
+    const target = {
+      kind: 'reference' as const,
+      source: { kind: 'publication' as const, id: 'p' },
+      reference: 'a.md',
+    };
+    act(() => openArtifactPreview(target));
+    await waitFor(() => expect(pending.has('a.md')).toBe(true));
+    await act(async () => {
+      pending.get('a.md')!({ accepted: true, artifact: { artifactId: 'a' } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    act(() => openArtifactPreview({ ...target, reference: 'b.md' }));
+    view.rerender(<ArtifactPreviewPanel fileTabs />);
+    await waitFor(() => expect(pending.has('b.md')).toBe(true));
+    expect(artifactPreviewStack.value.at(-1)?.kind).toBe('reference');
+    expect(artifactPreviewWorkspace.state.value.files).toHaveLength(0);
+    act(() => pending.get('b.md')!({ accepted: true, artifact: { artifactId: 'b' } }));
+    await screen.findByRole('tab', { name: 'Report B' });
+    expect(screen.queryByRole('tab', { name: 'Report A' })).toBeNull();
+    expect(
+      request.mock.calls.filter(
+        ([, call]) => call.name === 'artifact.file.get' && call.input.artifactId === 'a'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('ignores an old or closed resolve request', async () => {
+    render(<ArtifactPreviewPanel fileTabs />);
+    const original = request.getMockImplementation()!;
+    const pending = new Map<string, (value: unknown) => void>();
+    request.mockImplementation((method, params) =>
+      params.name === 'artifact.reference.resolve'
+        ? new Promise((resolve) => pending.set(params.input.reference, resolve))
+        : original(method, params)
+    );
+    const target = {
+      kind: 'reference' as const,
+      source: { kind: 'publication' as const, id: 'p' },
+      reference: 'a.md',
+    };
+    act(() => openArtifactPreview(target));
+    await waitFor(() => expect(pending.has('a.md')).toBe(true));
+    act(() => openArtifactPreview({ ...target, reference: 'b.md' }));
+    await waitFor(() => expect(pending.has('b.md')).toBe(true));
+    act(() => pending.get('b.md')!({ accepted: true, artifact: { artifactId: 'b' } }));
+    await screen.findByRole('tab', { name: 'Report B' });
+    await act(async () => {
+      pending.get('a.md')!({ accepted: true, artifact: { artifactId: 'a' } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(artifactPreviewStack.value.at(-1)).toEqual({ kind: 'artifact', artifactId: 'b' });
+    act(() => openArtifactPreview({ ...target, reference: 'c.md' }));
+    await waitFor(() => expect(pending.has('c.md')).toBe(true));
+    act(closeArtifactPreview);
+    await act(async () => {
+      pending.get('c.md')!({ accepted: true, artifact: { artifactId: 'c' } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(artifactPreviewWorkspace.state.value.open).toBe(false);
+    act(() => openArtifactPreview({ ...target, reference: 'c.md' }));
+    await waitFor(() =>
+      expect(
+        request.mock.calls.filter(
+          ([, call]) =>
+            call.name === 'artifact.reference.resolve' && call.input.reference === 'c.md'
+        )
+      ).toHaveLength(2)
+    );
+    act(() => pending.get('c.md')!({ accepted: true, artifact: { artifactId: 'c' } }));
+    await screen.findByRole('tab', { name: 'Report C' });
+  });
+
+  it('retains the SHA-bound changed-file Back flow for PR navigation', async () => {
+    render(<ArtifactPreviewPanel fileTabs />);
+    await open('a');
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (method, params) =>
+      params.name === 'artifact.reference.resolve'
+        ? { accepted: true, artifact: { artifactId: 'b' } }
+        : original(method, params)
+    );
+    act(() =>
+      pushArtifactPreview({
+        kind: 'reference',
+        source: { kind: 'publication', id: 'p' },
+        reference: 'https://github.com/example/demo/pull/1',
+        file: { path: 'b.md', headSha: 'a'.repeat(40) },
+      })
+    );
+    await screen.findByRole('heading', { name: 'Document b' });
+    expect(screen.queryByRole('tablist')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
+    await screen.findByRole('tab', { name: 'Report A' });
+  });
+
+  it('promotes a phone reference into the single result presentation', async () => {
+    desktop = false;
+    render(<ArtifactPreviewPanel fileTabs />);
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (method, params) =>
+      params.name === 'artifact.reference.resolve'
+        ? { accepted: true, artifact: { artifactId: 'b' } }
+        : original(method, params)
+    );
+    act(() =>
+      openArtifactPreview({
+        kind: 'reference',
+        source: { kind: 'publication', id: 'p' },
+        reference: 'b.md',
+      })
+    );
+    await screen.findByRole('dialog', { name: 'Report B' });
+    await waitFor(() =>
+      expect(artifactPreviewStack.value.at(-1)).toEqual({ kind: 'artifact', artifactId: 'b' })
+    );
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Back|Source|Close preview/ })).toBeNull();
   });
 
   it('keeps the existing single-preview behavior below the desktop breakpoint', async () => {

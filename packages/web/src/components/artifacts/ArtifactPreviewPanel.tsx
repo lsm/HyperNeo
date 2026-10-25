@@ -293,6 +293,8 @@ export function ArtifactPreviewPanel({
             target={top}
             resolved={resolved.current}
             markdownClass={markdownClass}
+            promoteFiles={fileTabs}
+            suspended={suspended}
           />
         ) : null}
       </div>
