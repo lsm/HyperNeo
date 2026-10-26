@@ -1,4 +1,4 @@
-# Worker turn reports deliver once per exact todo/status payload
+# Worker turn reports preserve replay protection with shared turn receipts
 
 Use the neo-quiet-wake.md journey and the shared isolated setup in SKILL.md.
 The report cases run through the real Codex adapter, todo runner, NeoService,
@@ -8,7 +8,9 @@ status-only authority warning and every byte of the worker's report.
 
 Check an exact repeat under a different transport ID/time, including after a
 NeoService restart, adds no request. Changed bytes under a reused ID or a
-different todo add one request each.
+different worker add one request each. A different todo bound to the same worker
+turn adds no request, even if its first observation has a different live status;
+use worker-turn-delivery.md for that isolated-daemon proof.
 Polling the same historical turn with a changed worker status, waiting reason or
 focus must not add requests; the first observed status is durable per turn. A new
 transport turn can carry a new status, with exact todo/status payload repeats

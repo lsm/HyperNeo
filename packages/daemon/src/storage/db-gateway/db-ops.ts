@@ -62,7 +62,10 @@ import {
   forgetAgentChildren,
   recordAgentChild,
 } from '../repositories/agent-child-process-repository.ts';
-import { recordNeoSessionMessage } from '../repositories/neo-session-message-repository.ts';
+import {
+  recordNeoSessionMessage,
+  sentDuringTurn,
+} from '../repositories/neo-session-message-repository.ts';
 import {
   acceptWorkDeliveryInput,
   recordWorkDeliveryOutcome,
@@ -144,6 +147,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     recordAgentChild,
     forgetAgentChildren,
     recordNeoSessionMessage,
+    sentDuringTurn,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
     jobEnqueueWrites,

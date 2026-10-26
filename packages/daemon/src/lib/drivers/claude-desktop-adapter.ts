@@ -502,6 +502,7 @@ export function claudeTranscriptState(
   let replyAt: number | undefined;
   let lastAt = 0;
   let earliest: number | undefined;
+  let startedAt: number | undefined;
   for (const line of lines) {
     let entry: ClaudeTranscriptEntry | null;
     try {
@@ -513,6 +514,7 @@ export function claudeTranscriptState(
     const at = workEntryTime(entry.timestamp);
     if (at !== undefined) lastAt = Math.max(lastAt, at);
     earliest ??= at;
+    if (entry.type === 'user' && entry.isSidechain !== true && ended) startedAt = at;
     const said = assistantText(line);
     if (said && entry.isSidechain !== true) {
       turn = fresh ? [said] : [...turn, said];
@@ -530,6 +532,7 @@ export function claudeTranscriptState(
       turnEnds.push({
         id: typeof entry.uuid === 'string' && entry.uuid ? entry.uuid : String(at),
         at,
+        startedAt,
         message: Array.isArray(content)
           ? content
               .flatMap((part: { type?: unknown; text?: unknown }) =>
@@ -538,6 +541,7 @@ export function claudeTranscriptState(
               .join('\n')
           : '',
       });
+      startedAt = undefined;
     }
     if (entry.type === 'assistant' && entry.isSidechain !== true) ended = claudeTurnEnded(entry);
     const text = claudeInputText(entry);

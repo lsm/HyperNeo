@@ -177,6 +177,7 @@ export const WorkStartedSchema = WorkSummarySchema.extend({
 });
 
 export const WorkTurnEndSchema = z.object({
+  startedAt: z.number().optional(),
   notify: z.literal(false).optional(),
   id: z.string().min(1),
   at: z.number(),
