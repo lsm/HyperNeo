@@ -148,6 +148,18 @@ async function fixture(path = ':memory:') {
     call,
     resolve,
     prior,
+    async next() {
+      const result = await write(source, {
+        todoId: todo.id,
+        kind: 'blocked',
+        title: 'Choose the next destination',
+        options: ['Staging', 'Production'],
+        language: 'en',
+        report: 'Need another decision',
+      });
+      if (!result.ok) throw new Error(result.reason);
+      return result.question;
+    },
     question: reported.question,
     unavailable(value: boolean) {
       unavailable = value;
@@ -195,6 +207,13 @@ test('an earlier human answer can be cited, while a retired agent resolution can
       answeredByHuman: false,
       resolvedByAgent: true,
     });
+    const next = await f.next();
+    expect(
+      await f.resolve({ kind: 'answer', questionId: f.question.id }, { questionId: next.id })
+    ).toMatchObject({ ok: false });
+    expect(f.store.getQuestion(next.id)?.state).toBe('open');
+    expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    expect(f.messages.size).toBe(1);
   } finally {
     f.db.close();
   }
@@ -261,6 +280,7 @@ test('failed delivery retains its hold and durable citation through restart', as
   const run = mkdtempSync(join(tmpdir(), 'question-resolution-'));
   const path = join(run, 'daemon.db');
   const f = await fixture(path);
+  let closed = false;
   try {
     f.unavailable(true);
     expect(await f.resolve({ kind: 'rule', text: rule })).toMatchObject({ ok: true });
@@ -270,6 +290,7 @@ test('failed delivery retains its hold and durable citation through restart', as
     await f.flush();
     expect(f.store.getTodo('todo')?.state).toBe('doing');
     f.db.close();
+    closed = true;
     const reopened = new Database(path);
     try {
       const store = new NeoAskTodoRepository(reopened);
@@ -285,7 +306,7 @@ test('failed delivery retains its hold and durable citation through restart', as
       reopened.close();
     }
   } finally {
-    f.db.close();
+    if (!closed) f.db.close();
     rmSync(run, { recursive: true, force: true });
   }
 });
