@@ -148,6 +148,7 @@ function withSecretDenials(
       },
       filesystem: {
         ...computed.sandbox.filesystem,
+        ...existing?.sandbox?.filesystem,
         denyRead: [
           ...new Set([
             ...computed.sandbox.filesystem.denyRead,
