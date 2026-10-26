@@ -564,7 +564,11 @@ export class NeoAskTodoRepository {
       askOpen: this.getAsk(todo.askId)?.status === 'open',
       order: this.db
         .prepare(
-          'SELECT id, state, started_at AS startedAt FROM neo_todos WHERE ask_id = ? ORDER BY position, created_at'
+          `SELECT id, state, started_at AS startedAt,
+            EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_todos.ask_id AND q.state = 'open'
+              AND (q.todo_id IS NULL OR q.todo_id = neo_todos.id)
+              AND (q.kind != 'start' OR EXISTS (SELECT 1 FROM json_each(q.start_todos) WHERE value = neo_todos.id))) AS questionOpen
+           FROM neo_todos WHERE ask_id = ? ORDER BY position, created_at`
         )
         .all(todo.askId) as TodoStateFacts['order'],
       questionOpen: !!this.db

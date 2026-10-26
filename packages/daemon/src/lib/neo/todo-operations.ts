@@ -535,7 +535,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its existing PR-merge check and updates doneWhen, refusing URLs another live todo on this ask tracks. Prefer editing to adding a duplicate PR todo. Or tick it done with evidence (done met for what you read, reported for a claim you cannot read); attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
+        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its existing PR-merge check and updates doneWhen, refusing URLs another live todo on this ask tracks. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

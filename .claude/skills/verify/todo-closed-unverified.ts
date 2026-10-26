@@ -32,7 +32,7 @@ try {
       const registry = createOperationRegistry(production.entries.map(op => op.name === 'work.start' ? {
         ...op, execute: async () => {
           starts++;
-          return { ok: true, value: { ref: { adapter: 'hyperneo', id: 'synthetic-next-worker' }, receipt: { executionId: 'synthetic-next-worker', inputId: 'synthetic-next-input' }, lastActivityAt: Date.now() } };
+          return { ok: true, value: { ref: { adapter: 'hyperneo', id: 'synthetic-next-worker' }, title: 'Synthetic next worker', place: { machine: 'synthetic', name: 'Synthetic', folder: run }, status: 'running', receipt: { executionId: 'synthetic-next-worker', inputId: 'synthetic-next-input' }, lastActivityAt: Date.now() } };
         },
       } : op));
       app.sessionManager.setOperationRegistryProvider(() => registry);

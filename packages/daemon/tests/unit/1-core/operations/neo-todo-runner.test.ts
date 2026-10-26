@@ -1134,6 +1134,18 @@ describe('planNeoTodoCheck', () => {
 });
 
 describe('neoTodoNote', () => {
+  test('an unverified closure is disclosed instead of described as done or blocked', () => {
+    const note = neoTodoNote({
+      title: 'T',
+      state: 'closed_unverified',
+      reason: 'Outcome not checked',
+    } as NeoTodo);
+    expect(note).toContain('closed unverified');
+    expect(note).toContain('Outcome not checked');
+    expect(note).not.toContain('is done');
+    expect(note).not.toContain('is blocked');
+  });
+
   test('passes on the report without promising Done for an unchecked close', () => {
     expect(
       neoTodoNote({

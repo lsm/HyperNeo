@@ -222,8 +222,10 @@ export function neoTodoNote(todo: NeoTodo): string {
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
     return `Todo "${todo.title}" reported and is done:\n${todo.report ?? ''}`;
+  if (todo.state === 'closed_unverified')
+    return `Todo "${todo.title}" is closed unverified, never done: ${todo.reason ?? 'Its outcome check has not passed.'}`;
   if (todo.state === 'doing')
-    return `Todo "${todo.title}" reported, and nothing checks it: tick it done with evidence once "${todo.doneWhen}" holds, or let it go on.\nIts report:\n${todo.report ?? ''}`;
+    return `Todo "${todo.title}" reported, and nothing checks it: record evidence for "${todo.doneWhen}"; closing it without a passed outcome check is closed unverified, never done.\nIts report:\n${todo.report ?? ''}`;
   return `Todo "${todo.title}" is blocked: ${todo.blockedReason ?? ''}\nNext: ${
     todo.nextAction ?? ''
   }\nIts last report:\n${todo.report ?? '(none)'}`;
@@ -806,7 +808,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         asks.map((ask) => ask.id)
       );
       for (const ask of asks) {
-        const completed = todos.find((todo) => todo.askId === ask.id && todo.state === 'done');
+        const completed = todos.find(
+          (todo) => todo.askId === ask.id && ['done', 'closed_unverified'].includes(todo.state)
+        );
         if (completed)
           await recompute(completed).catch((error) => warn('Todo plan advancement pending', error));
       }
