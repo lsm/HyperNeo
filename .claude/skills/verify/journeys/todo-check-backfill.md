@@ -11,10 +11,11 @@ bash .claude/skills/verify/proof-run.sh \
 ```
 
 The baseline fails because no offline backfill CLI exists. The fixed helper
-exports synthetic unchecked rows, invokes the CLI, and applies its PR/issue
+persists each synthetic report before exporting unchecked rows, invokes the CLI, and applies its PR/issue
 repair inputs through the real WebSocket neo.todo.edit door. The returned todo
 and persisted row must carry the derived check and completion sentence. Other
-state stays open. A repeated export yields no further edits and still lists the
+state stays open. One PR reference appears only in its persisted report, and
+its complete report survives the check edit. A repeated export yields no further edits and still lists the
 non-coding decision for Neo to set. A supplied synthetic kind map resolves an
 unlabelled named reference and its bare sibling into two required PRs; an
 unknown reference remains unresolved. Unit contracts cover labelled shorthand,

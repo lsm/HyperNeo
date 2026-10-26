@@ -97,8 +97,8 @@ try {
     { id: 'observed', title: 'Finish example/project#50 and #51', report: null },
     { id: 'unknown', title: 'Finish example/project#52', report: null },
     { id: 'decision', title: 'Choose the next destination', report: null },
-  ].map((row) =>
-    store.addTodo(
+  ].map((row) => {
+    const todo = store.addTodo(
       row.id,
       'ask',
       {
@@ -109,8 +109,9 @@ try {
         named: null,
       },
       1
-    )
-  );
+    );
+    return row.report === null ? todo : store.updateTodo(todo, { report: row.report }, 2);
+  });
   const snapshot = join(run, 'todos.json');
   writeFileSync(snapshot, JSON.stringify(rows));
   const kinds = join(run, 'ref-kinds.json');
@@ -146,6 +147,7 @@ try {
     assert.deepEqual(result.todo.check, edit.check);
     assert.notEqual(result.todo.doneWhen, 'Remember to verify');
     assert.equal(result.todo.state, 'todo');
+    assert.equal(result.todo.report, rows.find((row) => row.id === edit.todoId)?.report);
   }
   writeFileSync(snapshot, JSON.stringify(store.listTodos('ask')));
   const repeated = spawnSync(
