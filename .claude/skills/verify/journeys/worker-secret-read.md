@@ -59,3 +59,5 @@ profile. The synthetic-daemon send journey checks admission and receipt reportin
 locally without claiming OS enforcement. Home filename rules cover the home root
 and immediate children; tracked examples and key fixtures in nested private clones
 remain readable. Known credential directories are denied recursively.
+Workers intentionally allow Unix sockets; this journey proves file isolation
+and does not test socket-mediated credential access.
