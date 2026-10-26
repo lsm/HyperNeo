@@ -11,5 +11,9 @@
   "receiptFailureRollsBackUpdate": true,
   "successorRetainedOnScanFailure": true,
   "concurrentSuccessorCount": 1,
-  "temporaryHomeRemoved": true
+  "temporaryHomeRemoved": true,
+  "ciRunnerPasses": 78,
+  "ciRunnerFailures": 0,
+  "fullRepositoryChecks": "pass",
+  "proofsRefreshedAfterBaseMerge": true
 }

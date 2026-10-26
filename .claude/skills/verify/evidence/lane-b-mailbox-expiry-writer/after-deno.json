@@ -8,7 +8,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 564,
+    "uptime": 556,
     "sessions": {
       "active": 0,
       "total": 1
@@ -29,32 +29,32 @@
     "status": "queued"
   },
   "sweep": {
-    "id": "4f1c58a5-0dcc-4424-9d2c-66f48e80339b",
+    "id": "c3d6c8dc-cb6e-46be-bd1e-5659254cd2ef",
     "queue": "mailbox.expire",
     "status": "completed",
     "payload": {},
     "result": {
       "expired": 2,
-      "nextRunAt": 1792984652139
+      "nextRunAt": 1792984861966
     },
     "error": null,
     "priority": 0,
     "maxRetries": 3,
     "retryCount": 0,
     "runAt": 0,
-    "createdAt": 1792984591966,
-    "startedAt": 1792984592139,
+    "createdAt": 1792984801795,
+    "startedAt": 1792984801965,
     "heartbeatAt": null,
-    "completedAt": 1792984592144,
-    "claimToken": "76064000-6e41-4601-bea8-df2e510f2415"
+    "completedAt": 1792984801972,
+    "claimToken": "6c6351a9-9ce4-4c29-a84a-8ce830fa8b24"
   },
   "expired": [
     {
-      "id": "5e79e8a2-4e18-4366-91a3-76af13122c18",
+      "id": "80c38c79-59d7-414b-84cf-7e4d360495a9",
       "queue": "mailbox",
       "status": "dead",
       "payload": {
-        "id": "01M5V37PHSFCGQPC6Y6XS5EZJD",
+        "id": "01M5V3E3EYFQRWT6SPHA1966A3",
         "to": {
           "kind": "session",
           "sessionId": "synthetic-expiry-session"
@@ -82,19 +82,19 @@
       "priority": 0,
       "maxRetries": 4,
       "retryCount": 0,
-      "runAt": 1792984592121,
-      "createdAt": 1792984592121,
-      "startedAt": 1792984592122,
+      "runAt": 1792984801950,
+      "createdAt": 1792984801950,
+      "startedAt": 1792984801950,
       "heartbeatAt": null,
-      "completedAt": 1792984592140,
-      "claimToken": "f09be35d-6c0d-4698-9b16-15ef0986c6af"
+      "completedAt": 1792984801967,
+      "claimToken": "d667487c-4778-4162-8c14-924ffc5e43d8"
     },
     {
-      "id": "b4b22ff6-c087-489d-a480-8748c6471498",
+      "id": "d69df368-1626-4583-bf21-e9d704d89e5a",
       "queue": "mailbox",
       "status": "dead",
       "payload": {
-        "id": "01M5V37PHTS1191RP8NC6FJET5",
+        "id": "01M5V3E3EYFQRWT6SPHA1966A4",
         "to": {
           "kind": "session",
           "sessionId": "synthetic-expiry-session"
@@ -122,11 +122,11 @@
       "priority": 0,
       "maxRetries": 4,
       "retryCount": 0,
-      "runAt": 1792984592122,
-      "createdAt": 1792984592122,
+      "runAt": 1792984801950,
+      "createdAt": 1792984801950,
       "startedAt": null,
       "heartbeatAt": null,
-      "completedAt": 1792984592142,
+      "completedAt": 1792984801970,
       "claimToken": null
     }
   ],
@@ -138,7 +138,7 @@
   ],
   "followups": [
     {
-      "id": "18ceca82-2e1d-48e0-9dbd-1779c1b88271",
+      "id": "d8e4529d-1ea1-428c-b4e9-009640509cc4",
       "queue": "mailbox.expire",
       "status": "pending",
       "payload": {},
@@ -147,8 +147,8 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792984652139,
-      "createdAt": 1792984592139,
+      "runAt": 1792984861966,
+      "createdAt": 1792984801966,
       "startedAt": null,
       "heartbeatAt": null,
       "completedAt": null,
@@ -165,7 +165,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 585,
+    "uptime": 578,
     "sessions": {
       "active": 0,
       "total": 1
