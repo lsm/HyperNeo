@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { NEO_DEFAULT_PACKS, neoPackBriefs, neoPacks } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
@@ -73,9 +73,9 @@ describe('core stays pack-agnostic', () => {
         join(src, 'storage/repositories', file)
       ),
     ].filter((file) => file.endsWith('.ts'));
-    const offending = files.filter((file) =>
-      /['"`]coding['"`.]|pr_merged/.test(readFileSync(file, 'utf8'))
-    );
+    const offending = files
+      .filter((file) => /['"`]coding['"`.]|pr_merged/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(src, file));
     expect(files.length).toBeGreaterThan(20);
     expect(offending).toEqual([]);
   });
