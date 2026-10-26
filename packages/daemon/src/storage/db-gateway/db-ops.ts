@@ -99,6 +99,7 @@ import {
 } from '../repositories/mailbox-expiry-commands.ts';
 import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
 import { nativeFeedEnqueueWrites } from '../repositories/native-feed-enqueue-write.ts';
+import { sessionTitleEnqueueWrites } from '../repositories/session-title-enqueue-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -181,5 +182,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     mailboxExpiryWrites,
     githubPollSuccessorWrites,
     nativeFeedEnqueueWrites,
+    sessionTitleEnqueueWrites,
   ].map((op) => [op.name, op])
 );
