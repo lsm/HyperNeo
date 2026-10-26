@@ -808,6 +808,7 @@ export async function queueCodexMessage(
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
+  const sandbox = await resumeWorkerSandbox(detail.thread.folder);
   const owner = await steerCodexDesktopTurn(
     deps.desktopSocketPath,
     deps.spawn,
@@ -821,7 +822,6 @@ export async function queueCodexMessage(
     sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: owner.reason });
     return owner.reason;
   }
-  const sandbox = await resumeWorkerSandbox(detail.thread.folder);
   sendLog.warn('work.send route', {
     threadId: detail.thread.id,
     path: 'queue',
