@@ -7,7 +7,12 @@ import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 import { joinFinals, streamProtocol, type StreamProtocol } from './stream-protocols.ts';
 
-import { voiceDiagnostic, voiceSocketReason, voiceSocketErrorCode, voicePeerReasonBytes } from './diagnostics.ts';
+import {
+  voiceDiagnostic,
+  voiceSocketReason,
+  voiceSocketErrorCode,
+  voicePeerReasonBytes,
+} from './diagnostics.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
