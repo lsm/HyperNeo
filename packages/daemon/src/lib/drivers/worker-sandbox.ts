@@ -6,12 +6,12 @@ import type { CodexAppServer } from './codex-app-server.ts';
 import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { homedir, tmpdir } from 'node:os';
-import { existsSync } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {
-  appendFile,
   lstat,
   mkdir,
+  open,
   readFile,
   rename,
   rm,
@@ -214,8 +214,17 @@ export async function excludeWorkerConfig(root: string, pattern: string) {
     throw error;
   });
   if (entry && !entry.isFile()) throw new Error('Git exclude must be a regular file');
-  const previous = entry ? await readFile(path, 'utf8') : '';
-  if (!previous.split('\n').includes(pattern)) await appendFile(path, `\n${pattern}\n`);
+  const handle = await open(
+    path,
+    constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
+    0o600
+  );
+  try {
+    const previous = await handle.readFile('utf8');
+    if (!previous.split('\n').includes(pattern)) await handle.appendFile(`\n${pattern}\n`);
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function resumeWorkerSandbox(root: string) {

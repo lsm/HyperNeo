@@ -271,6 +271,7 @@ describe('codex-desktop start', () => {
       .spyOn(sandbox, 'prepareWorkerSandbox')
       .mockResolvedValue(sandbox.workerSandboxPaths(dir));
     const release = vi.spyOn(sandbox, 'releaseWorkerSandbox').mockResolvedValue();
+    const persist = vi.spyOn(sandbox, 'persistCodexWorkerProfile').mockResolvedValue();
     let released = false;
     const { instance, calls, closed } = adapter(
       { call: async () => ({ thread: { id: 'unconfirmed' } }) },
@@ -305,6 +306,7 @@ describe('codex-desktop start', () => {
     } finally {
       prepare.mockRestore();
       release.mockRestore();
+      persist.mockRestore();
     }
   });
 
