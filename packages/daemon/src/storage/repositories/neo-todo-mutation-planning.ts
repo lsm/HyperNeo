@@ -1,11 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import { coreTodoPolicy } from '../../lib/neo/core-todo-checks.ts';
-import {
-  createCodingTodoPolicy,
-  CodingTodoPrRepository,
-} from '../../lib/neo/packs/coding/todo-prs.ts';
+import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
   planNeoTodoDraft,
@@ -14,6 +10,7 @@ import {
   planNeoTodoRemove,
   requireNeoOpenTodo,
   requireNeoTodoArtifacts,
+  requireNeoTodoCardsAnswered,
   type NeoTodoPolicy,
 } from '../../lib/neo/todo-operations.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -34,10 +31,7 @@ class NeoTodoMutationPlanner {
   private readonly policies: readonly NeoTodoPolicy[];
   constructor(db: Database) {
     this.todos = new NeoAskTodoRepository(db);
-    this.policies = [
-      { id: 'core', todos: coreTodoPolicy },
-      { id: 'coding', todos: createCodingTodoPolicy(new CodingTodoPrRepository(db)) },
-    ];
+    this.policies = neoTodoPolicies(db);
   }
 
   private withCheck(plan: Plan, input: Input) {
@@ -133,12 +127,13 @@ class NeoTodoMutationPlanner {
         ['outcome', 'input'],
         'result:outcome'
       )
+      .pipe(
+        (plan: Plan) => requireNeoTodoCardsAnswered(plan, todos.listQuestions(plan.todo.askId)),
+        'outcome',
+        'result:outcome'
+      )
       .pipe((plan: Plan) => ({ ok: true as const, ...plan }), 'outcome', 'outcome')
-      .end('outcome') as (
-      input: Input,
-      now: number,
-      registered: readonly (ArtifactRef | null)[]
-    ) => ({ ok: true } & Plan) | Outcome;
+      .end('outcome') as NeoTodoMutationPlanner['plan'];
     return execute(input, now, registered);
   }
 }

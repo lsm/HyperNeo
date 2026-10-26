@@ -20,6 +20,8 @@ Pass requires a title/URL proposal to preserve current peer-ownership
 bookkeeping, and a core-check proposal to derive its label without observing
 external completion facts. Remove is also only a proposal. The public full card
 must keep its original title, open human card and entire stored report/hash.
+Completion plans with an unanswered todo-specific human card must be refused
+without changing the card. Final writer revalidation in 1b remains required.
 Planning must emit no `neo.changed` event and execute no todo SQL on main.
 `todo-mutation-planning.json` records the result and `resourcesStopped` after
 cleanup; the wrapper saves it before deleting temporary HOME/data/TMPDIR.
