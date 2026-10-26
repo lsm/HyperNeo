@@ -48,6 +48,9 @@ try {
     includes(JSON.stringify(response), 'project and a number', name);
     includes(JSON.stringify(response), 'never a task title', name);
   }
+  const sendDescription = JSON.parse((await mcp({ name: 'operations.describe', input: { name: 'message.send' } })).content[0].text);
+  descriptions['message.send'] = sendDescription;
+  for (const phrase of ['requiring a human decision', 'coordination questions', 'no question envelope', 'never a human card']) includes(JSON.stringify(sendDescription), phrase, 'message.send');
   evidence.descriptions = descriptions;
   const prompt = String(app.sessionManager.getSessionFromDB(root)?.config.systemPrompt);
   evidence.neoSystemPrompt = prompt;
