@@ -1,0 +1,3869 @@
+{
+  "scope": "Lane A row 26: HTTP polling collector snapshots, observation commands and external-page expiration",
+  "regressionCommit": "b6442f844df8873f218778cbd3578f25d8dbfe0b",
+  "productionChangedLines": 99,
+  "focusedUnitTests": 18,
+  "focusedAssertions": 76,
+  "repositoryCheck": "passed",
+  "versions": {
+    "bun": "1.4.3",
+    "deno": "2.9.4"
+  },
+  "oneExistingCheckout": true,
+  "noNewInstall": true,
+  "noSimulator": true,
+  "heavyJobsRunSerially": true,
+  "runtimes": {
+    "bun": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 302,
+        "gatewayCommands": 0,
+        "eventsPerCycle": [
+          2,
+          2,
+          2,
+          4,
+          4
+        ],
+        "maxLoopLagMs": 3.911250000000109,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 48,
+        "freeGiBBefore": 260.4815483093262,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 384.491583
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 187.1600420000002
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 175.76666699999987
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 170.1166250000001
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 154.96133299999974
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 183.05058400000007
+          }
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 256,
+        "eventsPerCycle": [
+          2,
+          2,
+          2,
+          4,
+          4
+        ],
+        "maxLoopLagMs": 3.0681250000002365,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 54,
+        "freeGiBBefore": 260.71899032592773,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 470.6595409999999
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 213.75549999999998
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 124.2972920000002
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 142.10783300000003
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 134.497834
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 263.2650829999998
+          },
+          {
+            "name": "system.health",
+            "durationMs": 0.3937909999999647
+          }
+        ],
+        "fence": {
+          "winner": {
+            "accepted": true,
+            "facts": {
+              "subject": {
+                "credentialId": "opaque-synthetic-race",
+                "url": "https://api.github.com/repos/synthetic/shared/late",
+                "accept": "application/vnd.github+json",
+                "apiVersion": "2022-11-28"
+              },
+              "factRevision": 1,
+              "observationRevision": 1,
+              "page": {
+                "status": "known",
+                "http": {
+                  "cycle": "new-cycle",
+                  "status": 200,
+                  "headers": {}
+                },
+                "value": [
+                  {
+                    "id": 2
+                  }
+                ],
+                "etag": "\"winner\"",
+                "next": null,
+                "observedAt": 1792972381981
+              }
+            }
+          },
+          "loserAccepted": false
+        },
+        "contention": {
+          "healthMs": 0.4074999999997999,
+          "collectionMs": 1510.460458,
+          "affectedCollectionUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.16891599999996743,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 64.72637500000008,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.6544580000002043,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08558399999992616,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1717500000002019,
+            "argsBytes": 316,
+            "replyBytes": 407
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.274791999999934,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07416699999998855,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1290000000001328,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3945000000001073,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.24749999999994543,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12991699999997763,
+            "argsBytes": 326,
+            "replyBytes": 417
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3066670000000613,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07087499999988722,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1324170000000322,
+            "argsBytes": 226,
+            "replyBytes": 317
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3113749999999982,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.14724999999998545,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.20358399999986432,
+            "argsBytes": 247,
+            "replyBytes": 338
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3259170000001177,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09470900000019356,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15379100000018298,
+            "argsBytes": 250,
+            "replyBytes": 341
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.29179100000010294,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0850839999998243,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.14174999999977445,
+            "argsBytes": 218,
+            "replyBytes": 309
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.28308399999991707,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1117500000000291,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15145899999993162,
+            "argsBytes": 237,
+            "replyBytes": 328
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2988329999998314,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.13891599999988102,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.22474999999985812,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1101659999999356,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1040419999999358,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04383299999994961,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10137500000018917,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08420900000010079,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11620799999991505,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08295799999996234,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09804200000007768,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05258400000002439,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08016599999996288,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04737499999987449,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11437499999988177,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06483299999990777,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06383299999993142,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07004200000005767,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0831670000000031,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.14687500000013642,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15466700000001765,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.38512500000001637,
+            "argsBytes": 529,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08370799999988776,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.20720800000003692,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3328750000000582,
+            "argsBytes": 528,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07058299999994233,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11383300000011332,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.4663339999999607,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.18120799999996962,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.5287499999999454,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.283916999999974,
+            "argsBytes": 538,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07391699999993762,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12599999999997635,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.26570799999990413,
+            "argsBytes": 438,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04324999999994361,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1410000000000764,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.27537499999994,
+            "argsBytes": 459,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07033300000011877,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13679100000013023,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2391250000000582,
+            "argsBytes": 462,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.057292000000188636,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1594159999999647,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.24520799999982046,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05158300000016425,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1201250000001437,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2734579999998914,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06116599999995742,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11712499999998727,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.053666999999904874,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06925000000001091,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04395799999997507,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.07087499999988722,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05524999999988722,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0914580000001024,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.044666000000006534,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.07354099999997743,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.037083000000166066,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06716599999981554,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.03479200000015226,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10854199999994307,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.043124999999918145,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09433400000011716,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.045166999999992186,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08179199999995035,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05170799999996234,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0779170000000704,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.22116699999992306,
+            "argsBytes": 337,
+            "replyBytes": 451
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04658300000005511,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13591599999995196,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2630420000000413,
+            "argsBytes": 336,
+            "replyBytes": 450
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05720900000005713,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13199999999983447,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.36162500000000364,
+            "argsBytes": 337,
+            "replyBytes": 442
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06970899999987523,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1855000000000473,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2843750000001819,
+            "argsBytes": 238,
+            "replyBytes": 352
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06716599999981554,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12604099999998652,
+            "argsBytes": 317,
+            "replyBytes": 425
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2750419999999849,
+            "argsBytes": 337,
+            "replyBytes": 451
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07304199999998673,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1220419999999649,
+            "argsBytes": 316,
+            "replyBytes": 424
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2826249999998254,
+            "argsBytes": 336,
+            "replyBytes": 450
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05120800000008785,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13574999999991633,
+            "argsBytes": 317,
+            "replyBytes": 416
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2762920000000122,
+            "argsBytes": 337,
+            "replyBytes": 442
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05166699999995217,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11820799999986775,
+            "argsBytes": 218,
+            "replyBytes": 326
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.26916700000015226,
+            "argsBytes": 238,
+            "replyBytes": 352
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08554100000014841,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1449169999998503,
+            "argsBytes": 317,
+            "replyBytes": 425
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2409580000000915,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.718166999999994,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1310000000000855,
+            "argsBytes": 316,
+            "replyBytes": 424
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2523750000000291,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.13537499999983993,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13374999999996362,
+            "argsBytes": 317,
+            "replyBytes": 416
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3629160000000411,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06645800000001145,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11504199999990306,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2853330000000369,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09895800000003874,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.20429200000012315,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.24333400000000438,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.046124999999847205,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11891600000012659,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.24937500000010004,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05904200000009041,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1553750000000491,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3127910000000611,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09283400000003894,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.21908299999995506,
+            "argsBytes": 218,
+            "replyBytes": 326
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.26283300000000054,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.049291000000039276,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10124999999993634,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.26587500000005093,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05095900000014808,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10124999999993634,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.02708400000005895,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.03366700000015044,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.023165999999946507,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0913749999999709,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04737499999987449,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.05824999999981628,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.02987499999994725,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.042208999999957086,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.035041999999975815,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.046459000000140804,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.046124999999847205,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0466670000000704,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.02279099999987011,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.03075000000012551,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.018499999999903594,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.02712500000006912,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1557919999997921,
+            "argsBytes": 41,
+            "replyBytes": 2
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12166700000011588,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2363749999999527,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06358299999988049,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10295900000005531,
+            "argsBytes": 316,
+            "replyBytes": 407
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2712089999999989,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05466699999988123,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08924999999999272,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2184580000000551,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04154200000016317,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08191599999986465,
+            "argsBytes": 326,
+            "replyBytes": 417
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2061660000001666,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.03462500000000546,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12312499999984539,
+            "argsBytes": 226,
+            "replyBytes": 317
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3240419999999631,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07512500000007094,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11129200000004857,
+            "argsBytes": 247,
+            "replyBytes": 338
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.37558400000011716,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.11408400000004804,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.14866699999993216,
+            "argsBytes": 250,
+            "replyBytes": 341
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.28125,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06162500000004911,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13483300000007148,
+            "argsBytes": 218,
+            "replyBytes": 309
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2237089999998716,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.034333999999944353,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09320800000000418,
+            "argsBytes": 237,
+            "replyBytes": 328
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.21758299999987685,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04066600000010112,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09733400000004622,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.023042000000032203,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.03233300000010786,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.020291999999926702,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0359169999999267,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.02070800000001327,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.028166000000055647,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.027749999999969077,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06383400000004258,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0364590000001499,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.04520800000000236,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.031416999999919426,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.029084000000011656,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.037833999999975276,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.051166999999850304,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.02250000000003638,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.035667000000103144,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.15229199999976117,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 89.60108300000002,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.9657910000000811,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05587500000001455,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12245800000027884,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.21949999999969805,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04208399999970425,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1671249999999418,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.30150000000003274,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.048874999999952706,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.23366699999996854,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2357080000001588,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05070799999975861,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10649999999986903,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2580000000002656,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.03541700000005221,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11549999999988358,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2577499999997599,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0426660000002812,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11262500000020736,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 1.313415999999961,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07454099999995378,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10537499999963984,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.21237499999961074,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.03983299999981682,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1534999999998945,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.23170799999979863,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.10716699999966295,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15029200000026322,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.03449999999975262,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06841700000040873,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.043083000000024185,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10479099999975006,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07274999999981446,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.07683399999996254,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.055666000000201166,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09029199999986304,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.035874999999577994,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.055125000000316504,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.040666999999757536,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06212500000037835,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.02624999999989086,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.057374999999865395,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.028708000000278844,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.049958000000060565,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08262500000000728,
+            "argsBytes": 210,
+            "replyBytes": 301
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.12416600000005928,
+            "argsBytes": 318,
+            "replyBytes": 402
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.11058300000013332,
+            "argsBytes": 310,
+            "replyBytes": 403
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.24204199999985576,
+            "argsBytes": 230,
+            "replyBytes": 403
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 1208.5674159999999,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.3626670000003287,
+            "argsBytes": 238,
+            "replyBytes": 329
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3884579999999005,
+            "argsBytes": 339,
+            "replyBytes": 423
+          }
+        ]
+      }
+    },
+    "deno": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 302,
+        "gatewayCommands": 0,
+        "eventsPerCycle": [
+          2,
+          2,
+          2,
+          4,
+          4
+        ],
+        "maxLoopLagMs": 3.2517909999996846,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 54,
+        "freeGiBBefore": 260.42073822021484,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 397.1300839999999
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 296.5531249999999
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 135.27475000000004
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 133.64579099999992
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 124.8276249999999
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 255.17520799999966
+          }
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 256,
+        "eventsPerCycle": [
+          2,
+          2,
+          2,
+          4,
+          4
+        ],
+        "maxLoopLagMs": 2.568833000000268,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 50,
+        "freeGiBBefore": 260.5591926574707,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 552.8937919999998
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 125.2327909999999
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 130.458666
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 124.40895799999998
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 129.75300000000016
+          },
+          {
+            "name": "space.github.pollOnce",
+            "durationMs": 284.47133399999984
+          },
+          {
+            "name": "system.health",
+            "durationMs": 0.5207499999996799
+          }
+        ],
+        "fence": {
+          "winner": {
+            "accepted": true,
+            "facts": {
+              "subject": {
+                "credentialId": "opaque-synthetic-race",
+                "url": "https://api.github.com/repos/synthetic/shared/late",
+                "accept": "application/vnd.github+json",
+                "apiVersion": "2022-11-28"
+              },
+              "factRevision": 1,
+              "observationRevision": 1,
+              "page": {
+                "status": "known",
+                "http": {
+                  "cycle": "new-cycle",
+                  "status": 200,
+                  "headers": {}
+                },
+                "value": [
+                  {
+                    "id": 2
+                  }
+                ],
+                "etag": "\"winner\"",
+                "next": null,
+                "observedAt": 1792972459859
+              }
+            }
+          },
+          "loserAccepted": false
+        },
+        "contention": {
+          "healthMs": 0.5306659999996555,
+          "collectionMs": 1556.443917,
+          "affectedCollectionUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.36083399999984067,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 172.79849999999988,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 1.2264999999999873,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.11029200000007222,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.4866660000000138,
+            "argsBytes": 316,
+            "replyBytes": 407
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.35620799999992414,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.10324999999988904,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.17912500000011278,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.39745799999991505,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09766700000000128,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1470839999999498,
+            "argsBytes": 326,
+            "replyBytes": 417
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.30662500000016735,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09420899999986432,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15654100000028848,
+            "argsBytes": 226,
+            "replyBytes": 317
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.29120800000009694,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08154100000001563,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.14016700000001947,
+            "argsBytes": 247,
+            "replyBytes": 338
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.5257500000002437,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.212833000000046,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.28966700000000856,
+            "argsBytes": 250,
+            "replyBytes": 341
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3531249999996362,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0875410000003285,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.168416000000434,
+            "argsBytes": 218,
+            "replyBytes": 309
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.4043329999999514,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.10679099999970276,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1816249999997126,
+            "argsBytes": 237,
+            "replyBytes": 328
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.4093750000001819,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1575830000001588,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.26512499999989814,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.21700000000009823,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1040829999997186,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07637499999964348,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13733300000012605,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08183400000007168,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12337500000012369,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06537500000013097,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06808399999999892,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.053875000000061846,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.07700000000022555,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05116700000007768,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.05887499999971624,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.045249999999668944,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.045125000000098225,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.029791999999815744,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.044249999999919964,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09691699999984849,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10604100000000471,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.41137499999967986,
+            "argsBytes": 529,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07154200000013589,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13666699999976117,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.29312499999969077,
+            "argsBytes": 528,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09833400000024994,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.14104200000019773,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3414580000003298,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08933299999989686,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1443330000001879,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.30387500000006185,
+            "argsBytes": 538,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08245799999986048,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12983299999996234,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2911669999998594,
+            "argsBytes": 438,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07170799999994415,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13158300000031886,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2820419999998194,
+            "argsBytes": 459,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0722089999999298,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12141599999995378,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2994579999999587,
+            "argsBytes": 462,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09629100000029212,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15791699999999764,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2955409999999574,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07899999999972351,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13379200000008495,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.271125000000211,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1200420000000122,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.16445900000007896,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0804590000002463,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08729200000016135,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0864160000000993,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10516700000016499,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06179199999996854,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0715410000002521,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05604200000016135,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09783399999969333,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.059292000000368716,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0812909999999647,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04837500000030559,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.05320799999981318,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.045666999999866675,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06854100000009566,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04608300000018062,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.05633299999999508,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1101659999999356,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11483399999997346,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.38754100000005565,
+            "argsBytes": 337,
+            "replyBytes": 451
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08379199999990306,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15141700000003766,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.32541700000001583,
+            "argsBytes": 336,
+            "replyBytes": 450
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07699999999977081,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13700000000017099,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3092079999996713,
+            "argsBytes": 337,
+            "replyBytes": 442
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.10262499999998909,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1540829999999005,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3540419999999358,
+            "argsBytes": 238,
+            "replyBytes": 352
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.12879100000009203,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1506670000003396,
+            "argsBytes": 317,
+            "replyBytes": 425
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.407416000000012,
+            "argsBytes": 337,
+            "replyBytes": 451
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1836249999996653,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.42687500000010914,
+            "argsBytes": 316,
+            "replyBytes": 424
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2892500000002656,
+            "argsBytes": 336,
+            "replyBytes": 450
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0742499999996653,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10695799999984956,
+            "argsBytes": 317,
+            "replyBytes": 416
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.27045799999996234,
+            "argsBytes": 337,
+            "replyBytes": 442
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07337499999994179,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13166700000010678,
+            "argsBytes": 218,
+            "replyBytes": 326
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3553750000000946,
+            "argsBytes": 238,
+            "replyBytes": 352
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07604099999980463,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13449999999966167,
+            "argsBytes": 317,
+            "replyBytes": 425
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.33945800000037707,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08683299999984229,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13270799999963856,
+            "argsBytes": 316,
+            "replyBytes": 424
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.28445800000008603,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07200000000011642,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11841699999968114,
+            "argsBytes": 317,
+            "replyBytes": 416
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.31062500000007276,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06670900000017355,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12862499999982901,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2540830000002643,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06187499999987267,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13895800000000236,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.27254199999970297,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05787499999996726,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.13320900000007896,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.27125000000023647,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06804199999987759,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1222499999998945,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.28858400000035545,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09625000000005457,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12858299999970768,
+            "argsBytes": 218,
+            "replyBytes": 326
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.33158300000013696,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08558399999992616,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1382499999999709,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.36895899999990434,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.3112909999999829,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.14770800000042072,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0665420000004815,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09691700000030323,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06345899999996618,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0967080000000351,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09120900000016263,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09745900000007168,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07250000000021828,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08525000000008731,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06633299999975861,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0757499999999709,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07520800000020245,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08412499999985812,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04883299999983137,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.061291999999866675,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.049332999999933236,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09629100000029212,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.12804199999982302,
+            "argsBytes": 41,
+            "replyBytes": 2
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0968750000001819,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.6029170000001614,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.48820800000021336,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15341699999999037,
+            "argsBytes": 316,
+            "replyBytes": 407
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.4518750000002001,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.10533299999997325,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.47154200000022684,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.29979199999979755,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07187500000009095,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.12912499999993088,
+            "argsBytes": 326,
+            "replyBytes": 417
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.30795800000032614,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07062500000029104,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11716699999988123,
+            "argsBytes": 226,
+            "replyBytes": 317
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.27008399999976973,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05908300000010058,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10570800000004965,
+            "argsBytes": 247,
+            "replyBytes": 338
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2921670000000631,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07616700000016863,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11587499999995998,
+            "argsBytes": 250,
+            "replyBytes": 341
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.25841700000000856,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09762499999987995,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.11641699999972843,
+            "argsBytes": 218,
+            "replyBytes": 309
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.2578330000001188,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07266700000036508,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1170830000000933,
+            "argsBytes": 237,
+            "replyBytes": 328
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3413749999999709,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.10141699999985576,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.1602499999999054,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07141599999977188,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.15983299999970768,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08645799999976589,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.14141699999981938,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.15216700000019046,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.20970800000031886,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.15000000000009095,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.10891700000001947,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.12466700000004494,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09145799999987503,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06516700000020137,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.07929100000001199,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.06204200000001947,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08162499999980355,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.16679199999998673,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.07445800000004965,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.2137920000000122,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 119.0169579999997,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 1.227375000000393,
+            "argsBytes": 545,
+            "replyBytes": 629
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.1069999999999709,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.2203749999998763,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.38633300000037707,
+            "argsBytes": 544,
+            "replyBytes": 628
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.10550000000012005,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.24970800000028248,
+            "argsBytes": 317,
+            "replyBytes": 408
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.4543330000001333,
+            "argsBytes": 802,
+            "replyBytes": 886
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09875000000010914,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.20133399999986068,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3493329999996604,
+            "argsBytes": 569,
+            "replyBytes": 653
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.0752079999997477,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.16537500000004002,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.32108300000027157,
+            "argsBytes": 554,
+            "replyBytes": 638
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07362499999999272,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.16254200000003038,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3010409999997137,
+            "argsBytes": 729,
+            "replyBytes": 813
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07858299999998053,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.19429100000024846,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3263329999999769,
+            "argsBytes": 478,
+            "replyBytes": 562
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07191599999987375,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.18504099999972823,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.31874999999990905,
+            "argsBytes": 469,
+            "replyBytes": 553
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.08395799999971132,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.18349999999963984,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3361670000003869,
+            "argsBytes": 524,
+            "replyBytes": 608
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.15774999999985084,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.20216700000037235,
+            "argsBytes": 317,
+            "replyBytes": 603
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.07141599999977188,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.09170799999992596,
+            "argsBytes": 316,
+            "replyBytes": 602
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05320900000015172,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.07166599999982282,
+            "argsBytes": 317,
+            "replyBytes": 860
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.09679200000027777,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.05908399999998437,
+            "argsBytes": 326,
+            "replyBytes": 627
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04170800000019881,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.08462499999995998,
+            "argsBytes": 226,
+            "replyBytes": 612
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.04854099999965911,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.0698749999996835,
+            "argsBytes": 247,
+            "replyBytes": 787
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05970800000022791,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.04183400000010806,
+            "argsBytes": 250,
+            "replyBytes": 536
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.041374999999789,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.043667000000368716,
+            "argsBytes": 218,
+            "replyBytes": 527
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 0.05375000000003638,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.04383299999972223,
+            "argsBytes": 237,
+            "replyBytes": 582
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.06750000000010914,
+            "argsBytes": 210,
+            "replyBytes": 301
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.15308300000015151,
+            "argsBytes": 318,
+            "replyBytes": 402
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.08962499999961437,
+            "argsBytes": 310,
+            "replyBytes": 403
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.06999999999970896,
+            "argsBytes": 230,
+            "replyBytes": 403
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "prune",
+            "durationMs": 1254.0457089999995,
+            "argsBytes": 41,
+            "replyBytes": 1
+          },
+          {
+            "operation": "coding.pollPage.snapshot",
+            "method": "read",
+            "durationMs": 0.36362499999995634,
+            "argsBytes": 238,
+            "replyBytes": 329
+          },
+          {
+            "operation": "coding.pollPage.observe",
+            "method": "observe",
+            "durationMs": 0.3716660000000047,
+            "argsBytes": 339,
+            "replyBytes": 423
+          }
+        ]
+      }
+    }
+  },
+  "limits": [
+    "The synthetic 1.2-second writer lock plus 300 ms response delay makes the supplementary collector exceed the 250 ms affected-operation target. The complete polling RPC was not tested under that lock because other watched-repo and event-family writes are outside this slice.",
+    "Gateway elapsed time and serialized sizes are recorded; queue, SQL and clone time are not separately attributed.",
+    "Connector PR and review-thread adapters still use synchronous poll repository calls and are separate subsequent lane-A slices. No claim of whole-daemon main SQL absence or production deployment."
+  ]
+}
