@@ -107,7 +107,7 @@ export async function steerCodexDesktopTurn(
   threadId: string,
   text: string,
   messageId: string,
-  mode: 'auto' | 'steer' = 'auto',
+  mode: 'auto' | 'steer' | 'queue' = 'auto',
   desktopRunning = () => codexDesktopRunning(spawn, probePlatform),
   probePlatform = process.platform
 ): Promise<CodexSendGate<'app-server'>> {
@@ -131,6 +131,21 @@ export async function steerCodexDesktopTurn(
       detail: String(error),
     });
     return { reason: reject('not_delivered', String(error), true) };
+  }
+  if (mode === 'queue') {
+    log.warn('work.send route', {
+      threadId,
+      messageId,
+      path: 'refused',
+      reason: 'desktop_owns_queue',
+    });
+    return {
+      reason: reject(
+        'busy',
+        'Codex Desktop owns this thread; queued input cannot be added until the thread is released.',
+        true
+      ),
+    };
   }
   if (!socketPath) {
     log.warn('work.send route', {

@@ -666,6 +666,7 @@ describe('codex-desktop adapter status and send', () => {
         { desktopRunning: async () => desktopRunning }
       );
       const result = await driver.send!(ref('idle'), 'continue held work', user);
+      const queued = await driver.queue!(ref('idle'), 'next task after this turn', user);
       if (desktopRunning) {
         expect(result).toMatchObject({
           ok: false,
@@ -673,13 +674,23 @@ describe('codex-desktop adapter status and send', () => {
           notSent: true,
           detail: expect.stringContaining('ownership endpoint is unavailable'),
         });
+        expect(queued).toMatchObject({
+          ok: false,
+          reason: 'busy',
+          notSent: true,
+          detail: expect.stringContaining('queued input cannot be added'),
+        });
         expect(calls).toEqual([]);
       } else {
         expect(result).toEqual({
           ok: true,
           value: { delivered: false, queuedSubmissionId: 'queue-1' },
         });
-        expect(calls).toEqual(['thread/queue/add']);
+        expect(queued).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'queue-1' },
+        });
+        expect(calls).toEqual(['thread/queue/add', 'thread/queue/add']);
       }
     }
   );
