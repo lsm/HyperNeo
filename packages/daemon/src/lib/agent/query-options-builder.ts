@@ -46,7 +46,11 @@ import { neoReadAccess } from '../neo/read-access.ts';
 import { neoReadSandbox, neoReadTools } from '../neo/session-config.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
-import { projectSessionToolInputs, type SessionToolInputs } from '../tools/session-tool-inputs.ts';
+import {
+  prepareInitialSessionToolSelection,
+  projectSessionToolInputs,
+  type SessionToolInputs,
+} from '../tools/session-tool-inputs.ts';
 import {
   getProviderCatalogEpoch,
   getSessionModelCacheKey,
@@ -357,15 +361,16 @@ export class QueryOptionsBuilder {
   private canonicalToolInputs(session = this.ctx.session): CanonicalToolInputs | null {
     const selection = session.config.toolSelection;
     if (!selection) return null;
-    const inputs = projectSessionToolInputs(
-      {
-        session,
-        skills: this.ctx.skillsManager?.listSkills() ?? [],
-        registry: this.ctx.appMcpServerRepo?.list() ?? [],
-        overrides: [],
-      },
-      selection
-    );
+    const catalog = {
+      session,
+      skills: this.ctx.skillsManager?.listSkills() ?? [],
+      registry: this.ctx.appMcpServerRepo?.list() ?? [],
+      overrides: [],
+      skillOverrides: this.ctx.skillOverrides,
+    };
+    const restricted = prepareInitialSessionToolSelection(catalog, [], selection);
+    if (!restricted.ok) throw new Error(restricted.reason);
+    const inputs = projectSessionToolInputs(catalog, restricted.selection);
     if (!inputs.ok) throw new Error(inputs.reason);
     return inputs;
   }
