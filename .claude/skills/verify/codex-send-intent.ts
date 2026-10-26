@@ -119,6 +119,7 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
   }
   if (request.method === 'thread/queue/add' && queueFault) {
     if (queueFault === 'refused') socket.send(JSON.stringify({ id: request.id, error: { code: -32600, message: 'thread synthetic already has an active writer' } }));
+    else if (queueFault === 'unsupported') socket.send(JSON.stringify({ id: request.id, error: { code: -32601, message: 'method not found' } }));
     else socket.close();
     return;
   }
@@ -199,6 +200,11 @@ try {
     assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'agent' && entry.text === 'First concurrent reply only.'));
     writeFileSync(rollout, ''); collide = false;
   }
+  writeFileSync(join(bin, 'codex'), `#!${process.execPath}\nimport { appendFileSync } from 'node:fs';\nconst args=process.argv.slice(2);\nif(args[0]!=='queue'||!args[1]?.startsWith('--thread=')||!args[2]?.startsWith('--message='))process.exit(2);\nconst timestamp=new Date().toISOString();\nappendFileSync(${JSON.stringify(rollout)},JSON.stringify({type:'response_item',timestamp,payload:{type:'message',role:'user',id:'foreign-cli-input',content:[{type:'input_text',text:args[2].slice('--message='.length)}]}})+'\\n');\nawait Bun.write(Bun.stdout,'cli-accepted\\n');\n`, { mode: 0o700 });
+  queueFault = 'unsupported';
+  const cli = await send();
+  assert.deepEqual(cli.value, { delivered: false, queuedSubmissionId: 'cli-accepted' }, 'CLI queue acceptance cannot borrow a concurrent transcript receipt');
+  writeFileSync(rollout, '');
   for (const fault of ['refused', 'lost-reply']) {
     queueFault = fault;
     const before = calls.length;

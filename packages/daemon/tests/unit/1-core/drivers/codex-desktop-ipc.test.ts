@@ -436,7 +436,7 @@ describe('withCodexDesktopIpc', () => {
                     payload: {
                       type: 'message',
                       role: 'user',
-                      id: 'queued-input',
+                      id: params.clientUserMessageId,
                       content: [{ type: 'input_text', text }],
                     },
                   }) + '\n'
@@ -497,7 +497,7 @@ describe('withCodexDesktopIpc', () => {
               value: {
                 delivered: true,
                 queuedSubmissionId: 'existing-queue',
-                receipt: { executionId: 'thread-1', inputId: 'queued-input' },
+                receipt: { executionId: 'thread-1', inputId: 'existing-input' },
               },
             },
           });

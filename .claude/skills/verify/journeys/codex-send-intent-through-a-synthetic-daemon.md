@@ -25,6 +25,15 @@ precondition response. work.send must return notSent true so callers can retry.
 A later queue request loses its acknowledgment after dispatch: that response
 must remain uncertain, without notSent or a second queue submission. Explicit
 steering retains the same distinction between pre-send failure and a lost reply.
+Two overlapping automatic submissions then share a long prefix, and another pair
+uses identical messages. Both queue calls take their pre-consumption snapshot
+before the receiver writes only the first input and reply. The first submission
+may return that receipt only when its client input ID and complete message match;
+the second must remain accepted with its own queue ID and no receipt. Its
+matching text cannot borrow the first exchange. Receipt-bound work.status must
+still show the first submission's own reply. A synthetic CLI fallback appends
+an unrelated matching input while accepting a queue request: that route returns
+only the queue ID and delivered false, because it has no correlated input ID.
 
 The failing reproduction is committed before the fix: the unchanged adapter
 steers instead of returning a queue ID. Retain observed.json, proof.log and

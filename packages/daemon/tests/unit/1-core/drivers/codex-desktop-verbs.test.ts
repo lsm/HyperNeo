@@ -61,16 +61,31 @@ describe('codexQueueDelivery', () => {
   test('a queued message is receipted by the user message id it appended, not an older copy', () => {
     const before = [heardAs('msg_old', 'next step')];
     const after = [...before, saidAt('ok'), heardAs('msg_new', 'next step\nwith detail')];
-    expect(codexQueueDelivery(after, 'next step', 't1', codexUserInputIds(before))).toEqual({
+    expect(
+      codexQueueDelivery(
+        after,
+        'next step\nwith detail',
+        't1',
+        codexUserInputIds(before),
+        'msg_new'
+      )
+    ).toEqual({
       delivered: true,
       receipt: { executionId: 't1', inputId: 'msg_new' },
     });
-    expect(codexQueueDelivery(before, 'next step', 't1', codexUserInputIds(before))).toEqual({
+    expect(
+      codexQueueDelivery(before, 'next step', 't1', codexUserInputIds(before), 'msg_old')
+    ).toEqual({
       delivered: false,
     });
-    expect(codexQueueDelivery([heard('next step')], 'next step', 't1', new Set())).toEqual({
-      delivered: false,
-    });
+    expect(codexQueueDelivery([heard('next step')], 'next step', 't1', new Set(), 'no-id')).toEqual(
+      {
+        delivered: false,
+      }
+    );
+    expect(
+      codexQueueDelivery(after, 'next step\nwith detail', 't1', new Set(), 'other-sender')
+    ).toEqual({ delivered: false });
   });
 });
 
@@ -1254,14 +1269,17 @@ describe('codex-desktop adapter status and send', () => {
   test('native queue preserves a fresh delivered input receipt for later evidence reads', async () => {
     appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('older', 'next step')}`);
     const driver = adapter(0, '', async () => ({
-      call: async (method) => {
+      call: async (method, params) => {
         if (method === 'thread/turns/list') return { data: [] };
-        appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('native-input', 'next step')}`);
+        appendFileSync(
+          join(dir, 'running.jsonl'),
+          `\n${heardAs(String(params.clientUserMessageId), 'next step')}`
+        );
         return { queuedSubmission: { id: 'native-queue' } };
       },
       close: () => {},
     }));
-    const receipt = { executionId: 'busy', inputId: 'native-input' };
+    const receipt = { executionId: 'busy', inputId: 'abcd1234-0000' };
     expect(await driver.queue!(ref('busy'), 'next step', user)).toEqual({
       ok: true,
       value: { delivered: true, queuedSubmissionId: 'native-queue', receipt },
@@ -1348,7 +1366,7 @@ describe('codex-desktop adapter status and send', () => {
     'an undiscovered active writer accepts idle input through its queue (consumed: %s)',
     async (consumed) => {
       const queued: string[] = [];
-      const receipt = { executionId: 'idle', inputId: 'writer-input' };
+      const receipt = { executionId: 'idle', inputId: 'abcd1234-0000' };
       const driver = adapter(0, '', async () => ({
         call: async (method, params) => {
           if (method === 'thread/turns/list')

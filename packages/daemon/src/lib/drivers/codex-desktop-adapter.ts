@@ -637,12 +637,15 @@ export function codexQueueDelivery(
   lines: readonly string[],
   message: string,
   threadId: string,
-  before: ReadonlySet<string>
+  before: ReadonlySet<string>,
+  inputId: string
 ): WorkDelivery {
-  const opening = message.trim().split('\n')[0].slice(0, 200);
   const fresh = lines
     .map((line) => codexUserInput(parseLine(line)))
-    .findLast((input) => !!input && !before.has(input.id) && input.text.includes(opening));
+    .findLast(
+      (input) =>
+        !!input && input.id === inputId && !before.has(input.id) && input.text === message.trim()
+    );
   return {
     delivered: !!fresh,
     ...(fresh ? { receipt: { executionId: threadId, inputId: fresh.id } } : {}),
@@ -762,9 +765,6 @@ async function queueCodexCliMessage(
 ): Promise<Result<WorkDelivery>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const before = codexUserInputIds(
-      await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
-    );
     const proc = deps.spawn(
       ['codex', 'queue', `--thread=${detail.thread.id}`, `--message=${message}`],
       { stdout: 'pipe', stderr: 'pipe' }
@@ -778,11 +778,10 @@ async function queueCodexCliMessage(
     if (code !== 0) {
       return reject('not_delivered', stderr.trim() || `codex queue exited with ${code}.`);
     }
-    const tail = await readRolloutTail(detail.thread.rolloutPath).catch(() => []);
     return {
       ok: true,
       value: {
-        ...codexQueueDelivery(tail, message, detail.thread.id, before),
+        delivered: false,
         ...(stdout.trim() ? { queuedSubmissionId: stdout.trim() } : {}),
       },
     };
@@ -818,11 +817,12 @@ export async function queueCodexMessage(
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
     );
+    const clientUserMessageId = deps.newId();
     let added: unknown;
     try {
       added = await server.call('thread/queue/add', {
         threadId: detail.thread.id,
-        clientUserMessageId: deps.newId(),
+        clientUserMessageId,
         input: [{ type: 'text', text: message }],
       });
     } catch (error) {
@@ -853,7 +853,8 @@ export async function queueCodexMessage(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => []),
       message,
       detail.thread.id,
-      before
+      before,
+      clientUserMessageId
     );
     return {
       ok: true,
