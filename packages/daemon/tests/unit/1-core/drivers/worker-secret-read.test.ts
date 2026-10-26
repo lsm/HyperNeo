@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
@@ -124,6 +132,31 @@ test('Codex accepts the installed allowed worker profile', async () => {
       root
     )
   ).resolves.toBeUndefined();
+});
+
+test('environment and private-key filename rules deny synthetic home secrets', async () => {
+  const home = join(fixture, 'home');
+  const fs = codexWorkerSandbox(root).config.permissions['hyperneo-worker'].filesystem as Record<
+    string,
+    unknown
+  >;
+  for (const path of [
+    join(home, '.env'),
+    join(home, '**/.env.*'),
+    join(home, '**/*.pem'),
+    join(home, '**/*.key'),
+  ])
+    expect(fs[path]).toBe('deny');
+  await installClaudeNativeWrites(root, [join(fixture, 'source')]);
+  expect(settings().sandbox.filesystem.denyRead).toContain(join(home, '**/*.pem'));
+  expect(settings().permissions.deny).toContain(`Read(/${home}/**/*.pem)`);
+});
+
+test('reading a complete Claude policy does not rewrite its settings', async () => {
+  await installClaudeNativeWrites(root, [join(fixture, 'source')]);
+  utimesSync(settingsPath(), new Date(1000), new Date(1000));
+  await readClaudeWorkerSandbox(root);
+  expect(statSync(settingsPath()).mtimeMs).toBe(1000);
 });
 
 test('Desktop reload can resolve the protected profile without bootstrap overrides', async () => {
