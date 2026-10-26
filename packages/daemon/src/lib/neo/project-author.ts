@@ -1,5 +1,5 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import type { OperationCaller } from '../operations/registry.ts';
+import { isAgentSessionCaller, type OperationCaller } from '../operations/registry.ts';
 
 export function requireNeoTreeAuthor(
   caller: OperationCaller,
@@ -16,8 +16,7 @@ export function requireLocalTreeAuthor(caller: OperationCaller):
       value: true;
     }
   | { reason: { ok: false; reason: string } } {
-  return (caller.source === 'rpc' && caller.principal === 'local') ||
-    (caller.source === 'mcp' && !!caller.sessionId)
+  return (caller.source === 'rpc' && caller.principal === 'local') || isAgentSessionCaller(caller)
     ? { value: true }
     : { reason: { ok: false, reason: 'local_session_required' } };
 }

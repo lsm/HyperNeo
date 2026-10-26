@@ -7,7 +7,11 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import {
+  defineOperation,
+  isAgentSessionCaller,
+  type OperationCaller,
+} from '../operations/registry.ts';
 import { GOAL_READ_POLICY, GOAL_WRITE_POLICY } from './goal-operation-scope.ts';
 import { SessionScheduleCadenceSchema } from '../scheduler/operations.ts';
 import { requireValidCadence } from '../scheduler/session-schedules.ts';
@@ -171,8 +175,8 @@ export function resolveGoalOwner(
     return input.ownerSessionId
       ? { value: input.ownerSessionId }
       : refuse('owner_unresolved: ownerSessionId is required for this caller.');
-  if (!caller.sessionId)
-    return refuse('owner_denied: a session caller needs its session id to own goals.');
+  if (!isAgentSessionCaller(caller) || !caller.sessionId)
+    return refuse('owner_denied: an agent session caller needs its session id to own goals.');
   return { value: input.ownerSessionId ?? caller.sessionId };
 }
 

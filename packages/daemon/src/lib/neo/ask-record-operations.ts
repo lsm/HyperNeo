@@ -3,7 +3,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import {
+  defineOperation,
+  isAgentSessionCaller,
+  type OperationCaller,
+} from '../operations/registry.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
   addNeoTodo,
@@ -61,9 +65,9 @@ export function requireNeoAskSession(
 }
 
 export function requireAskSession(caller: OperationCaller): Gate<string> {
-  return caller.sessionId
-    ? { value: caller.sessionId }
-    : { reason: { ok: false, reason: 'no_session: opening an ask needs a session.' } };
+  return isAgentSessionCaller(caller)
+    ? { value: caller.sessionId! }
+    : { reason: { ok: false, reason: 'no_session: opening an ask needs an agent session.' } };
 }
 
 export function requireNeoAskGoal(
@@ -274,8 +278,9 @@ export function createNeoAskRecordOperations(
     )
     .pipe(
       (ask: NeoAsk, caller: OperationCaller): Gate<NeoAsk> =>
-        ask.sessionId !== caller.sessionId
-          ? { reason: { ok: false, reason: 'not_owned: this ask belongs to another Neo.' } }
+        ask.sessionId !== caller.sessionId &&
+        !(caller.role === 'neo' && !isNeoSession(ask.sessionId))
+          ? { reason: { ok: false, reason: 'not_owned: this ask belongs to another session.' } }
           : ask.focusedSession
             ? { value: ask }
             : {

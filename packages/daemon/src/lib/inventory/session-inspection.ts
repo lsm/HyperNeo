@@ -3,7 +3,11 @@ import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SessionInspectionRecord } from '../../storage/repositories/daemon-inventory-repository.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import {
+  defineOperation,
+  isAgentSessionCaller,
+  type OperationCaller,
+} from '../operations/registry.ts';
 import type { SpaceSessionMessage } from '../session/space-session-reads.ts';
 
 const InputSchema = z
@@ -60,8 +64,7 @@ export interface SessionInspectionDependencies {
 }
 
 export function admitSessionInspection(input: Input, caller: OperationCaller): Gate<Input> {
-  return (caller.source === 'rpc' && caller.principal === 'local') ||
-    (caller.source === 'mcp' && !!caller.sessionId)
+  return (caller.source === 'rpc' && caller.principal === 'local') || isAgentSessionCaller(caller)
     ? { value: input }
     : { reason: { accepted: false, reason: 'inspection_forbidden' } };
 }

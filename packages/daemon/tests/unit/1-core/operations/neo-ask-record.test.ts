@@ -469,12 +469,20 @@ describe('requireNeoAskSession', () => {
 });
 
 describe('requireAskSession and requireNeoAskGoal', () => {
-  test('any daemon session opens an ask and may name a goal another session owns', () => {
-    expect(requireAskSession({ source: 'mcp', sessionId: 'worker-1' })).toEqual({
-      value: 'worker-1',
+  test('any agent session opens an ask and may name a goal another session owns', () => {
+    expect(
+      requireAskSession({ source: 'mcp', role: 'direct_task_worker', sessionId: 'worker-1' })
+    ).toEqual({ value: 'worker-1' });
+    expect(requireAskSession({ source: 'mcp', sessionId: 'worker-1' })).toMatchObject({
+      reason: { ok: false, reason: 'no_session: opening an ask needs an agent session.' },
+    });
+    expect(
+      requireAskSession({ source: 'mcp', role: 'universal_read', sessionId: 'chat-1' })
+    ).toMatchObject({
+      reason: { ok: false, reason: 'no_session: opening an ask needs an agent session.' },
     });
     expect(requireAskSession({ source: 'rpc', principal: 'local' })).toMatchObject({
-      reason: { ok: false, reason: 'no_session: opening an ask needs a session.' },
+      reason: { ok: false, reason: 'no_session: opening an ask needs an agent session.' },
     });
     const goal = { ownerSessionId: 'neo:root' } as unknown as Parameters<
       typeof requireNeoAskGoal
