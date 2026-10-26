@@ -193,7 +193,7 @@ describe('NeoAskTodos', () => {
     expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
   });
 
-  it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge'])(
+  it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
     'opens a question source through the existing opener: %s',
     async (link) => {
       locale.value = 'en';
@@ -224,9 +224,12 @@ describe('NeoAskTodos', () => {
         />
       );
       const body = app.container.querySelector('#neo-ref-question-source')!;
-      expect(body.textContent).toContain('Review worker');
-      expect(body.textContent).toContain('Codex');
-      fireEvent.click(app.getByRole('button', { name: 'Open session: Review worker' }));
+      expect(body.textContent).not.toContain('Review worker');
+      expect(body.textContent).not.toContain('Codex');
+      const open = app.getByRole('button', { name: 'Open', exact: true });
+      expect(open.textContent).toBe('Open');
+      expect(open.querySelector('svg')).toBeNull();
+      fireEvent.click(open);
       expect(onOpen).toHaveBeenCalledWith(link, 'Codex · Review worker');
       fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
       expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
@@ -236,7 +239,7 @@ describe('NeoAskTodos', () => {
   it.each([
     { link: null, opener: true },
     { link: 'codex://threads/worker', opener: false },
-  ])('shows source identity without navigation: %j', ({ link, opener }) => {
+  ])('omits the source header when navigation is unavailable: %j', ({ link, opener }) => {
     locale.value = 'en';
     const onAnswer = vi.fn();
     const app = render(
@@ -263,11 +266,38 @@ describe('NeoAskTodos', () => {
       />
     );
     const header = app.container.querySelector('[data-question-source]');
-    expect(header?.textContent).toContain('Terminal worker');
-    expect(header?.textContent).toContain('Claude');
-    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+    expect(header).toBeNull();
+    expect(app.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
     fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
     expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
+  });
+
+  it('shows a short localized opener even when the source title is broken', () => {
+    const onOpen = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('source', {
+              kind: 'reply',
+              sourceSession: {
+                adapter: 'codex-desktop',
+                id: 'worker',
+                name: '( · Codex',
+                label: 'Codex · ( · Codex',
+                provider: 'Codex',
+                link: 'codex://threads/worker',
+              },
+            }),
+          ],
+        })}
+        onOpen={onOpen}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.container.textContent).not.toContain('( · Codex');
+    fireEvent.click(app.getByRole('button', { name: '打开', exact: true }));
+    expect(onOpen).toHaveBeenCalledWith('codex://threads/worker', 'Codex · ( · Codex');
   });
 
   it('offers no session opener for a question without one source', () => {
@@ -279,7 +309,7 @@ describe('NeoAskTodos', () => {
         onAnswer={vi.fn()}
       />
     );
-    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+    expect(app.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
   });
 
   it.each(guidanceQuestions)('renders the concise guidance example: $title', async (fixture) => {
