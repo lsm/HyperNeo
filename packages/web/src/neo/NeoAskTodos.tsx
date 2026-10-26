@@ -286,27 +286,15 @@ function QuestionBox({
       data-question-kind={question.kind}
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
-      {question.sourceSession && (
-        <div class="mb-2 flex flex-wrap items-center justify-end gap-2" data-question-source>
-          <span class="min-w-0 break-words text-right text-xs text-fg-muted">
-            {question.sourceSession.name ?? question.sourceSession.id} ·{' '}
-            {question.sourceSession.provider}
-          </span>
-          {question.sourceSession.link && onOpen && (
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              aria-label={t('question.openSessionTitle', {
-                name: question.sourceSession.name ?? question.sourceSession.id,
-              })}
-              onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
-            >
-              <NeoSessionMark
-                kind={neoSessionKind(question.sourceSession.adapter, question.sourceSession.link)}
-              />
-              {t('question.openSession')}
-            </button>
-          )}
+      {question.sourceSession?.link && onOpen && (
+        <div class="mb-2 flex justify-end" data-question-source>
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
+          >
+            {t('question.open')}
+          </button>
         </div>
       )}
       <MarkdownRenderer

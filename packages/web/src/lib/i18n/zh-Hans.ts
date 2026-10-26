@@ -81,6 +81,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.hideDetails': '收起详情：{title}',
   'todo.openTitle': '打开 {title}',
   'todo.startTitle': '开始 {title}',
+  'question.open': '打开',
   'question.openSession': '打开会话',
   'question.openSessionTitle': '打开会话：{name}',
   'question.document': '查看完整版本',
