@@ -1628,7 +1628,7 @@ export class AgentSession
     await this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     await this.internalEventBus.publish('session.updated', {
       sessionId: this.session.id,
-      source: 'model-switch',
+      source: 'model-switch-pending',
       session: { metadata: this.session.metadata },
     });
   }
