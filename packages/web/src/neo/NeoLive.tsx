@@ -1,4 +1,5 @@
 import { resolveNeoCardReply } from './public-conversation.ts';
+import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
@@ -873,6 +874,15 @@ export function NeoLive() {
                           offset,
                         })
                       )
+                    }
+                    onLoadDetails={(askId) =>
+                      connectionManager.getHub().then(async (hub) => {
+                        const result = await invokeOperation<
+                          { ok: true; entry: NeoAskEntry } | { ok: false; reason: string }
+                        >(hub, 'neo.ask.read', { askId });
+                        if (!result.ok) throw new Error(result.reason);
+                        return result.entry;
+                      })
                     }
                     onOpen={(link) =>
                       link.startsWith('/session/')

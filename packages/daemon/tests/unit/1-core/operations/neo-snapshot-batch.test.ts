@@ -71,11 +71,11 @@ test('a 231-todo snapshot retains its rows using three child/link reads', async 
   const todos = value.todoAsks.flatMap((entry) => entry.todos);
   expect(value.todoAsks).toHaveLength(50);
   expect(todos).toHaveLength(231);
-  expect(value.todoAsks.flatMap((entry) => entry.questions)).toHaveLength(66);
+  expect(value.todoAsks.flatMap((entry) => entry.questions)).toHaveLength(0);
   expect(todos.find((todo) => todo.id === 'todo-230')).toMatchObject({
     title: 'Synthetic todo 230',
     link: '/session/synthetic-230',
-    instruction: 'x'.repeat(1155),
+    instruction: null,
   });
   expect(observer.queries.filter((query) => query.child)).toHaveLength(3);
 });

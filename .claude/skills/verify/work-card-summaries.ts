@@ -49,6 +49,16 @@ try {
     const detail = await invoke('neo.ask.read', { todoId: todo.id }) as unknown as { ok: boolean; entry: { todos: typeof rows[number]['todos'] } };
     assert(detail.ok);
     assert.equal(detail.entry.todos.find(item => item.id === todo.id)?.instruction, 'x'.repeat(1155));
+    app.db.getDatabase().prepare(`INSERT INTO neo_questions
+      (id,ask_id,text,kind,state,options,multiple,created_at)
+      VALUES ('summary-open','ask-18','Full synthetic question','choice','open','["Ship","Wait"]',0,1)`).run();
+    const waiting = (await invoke('neo.snapshot')).todoAsks.find(entry => entry.ask.id === 'ask-18')!;
+    assert.equal(waiting.state, 'waiting');
+    assert.equal(waiting.summary?.openQuestionCount, 1);
+    assert.equal(waiting.questions.length, 0);
+    const opened = await invoke('neo.ask.read', { askId: 'ask-18' }) as unknown as { entry: typeof rows[number] };
+    assert.equal(opened.entry.questions.find(question => question.id === 'summary-open')?.text, 'Full synthetic question');
+    assert.deepEqual(opened.entry.questions.find(question => question.id === 'summary-open')?.options, ['Ship', 'Wait']);
   }
   console.log(JSON.stringify(observed));
 } finally {
