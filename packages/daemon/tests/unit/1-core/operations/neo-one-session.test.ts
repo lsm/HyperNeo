@@ -101,7 +101,10 @@ describe('Neo as one session', () => {
     runMigration393(db.getDatabase());
     const invoke = (name: string, input: unknown, as: OperationCaller) =>
       invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, as);
-    const todo = { title: 'Fix header', doneWhen: 'Merged' };
+    const todo = {
+      title: 'Fix header',
+      check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } },
+    };
     const added = await invoke('neo.todo.add', { askId: 'open', ...todo }, caller(root));
     expect(added).toMatchObject({ value: { ok: true } });
     const id = (added as { value: { todo: { id: string } } }).value.todo.id;

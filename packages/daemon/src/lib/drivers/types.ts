@@ -109,7 +109,7 @@ export const WorkRejectionSchema = z.enum([
 
 export function workResultSchema<Value extends z.ZodType>(value: Value) {
   return z.discriminatedUnion('ok', [
-    z.object({ ok: z.literal(true), value }),
+    z.object({ ok: z.literal(true), value, records: z.array(z.string()).optional() }),
     z.object({
       ok: z.literal(false),
       reason: WorkRejectionSchema,
@@ -230,7 +230,7 @@ export type WorkDetail = z.infer<typeof WorkDetailSchema>;
 export type WorkInput = z.infer<typeof WorkInputSchema>;
 export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
 export type Rejected = { ok: false; reason: WorkRejection; detail: string; notSent?: true };
-export type Result<T> = { ok: true; value: T } | Rejected;
+export type Result<T> = { ok: true; value: T; records?: string[] } | Rejected;
 
 export type WorkVerb =
   | 'find'

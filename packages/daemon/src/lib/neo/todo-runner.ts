@@ -33,7 +33,11 @@ import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
 type Rejection = { ok: false; reason: string };
-type Gate<T> = { value: T } | { reason: Rejection };
+type Recorded = { ok: true; todo: NeoTodo; records: string[] };
+type Gate<T> = { value: T } | { reason: Rejection | Recorded };
+const record = (todo: NeoTodo, reason: string): { reason: Recorded } => ({
+  reason: { ok: true, todo, records: [reason] },
+});
 type Startable = {
   todo: NeoTodo;
   ask: NeoAsk;
@@ -99,7 +103,8 @@ export function requireNeoTodoStartable(read: {
 }): Gate<Startable> {
   const { todo, ask, target } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
-  if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
+  if (ask.status !== 'open')
+    return record(todo, `ask_settled: this ask is ${ask.status}; no work was dispatched.`);
   if (!isNeoTodoStartable(todo)) return fail(`already_started: this todo is ${todo.state}.`);
   if (!todo.instruction || !target)
     return fail('no_session: this todo has no instruction and target; the daemon checks it.');
@@ -115,9 +120,10 @@ export function requireNeoTodoContinuable(read: {
 }): Gate<{ todo: NeoTodo; ask: NeoAsk; ref: WorkRef }> {
   const { todo, ask, ref } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
-  if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
+  if (ask.status !== 'open')
+    return record(todo, `ask_settled: this ask is ${ask.status}; no work was dispatched.`);
   if (todo.state === 'todo' || todo.state === 'removed' || !ref)
-    return fail(`not_started: this todo is ${todo.state} and has no session to continue.`);
+    return record(todo, `not_started: this todo is ${todo.state} and has no session to continue.`);
   return { value: { todo, ask, ref } };
 }
 
@@ -134,9 +140,12 @@ export function requireNeoTodoRetryable(read: {
   ref: WorkRef | null;
   target: NeoDriverTarget | null;
   interrupted: boolean;
+  ask: NeoAsk | null;
 }): Gate<NeoTodo> {
   const { todo, target } = read;
   if (!todo) return fail('not_found: no such todo.');
+  if (read.ask && read.ask.status !== 'open')
+    return record(todo, `ask_settled: this ask is ${read.ask.status}; no work was dispatched.`);
   if (read.interrupted)
     return fail(
       'start_uncertain: the start failed after the driver may have opened a session; find it with work.find before starting again.'
@@ -144,7 +153,10 @@ export function requireNeoTodoRetryable(read: {
   const failed =
     todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
   if (!failed || !target || !['start', 'send'].includes(target.verb))
-    return fail('not_retryable: only a failed todo with a worker target can be retried.');
+    return record(
+      todo,
+      'not_retryable: no retry was needed or no worker target is recorded; no work was dispatched.'
+    );
   return { value: todo };
 }
 
@@ -390,7 +402,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'outcome',
       'outcome'
     )
-    .endAsync('outcome') as (todoId: string) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
+    .endAsync('outcome') as (
+    todoId: string
+  ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
   const noteNeedsYou = async (
     todoId: string,
@@ -459,10 +473,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const judgement =
         pack && pack.readFacts && pack.judge ? pack.judge(todo, await pack.readFacts(todo)) : null;
       const result = judgement ? null : await rule.check(todo);
+      const completion =
+        judgement ??
+        (result?.done && !result.failed
+          ? { state: 'done' as const, evidence: result.evidence }
+          : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
-      const next = judgement
-        ? await recompute(live, {}, now, judgement)
+      const next = completion
+        ? await recompute(live, {}, now, completion)
         : await finish(
             live,
             ask,
@@ -470,7 +489,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             now
           );
       if (
-        judgement &&
+        completion &&
         next.state !== live.state &&
         ['done', 'failed', 'blocked'].includes(next.state)
       )

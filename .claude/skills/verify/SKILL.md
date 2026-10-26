@@ -107,6 +107,10 @@ The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
 wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
+Export a writable TMPDIR for web tests, build tooling and git commands too;
+their temporary files can otherwise fail before verification starts.
+The wrapper forwards NODE_PATH and VERIFY_BROWSER for browser helpers; its
+child environment remains otherwise scrubbed.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
 For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
@@ -117,10 +121,13 @@ The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
 `journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
 competing writer when fixtures overlap the booted daemon.
 
-If the isolated daemon cannot bind its ephemeral listener, preserve the startup
-error and mark the daemon proof blocked. An EADDRINUSE report for port 0 is
-inconclusive too; do not count unit results as a successful daemon run or weaken
-host protections to make the listener start.
+If a metadata helper cannot bind its own listener (for example EPERM or an
+ephemeral port 0 reported as EADDRINUSE), preserve its log and mark daemon proof
+blocked. Use a journey's listener-free proof only for the narrower surface it
+explicitly covers; unit results do not establish a successful daemon run.
+Helpers requiring /private/tmp also need TMPDIR=/private/tmp. Never weaken host
+protections to make a proof run.
+
 
 The wrapper forwards an explicitly selected VERIFY_CLAUDE path for native SDK
 proofs. It does not forward provider credentials or the human's configuration.
@@ -182,7 +189,8 @@ They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
 Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
 sends use the native app-server queue; their proofs must show no Desktop ownership
-probe, open, resume or new writer.
+probe, open or turn/start. Check the loaded list and resume saved unloaded threads
+before settings or enqueue; already loaded threads must not be resumed.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

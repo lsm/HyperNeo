@@ -112,12 +112,12 @@ const cases: {
     next: null,
   },
   {
-    name: 'human authority survives late facts',
+    name: 'a passed check supersedes an old human block',
     state: 'blocked',
     humanBlocked: true,
     judgement: { state: 'done', evidence: 'Late fact' },
-    expected: 'blocked',
-    next: null,
+    expected: 'done',
+    next: 'next',
   },
   {
     name: 'a closed ask removes active work',

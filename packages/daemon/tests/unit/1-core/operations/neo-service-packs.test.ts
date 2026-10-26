@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
+import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -25,9 +26,82 @@ afterEach(() => {
   db.close();
 });
 
+test('core checks stay installed with only life-admin enabled and read actual outcomes', async () => {
+  db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
+  const core = service.pack('core');
+  expect(core).not.toBeNull();
+  service.todos.openAsk({
+    id: 'ask',
+    title: 'Decision',
+    request: 'Confirm the result',
+    sessionId: 'neo',
+    projectId: null,
+    originMessageId: null,
+    createdAt: 1,
+  });
+  const question = service.todos.askQuestion(
+    'question',
+    'ask',
+    {
+      text: 'Is it done?',
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: null,
+    },
+    1
+  );
+  const todo = service.todos.addTodo(
+    'todo',
+    'ask',
+    {
+      title: 'Confirm result',
+      doneWhen: 'Human confirms',
+      instruction: null,
+      named: null,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: question.id } },
+    },
+    1
+  );
+  expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
+  service.todos.answerQuestion(question, 'no', 'button', 2);
+  expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
+  const yes = service.todos.askQuestion('yes', 'ask', question, 3);
+  service.todos.answerQuestion(yes, 'yes', 'chat', 4);
+  const confirmed = { ...todo, check: { ...todo.check!, params: { questionId: yes.id } } };
+  expect(await core!.todos!.check(confirmed)).toMatchObject({ done: true });
+  expect(await core!.todos!.check({ ...confirmed, askId: 'foreign' })).toEqual({
+    done: false,
+    evidence: null,
+  });
+  expect(
+    await core!.todos!.check({
+      ...todo,
+      check: {
+        pack: 'core',
+        kind: 'deployed',
+        params: { repo: 'lsm/HyperNeo', sha: BUILD_METADATA.commit },
+      },
+    })
+  ).toMatchObject({ done: true });
+  expect(
+    await core!.todos!.check({
+      ...todo,
+      check: {
+        pack: 'core',
+        kind: 'deployed',
+        params: { repo: 'other/repository', sha: BUILD_METADATA.commit },
+      },
+    })
+  ).toEqual({ done: false, evidence: null });
+  expect(service.todos.getTodo(todo.id)?.state).toBe('todo');
+});
+
 test('installed builtins keep identity and settings select without rebuilding them', () => {
   const installed = service.installedPacks();
-  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin']);
+  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin', 'core']);
   expect(service.packs()).toEqual([installed[0]]);
   db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
   expect(service.packs()).toEqual([installed[1]]);

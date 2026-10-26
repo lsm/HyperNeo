@@ -2,6 +2,8 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { nativeFeedEnqueueWrites } from '../../storage/repositories/native-feed-enqueue-write.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import {
@@ -154,8 +156,8 @@ export function claudeFeedSource(hyperneo: ReadonlySet<string>): FeedSource<Feed
   };
 }
 
-export function scheduleClaudeFeed(queue: JobQueueRepository): void {
-  queue.enqueueUniquePending({
+export async function scheduleClaudeFeed(queue: JobQueueRepository): Promise<void> {
+  await gatewayFor(queue.db).call(nativeFeedEnqueueWrites, 'enqueueUniquePending', {
     queue: WORK_FEED_CLAUDE,
     payload: { scope: 'claude' },
     matchPayload: { scope: 'claude' },

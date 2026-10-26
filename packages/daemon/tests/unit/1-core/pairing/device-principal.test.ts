@@ -32,7 +32,14 @@ const echo = (name: string) =>
 function connectedAs(device: UpgradeIdentity | null) {
   const handler = createOperationRpcHandler(
     createOperationRegistry(
-      ['client.list', 'neo.snapshot', 'session.archive', 'message.send', 'work.status'].map(echo)
+      [
+        'client.list',
+        'neo.snapshot',
+        'neo.ask.read',
+        'session.archive',
+        'message.send',
+        'work.status',
+      ].map(echo)
     ),
     (call) => (call.clientId === 'socket-1' && device ? { device } : {})
   );
@@ -64,6 +71,7 @@ describe('operation callers from paired devices', () => {
   test('a paired relay keeps the reads the push relay makes and nothing else', async () => {
     const call = connectedAs({ deviceId: 'relay', kind: 'relay' });
     expect(await call('neo.snapshot')).toEqual({ principal: 'local', kind: 'relay' });
+    expect(await call('neo.ask.read')).toEqual({ principal: 'local', kind: 'relay' });
     expect(await call('client.list')).toEqual({ principal: 'local', kind: 'relay' });
     await refused(call('session.archive'));
   });

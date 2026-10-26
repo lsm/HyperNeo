@@ -1,0 +1,20 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 358,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "startError": "Error: GitHub poll refresh SQL reached main connection",
+  "initial": [],
+  "mainSqlAttempts": 1
+}

@@ -1,4 +1,5 @@
 import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
+import { sessionListReads } from '../../storage/repositories/session-list-read.ts';
 import type {
   CreateSessionRequest,
   GetSessionToolInventoryRequest,
@@ -279,10 +280,12 @@ export function setupSessionHandlers(
   messageHub.onRequest(
     'session.list',
     async (data: { status?: string; includeArchived?: boolean } | undefined) => {
-      const sessions = sessionManager.listSessions({
-        status: data?.status,
-        includeArchived: data?.includeArchived,
-      });
+      const sessions = await sessionManager
+        .getDatabase()
+        .gateway.call(sessionListReads, 'listSessions', {
+          status: data?.status,
+          includeArchived: data?.includeArchived,
+        });
       return { sessions };
     }
   );
@@ -809,7 +812,7 @@ export function setupSessionHandlers(
       let didRefresh = forceRefresh;
 
       if (forceRefresh) {
-        await refreshModels(undefined, { forceRemote: true });
+        await refreshModels(undefined, { forceRemote: true, allowPartial: true });
       }
 
       let availableModels = getAvailableModels('global');
@@ -860,7 +863,17 @@ export function setupSessionHandlers(
         }
       }
 
+      const { getAllProviderFailures } = await import('../providers/provider-failure-store.js');
+      const failures = getAllProviderFailures().filter((failure) =>
+        getProviderRegistry().has(failure.providerId)
+      );
+      const unavailable = new Set(failures.map((failure) => failure.providerId));
       return {
+        unavailableProviders: failures.map(({ providerId, errorKind }) => ({
+          providerId,
+          errorKind,
+          available: false,
+        })),
         models: availableModels.map((m) => ({
           id: m.id,
           display_name: m.name,
@@ -871,7 +884,7 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
-          available: m.available !== false,
+          available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),
         cached: !didRefresh && availableModels.length > 0,

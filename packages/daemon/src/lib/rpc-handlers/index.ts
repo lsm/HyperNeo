@@ -190,6 +190,7 @@ import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts'
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
 import { setupLiveQueryHandlers } from './live-query-handlers.ts';
+import { readLiveSessionList } from '../../storage/repositories/session-list-live-read.ts';
 import { setupReferenceHandlers } from './reference-handlers.ts';
 import { FileIndex } from '../file-index.ts';
 import { LiveQueryEngine } from '../../storage/live-query.ts';
@@ -404,7 +405,9 @@ export interface RPCHandlerSetupResult {
   wakePollingConcern: (key: string, text: string) => Promise<boolean>;
 }
 
-export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
+export async function setupRPCHandlers(
+  deps: RPCHandlerDependencies
+): Promise<RPCHandlerSetupResult> {
   let taskAgentManager: TaskAgentManager;
   const persistToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
     createSessionToolPreferenceWriter(deps.db, async () => {
@@ -510,7 +513,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.liveQueries,
     deps.db.getDatabase(),
-    (args) => deps.db.getMessageFeedAsync(args)
+    (args) => deps.db.getMessageFeedAsync(args),
+    (includeArchived) => deps.db.gateway.call(readLiveSessionList, 'read', includeArchived)
   );
 
   registerAppMcpHandlers(deps.messageHub, {
@@ -1868,8 +1872,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
   if (process.env.NODE_ENV !== 'test') {
     scheduleTurnEmbedding(deps.jobQueue);
-    scheduleCodexFeed(deps.jobQueue);
-    scheduleClaudeFeed(deps.jobQueue);
+    await scheduleCodexFeed(deps.jobQueue);
+    await scheduleClaudeFeed(deps.jobQueue);
   }
 
   return {

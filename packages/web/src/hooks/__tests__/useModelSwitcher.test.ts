@@ -1,5 +1,6 @@
 // @ts-nocheck
 
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
 import {
@@ -1325,7 +1326,11 @@ describe('useModelSwitcher', () => {
       });
 
       await waitFor(() => {
-        expect(mockHub.request).toHaveBeenCalledWith('models.list', { useCache: true });
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'models.list',
+          { useCache: true },
+          { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+        );
       });
       rerender({ sessionId: 'session-2' });
 

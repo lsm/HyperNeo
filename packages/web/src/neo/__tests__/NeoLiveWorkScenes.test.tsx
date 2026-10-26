@@ -32,11 +32,13 @@ vi.mock('../NeoConversation.tsx', () => ({
   NeoConversation: (props: {
     publicConversation?: Parameters<typeof NeoPublicConversation>[0]['conversation'];
     onOpenWork?: Parameters<typeof NeoPublicConversation>[0]['onOpenWork'];
+    replyLabels?: Parameters<typeof NeoPublicConversation>[0]['replyLabels'];
   }) =>
     props.publicConversation ? (
       <NeoPublicConversation
         conversation={props.publicConversation}
         onOpenWork={props.onOpenWork}
+        replyLabels={props.replyLabels}
       />
     ) : (
       <p>Durable fictional answer</p>
@@ -289,6 +291,159 @@ function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = fals
 }
 
 describe('card reply notice navigation', () => {
+  it.each(['pending', 'failed'])(
+    'keeps a %s card read stable while editing the draft',
+    async (state) => {
+      let resolve!: (value: unknown) => void;
+      let reject!: (cause: Error) => void;
+      const pending = new Promise((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      const read = vi.fn(() => pending);
+      const request = vi.fn((_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+      );
+      const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+      try {
+        const { model, container } = mountCard('open');
+        const full = model.value.snapshot.todoAsks[0];
+        act(() => {
+          model.value = {
+            ...model.value,
+            snapshot: {
+              ...model.value.snapshot,
+              todoAsks: [
+                {
+                  ...full,
+                  questions: [],
+                  summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+                },
+              ],
+            },
+          };
+        });
+        fireEvent.click(container.querySelector('[data-ask="waiting"] [data-ask-details-toggle]')!);
+        await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        if (state === 'failed') {
+          await act(async () => reject(new Error('Full card unavailable')));
+          expect(await screen.findByText('Full card unavailable')).toBeTruthy();
+        }
+        await act(async () => {
+          fireEvent.input(screen.getByRole('textbox', { name: 'Draft' }), {
+            target: { value: 'Unsent draft' },
+          });
+        });
+        expect(read).toHaveBeenCalledTimes(1);
+        if (state === 'pending') {
+          await act(async () => resolve({ ok: true, entry: full }));
+          expect(await screen.findByRole('button', { name: /Approve/ })).toBeTruthy();
+        } else expect(screen.getByText('Full card unavailable')).toBeTruthy();
+      } finally {
+        hub.mockRestore();
+      }
+    }
+  );
+  it('keeps question reply quotes readable when their card is summarized', async () => {
+    const { model } = mountCard('open');
+    const full = model.value.snapshot.todoAsks[0];
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...full,
+              questions: [],
+              summary: {
+                todoCount: 0,
+                questionCount: 1,
+                openQuestionCount: 1,
+                questionRefs: [{ id: 'q1', replacedBy: null }],
+              },
+            },
+          ],
+        },
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'question-reply',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: 'reply',
+                askOrigin: { sessionId: root, messageId: 'reply' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+                content: 'My sign-off reply',
+                replyTo: { kind: 'question', id: 'q1' },
+              },
+            },
+          ],
+        },
+      };
+    });
+    expect(await screen.findByRole('button', { name: 'Neo Sign-off card' })).toBeTruthy();
+    expect(screen.queryByText('Original message unavailable')).toBeNull();
+  });
+
+  it('opens full question details from a wake link into a summarized card', async () => {
+    const { model } = mountCard('open');
+    const full = model.value.snapshot.todoAsks[0];
+    const hub = vi
+      .spyOn(connectionManager, 'getHub')
+      .mockResolvedValue({ request: vi.fn(async () => ({ ok: true, entry: full })) } as never);
+    try {
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            todoAsks: [
+              {
+                ...full,
+                questions: [],
+                summary: {
+                  todoCount: 0,
+                  questionCount: 1,
+                  openQuestionCount: 1,
+                  questionRefs: [{ id: 'q1', replacedBy: null }],
+                },
+              },
+            ],
+          },
+          viewPublicConversation: {
+            ...model.value.viewPublicConversation!,
+            entries: [
+              {
+                kind: 'wake',
+                key: 'question-wake',
+                wake: {
+                  scheduleId: 'schedule',
+                  sourceKind: 'session',
+                  sourceId: root,
+                  title: 'Review sign-off',
+                  firedAt: 1,
+                  settledAt: 2,
+                  summary: 'Question added',
+                  additions: [{ kind: 'question', id: 'q1', label: 'Open sign-off question' }],
+                },
+              },
+            ],
+          },
+        };
+      });
+      fireEvent.click(screen.getByText('Open sign-off question'));
+      await waitFor(() =>
+        expect(document.querySelector('[data-card-reply-focus]')?.id).toBe('neo-ref-question-q1')
+      );
+      expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
+    } finally {
+      hub.mockRestore();
+    }
+  });
   it.each([
     [900, false],
     [900, true],

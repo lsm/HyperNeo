@@ -154,17 +154,17 @@ describe('coding delivery completion', () => {
   );
 
   test.each(['pr_merged', 'issue_closed'] as const)(
-    'marked %s stays open through merge and failed smoke',
+    'a passed %s check completes despite missing or failed delivery smoke',
     async (kind) => {
       const s = await setup(kind);
       try {
-        expect((await s.pack.check(s.todo))?.done).toBe(false);
+        expect((await s.pack.check(s.todo))?.done).toBe(true);
         await s.gate();
-        expect((await s.pack.check(s.todo))?.done).toBe(false);
+        expect((await s.pack.check(s.todo))?.done).toBe(true);
         expect(await s.record({ ...smoke, verdict: 'fail' })).toEqual({ accepted: true });
-        expect(await s.pack.check(s.todo)).toEqual({ done: false, evidence: null });
+        expect((await s.pack.check(s.todo))?.done).toBe(true);
         const facts = await s.pack.readFacts(s.todo);
-        expect(s.pack.judge(s.todo, facts)).toEqual({ state: 'no_opinion' });
+        expect(s.pack.judge(s.todo, facts).state).toBe('done');
         expect(await s.record()).toEqual({ accepted: true });
         expect((await s.pack.check(s.todo))?.done).toBe(true);
         expect(s.pack.judge(s.todo, await s.pack.readFacts(s.todo)).state).toBe('done');
@@ -174,7 +174,7 @@ describe('coding delivery completion', () => {
     }
   );
 
-  test('explicit non-deployable reason satisfies smoke; missing reason does not', async () => {
+  test('smoke still requires an explicit non-deployable reason independently of a passed check', async () => {
     const s = await setup();
     try {
       await s.gate();
@@ -182,7 +182,7 @@ describe('coding delivery completion', () => {
         accepted: false,
         reason: 'inapplicability_reason_required',
       });
-      expect((await s.pack.check(s.todo))?.done).toBe(false);
+      expect((await s.pack.check(s.todo))?.done).toBe(true);
       expect(
         await s.record({
           ...smoke,
@@ -197,13 +197,13 @@ describe('coding delivery completion', () => {
     }
   });
 
-  test('a new head cannot revert a gated todo to legacy completion', async () => {
+  test('changed delivery heads do not add conditions to a passed merge check', async () => {
     const s = await setup();
     try {
       await s.gate();
       await s.record();
       s.push();
-      expect((await s.pack.check(s.todo))?.done).toBe(false);
+      expect((await s.pack.check(s.todo))?.done).toBe(true);
     } finally {
       s.db.close();
     }
@@ -223,13 +223,13 @@ describe('coding delivery completion', () => {
     }
   });
 
-  test('invalidated QA cannot approve completion using an older receipt', async () => {
+  test('invalidated QA does not change a passed merge check', async () => {
     const s = await setup();
     try {
       await s.gate();
       await s.record();
       s.repo.stageFacts.observeHead(url, 'different', Date.now() + 1);
-      expect((await s.pack.check(s.todo))?.done).toBe(false);
+      expect((await s.pack.check(s.todo))?.done).toBe(true);
     } finally {
       s.db.close();
     }
@@ -245,13 +245,13 @@ describe('coding delivery completion', () => {
   });
 });
 
-test('a receipt cannot cover newer QA evidence it never recorded', async () => {
+test('new QA evidence does not change a passed merge check', async () => {
   const s = await setup();
   try {
     await s.gate();
     await s.record();
     expect(s.repo.stageFacts.record({ ...qa, evidence: ['artifact:new-qa'] })).toBe(true);
-    expect((await s.pack.check(s.todo))?.done).toBe(false);
+    expect((await s.pack.check(s.todo))?.done).toBe(true);
   } finally {
     s.db.close();
   }

@@ -69,13 +69,13 @@ try {
           { reference: fact.acceptanceContract, write, qa: ref, bot: 'review-bot' }, { kind: 'bot', head, login: 'review-bot', approved: true }, ledger.stageFacts.read(url), async () => head);
         assert(prepared.accepted); evidence.push({ phase, prepared });
         fixture('MERGED');
-        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Merge only' })).ok, false);
+        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Merge only' })).ok, true);
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke: { ...smoke, verdict: 'fail' } }), { accepted: true });
-        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Failed smoke' })).ok, false);
-        assert.equal(store.getTodo('todo')?.state, 'todo');
+        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Failed smoke' })).ok, true);
+        assert.equal(store.getTodo('todo')?.state, 'done');
       } else {
-        assert.equal(store.getTodo('todo')?.state, 'todo');
-        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Restart does not erase failure' })).ok, false);
+        assert.equal(store.getTodo('todo')?.state, 'done');
+        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Restart preserves the passed check' })).ok, true);
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke: { ...smoke, ref: write, actor: { ...actor, id: write.id } } }), { accepted: false, reason: 'stage_assignment_mismatch' });
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke }), { accepted: true });
         assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Observed deployed smoke' })).ok, true);
@@ -85,6 +85,6 @@ try {
     } finally { ws?.close(); await app.cleanup(); }
   }
   evidence.push({ verified: true });
-  console.log('PASS: real todo-close RPC refuses merge-only and failed smoke across restart; assigned QA smoke reads build containment then permits completion.');
+  console.log('PASS: real todo-close RPC follows the passed merge check across failed smoke and restart; assigned QA smoke still validates actor and build containment independently.');
 } catch (error) { evidence.push({ error: String(error) }); throw error; }
 finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }

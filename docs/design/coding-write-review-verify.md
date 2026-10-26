@@ -61,16 +61,18 @@ findings and any repository human sign-off. Re-read the head immediately before
 the repository-authorized, SHA-pinned manual merge; never enable auto-merge.
 After deployment, confirm the running build contains the merge and have the
 Verify session run one smoke check of the changed behavior, recording build and result. A failed
-smoke keeps the task open. Non-deployable changes record why smoke is inapplicable.
+smoke keeps its separate verification work open. Non-deployable changes record why
+smoke is inapplicable.
 
 Keep one coding todo/sub-issue per existing work slice, with linked write,
 review and verify assignments and recorded stage outcomes; do not create another
-workflow engine. Replace merge/issue-closure-only completion with **gated merge
-plus deployment smoke** (or recorded inapplicability). GitHub may auto-close the
-sub-issue on merge; CLOSED/COMPLETED is required but cannot complete the todo
-without those facts. Keep the todo pending through smoke. The parent work completes
-only when its existing sub-issues meet this rule. Apply it to newly dispatched
-work; preserve historical outcomes.
+workflow engine. Each todo completes when its declared check passes: a merged PR
+satisfies pr_merged and CLOSED/COMPLETED satisfies issue_closed, including when
+GitHub auto-closes the sub-issue on merge. Record any remaining deployment or smoke
+requirement as separate work with its own completion check. Keep merge and smoke
+admission rules independent of todo completion; a failed smoke does not rewrite a
+passed PR or issue check. The parent work stays open while its required work remains
+unfinished, without rewriting historical outcomes.
 
 Reuse [pack policy](../../packages/daemon/src/lib/neo/packs/coding/pack.ts),
 [verify preflight](../../packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts),
@@ -81,4 +83,4 @@ the [review](../../packages/prompts/src/agents/system-contracts/reviewer-system-
 and [Verify](../../packages/prompts/src/agents/system-contracts/qa-system-contract.md)
 contracts, and the repo's [verify skill](../../.claude/skills/verify/SKILL.md).
 Implementation follows approval in small PRs: pin existing behavior; add stage
-facts/provenance policy; wire actor assignment and merge/completion gates.
+facts/provenance policy; wire actor assignment, merge admission and smoke evidence.

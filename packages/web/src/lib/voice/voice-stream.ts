@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { bytesToBase64, downsampleChunks, encodePcm16 } from '../wav.ts';
+import { getVoiceLanguage } from './voice-language.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const FLUSH_SAMPLES = 3_200;
@@ -47,10 +48,12 @@ export function openVoiceStream(hub: MessageHub, onText: (text: string) => void)
       );
   };
 
+  const language = getVoiceLanguage();
   const ready = hub
     .request<{ streamId: string; via: 'streaming' | 'batch' }>('voice.stream.start', {
       encoding: 'pcm16',
       sampleRate: STREAM_SAMPLE_RATE,
+      ...(language === 'auto' ? {} : { language }),
     })
     .then(
       (started) => {

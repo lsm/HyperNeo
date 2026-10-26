@@ -17,6 +17,7 @@ export type SDKStatusPage = {
   total: number;
 };
 export type SDKPageParams = {
+  requireSession?: boolean;
   limit?: number;
   before?: number;
   since?: number;
@@ -115,6 +116,8 @@ export function readSDKMessagePage(
   repository: SDKMessageRepository,
   { sessionId, page }: SDKPageArgs
 ): SDKMessagePage {
+  if (page.requireSession && !repository.sessionExists(sessionId))
+    throw new Error('Session not found');
   const selected = repository.getSDKMessages(
     sessionId,
     page.limit,

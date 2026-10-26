@@ -10,7 +10,6 @@ import {
   planNeoTodoClose,
   planNeoTodoRemove,
   requireNeoOpenTodo,
-  requireNeoDoneWhenEditable,
   requireNeoTodoArtifacts,
   requireNeoTodoCardsAnswered,
   type NeoTodoPolicy,
@@ -90,14 +89,6 @@ class NeoTodoMutationWriter {
       .pipe(
         (todo: NeoTodo | null) => requireNeoOpenTodo(todo, todo ? todos.getAsk(todo.askId) : null),
         'current',
-        'result:outcome'
-      )
-      .pipe(
-        (todo: NeoTodo, input: Input) =>
-          input.kind === 'edit'
-            ? requireNeoDoneWhenEditable(todo, input, this.policies)
-            : { value: todo },
-        ['outcome', 'input'],
         'result:outcome'
       )
       .pipe(

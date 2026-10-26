@@ -98,16 +98,42 @@ describe('Coding watched repositories', () => {
       { repos: '["chosen/repo"]', opened: '["https://github.com/chosen/repo/pull/1"]' },
     ]);
   });
-  test('legacy watches seed once and an explicitly empty list survives schema initialization', async () => {
+  test('upgrade leaves an unset watch list empty despite project and PR history', async () => {
     const f = setup(true);
-    expect(f.setting()).toEqual(['foreign/repo']);
-    await f.pack.sweep!(100);
-    expect(f.reads).toEqual(['foreign/repo']);
-    expect(await f.save([])).toEqual({ ok: true });
+    f.db.exec(`DELETE FROM neo_pack_preferences WHERE pack = 'coding' AND key = 'watchedRepos';
+      INSERT INTO pack_coding_pr_ledger
+        (repo, number, title, branch, head, state, state_since, read_at)
+        VALUES ('foreign/repo', 1, 'Old PR', 'work', 'old', 'unreviewed', 1, 1);
+      INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
+        VALUES ('old-ask', 'old-session', 'Old work', 'Old work', 1, 1);
+      INSERT INTO neo_todos (id, ask_id, position, title, done_when, repo, created_at, updated_at)
+        VALUES ('old-todo', 'old-ask', 0, 'Old work', 'Done', 'other/repo', 1, 1);
+      INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at)
+        VALUES ('old-todo', '["https://github.com/other/repo/pull/2"]', 1);`);
     f.pack.todos!.schema(f.db);
     expect(f.setting()).toEqual([]);
-    await f.pack.sweep!(101);
-    expect(f.reads).toEqual(['foreign/repo']);
+    await f.pack.sweep!(100);
+    expect(f.reads).toEqual([]);
+    expect(f.notices).toEqual([]);
+    expect(f.db.prepare('SELECT repo FROM pack_coding_pr_ledger').all()).toEqual([
+      { repo: 'foreign/repo' },
+    ]);
+  });
+  test('upgrade preserves every saved watch list and its attribution', async () => {
+    const f = setup(true);
+    for (const value of [[], ['chosen/repo']]) {
+      expect(await f.save(value)).toEqual({ ok: true });
+      const before = getNeoPackPreference(
+        f.db,
+        'coding',
+        { kind: 'global', key: '' },
+        'watchedRepos'
+      );
+      f.pack.todos!.schema(f.db);
+      expect(
+        getNeoPackPreference(f.db, 'coding', { kind: 'global', key: '' }, 'watchedRepos')
+      ).toEqual(before);
+    }
   });
   test('invalid repository names and non-global lists are refused without changing the watch list', async () => {
     const f = setup();

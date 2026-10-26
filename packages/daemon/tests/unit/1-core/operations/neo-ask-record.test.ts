@@ -1,3 +1,4 @@
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
@@ -60,7 +61,7 @@ function setup() {
       (projectId) => (projectId === 'project-1' ? projectId : null),
       (sessionId) => ['neo-a', 'neo-other'].includes(sessionId),
       () => [{ id: 'project-1', title: 'P' }],
-      () => [],
+      () => createTodoCheckPacks(db),
       (id) => goals.get(id)
     ).map((op) => [op.name, op])
   );
@@ -81,7 +82,7 @@ const opening = {
       target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
       start: true,
     },
-    { title: 'Deploy', doneWhen: 'Both daemons run it' },
+    { check: pendingTodoCheck, title: 'Deploy', doneWhen: 'Both daemons run it' },
   ],
 };
 
@@ -93,7 +94,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
       {
         title: 'Unverified delivery',
         request: 'Close without a verified outcome',
-        todos: [{ title: 'Delivery', doneWhen: 'Result checked' }],
+        todos: [{ check: pendingTodoCheck, title: 'Delivery', doneWhen: 'Result checked' }],
       },
       turn('m1')
     );
@@ -125,7 +126,9 @@ describe('neo.ask.open and neo.ask.settle', () => {
       {
         title: 'Choose positioning',
         request: 'Discuss then implement',
-        todos: [{ title: 'Implement the chosen option', doneWhen: 'PR merged' }],
+        todos: [
+          { check: pendingTodoCheck, title: 'Implement the chosen option', doneWhen: 'PR merged' },
+        ],
       },
       turn('m1')
     );
@@ -168,7 +171,13 @@ describe('neo.ask.open and neo.ask.settle', () => {
         {
           title: 'Choose positioning',
           request: 'Discuss then implement',
-          todos: [{ title: 'Deploy after implementation', doneWhen: 'Build readback matches' }],
+          todos: [
+            {
+              check: pendingTodoCheck,
+              title: 'Deploy after implementation',
+              doneWhen: 'Build readback matches',
+            },
+          ],
         },
         turn('m4')
       )
