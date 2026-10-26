@@ -15,7 +15,14 @@ describe('neo read admission', () => {
       'Read(~/**/*.pem)',
       'Read(~/.config/gcloud/**)',
       'Read(~/.config/gh/**)',
+      'Read(~/.config/op/**)',
+      'Read(~/.config/git/credentials)',
       'Read(~/Library/Keychains/**)',
+      'Read(~/Library/Application Support/Firefox/**)',
+      'Read(~/Library/Application Support/Google/Chrome/**)',
+      'Read(~/Library/Mail/**)',
+      'Read(~/Library/Messages/**)',
+      'Read(~/Library/MobileSync/Backups/**)',
     ])
       expect(rules).toContain(kept);
     for (const dropped of [

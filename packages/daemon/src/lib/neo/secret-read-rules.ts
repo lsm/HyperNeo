@@ -8,7 +8,13 @@ const SECRET_DIRS = [
   '.docker',
   '.config/gcloud',
   '.config/gh',
+  '.config/op',
   'Library/Keychains',
+  'Library/Application Support/Firefox',
+  'Library/Application Support/Google/Chrome',
+  'Library/Mail',
+  'Library/Messages',
+  'Library/MobileSync/Backups',
 ];
 const SECRET_FILES = [
   '.claude/.credentials.json',
@@ -16,6 +22,7 @@ const SECRET_FILES = [
   '.claude/settings.local.json',
   '.claude.json',
   '.git-credentials',
+  '.config/git/credentials',
   '.bash_history',
   '.zsh_history',
   '.netrc',
