@@ -87,6 +87,7 @@ import { credentialStoreWrites } from '../repositories/credential-store-writes.t
 import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue-write.ts';
 import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
+import { jobStaleReclaimWrites } from '../repositories/job-stale-reclaim-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -161,5 +162,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     providerRpcWrites,
     credentialStoreWrites,
     enqueueSessionDelivery,
+    jobStaleReclaimWrites,
   ].map((op) => [op.name, op])
 );

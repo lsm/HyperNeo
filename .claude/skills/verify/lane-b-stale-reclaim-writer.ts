@@ -43,7 +43,7 @@ try {
     raw.prepare('UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?').run(Date.now() - 60_000, Date.now() - 60_000, job.id);
   }
   const processed: string[] = [];
-  processor = new JobQueueProcessor(repo, { db: app.db.gateway, staleThresholdMs: 5_000, jitterRandom: () => 0.5 });
+  processor = new JobQueueProcessor(repo, { db: app.db.gateway, staleThresholdMs: 5_000, maxConcurrent: 2, jitterRandom: () => 0.5 });
   processor.register(queue, async (job) => { processed.push(job.id); });
   const hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });

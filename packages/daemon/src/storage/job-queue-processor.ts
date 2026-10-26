@@ -7,6 +7,7 @@ import {
 import { Logger } from '../lib/logger.ts';
 import type { TableChangeScope } from './reactive-database.ts';
 import { DbGateway } from './db-gateway/db-gateway.ts';
+import { jobStaleReclaimWrites } from './repositories/job-stale-reclaim-write.ts';
 import {
   jobQueueReads,
   jobQueueWrites,
@@ -201,10 +202,7 @@ export class JobQueueProcessor {
   private static readonly STALE_CHECK_INTERVAL = 60_000;
   private static readonly POLL_ERROR_LOG_INTERVAL_MS = 60_000;
 
-  constructor(
-    private repo: JobQueueRepository,
-    options?: JobQueueProcessorOptions
-  ) {
+  constructor(repo: JobQueueRepository, options?: JobQueueProcessorOptions) {
     this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
     this.maxConcurrent = options?.maxConcurrent ?? 1;
     this.staleThresholdMs = options?.staleThresholdMs ?? 5 * 60 * 1000;
@@ -238,12 +236,7 @@ export class JobQueueProcessor {
 
   start(): void {
     this.running = true;
-    try {
-      this.reclaimStaleClaims(Date.now() - this.staleThresholdMs);
-    } catch (error) {
-      this.notePollError('start_reclaim', undefined, error);
-    }
-    this.lastStaleCheck = Date.now();
+    this.lastStaleCheck = 0;
     this.pollTimer = setInterval(() => {
       this.tick();
     }, this.pollIntervalMs);
@@ -292,15 +285,17 @@ export class JobQueueProcessor {
   }
 
   private async pollOnce(): Promise<number> {
+    const wasRunning = this.running;
     let claimed = 0;
     let errored = false;
     try {
       try {
-        this.checkStaleJobs();
+        await this.checkStaleJobs();
       } catch (error) {
         errored = true;
         this.notePollError('stale_check', undefined, error);
       }
+      if (wasRunning && !this.running) return 0;
 
       let excludeIds: string[] | undefined;
       if (this.settlingReclaimedJobIds.size > 0) {
@@ -632,30 +627,10 @@ export class JobQueueProcessor {
     }
   }
 
-  private reclaimStaleClaims(staleBefore: number): void {
-    const claims = this.repo.reclaimStale(staleBefore, [...this.handlers.keys()]);
-    if (claims.length > 0) {
-      const claimByJobId = new Map(claims.map((claim) => [claim.jobId, claim] as const));
-      applyStaleReclaimJitter(
-        this.repo,
-        claims.map((claim) => claim.jobId),
-        this.jitterRandom,
-        (jobId, error) => {
-          const claim = claimByJobId.get(jobId);
-          if (claim) {
-            const cause = error instanceof Error ? error.message : String(error);
-            this.emitLifecycle(
-              'stale_reclaim_jitter_failed',
-              jobFromReclaimedClaim(claim),
-              undefined,
-              {
-                reason: `reschedule_failed: ${cause}`,
-              }
-            );
-          }
-        }
-      );
-    }
+  private async reclaimStaleClaims(staleBefore: number): Promise<void> {
+    const claims = await this.db.call(jobStaleReclaimWrites, 'reclaimStale', staleBefore, [
+      ...this.handlers.keys(),
+    ]);
     for (const claim of claims) {
       const record = claim.claimToken
         ? this.inFlightClaims.get(claim.jobId)?.get(claim.claimToken)
@@ -674,6 +649,24 @@ export class JobQueueProcessor {
         claimToken: claim.claimToken,
         expireAt: Date.now() + this.settlementGraceMs,
       });
+    }
+    const delays = staleReclaimJitterDelays(claims.length, this.jitterRandom);
+    const jitteredAt = Date.now();
+    for (const [index, claim] of claims.entries()) {
+      try {
+        await this.db.call(
+          jobStaleReclaimWrites,
+          'reschedulePending',
+          claim.jobId,
+          jitteredAt + delays[index],
+          claim.claimToken
+        );
+      } catch (error) {
+        const cause = error instanceof Error ? error.message : String(error);
+        this.emitLifecycle('stale_reclaim_jitter_failed', jobFromReclaimedClaim(claim), undefined, {
+          reason: `reschedule_failed: ${cause}`,
+        });
+      }
     }
   }
 
@@ -786,10 +779,10 @@ export class JobQueueProcessor {
     this.consecutivePollErrors = 0;
   }
 
-  private checkStaleJobs(): void {
+  private async checkStaleJobs(): Promise<void> {
     const now = Date.now();
     if (now - this.lastStaleCheck < JobQueueProcessor.STALE_CHECK_INTERVAL) return;
-    this.reclaimStaleClaims(now - this.staleThresholdMs);
+    await this.reclaimStaleClaims(now - this.staleThresholdMs);
     this.lastStaleCheck = now;
   }
 }

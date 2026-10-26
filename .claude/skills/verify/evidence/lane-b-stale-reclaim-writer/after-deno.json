@@ -1,0 +1,128 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 522,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "reclaimed": [
+    {
+      "id": "1a991768-ca22-4afb-86a8-805e819ae7fa",
+      "queue": "synthetic-reclaim-owned",
+      "status": "pending",
+      "payload": {
+        "seq": 0
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 8,
+      "retryCount": 0,
+      "runAt": 1792982622759,
+      "createdAt": 1792982621747,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": "4f04c49e-0164-4666-bfb4-8bbc34947e9b"
+    },
+    {
+      "id": "cad2c900-d26b-43e3-9c38-2336fcf79e65",
+      "queue": "synthetic-reclaim-owned",
+      "status": "pending",
+      "payload": {
+        "seq": 1
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 8,
+      "retryCount": 0,
+      "runAt": 1792982624759,
+      "createdAt": 1792982621747,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": "a7d775c1-a324-47a0-86f5-26b8ddd1ff97"
+    }
+  ],
+  "foreign": "processing",
+  "fresh": "processing",
+  "oldClaimHeartbeats": [
+    false,
+    false
+  ],
+  "oldClaimCompletions": [
+    false,
+    false
+  ],
+  "processedBeforeDue": [],
+  "processed": [
+    "1a991768-ca22-4afb-86a8-805e819ae7fa",
+    "cad2c900-d26b-43e3-9c38-2336fcf79e65"
+  ],
+  "completed": [
+    {
+      "id": "1a991768-ca22-4afb-86a8-805e819ae7fa",
+      "queue": "synthetic-reclaim-owned",
+      "status": "completed",
+      "payload": {
+        "seq": 0
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 8,
+      "retryCount": 0,
+      "runAt": 0,
+      "createdAt": 1792982621747,
+      "startedAt": 1792982621759,
+      "heartbeatAt": null,
+      "completedAt": 1792982621759,
+      "claimToken": "9a4f3d58-439b-428e-a16b-596e4d102a7b"
+    },
+    {
+      "id": "cad2c900-d26b-43e3-9c38-2336fcf79e65",
+      "queue": "synthetic-reclaim-owned",
+      "status": "completed",
+      "payload": {
+        "seq": 1
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 8,
+      "retryCount": 0,
+      "runAt": 0,
+      "createdAt": 1792982621747,
+      "startedAt": 1792982621759,
+      "heartbeatAt": null,
+      "completedAt": 1792982621759,
+      "claimToken": "b1fdc531-d092-4a13-a552-4dcb118b7dc7"
+    }
+  ],
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 537,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 0
+}
