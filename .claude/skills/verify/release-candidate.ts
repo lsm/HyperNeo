@@ -142,7 +142,7 @@ try {
   assert.equal(sent.ok, true);
   await wait('Neo visible reply', async () => JSON.stringify(await op('neo.publication.read', { conversationId: opened.sessionId.slice(4) })).includes(neoReply), 180000);
   steps.neoChat = { pass: true, received: sent.ok, visibleReply: neoReply, transport: 'real downloaded Claude SDK, loopback scripted model, real publication operation' }; save();
-  const life = await op('work.start', { adapter: 'hyperneo', title: 'RC life admin', message: 'Make a synthetic grocery list for a quiet weekend. Do not contact anyone.', place: { machine: hostname(), folder: join(run, 'home/HyperNeo'), name: 'Life admin' }, model: lifeModel.id });
+  const life = await op('work.start', { adapter: 'hyperneo', createFolder: true, title: 'RC life admin', message: 'Make a synthetic grocery list for a quiet weekend. Do not contact anyone.', place: { machine: hostname(), folder: join(run, 'home/HyperNeo'), name: 'Life admin' }, model: lifeModel.id });
   evidence.lifeReceipt = life; save();
   assert.equal(life.ok, true);
   const db = new Database(join(run, 'data/daemon.db'), { readonly: true });
