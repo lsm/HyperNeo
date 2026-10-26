@@ -226,7 +226,7 @@ describe('NeoAskTodos', () => {
       const body = app.container.querySelector('#neo-ref-question-source')!;
       expect(body.textContent).not.toContain('Review worker');
       expect(body.textContent).not.toContain('Codex');
-      const open = app.getByRole('button', { name: 'Open', exact: true });
+      const open = app.getByRole('button', { name: 'Open session: Review worker', exact: true });
       expect(open.textContent).toBe('Open');
       expect(open.querySelector('svg')).toBeNull();
       fireEvent.click(open);
@@ -267,7 +267,7 @@ describe('NeoAskTodos', () => {
     );
     const header = app.container.querySelector('[data-question-source]');
     expect(header).toBeNull();
-    expect(app.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
+    expect(app.queryByRole('button', { name: /^Open session:/ })).toBeNull();
     fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
     expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
   });
@@ -296,8 +296,41 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.container.textContent).not.toContain('( · Codex');
-    fireEvent.click(app.getByRole('button', { name: '打开', exact: true }));
+    const open = app.getByRole('button', { name: '打开会话：( · Codex', exact: true });
+    expect(open.textContent).toBe('打开');
+    fireEvent.click(open);
     expect(onOpen).toHaveBeenCalledWith('codex://threads/worker', 'Codex · ( · Codex');
+  });
+
+  it('names the destination by its ID when the source has no title', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('source', {
+              kind: 'reply',
+              sourceSession: {
+                adapter: 'hyperneo',
+                id: 'worker-without-title',
+                name: null,
+                label: 'HyperNeo · worker-without-title',
+                provider: 'Anthropic',
+                link: '/session/worker-without-title',
+              },
+            }),
+          ],
+        })}
+        onOpen={vi.fn()}
+        onAnswer={vi.fn()}
+      />
+    );
+    const open = app.getByRole('button', {
+      name: 'Open session: worker-without-title',
+      exact: true,
+    });
+    expect(open.textContent).toBe('Open');
+    expect(app.container.querySelector('[data-question-source]')?.textContent).toBe('Open');
   });
 
   it('offers no session opener for a question without one source', () => {
@@ -309,7 +342,7 @@ describe('NeoAskTodos', () => {
         onAnswer={vi.fn()}
       />
     );
-    expect(app.queryByRole('button', { name: 'Open', exact: true })).toBeNull();
+    expect(app.queryByRole('button', { name: /^Open session:/ })).toBeNull();
   });
 
   it.each(guidanceQuestions)('renders the concise guidance example: $title', async (fixture) => {
