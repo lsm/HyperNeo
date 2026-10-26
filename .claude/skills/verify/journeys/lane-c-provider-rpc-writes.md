@@ -14,6 +14,8 @@ remaining record. An explicit synthetic credential value is sent only over RPC
 into the test database, never in the environment. That update must strip saved
 discovery while keeping unrelated configuration. A synthetic credential-store
 failure must delete the just-created provider before returning its error.
+Credential storage stays outside the transaction; its provider auth/health
+metadata update is a separate awaited data-only writer command with no secret.
 
 Save evidence/provider-rpc-writes.json. The helper restores its temporary
 credential-store failure hook, closes transport/daemon in finally and immediately

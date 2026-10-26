@@ -1,6 +1,8 @@
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { recordProviderAuth } from '../../storage/repositories/provider-rpc-writes.ts';
 import {
   createCredentialStore,
   credentialService,
@@ -49,7 +51,7 @@ export class ProviderCredentialManager {
       DEFAULT_ACCOUNT,
       JSON.stringify(credentials)
     );
-    this.updateProviderAuth(providerId, 'api_key', 'healthy');
+    await this.updateProviderAuth(providerId, 'api_key', 'healthy');
   }
 
   async storeOAuthTokens(
@@ -62,7 +64,7 @@ export class ProviderCredentialManager {
       DEFAULT_ACCOUNT,
       JSON.stringify(credentials)
     );
-    this.updateProviderAuth(providerId, 'oauth', 'healthy');
+    await this.updateProviderAuth(providerId, 'oauth', 'healthy');
   }
 
   async getCredentials(providerId: string): Promise<ProviderCredentials | null> {
@@ -135,19 +137,13 @@ export class ProviderCredentialManager {
     return undefined;
   }
 
-  private updateProviderAuth(
+  private async updateProviderAuth(
     providerId: string,
     authType: 'api_key' | 'oauth' | 'none',
     healthStatus: 'unknown' | 'healthy' | 'unhealthy'
-  ): void {
+  ): Promise<void> {
     if (!this.hasProvidersTable()) return;
-    this.db
-      .prepare(
-        `UPDATE providers
-         SET auth_type = ?, health_status = ?, updated_at = ?
-         WHERE provider_id = ? OR id = ?`
-      )
-      .run(authType, healthStatus, Date.now(), providerId, providerId);
+    await gatewayFor(this.db).run(recordProviderAuth, { providerId, authType, healthStatus });
   }
 
   private hasProvidersTable(): boolean {

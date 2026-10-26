@@ -78,7 +78,7 @@ try {
     assert(persisted);
     assert.equal(persisted.displayName, 'Updated synthetic provider');
     assert.equal(persisted.isDefault, true);
-    assert.equal(persisted.healthStatus, 'unhealthy');
+    assert.equal(persisted.healthStatus, 'healthy');
     assert.equal(persisted.authType, 'api_key');
     assert.deepEqual(JSON.parse(persisted.configJson!), { command: 'synthetic-command' });
     assert.match(String((evidence.rollback as { error?: string }).error), /synthetic credential failure/);
