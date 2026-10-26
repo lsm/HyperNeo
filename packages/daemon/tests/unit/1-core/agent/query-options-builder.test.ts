@@ -3481,7 +3481,7 @@ describe('QueryOptionsBuilder', () => {
           list: () => [server],
           get: () => server,
         } as unknown as AppMcpServerRepository,
-        skillOverrides: skills.map((skill) => ({ skillId: skill.id, enabled: false })),
+        skillOverrides: [],
       };
       mockSession.config.toolSelection = on;
       mockSession.config.tools = { disabledSkills: skills.map((skill) => skill.id) };
@@ -3489,7 +3489,7 @@ describe('QueryOptionsBuilder', () => {
       return { server, skills, on, context, builder: new QueryOptionsBuilder(context) };
     }
 
-    it('uses frozen choices despite old global, session and workflow vetoes', async () => {
+    it('uses frozen choices despite old global and session preference flags', async () => {
       const f = fixture();
       const options = await f.builder.build();
       expect(options.mcpServers).toEqual({
@@ -3504,6 +3504,23 @@ describe('QueryOptionsBuilder', () => {
       expect(options.plugins).toHaveLength(2);
       expect(options.tools).toEqual(['Read']);
       expect(options.strictMcpConfig).toBe(true);
+    });
+
+    it('applies changed slot vetoes on the next query without changing saved choices', async () => {
+      const f = fixture();
+      const selection = structuredClone(f.on);
+      expect((await f.builder.build()).plugins).toHaveLength(2);
+      Object.assign(f.context, {
+        skillOverrides: f.skills.map((skill) => ({ skillId: skill.id, enabled: false })),
+      });
+      const restricted = await f.builder.build();
+      expect(restricted.mcpServers ?? {}).toEqual({});
+      expect(restricted.plugins ?? []).toEqual([]);
+      expect(mockSession.config.toolSelection).toEqual(selection);
+      Object.assign(f.context, { skillOverrides: [] });
+      const restored = await f.builder.build();
+      expect(restored.mcpServers).toHaveProperty('frozen-browser');
+      expect(restored.plugins).toHaveLength(2);
     });
 
     it('keeps a saved off selection off when catalogs turn on', async () => {

@@ -70,7 +70,7 @@ try {
   const plugin = await createSkill({ name: 'fixture-plugin', displayName: 'Plugin', description: 'Synthetic', sourceType: 'plugin', config: { type: 'plugin', pluginPath: join(run, 'fixture-plugin') }, enabled: false, validationStatus: 'valid' });
   mkdirSync(join(run, 'data/skills/fixture-guide'), { recursive: true });
   writeFileSync(join(run, 'data/skills/fixture-guide/SKILL.md'), '---\nname: fixture-guide\ndescription: Synthetic instructions\n---\nUse the synthetic fixture.\n');
-  for (const name of ['frozen-on', 'frozen-off', 'reserved-runtime']) {
+  for (const name of ['frozen-on', 'frozen-off', 'reserved-runtime', 'slot-veto']) {
     const on = name !== 'frozen-off';
     if (!on) {
       await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: true });
@@ -89,6 +89,11 @@ try {
       assert(agent);
       agent.mergeRuntimeMcpServers({ 'runtime-fixture': { command: 'not-executed-runtime' } });
     }
+    if (name === 'slot-veto') {
+      const agent = await app.sessionManager.getSessionAsync(sessionId);
+      assert(agent);
+      agent.skillOverrides = [wrapper, guide, plugin].map(skill => ({ skillId: skill.id, enabled: false }));
+    }
     const before = queries.length;
     await hub.request('message.send', { sessionId, content: 'Use my selected tools' });
     let observed: { state: string; mcpServers: Array<{ name: string; tools: string[] }> } | undefined;
@@ -101,9 +106,10 @@ try {
     assert.equal(queries.length, before + 1);
     const query = queries[before];
     (evidence.cases as unknown[]).push({ name, selection, sdkAliases: query.aliases, sdkPlugins: query.plugins, nativeTools: query.tools, observed });
-    const expectedAliases = name === 'reserved-runtime' ? ['hyperneo-operations-2', 'runtime-fixture'] : on ? ['frozen-browser'] : [];
+    const attached = on && name !== 'slot-veto';
+    const expectedAliases = name === 'reserved-runtime' ? ['hyperneo-operations-2', 'runtime-fixture'] : attached ? ['frozen-browser'] : [];
     assert.deepEqual([...query.aliases].sort(), expectedAliases.sort());
-    assert.deepEqual([...query.plugins].sort(), on ? ['fixture-guide', 'fixture-plugin'] : []);
+    assert.deepEqual([...query.plugins].sort(), attached ? ['fixture-guide', 'fixture-plugin'] : []);
     assert.deepEqual(query.tools, ['Read']);
     assert(query.allNames.includes('hyperneo-operations'));
     assert.deepEqual(observed.mcpServers.map(entry => entry.name).sort(), [...query.aliases].sort());
