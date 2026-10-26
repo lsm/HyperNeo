@@ -90,6 +90,7 @@ describe('Neo home read', () => {
     process.env.GIT_CONFIG_GLOBAL = configuration;
     try {
       expect(await read('direction.md')).toMatchObject({ ok: true, content });
+      await expect(home.init()).rejects.toThrow('bad config line');
     } finally {
       if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
       else process.env.GIT_CONFIG_GLOBAL = previous;

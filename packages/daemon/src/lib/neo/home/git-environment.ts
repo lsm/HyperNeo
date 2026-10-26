@@ -26,6 +26,26 @@ export async function spawnHomeCommand(args: string[], options: SpawnOptions, di
       (entry): entry is [string, string] => entry[1] !== undefined
     )
   );
+  const versionProbe = spawnProcess(['git', '--version'], {
+    cwd: options.cwd,
+    env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [version, versionError, versionCode] = await Promise.all([
+    new Response(versionProbe.stdout).text(),
+    new Response(versionProbe.stderr).text(),
+    versionProbe.exited,
+  ]);
+  if (versionCode) return { failure: { code: versionCode, error: versionError.trim() } };
+  const [, major, minor] = version.match(/^git version (\d+)\.(\d+)/) ?? [];
+  if (!(Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 32)))
+    return {
+      failure: {
+        code: 1,
+        error: `Git 2.32 or newer is required to isolate home filters (found ${version.trim()}).`,
+      },
+    };
   const probe = spawnProcess(['git', 'config', '--null', '--list', '--show-scope'], {
     cwd: options.cwd,
     env,

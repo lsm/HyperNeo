@@ -29,3 +29,17 @@ daemon and preserve evidence before removing its run, using shared setup.
 
 Focused operation contracts also exercise system Git configuration. This journey
 is daemon/RPC filter proof; it makes no claim about native SDK sandbox enforcement.
+
+For a listener-free compatibility proof, run the shared `proof-run.sh` wrapper
+with `.claude/skills/verify/neo-home-git-version.ts` and an absolute Git executable
+as its final argument. Run once with supported Git and once with Git 2.31.1 built
+in an owned cache from the upstream release. The helper creates a synthetic HOME,
+identity, attributes file and a conditional smudge filter selected only in a
+linked worktree. Supported Git must check out exact bytes without executing the
+filter; old Git must refuse before checkout with a Git 2.32 minimum diagnostic.
+Inspect `neo-home-git-version.json` and the log. This proves daemon command
+configuration isolation, not the RPC or SDK sandbox surface.
+
+The local-read operation contract also seeds a malformed inherited Git profile.
+Tolerant Git probes must preserve local document access; required Git commands
+must still fail rather than silently discard the profile.
