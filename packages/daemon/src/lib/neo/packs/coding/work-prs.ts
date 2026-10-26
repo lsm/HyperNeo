@@ -175,23 +175,32 @@ const DetailSchema = z.object({
 const DETAIL_QUERY =
   'query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}';
 
-function requiredCheckContexts(rules: readonly BranchRule[]): string[] {
+type RequiredCheck = { context: string; integrationId: number | null };
+
+function requiredChecks(rules: readonly BranchRule[]): RequiredCheck[] {
   return rules
     .filter((rule) => rule.type === 'required_status_checks')
     .flatMap((rule) => {
       const parameters = rule.parameters as Record<string, unknown> | null | undefined;
       const checks = parameters?.required_status_checks;
       if (Array.isArray(checks))
-        return checks.flatMap((check) =>
-          typeof check === 'string'
-            ? [check]
-            : check && typeof check === 'object' && typeof check.context === 'string'
-              ? [check.context]
-              : []
-        );
+        return checks.flatMap((check) => {
+          if (typeof check === 'string') return [{ context: check, integrationId: null }];
+          if (check && typeof check === 'object' && typeof check.context === 'string')
+            return [
+              {
+                context: check.context,
+                integrationId:
+                  typeof check.integration_id === 'number' ? check.integration_id : null,
+              },
+            ];
+          return [];
+        });
       const contexts = parameters?.contexts;
       return Array.isArray(contexts)
-        ? contexts.flatMap((context) => (typeof context === 'string' ? [context] : []))
+        ? contexts.flatMap((context) =>
+            typeof context === 'string' ? [{ context, integrationId: null }] : []
+          )
         : [];
     });
 }
@@ -253,12 +262,21 @@ const CheckRunsSchema = z.array(
         name: z.string().nullish(),
         status: z.string().nullish(),
         conclusion: z.string().nullish(),
+        app: z.object({ id: z.number().nullish() }).nullish(),
       })
     ),
   })
 );
 const CombinedStatusSchema = z.array(
-  z.object({ statuses: z.array(z.object({ state: z.string(), context: z.string().nullish() })) })
+  z.object({
+    statuses: z.array(
+      z.object({
+        state: z.string(),
+        context: z.string().nullish(),
+        creator: z.object({ id: z.number().nullish() }).nullish(),
+      })
+    ),
+  })
 );
 
 const REST_PAGE_SIZE = 100;
@@ -313,23 +331,28 @@ async function readCheckRollup(
     for (const page of parsedStatuses.data)
       for (const status of page.statuses) rollup.push({ state: status.state.toUpperCase() });
   if (!parsedRuns?.success || !parsedStatuses?.success) return null;
-  const covered = new Set([
-    ...(parsedRuns?.data ?? []).flatMap((page) =>
-      page.check_runs.flatMap((run) => (run.name ? [run.name.toUpperCase()] : []))
-    ),
-    ...(parsedStatuses?.data ?? []).flatMap((page) =>
-      page.statuses.flatMap((status) => (status.context ? [status.context.toUpperCase()] : []))
-    ),
-  ]);
+  const covered = new Map<string, Set<number | null>>();
+  const cover = (context: string, provider: number | null | undefined) => {
+    const providers = covered.get(context.toUpperCase()) ?? new Set<number | null>();
+    providers.add(provider ?? null);
+    covered.set(context.toUpperCase(), providers);
+  };
+  for (const page of parsedRuns?.data ?? [])
+    for (const run of page.check_runs) if (run.name) cover(run.name, run.app?.id ?? null);
+  for (const page of parsedStatuses?.data ?? [])
+    for (const status of page.statuses)
+      if (status.context) cover(status.context, status.creator?.id ?? null);
   if (typeof raw.baseRefName === 'string' && raw.baseRefName) {
-    const rules = await fetchBranchRules(
-      `${meta.owner}/${meta.repo}`,
-      raw.baseRefName,
-      spawnImpl
-    );
+    const rules = await fetchBranchRules(`${meta.owner}/${meta.repo}`, raw.baseRefName, spawnImpl);
     if (rules === null) return null;
-    for (const context of requiredCheckContexts(rules))
-      if (!covered.has(context.toUpperCase())) rollup.push({ state: 'EXPECTED' });
+    for (const check of requiredChecks(rules)) {
+      const providers = covered.get(check.context.toUpperCase());
+      const satisfied =
+        check.integrationId === null
+          ? providers !== undefined
+          : (providers?.has(check.integrationId) ?? false);
+      if (!satisfied) rollup.push({ state: 'EXPECTED' });
+    }
   }
   return rollup;
 }

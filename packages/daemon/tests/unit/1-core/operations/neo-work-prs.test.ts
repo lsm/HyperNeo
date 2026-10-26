@@ -321,10 +321,7 @@ describe('readGithubPrs REST check rollup', () => {
             ? null
             : [{ statuses: [] }]
     );
-    const read = await readGithubPrs(
-      ['https://github.com/lsm/RequiredC/pull/9'],
-      spawn as never
-    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredC/pull/9'], spawn as never);
     expect(read).toBe(null);
   });
 
@@ -350,6 +347,60 @@ describe('readGithubPrs REST check rollup', () => {
             : [{ statuses: [] }]
     );
     const read = await readGithubPrs(['https://github.com/lsm/RequiredB/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('passing');
+  });
+
+  test('a same-named run from another provider does not satisfy a pinned required check', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredD/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? [
+              {
+                check_runs: [
+                  { name: 'gate', status: 'completed', conclusion: 'success', app: { id: 999 } },
+                ],
+              },
+            ]
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: {
+                    required_status_checks: [{ context: 'gate', integration_id: 123 }],
+                  },
+                },
+              ]
+            : [{ statuses: [] }]
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredD/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('pending');
+  });
+
+  test('a matching provider satisfies a pinned required check', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredE/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? [
+              {
+                check_runs: [
+                  { name: 'gate', status: 'completed', conclusion: 'success', app: { id: 123 } },
+                ],
+              },
+            ]
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: {
+                    required_status_checks: [{ context: 'gate', integration_id: 123 }],
+                  },
+                },
+              ]
+            : [{ statuses: [] }]
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredE/pull/9'], spawn as never);
     expect(read?.[0]?.checks).toBe('passing');
   });
 
