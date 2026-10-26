@@ -28,7 +28,7 @@ export function NeoWorkerPermissionSettings() {
   };
 
   return (
-    <SettingsSection title="Claude workers">
+    <SettingsSection title="Workers">
       <SettingsGroup>
         <SettingsRow
           label="Claude worker permission"

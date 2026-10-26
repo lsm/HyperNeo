@@ -14,6 +14,8 @@ reuse their card; human Allow and Decline persist across a real isolated daemon
 restart; removing an allowed entry over the settings RPC changes the next Codex
 policy. The settings component test opens the actual settings component and clicks
 Remove. This is component interaction evidence, not a browser screenshot.
+Discovery is optional: missing Git or SSH must not interrupt daemon startup. The
+Windows compiled startup smoke exercises the real missing-Git environment.
 
 Policy tests in `worker-unix-sockets.test.ts` inspect the written Claude settings
 and generated Codex configuration. Both include only the approved path and drop
@@ -28,7 +30,8 @@ can launch the real worker sandboxes. Do not change machine sandbox settings.
 Use the existing native-worker journey's shared isolation, with the socket mode:
 
 ```bash
-bash .claude/skills/verify/resource-check.sh && \
+set -e
+bash .claude/skills/verify/resource-check.sh
 RUN=$(mktemp -d /private/tmp/hn-sockets-XXXXXX)
 mkdir -p "$RUN/home" "$RUN/bin"
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \

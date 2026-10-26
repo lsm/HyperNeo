@@ -9,9 +9,16 @@ import type { OperationCaller } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
 
 async function output(command: string[]) {
-  const child = spawnProcess(command, { stdout: 'pipe', stderr: 'ignore' });
-  const [code, data] = await Promise.all([child.exited, collectWithMaxBuffer(child.stdout, 16384)]);
-  return code === 0 ? data.text.trim() : '';
+  try {
+    const child = spawnProcess(command, { stdout: 'pipe', stderr: 'ignore' });
+    const [code, data] = await Promise.all([
+      child.exited,
+      collectWithMaxBuffer(child.stdout, 16384),
+    ]);
+    return code === 0 ? data.text.trim() : '';
+  } catch {
+    return '';
+  }
 }
 
 export function workerSocketOperation(
@@ -55,7 +62,7 @@ export const discoverSigningSocket = (superpipe({})('workerSocket.discover') as 
       if (format !== 'ssh') return null;
       const config = process.env.SSH_AUTH_SOCK
         ? ''
-        : await output(['ssh', '-F', join(homedir(), '.ssh/config'), '-G', '*']).catch(() => '');
+        : await output(['ssh', '-F', join(homedir(), '.ssh/config'), '-G', '*']);
       const agent = process.env.SSH_AUTH_SOCK ?? config.match(/^identityagent (.+)$/m)?.[1];
       const socket = agent?.startsWith('~/') ? join(homedir(), agent.slice(2)) : agent;
       return socket && isAbsolute(socket) ? socket : null;

@@ -26,7 +26,8 @@ afterEach(() => configureWorkerSockets(() => []));
 afterAll(() => rmSync(fixture, { recursive: true, force: true }));
 
 test('new Claude worker policy grants only the human-approved socket', async () => {
-  await installClaudeNativeWrites(root, [join(fixture, 'source')], [allowed]);
+  configureWorkerSockets(() => [allowed]);
+  await installClaudeNativeWrites(root, [join(fixture, 'source')]);
   const settings = JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
   expect(settings.sandbox.network.allowUnixSockets).toEqual([allowed]);
   expect(settings.sandbox.network.allowUnixSockets).not.toContain(denied);
