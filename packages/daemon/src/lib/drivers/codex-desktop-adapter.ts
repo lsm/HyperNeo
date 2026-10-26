@@ -5,6 +5,7 @@ import {
   releaseWorkerSandbox,
   resumeWorkerSandbox,
   requireCodexWorkerProfile,
+  workerSandboxOn,
 } from './worker-sandbox.ts';
 import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
@@ -1184,7 +1185,8 @@ export async function startCodexThread(
         if (!prepared.ok) return prepared;
         workFolder = prepared.value;
       }
-      const sandbox = request.preparation ? codexWorkerSandbox(workFolder.cwd) : null;
+      const sandbox =
+        request.preparation && workerSandboxOn() ? codexWorkerSandbox(workFolder.cwd) : null;
       if (sandbox) {
         await prepareWorkerSandbox(workFolder.cwd);
         await persistCodexWorkerProfile(workFolder.cwd);

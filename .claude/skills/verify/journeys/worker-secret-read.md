@@ -7,6 +7,8 @@ sandbox: `sandbox_apply: Operation not permitted` is inconclusive, never a pass.
 Do not disable enforcement or retry with elevated privileges. Neo runs this
 journey as the post-deploy smoke on the live build, using an isolated test daemon.
 Never restart the live daemon or connect to port 8399.
+Worker sandbox must be `always`: the helper sets it before `work.start`.
+The default `off` preference intentionally provides no file isolation.
 
 Run the existing daemon/real-CLI proof with the additional environment variable:
 

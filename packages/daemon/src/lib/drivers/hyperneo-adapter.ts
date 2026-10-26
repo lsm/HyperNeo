@@ -1,5 +1,5 @@
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
-import { releaseWorkerSandbox } from './worker-sandbox.ts';
+import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
@@ -602,7 +602,8 @@ export async function createHyperneoSession(
   if (prepared && !prepared.ok) return { reason: prepared };
   let sessionId: string | undefined;
   try {
-    if (prepared) await installClaudeNativeWrites(prepared.value.directory, [folder]);
+    if (prepared && workerSandboxOn())
+      await installClaudeNativeWrites(prepared.value.directory, [folder]);
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,

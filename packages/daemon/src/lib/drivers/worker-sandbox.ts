@@ -20,8 +20,16 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { WorkerSandboxMode } from '@hyperneo/shared';
 
 let readWorkerSockets = (): string[] => [];
+let readWorkerSandbox = (): WorkerSandboxMode => 'off';
+
+export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
+  readWorkerSandbox = read;
+}
+
+export const workerSandboxOn = () => readWorkerSandbox() === 'always';
 
 export function configureWorkerSockets(read: () => string[]) {
   readWorkerSockets = read;

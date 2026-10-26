@@ -1,9 +1,10 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
@@ -132,6 +133,7 @@ describe('codexStartReceipt', () => {
 describe('codex-desktop start receipt', () => {
   let dir = '';
   afterEach(() => {
+    configureWorkerSandbox(() => 'off');
     if (dir) rmSync(dir, { recursive: true, force: true });
     dir = '';
   });
@@ -170,6 +172,7 @@ describe('codex-desktop start receipt', () => {
 });
 
 describe('codex-desktop start', () => {
+  beforeEach(() => configureWorkerSandbox(() => 'always'));
   let dir = '';
   afterEach(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -303,6 +306,32 @@ describe('codex-desktop start', () => {
       prepare.mockRestore();
       release.mockRestore();
     }
+  });
+
+  test('with the default worker sandbox preference a prepared Codex start has full access', async () => {
+    configureWorkerSandbox(() => 'off');
+    dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
+    mkdirSync(join(dir, '.git'));
+    const { instance, calls } = adapter(
+      { call: async () => ({ thread: { id: 'fresh' } }) },
+      undefined,
+      {
+        root: '/focus/dolmen',
+        linked: true,
+        prepareExecution: async () => ({
+          ok: true,
+          value: { directory: dir, release: async () => {} },
+        }),
+      }
+    );
+    expect(
+      await instance.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user)
+    ).toMatchObject({ ok: true });
+    expect(calls[0]).toMatchObject(['thread/start', { cwd: dir, sandbox: 'danger-full-access' }]);
+    expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
+      sandboxPolicy: { type: 'dangerFullAccess' },
+    });
+    expect(existsSync(join(dir, '.git/hyperneo-worker-sandbox'))).toBe(false);
   });
 
   test('failed preparation creates no thread and a failed thread start releases the prepared directory', async () => {

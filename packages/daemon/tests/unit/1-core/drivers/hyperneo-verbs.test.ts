@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
@@ -79,6 +80,7 @@ describe('hyperneo adapter send and status', () => {
   let events: string[];
 
   beforeEach(() => {
+    configureWorkerSandbox(() => 'always');
     source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
     execFileSync('git', ['init', source]);
     projectBase = join(source, 'project-storage');
@@ -130,6 +132,7 @@ describe('hyperneo adapter send and status', () => {
   });
 
   afterEach(() => {
+    configureWorkerSandbox(() => 'off');
     db.close();
     rmSync(source, { recursive: true, force: true });
   });
@@ -282,6 +285,39 @@ describe('hyperneo adapter send and status', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test.each([
+    ['off', false],
+    ['always', true],
+  ] as const)(
+    'with the worker sandbox preference %s, a prepared start is sandboxed: %s',
+    async (mode, enabled) => {
+      configureWorkerSandbox(() => mode);
+      const root = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-mode-'));
+      const directory = join(root, 'prepared');
+      mkdirSync(join(directory, '.git/info'), { recursive: true });
+      try {
+        const driver = adapter(async () => ({
+          ok: true,
+          value: { directory, release: async () => {} },
+        }));
+        expect(
+          await driver.start!(
+            {
+              place: { machine: 'imac', folder: source, name: 'repo' },
+              title: 't',
+              message: 'm',
+              preparation: { pack: 'coding', parameters: {} },
+            },
+            { from: 'user', caller: { source: 'rpc' } }
+          )
+        ).toMatchObject({ ok: true });
+        expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(enabled);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
 
   test('failed preparation creates no native session or handoff', async () => {
     const driver = adapter(async () => ({

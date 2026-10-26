@@ -109,6 +109,9 @@ worker's runtime. Policy replacements are atomic within the prepared clone.
 
 Slice 4 (#8630) selects the installed app-server's experimental named permission
 profiles at thread creation, opening turn and future-turn settings updates.
+This applies to prepared workers with Worker sandbox set to `always`. The `off`
+default introduced by #9024 intentionally provides no secret-read isolation;
+preparation alone does not enable the sandbox.
 `hyperneo-worker` defines explicit private write roots, normal filesystem reads,
 and secret-path read denials; no legacy sandbox selector may override it. This
 uses the engine's OS enforcement instead of a second daemon Seatbelt wrapper or
