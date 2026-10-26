@@ -2676,6 +2676,40 @@ describe('AgentSession', () => {
       });
     });
 
+    it('deliverChatMessage preserves queued input when the enqueue reply is lost after commit', async () => {
+      const fixture = createMailboxTestDb();
+      const gateway = new DbGateway(':memory:', fixture.db);
+      bindGateway(fixture.db, gateway);
+      const uuid = 'synthetic-lost-enqueue-reply';
+      fixture.sdkMessageRepo.saveUserMessage(
+        mockSession.id,
+        { type: 'user', uuid, message: { role: 'user', content: 'synthetic input' } },
+        'enqueued'
+      );
+      mockDb.getJobQueueRepo = mock(() => fixture.jobQueue);
+      mockDb.getSDKMessageRepo = mock(() => fixture.sdkMessageRepo);
+      const run = gateway.run.bind(gateway);
+      gateway.run = async (op, input) => {
+        await run(op, input);
+        throw new Error('synthetic lost commit reply');
+      };
+      try {
+        await expect(agentSession.deliverChatMessage(uuid)).rejects.toThrow(
+          'synthetic lost commit reply'
+        );
+        expect(fixture.jobQueue.listJobs({ queue: 'message_delivery', limit: 10 })).toHaveLength(1);
+        expect(fixture.sdkMessageRepo.getUserSendStatus(mockSession.id, uuid)).toBe('enqueued');
+        expect(mockInternalEventBus.publish).not.toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: mockSession.id,
+          messageIds: expect.any(Array),
+          status: 'failed',
+        });
+      } finally {
+        await gateway.close();
+        fixture.close();
+      }
+    });
+
     it('resetQuery should delegate to lifecycleManager', async () => {
       const resetSpy = mock(async () => ({ success: true }));
       // biome-ignore lint: test mock access
