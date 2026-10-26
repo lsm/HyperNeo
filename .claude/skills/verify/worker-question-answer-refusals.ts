@@ -48,7 +48,7 @@ sockets.on('connection', (socket) => socket.on('message', (bytes) => {
     return;
   }
   if (request.method === 'turn/start' && refused) {
-    socket.send(JSON.stringify({ id: request.id, error: { code: -32600, message: 'thread synthetic already has an active writer' } }));
+    socket.send(JSON.stringify({ id: request.id, error: { code: -32600, message: 'Cannot start: thread synthetic already has an active writer; retry later' } }));
     return;
   }
   if (request.method === 'turn/start') {
@@ -96,6 +96,7 @@ try {
   assert.equal(store.getTodo(todo.id)?.blockedBy, 'needs-human');
   assert.equal(before.answerDelivery[0].receipt, null, 'a proved refusal must clear its claim for retry');
   assert.equal(send.notSent, true);
+  assert(!String(send.detail).includes('may still have been delivered'), 'proved refusal guidance must not imply uncertain delivery');
   assert.equal(peerInputs.length, 0);
   refused = false;
   if (mode === 'remote') {

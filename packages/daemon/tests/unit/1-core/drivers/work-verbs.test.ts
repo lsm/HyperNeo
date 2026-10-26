@@ -119,9 +119,13 @@ describe('work verb operations', () => {
         expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
         if (phase === 'before-connect') {
           expect(result).toHaveProperty('notSent', true);
+          expect((result as { detail: string }).detail).not.toContain(
+            'may still have been delivered'
+          );
           expect(received).toBe(0);
         } else {
           expect(result).not.toHaveProperty('notSent');
+          expect((result as { detail: string }).detail).toContain('may still have been delivered');
           expect(received).toBe(1);
         }
       } finally {
