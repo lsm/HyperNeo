@@ -50,11 +50,37 @@ export class NeoHomeRepository {
     );
   }
 
+  private async isolatedGit(args: string[], allowFailure = false, cwd = this.root) {
+    const identity: string[] = [];
+    for (const key of ['user.name', 'user.email']) {
+      const value = (await this.git(['config', '--get', key], true)).text;
+      if (value) identity.push('-c', `${key}=${value}`);
+    }
+    return this.command(
+      ['git', ...identity, '-c', 'core.hooksPath=/dev/null', ...args],
+      allowFailure,
+      false,
+      cwd,
+      true
+    );
+  }
+
   github(args: string[]) {
     return this.command(['gh', ...args], true, true);
   }
 
-  private async command(args: string[], allowFailure = false, network = false, cwd = this.root) {
+  private async command(
+    args: string[],
+    allowFailure = false,
+    network = false,
+    cwd = this.root,
+    isolateConfig = false
+  ) {
+    const inherited = Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    );
     const child = spawnProcess(args, {
       cwd,
       stdout: 'pipe',
@@ -62,11 +88,7 @@ export class NeoHomeRepository {
       detached: network,
       env: network
         ? {
-            ...Object.fromEntries(
-              Object.entries(process.env).filter(
-                (entry): entry is [string, string] => entry[1] !== undefined
-              )
-            ),
+            ...inherited,
             GIT_TERMINAL_PROMPT: '0',
             GIT_CONFIG_COUNT: String(Number(process.env.GIT_CONFIG_COUNT ?? 0) + 1),
             [`GIT_CONFIG_KEY_${Number(process.env.GIT_CONFIG_COUNT ?? 0)}`]: 'core.hooksPath',
@@ -77,7 +99,10 @@ export class NeoHomeRepository {
             SSH_ASKPASS_REQUIRE: 'force',
             GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
           }
-        : undefined,
+        : {
+            ...inherited,
+            ...(isolateConfig ? { GIT_CONFIG_GLOBAL: '/dev/null' } : {}),
+          },
     });
     let timedOut = false;
     const timer = network
@@ -455,6 +480,15 @@ export class NeoHomeRepository {
     };
   }
 
+  private async writeWithinHome(path: string, bytes: Buffer): Promise<void> {
+    const target = join(this.root, path);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, bytes, {
+      flag:
+        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0),
+    });
+  }
+
   private async write(input: HomeSavePlan): Promise<HomeSaveResult> {
     const paths = [input.path];
     if (input.confirmation) paths.push(join(dirname(input.path), 'decisions.md'));
@@ -522,18 +556,18 @@ export class NeoHomeRepository {
         ? `${input.message}\n\nNeo-Confirmed-By: question ${input.confirmation.questionId}`
         : input.message;
       try {
-        for (const [path, bytes] of writes) {
-          await mkdir(dirname(join(this.root, path)), { recursive: true });
-          await writeFile(join(this.root, path), bytes);
-        }
-        await this.git(['add', '--', ...paths]);
-        await this.git(['commit', '--only', '-m', message, '--', ...paths]);
+        for (const path of paths)
+          if (await this.hasSymbolicLink(path))
+            return { ok: false, reason: 'invalid_path: symbolic link.' };
+        for (const [path, bytes] of writes) await this.writeWithinHome(path, bytes);
+        await this.isolatedGit(['add', '--', ...paths]);
+        await this.isolatedGit(['commit', '--only', '-m', message, '--', ...paths]);
       } catch (error) {
         await this.git(['reset', '--', ...paths]).catch(() => {});
         for (const [path, before] of originals)
           await (before === null
             ? rm(join(this.root, path), { force: true })
-            : writeFile(join(this.root, path), before)
+            : this.writeWithinHome(path, before)
           ).catch(() => {});
         throw error;
       }
@@ -588,9 +622,15 @@ export class NeoHomeRepository {
         }
       }
       try {
-        if (created.length) await this.git(['add', '--', ...created]);
+        if (created.length) await this.isolatedGit(['add', '--', ...created]);
         if (created.length || !hasHead)
-          await this.git(['commit', '--allow-empty', '-om', 'Initialize Neo home', ...created]);
+          await this.isolatedGit([
+            'commit',
+            '--allow-empty',
+            '-om',
+            'Initialize Neo home',
+            ...created,
+          ]);
       } catch (error) {
         if (created.length) await this.git(['reset', '--', ...created]).catch(() => {});
         for (const path of created)
