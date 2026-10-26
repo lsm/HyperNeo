@@ -16,19 +16,19 @@ export function NeoWorkerPermissionSettings() {
   const effective = neoWorkerPermissionMode(neo);
   if (!settings) return null;
 
-  const save = async (workerPermissionMode: NeoWorkerPermissionMode) => {
+  const save = async (updates: Parameters<typeof updateGlobalSettings>[0]) => {
     setSaving(true);
     try {
-      await updateGlobalSettings({ neo: { ...neo, workerPermissionMode } });
+      await updateGlobalSettings(updates);
     } catch {
-      toast.error('Failed to update Claude worker permission');
+      toast.error('Failed to update worker settings');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <SettingsSection title="Claude workers">
+    <SettingsSection title="Workers">
       <SettingsGroup>
         <SettingsRow
           label="Claude worker permission"
@@ -39,8 +39,13 @@ export function NeoWorkerPermissionSettings() {
             class="st-select"
             value={effective}
             disabled={saving}
-            onChange={(event) =>
-              save((event.target as HTMLSelectElement).value as NeoWorkerPermissionMode)
+            onChange={({ currentTarget }) =>
+              save({
+                neo: {
+                  ...neo,
+                  workerPermissionMode: currentTarget.value as NeoWorkerPermissionMode,
+                },
+              })
             }
           >
             {NEO_WORKER_PERMISSION_MODES.map((mode) => (
@@ -49,6 +54,30 @@ export function NeoWorkerPermissionSettings() {
               </option>
             ))}
           </select>
+        </SettingsRow>
+        <SettingsRow
+          label="Worker Unix sockets"
+          description="New worker sessions may connect to these human-approved sockets."
+        >
+          {(settings.workerUnixSockets ?? []).map((path) => (
+            <div key={path}>
+              <code>{path}</code>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() =>
+                  save({
+                    workerUnixSockets: settings.workerUnixSockets!.filter(
+                      (socket) => socket !== path
+                    ),
+                  })
+                }
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          {!settings.workerUnixSockets?.length && <span>No sockets allowed</span>}
         </SettingsRow>
       </SettingsGroup>
     </SettingsSection>

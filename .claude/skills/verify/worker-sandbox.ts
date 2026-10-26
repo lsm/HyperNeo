@@ -4,6 +4,7 @@ import { prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/da
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer, type Server } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -53,6 +54,7 @@ const evidence: unknown[] = [];
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 let sdkModel: ReturnType<typeof spawn> | undefined;
+const socketServers: Server[] = [];
 const buildOptions = QueryOptionsBuilder.prototype.build;
 let sdkBaseUrl = '';
 QueryOptionsBuilder.prototype.build = async function (...args) {
@@ -88,6 +90,15 @@ try {
     title: 'Synthetic prepared clone', message: 'Synthetic task only',
     preparation: { pack: 'coding', parameters: { target: 'dev', prerequisiteCommits: [before] } },
   };
+  if (process.env.VERIFY_WORKER_SOCKETS === '1') {
+    for (const name of ['allowed.sock', 'denied.sock']) {
+      const server = createServer((client) => client.end('synthetic-socket-ok'));
+      socketServers.push(server);
+      await new Promise<void>((done, fail) => { server.once('error', fail); server.listen(join(run, name), done); });
+    }
+    writeFileSync(join(run, 'verify-sockets'), 'synthetic-only');
+    await rpc('rpc:settings.global.update', { updates: { workerUnixSockets: [join(run, 'allowed.sock')] } });
+  }
   const started = await rpc('work.start', request) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
   const worker = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
@@ -181,6 +192,11 @@ try {
   };
   writeFileSync(join(run, 'evidence/sdk-observed.json'), JSON.stringify(observed, null, 2));
   assert(Object.values(observed).every(Boolean), JSON.stringify(observed));
+  if (process.env.VERIFY_WORKER_SOCKETS === '1') {
+    const sockets = JSON.parse(readFileSync(join(sdkWorker, 'socket-observed.json'), 'utf8'));
+    writeFileSync(join(run, 'evidence/sdk-sockets.json'), JSON.stringify(sockets));
+    assert.deepEqual(sockets, { allowed: true, denied: false });
+  }
   let published: unknown;
   await wait(() => {
     try {
@@ -231,6 +247,7 @@ try {
 } finally {
   QueryOptionsBuilder.prototype.build = buildOptions;
   sdkModel?.kill();
+  await Promise.all(socketServers.map((server) => new Promise<void>((done) => server.close(() => done()))));
   ws?.close();
   await app?.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

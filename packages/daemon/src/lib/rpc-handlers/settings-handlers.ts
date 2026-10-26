@@ -1,4 +1,5 @@
 export { keepNeoOwnedSettings } from '../global-settings-patch.ts';
+import { configureWorkerSockets } from '../drivers/worker-sandbox.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { GlobalSettings } from '@hyperneo/shared';
@@ -69,6 +70,7 @@ export function registerSettingsHandlers(
   db: Database,
   credentialManager?: ProviderCredentialManager
 ) {
+  configureWorkerSockets(() => settingsManager.getGlobalSettings().workerUnixSockets ?? []);
   messageHub.onRequest(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {
