@@ -81,10 +81,14 @@ describe('WebSocketServerTransport', () => {
         transport.registerClient(ws, 'premeasured-client');
         (ws.send as ReturnType<typeof mock>).mockImplementation(() => -1);
         registeredConnection!.send('opaque serialized frame', {
-          bytes: 23, type: 'EVENT', method: 'proof.premeasured',
+          bytes: 23,
+          type: 'EVENT',
+          method: 'proof.premeasured',
         });
         expect(events[0].metadata).toMatchObject({
-          messageBytes: 23, type: 'EVENT', method: 'proof.premeasured',
+          messageBytes: 23,
+          type: 'EVENT',
+          method: 'proof.premeasured',
         });
       } finally {
         stop();
@@ -101,7 +105,13 @@ describe('WebSocketServerTransport', () => {
         const id = transport.registerClient(ws, 'measured-client');
         (ws.send as ReturnType<typeof mock>).mockImplementation(() => 0);
         const data = JSON.stringify({ type: 'EVENT', method: 'proof.burst', data: 'private 😀' });
-        expect(() => registeredConnection!.send(data)).toThrow('runtime_overflow');
+        expect(() =>
+          registeredConnection!.send(data, {
+            bytes: new Blob([data]).size,
+            type: 'EVENT',
+            method: 'proof.burst',
+          })
+        ).toThrow('runtime_overflow');
         expect(events[0].metadata).toMatchObject({
           clientId: id,
           reason: 'runtime_overflow',

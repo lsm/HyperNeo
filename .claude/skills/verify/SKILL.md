@@ -91,6 +91,9 @@ The wrapper trims TMPDIR's trailing slash so its HOME/data paths match helpers'
 normalized run paths, including macOS's default TMPDIR.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
+For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
+`node --import tsx` with the same isolated environment and cleanup. This tests
+the Deno/Node adapter seam; Node remains unsupported as a daemon runtime.
 
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:

@@ -6,6 +6,8 @@ import type { HubMessageWithMetadata } from '@hyperneo/shared/message-hub/protoc
 import type { MessageHubRouter, ClientConnection } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 
+type FrameInfo = NonNullable<Parameters<ClientConnection['send']>[1]>;
+
 export interface WebSocketServerTransportOptions {
   name?: string;
   debug?: boolean;
@@ -138,7 +140,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 
   registerClient(ws: RuntimeSocket, connectionSessionId: string): string {
     const clientId = generateUUID();
-    const pending: { data: string; bytes: number }[] = [];
+    const pending: { data: string; info: FrameInfo }[] = [];
     let queuedBytes = 0;
     let blocked = false;
     let failed = false;
@@ -146,11 +148,7 @@ export class WebSocketServerTransport implements IMessageTransport {
     let messages = 0;
     let bytes = 0;
 
-    const diagnose = (reason: string, data: string, messageBytes: number) => {
-      let envelope: Partial<HubMessage> = {};
-      try {
-        envelope = JSON.parse(data);
-      } catch {}
+    const diagnose = (reason: string, info: FrameInfo) => {
       const seconds = Math.max(1, (Date.now() - windowStart) / 1000);
       emitStructuredLogEvent({
         level: reason === 'backpressure' || reason === 'socket_closing' ? 'info' : 'warn',
@@ -160,9 +158,9 @@ export class WebSocketServerTransport implements IMessageTransport {
         metadata: {
           clientId,
           reason,
-          type: envelope?.type,
-          method: envelope?.method,
-          messageBytes,
+          type: info.type,
+          method: info.method,
+          messageBytes: info.bytes,
           bufferedBytes: ws.getBufferedAmount?.() ?? null,
           queuedBytes,
           queuedMessages: pending.length,
@@ -172,29 +170,29 @@ export class WebSocketServerTransport implements IMessageTransport {
         },
       });
     };
-    const fail = (reason: string, data: string, size: number) => {
-      diagnose(reason, data, size);
+    const fail = (reason: string, info: FrameInfo) => {
+      diagnose(reason, info);
       failed = true;
       pending.length = 0;
       queuedBytes = 0;
       ws.close(1011, 'Message dropped; reconnect to resync');
       throw new Error(`Message dropped for client ${clientId}; ${reason}`);
     };
-    const write = (data: string, size: number) => {
+    const write = (data: string, info: FrameInfo) => {
       const sent = ws.send(data);
       if (sent === 0) {
         if (ws.readyState !== 1) {
-          diagnose('socket_closing', data, size);
+          diagnose('socket_closing', info);
           failed = true;
           pending.length = 0;
           queuedBytes = 0;
           return;
         }
-        fail('runtime_overflow', data, size);
+        fail('runtime_overflow', info);
       }
       if (sent === -1) {
         blocked = true;
-        diagnose('backpressure', data, size);
+        diagnose('backpressure', info);
       }
     };
     this.clientQueues.set(clientId, {
@@ -204,8 +202,8 @@ export class WebSocketServerTransport implements IMessageTransport {
         try {
           while (pending.length && !blocked && !failed && ws.readyState === 1) {
             const item = pending.shift()!;
-            queuedBytes -= item.bytes;
-            write(item.data, item.bytes);
+            queuedBytes -= item.info.bytes;
+            write(item.data, item.info);
           }
         } catch (error) {
           this.logger.error('Failed to drain client queue:', error);
@@ -215,21 +213,20 @@ export class WebSocketServerTransport implements IMessageTransport {
 
     const connection: ClientConnection = {
       id: clientId,
-      send: (data: string) => {
+      send: (data, info = { bytes: new Blob([data]).size }) => {
         if (failed || ws.readyState !== 1) return;
-        const size = new Blob([data]).size;
         if (Date.now() - windowStart >= 1000) {
           windowStart = Date.now();
           messages = 0;
           bytes = 0;
         }
         messages++;
-        bytes += size;
-        if (!blocked) return write(data, size);
-        if (pending.length >= this.maxQueueSize || queuedBytes + size > this.maxQueueBytes)
-          return fail('queue_overflow', data, size);
-        pending.push({ data, bytes: size });
-        queuedBytes += size;
+        bytes += info.bytes;
+        if (!blocked) return write(data, info);
+        if (pending.length >= this.maxQueueSize || queuedBytes + info.bytes > this.maxQueueBytes)
+          return fail('queue_overflow', info);
+        pending.push({ data, info });
+        queuedBytes += info.bytes;
       },
       isOpen: () => !failed && ws.readyState === 1,
       canAccept: () => true,
