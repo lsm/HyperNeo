@@ -63,17 +63,31 @@ function fixture(remaining = 4000, resetAt = '2099-01-01T00:00:00Z') {
 
 describe('coding ledger acquisition', () => {
   test('a known GraphQL cooldown defers before spending core list requests', async () => {
-    const f = fixture(), calls: string[] = [];
+    const f = fixture(),
+      calls: string[] = [];
     const read = createCodingLedgerReader(async (args, resource) => {
       calls.push(args[2]);
-      if (args[2] === 'user') return { ok: true, data: { id: 1, url: 'https://api.github.com/users/actor' } };
-      if (resource === 'core') return { ok: true, data: args[2].includes('state=open') ? [f.pull] : [] };
-      return { ok: false, error: 'API rate limit exceeded', retryAfterMs: 3600000,
-        quota: { status: 403, resource: 'graphql', remaining: 0, resetAt: Date.now()+3600000, retryAfterMs: null, requestId: 'graphql-refused' } };
+      if (args[2] === 'user')
+        return { ok: true, data: { id: 1, url: 'https://api.github.com/users/actor' } };
+      if (resource === 'core')
+        return { ok: true, data: args[2].includes('state=open') ? [f.pull] : [] };
+      return {
+        ok: false,
+        error: 'API rate limit exceeded',
+        retryAfterMs: 3600000,
+        quota: {
+          status: 403,
+          resource: 'graphql',
+          remaining: 0,
+          resetAt: Date.now() + 3600000,
+          retryAfterMs: null,
+          requestId: 'graphql-refused',
+        },
+      };
     });
     await read('synthetic/repo');
     const before = calls.length;
-    const held = await read('synthetic/other') as { quota?: { deferred?: boolean } };
+    const held = (await read('synthetic/other')) as { quota?: { deferred?: boolean } };
     expect(held.quota?.deferred).toBe(true);
     expect(calls.length).toBe(before);
   });

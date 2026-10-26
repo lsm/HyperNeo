@@ -13,7 +13,7 @@ import type { ConnectorOutcome } from './connectors/connector.ts';
 
 export const DEFAULT_GH_LOOKUP_TIMEOUT_MS = 30_000;
 export type GhResponseQuota = {
-  status: number;
+  status: number | null;
   resource: string | null;
   remaining: number | null;
   resetAt: number | null;

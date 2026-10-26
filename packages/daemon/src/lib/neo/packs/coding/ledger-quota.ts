@@ -11,6 +11,7 @@ export type LedgerQuota = GhResponseQuota & {
   credentialBucket?: string | null;
   retryAt?: number;
   deferred?: boolean;
+  identityRefused?: boolean;
 };
 export type LedgerQuotaRun = (
   args: string[],
@@ -57,23 +58,65 @@ const projectQuota = (superpipe({})('coding-ledger-credential-quota') as Pipelin
   now: number
 ) => LedgerQuota | undefined;
 
-export function createCodingQuotaReader(
-  run: LedgerQuotaRun
-): (
-  args: string[],
+type ScopedQuotaRead = (
+  args: string[] | undefined,
   resource: 'core' | 'graphql',
   previous?: LedgerQuota
-) => ReturnType<LedgerQuotaRun> {
+) => ReturnType<LedgerQuotaRun>;
+export function createCodingQuotaReader(run: LedgerQuotaRun): ScopedQuotaRead & {
+  preflight: (resource: 'core' | 'graphql', previous?: LedgerQuota) => ReturnType<LedgerQuotaRun>;
+} {
   let identityAt = -Infinity,
     bucket: string | null = null;
   const cooldowns = new Map<string, LedgerQuota>();
-  return async (args, resource, previous) => {
+  let identityFailure: LedgerQuota | undefined;
+  const defer = (quota: LedgerQuota): Awaited<ReturnType<LedgerQuotaRun>> => ({
+    ok: false,
+    error: 'GitHub acquisition cooldown',
+    retryAfterMs: quota.retryAt! - Date.now(),
+    quota: { ...quota, deferred: true },
+  });
+  const read: ScopedQuotaRead = async (args, resource, previous) => {
     const now = Date.now();
+    const refused = identityFailure ?? (previous?.identityRefused ? previous : undefined);
+    if (refused?.retryAt && refused.retryAt > now) return defer(refused);
+    if (identityFailure) {
+      identityFailure = undefined;
+      identityAt = -Infinity;
+    }
     if (now - identityAt >= 5 * 60_000) {
       const account = await run(['gh', 'api', 'user'], 'core');
       const parsed = Account.safeParse(account.ok ? account.data : null);
       bucket = parsed.success ? `${new URL(parsed.data.url).host}:user:${parsed.data.id}` : null;
       identityAt = now;
+      if (
+        !account.ok &&
+        (isRateLimitError(account.error) ||
+          account.quota?.remaining === 0 ||
+          account.quota?.retryAfterMs != null ||
+          account.quota?.status === 429)
+      ) {
+        const quota = projectQuota(
+          {
+            ...account,
+            quota: account.quota ?? {
+              status: null,
+              resource: null,
+              remaining: null,
+              resetAt: null,
+              requestId: null,
+              retryAfterMs: Math.min(account.retryAfterMs ?? 60000, 60000),
+            },
+          },
+          null,
+          now
+        );
+        if (quota?.retryAt) {
+          identityFailure = { ...quota, identityRefused: true };
+          return defer(identityFailure);
+        }
+        return { ...account, quota };
+      }
     }
     const key = bucket ? `${bucket}:${resource}` : null;
     if (
@@ -85,13 +128,8 @@ export function createCodingQuotaReader(
     )
       cooldowns.set(key, previous);
     const paused = key ? cooldowns.get(key) : undefined;
-    if (paused?.retryAt && paused.retryAt > now)
-      return {
-        ok: false,
-        error: 'GitHub credential bucket cooldown',
-        retryAfterMs: paused.retryAt - now,
-        quota: { ...paused, deferred: true },
-      };
+    if (paused?.retryAt && paused.retryAt > now) return defer(paused);
+    if (!args) return { ok: true, data: null };
     const result = await run(args, resource);
     const quota = projectQuota(result, bucket, now);
     if (!quota) return result;
@@ -101,4 +139,8 @@ export function createCodingQuotaReader(
     }
     return { ...result, quota };
   };
+  return Object.assign(read, {
+    preflight: (resource: 'core' | 'graphql', previous?: LedgerQuota) =>
+      read(undefined, resource, previous),
+  });
 }

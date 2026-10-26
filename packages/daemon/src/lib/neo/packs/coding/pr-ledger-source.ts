@@ -117,6 +117,15 @@ export function createCodingLedgerReader(run: LedgerQuotaRun = runCodingGh): Cod
         ok = true;
         return cached.response;
       }
+      const available = await scoped.preflight('graphql', previousQuota);
+      if (!available.ok) {
+        quota = available.quota;
+        return {
+          error: available.error,
+          retryAt: Date.now() + (available.retryAfterMs ?? 0),
+          quota,
+        };
+      }
       const lists: z.infer<typeof Pull>[][] = [];
       for (const [state, limit] of [
         ['open', 100],

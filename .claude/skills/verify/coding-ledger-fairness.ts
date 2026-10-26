@@ -18,7 +18,7 @@ const root=${JSON.stringify(run)},args=process.argv.slice(2),c=JSON.parse(readFi
 if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
 const user=args[1]==='user', graphql=args[1]==='graphql', empty=c.repo==='synthetic/empty';
 if(!user&&!graphql&&!args[1].startsWith('repos/'+c.repo+'/pulls?'))process.exit(2);
-const denied=empty&&(c.phase==='identity-refused'||(['limited','recovery'].includes(c.phase)&&!user));
+const denied=(empty&&(c.phase==='identity-refused'||(['limited','recovery'].includes(c.phase)&&!user)))||(c.phase==='graphql-limited'&&graphql);
 appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase:c.phase,repo:c.repo,user,graphql,denied})+'\n');
 process.stdout.write('HTTP/2.0 '+(denied?'403 Forbidden':'200 OK')+'\r\nx-ratelimit-resource: '+(graphql?'graphql':'core')+'\r\nx-ratelimit-remaining: '+(denied?0:4000)+'\r\nx-ratelimit-reset: '+Math.floor((c.base+7200000)/1000)+'\r\n\r\n');
 let data;
@@ -88,7 +88,25 @@ try {
     assert.equal(ledger.health.read('synthetic/empty')?.incident,null);
     assert.equal(ledger.health.read('synthetic/healthy')?.reason,'complete');
   }
+  phase = 'graphql-limited'; Date.now = () => base + 56*60000;
+  await reconcileCodingPrLedger(ledger, ['synthetic/healthy'], read, Date.now());
+  phase = 'graphql-held';
+  for (const minute of [61, 66]) {
+    readers.set('synthetic/healthy', createCodingLedgerReader());
+    Date.now = () => base + minute*60000;
+    await reconcileCodingPrLedger(ledger, ['synthetic/healthy'], read, Date.now());
+    assert.equal(ledger.health.read('synthetic/healthy')?.reason,'cooldown');
+    assert.equal(ledger.health.read('synthetic/healthy')?.misses,1);
+  }
+  Date.now = clock;
+  const heldSnapshot = await rpc('neo.snapshot'); evidence.graphqlHeldSnapshot = heldSnapshot;
+  const heldRows = (heldSnapshot.packRows as {pack:string;rows:{pr:string;state:string}[]}[]).find(row=>row.pack==='coding')!.rows;
+  assert.equal(heldRows.find(row=>row.pr==='synthetic/healthy#7')?.state,'waiting_human');
   const requests=readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  const heldReads=requests.filter(row=>row.phase==='graphql-held');
+  assert.equal(heldReads.length,2);
+  assert(heldReads.every(row=>row.user),'Known GraphQL cooldown must skip all core PR list reads');
+  evidence.graphqlHeldReads=heldReads;
   const probeFailureReads=requests.filter(row=>row.phase==='identity-refused'&&row.repo==='synthetic/empty');
   assert.equal(probeFailureReads.length,1,'Probe refusal cooldown must survive reader recreation');
   assert(probeFailureReads[0].user);

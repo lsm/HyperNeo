@@ -17,6 +17,16 @@ Then recreate the limited reader and scan the limited target first. Its persiste
 account/core cooldown must still apply without another eligible miss, while the
 following healthy account's CI recovery appears through snapshot RPC. This
 separately proves quota isolation rather than relying only on scan ordering.
+Next refuse the empty target's identity probe with an exhausted core response.
+Across three sweeps and reader recreation, only one probe may occur; the target
+must remain in cooldown with no extra misses or incident while the other account
+retains complete coverage. The refusal is a transport-local fallback with no
+invented account identity. Missing headers use a short bounded fallback instead
+of borrowing an unrelated hourly reset. Companion unit checks cover expiry
+re-probing. Finally exhaust the healthy account's GraphQL resource and recreate
+its reader for two later sweeps. The snapshot retains the last complete PR fact,
+health stays in cooldown without extra misses, and the request log contains only
+identity probes: neither discarded REST PR lists nor GraphQL hydration requests.
 Account scope is learned through the non-secret CLI `user` response, cached for
 one five-minute sweep. Unknown identity is never assumed to share a bucket.
 Actual response resource, remaining/reset and Retry-After determine the scoped
