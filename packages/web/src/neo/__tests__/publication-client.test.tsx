@@ -106,6 +106,34 @@ describe('authored publication client', () => {
     });
   });
 
+  it('reads a verbatim reply with one text field and refuses a split reply without one', async () => {
+    const verbatim = item();
+    delete verbatim.shortText;
+    const row = { ...verbatim, verbatim: true };
+    expect(
+      await readNeoPublications(
+        page,
+        transport({ ok: true, conversationId, items: [row], nextAfter: 1 }).getHub,
+        current
+      )
+    ).toEqual({ state: 'ready', items: [row], nextAfter: 1 });
+    expect(
+      await readNeoPublications(
+        page,
+        transport({ ok: true, conversationId, items: [verbatim], nextAfter: 1 }).getHub,
+        current
+      )
+    ).toMatchObject({ state: 'unavailable' });
+    expect(
+      await readNeoPublications(
+        page,
+        transport({ ok: true, conversationId, items: [{ ...item(), verbatim: true }], nextAfter: 1 })
+          .getHub,
+        current
+      )
+    ).toMatchObject({ state: 'unavailable' });
+  });
+
   it('preserves explicit human references and refuses malformed references', async () => {
     const authored = { ...item(), replyTo: [foreignId] };
     expect(

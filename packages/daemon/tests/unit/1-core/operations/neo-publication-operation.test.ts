@@ -133,6 +133,35 @@ describe('Neo publication without runtime input attribution', () => {
     expect(ledger.list(conversationId)![0].producerInput).toBeUndefined();
   });
 
+  test('publishes a verbatim reply from one text field and stores no shortText', () => {
+    const receipt = publish(
+      { requestId: 'send-verbatim', verbatim: true, fullText: 'The whole reply, unchanged.' },
+      caller
+    );
+    expect(receipt).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: { verbatim: true, fullText: 'The whole reply, unchanged.' },
+    });
+    const stored = ledger.list(conversationId)![0];
+    expect(stored).not.toHaveProperty('shortText');
+    expect(stored).toMatchObject({ verbatim: true, fullText: 'The whole reply, unchanged.' });
+  });
+
+  test('rejects shortText when verbatim is set and requires it otherwise', () => {
+    expect(
+      publish(
+        { requestId: 'send-verbatim', verbatim: true, shortText: 'Preview', fullText: 'Whole.' },
+        caller
+      )
+    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    expect(publish({ requestId: 'send-split', fullText: 'Whole.' }, caller)).toMatchObject({
+      accepted: false,
+      reason: 'invalid_publication',
+    });
+    expect(ledger.list(conversationId)).toHaveLength(0);
+  });
+
   test.each(['askOrigin', 'producerInput', 'conversationId', 'publicationId'])(
     'does not accept model authored runtime field %s',
     (field) => {
