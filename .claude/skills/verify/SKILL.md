@@ -57,6 +57,9 @@ do not change browser permissions or system settings to work around it.
 An installed browser that aborts with `SIGABRT` or `EPERM` is blocked too. Keep
 its launch log and use component evidence as a fallback, explicitly leaving
 screenshots and visual layout unverified.
+If browser origin approval is denied, retain that refusal and leave visual proof
+unverified. Do not retry through another browser or transport to bypass it;
+release the helper and preserve its daemon evidence before cleanup.
 
 Give it a model, once per run (stored in the run's DB only):
 

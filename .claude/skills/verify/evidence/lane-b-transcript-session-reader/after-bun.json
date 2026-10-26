@@ -1,0 +1,34 @@
+{
+  "coldMs": 21.206207999999947,
+  "concurrentHealthMs": 0.35149999999998727,
+  "warmConcurrentMs": 2.37991599999998,
+  "missingSession": "MessageHubResponseError: Session not found",
+  "conversationFallback": {
+    "sdkMessages": [],
+    "hasMore": false,
+    "backgroundTaskMessages": []
+  },
+  "workerFailure": "MessageHubResponseError: SDK reader failed: synthetic transcript worker failure",
+  "healthAfterFailure": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 395,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "actorRemainedCold": true,
+  "pageWorkerRequests": 8,
+  "replyHash": "dc433c3814899c87e9f99948ec6c1a089c6be60077f3bde426f93d4ec5b8df87",
+  "maxLoopLagMs": 1.2681249999999409,
+  "rpcLatencyUnder250ms": true,
+  "mainSqlAttempts": 0,
+  "bodyHashUnchanged": true
+}

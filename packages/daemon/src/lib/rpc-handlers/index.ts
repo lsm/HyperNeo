@@ -190,6 +190,7 @@ import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts'
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
 import { setupLiveQueryHandlers } from './live-query-handlers.ts';
+import { readLiveSessionList } from '../../storage/repositories/session-list-live-read.ts';
 import { setupReferenceHandlers } from './reference-handlers.ts';
 import { FileIndex } from '../file-index.ts';
 import { LiveQueryEngine } from '../../storage/live-query.ts';
@@ -512,7 +513,8 @@ export async function setupRPCHandlers(
     deps.messageHub,
     deps.liveQueries,
     deps.db.getDatabase(),
-    (args) => deps.db.getMessageFeedAsync(args)
+    (args) => deps.db.getMessageFeedAsync(args),
+    (includeArchived) => deps.db.gateway.call(readLiveSessionList, 'read', includeArchived)
   );
 
   registerAppMcpHandlers(deps.messageHub, {

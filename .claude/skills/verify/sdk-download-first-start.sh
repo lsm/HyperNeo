@@ -13,7 +13,7 @@ done
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 mkdir -p "$RUN/home" "$RUN/data" "$RUN/evidence"
 cd "$REPO"
-clean=(env -i HOME="$RUN/home" PATH=/usr/bin:/bin:/usr/sbin TMPDIR="$RUN")
+clean=(env -i HOME="$RUN/home" PATH=/usr/bin:/bin:/usr/sbin TMPDIR="$RUN" NODE_ENV=test)
 "${clean[@]}" "$(command -v bun)" .claude/skills/verify/neo-model-settings-mock.ts "$MOCK" > "$RUN/mock-api.log" 2>&1 &
 MOCK_PID=$!
 "${clean[@]}" HYPERNEO_DATA_DIR="$RUN/data" ANTHROPIC_BASE_URL="http://127.0.0.1:$MOCK" \

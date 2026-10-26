@@ -37,10 +37,11 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-function createMockSessionManager(): SessionManager {
+function createMockSessionManager(active = 3, total = 10): SessionManager {
   return {
-    getActiveSessions: mock(() => 3),
-    getTotalSessions: mock(() => 10),
+    getActiveSessions: mock(() => active),
+    getTotalSessions: mock(() => total),
+    getDatabase: () => ({ gateway: { call: mock(async () => total) } }),
   } as unknown as SessionManager;
 }
 
@@ -101,10 +102,7 @@ describe('System RPC Handlers', () => {
       const handler = messageHubData.handlers.get('system.health');
       expect(handler).toBeDefined();
 
-      const customSessionManager = {
-        getActiveSessions: mock(() => 5),
-        getTotalSessions: mock(() => 25),
-      } as unknown as SessionManager;
+      const customSessionManager = createMockSessionManager(5, 25);
 
       const newHubData = createMockMessageHub();
       setupSystemHandlers(newHubData.hub, customSessionManager);

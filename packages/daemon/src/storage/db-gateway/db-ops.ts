@@ -99,6 +99,13 @@ import {
 } from '../repositories/mailbox-expiry-commands.ts';
 import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
 import { nativeFeedEnqueueWrites } from '../repositories/native-feed-enqueue-write.ts';
+import { sessionTitleEnqueueWrites } from '../repositories/session-title-enqueue-write.ts';
+import { skillValidationEnqueueWrites } from '../repositories/skill-validation-enqueue-write.ts';
+import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-write.ts';
+import { sessionListReads } from '../repositories/session-list-read.ts';
+import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
+import { healthSessionCountReads } from '../repositories/health-session-count-read.ts';
+import { sessionProjectionReads } from '../repositories/session-projection-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -181,5 +188,12 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     mailboxExpiryWrites,
     githubPollSuccessorWrites,
     nativeFeedEnqueueWrites,
+    sessionTitleEnqueueWrites,
+    skillValidationEnqueueWrites,
+    githubPollRefreshWrites,
+    sessionListReads,
+    readLiveSessionList,
+    healthSessionCountReads,
+    sessionProjectionReads,
   ].map((op) => [op.name, op])
 );

@@ -18,7 +18,7 @@ printf 'outside-status=%s\\n' "$?"
 printf temp > "${{TMPDIR:-{worker}/fallback-tmp}}/probe-{engine}"
 printf 'temp-status=%s\\n' "$?"
 ''')
-protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine != 'codex' else []
+protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine in ['claude', 'sdk'] else []
 policy_before = {path: path.read_bytes() for path in protected}
 if engine == 'sdk' and sys.platform == 'darwin' and os.environ.get('VERIFY_IMMUTABLE_RUNTIME') != '0':
     with probe.open('a') as script: script.write('mkdir -p "$TMPDIR/flagged"; printf synthetic > "$TMPDIR/flagged/file"; /usr/bin/chflags uchg "$TMPDIR/flagged/file" "$TMPDIR/flagged"; printf "%s" "$?" > observed-flags-sdk.txt\n')
@@ -60,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(b'{"input_tokens":100}'); return
         requests.append(body)
         n = len(requests)
-        if engine == 'sdk': (run / 'evidence/sdk-requests.json').write_text(json.dumps(requests, indent=2))
+        if engine in ['sdk', 'codex-app-server']: (run / f'evidence/{engine}-requests.json').write_text(json.dumps(requests, indent=2))
         usage = {'input_tokens': 10, 'output_tokens': 10}
         if engine in ['claude', 'sdk']:
             main = any(t.get('name') == 'Bash' for t in body.get('tools', []))
@@ -92,12 +92,12 @@ class Handler(BaseHTTPRequestHandler):
 server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 with probe.open('a') as script: script.write(f"curl --proxy \"${{http_proxy:-$HTTP_PROXY}}\" --noproxy '' -fsS http://127.0.0.1:{server.server_port}/probe > network-{engine}.txt\n")
-if engine == 'sdk':
+if engine in ['sdk', 'codex-app-server']:
     import time
-    (run / 'evidence/sdk-port').write_text(str(server.server_port))
+    (run / f'evidence/{engine}-port').write_text(str(server.server_port))
     try:
-        while not (run / 'sdk-finish').exists(): time.sleep(0.1)
-        (run / 'evidence/sdk-requests.json').write_text(json.dumps(requests, indent=2))
+        while not (run / f'{engine}-finish').exists(): time.sleep(0.1)
+        (run / f'evidence/{engine}-requests.json').write_text(json.dumps(requests, indent=2))
     finally:
         server.shutdown(); server.server_close()
     sys.exit(0)

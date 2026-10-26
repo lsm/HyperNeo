@@ -14,6 +14,8 @@ import type {
 import type { SkillRepository } from '../storage/repositories/skill-repository.ts';
 import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository.ts';
 import type { JobQueueRepository } from '../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../storage/db-gateway/db-gateway.ts';
+import { skillValidationEnqueueWrites } from '../storage/repositories/skill-validation-enqueue-write.ts';
 import type { Database } from '../storage/database.ts';
 import type { ToolDefaultMutation } from '../storage/repositories/tool-default-transition.ts';
 import { writeToolDefaults } from './tools/write-tool-defaults.ts';
@@ -175,7 +177,7 @@ export class SkillsManager {
       [{ repository: 'skills', method: 'insert', args: [skill] }],
       skill.enabled
     );
-    this.enqueueValidation(skill.id);
+    await this.enqueueValidation(skill.id);
     const inserted = this.repo.get(skill.id);
     if (!inserted) {
       throw new Error(`Failed to insert skill "${params.name}"`);
@@ -204,7 +206,7 @@ export class SkillsManager {
       });
     await this.writeSkill({ ...existing, ...params }, mutations, params.enabled);
     if (params.config !== undefined) {
-      this.enqueueValidation(id);
+      await this.enqueueValidation(id);
     }
     return this.repo.get(id)!;
   }
@@ -543,9 +545,12 @@ export class SkillsManager {
     });
   }
 
-  private enqueueValidation(skillId: string): void {
+  private async enqueueValidation(skillId: string): Promise<void> {
     if (!this.jobQueue) return;
-    this.jobQueue.enqueue({ queue: SKILL_VALIDATE, payload: { skillId } });
+    await gatewayFor(this.jobQueue.db).call(skillValidationEnqueueWrites, 'enqueue', {
+      queue: SKILL_VALIDATE,
+      payload: { skillId },
+    });
   }
 
   private validateSkillConfig(sourceType: SkillSourceType, config: AppSkillConfig): void {

@@ -101,5 +101,7 @@ export function codexWorkerSandbox(root: string) {
 }
 
 export async function resumeWorkerSandbox(root: string) {
-  if (existsSync(join(root, '.git/hyperneo-worker-sandbox'))) await prepareWorkerSandbox(root);
+  if (!existsSync(join(root, '.git/hyperneo-worker-sandbox'))) return null;
+  await prepareWorkerSandbox(root);
+  return codexWorkerSandbox(root);
 }

@@ -565,4 +565,82 @@ env -i HOME="$NATIVE_FEED_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$NATIVE_FEED_EN
 	HYPERNEO_DATA_DIR="$NATIVE_FEED_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-native-feed-enqueue-writer.ts" "$NATIVE_FEED_ENQUEUE_RUN"
 
+SESSION_TITLE_ENQUEUE_RUN="$WORK_DIR/session-title-enqueue-writer"
+mkdir -p "$SESSION_TITLE_ENQUEUE_RUN/home" "$SESSION_TITLE_ENQUEUE_RUN/tmp"
+env -i HOME="$SESSION_TITLE_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SESSION_TITLE_ENQUEUE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_TITLE_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-title-enqueue-writer.ts" "$SESSION_TITLE_ENQUEUE_RUN"
+
+SKILL_VALIDATION_ENQUEUE_RUN="$WORK_DIR/skill-validation-enqueue-writer"
+mkdir -p "$SKILL_VALIDATION_ENQUEUE_RUN/home" "$SKILL_VALIDATION_ENQUEUE_RUN/tmp"
+env -i HOME="$SKILL_VALIDATION_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SKILL_VALIDATION_ENQUEUE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SKILL_VALIDATION_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-skill-validation-enqueue-writer.ts" "$SKILL_VALIDATION_ENQUEUE_RUN"
+
+GITHUB_POLL_REFRESH_RUN="$WORK_DIR/github-poll-refresh-writer"
+mkdir -p "$GITHUB_POLL_REFRESH_RUN/home" "$GITHUB_POLL_REFRESH_RUN/tmp"
+env -i HOME="$GITHUB_POLL_REFRESH_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_REFRESH_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-refresh-writer.ts" "$GITHUB_POLL_REFRESH_RUN"
+
+GITHUB_POLL_REFRESH_RETRY_RUN="$WORK_DIR/github-poll-refresh-retry"
+mkdir -p "$GITHUB_POLL_REFRESH_RETRY_RUN/home" "$GITHUB_POLL_REFRESH_RETRY_RUN/tmp"
+env -i HOME="$GITHUB_POLL_REFRESH_RETRY_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RETRY_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_REFRESH_RETRY_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-refresh-retry.ts" "$GITHUB_POLL_REFRESH_RETRY_RUN"
+
+GITHUB_POLL_STARTUP_DEGRADED_RUN="$WORK_DIR/github-poll-startup-degraded"
+mkdir -p "$GITHUB_POLL_STARTUP_DEGRADED_RUN/home" "$GITHUB_POLL_STARTUP_DEGRADED_RUN/tmp"
+env -i HOME="$GITHUB_POLL_STARTUP_DEGRADED_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_STARTUP_DEGRADED_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_STARTUP_DEGRADED_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-startup-degraded.ts" "$GITHUB_POLL_STARTUP_DEGRADED_RUN"
+
+GITHUB_POLL_CAPABILITY_FAILURE_RUN="$WORK_DIR/github-poll-capability-failure"
+mkdir -p "$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" "$GITHUB_POLL_CAPABILITY_FAILURE_RUN/tmp"
+env -i HOME="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-capability-failure.ts" "$GITHUB_POLL_CAPABILITY_FAILURE_RUN"
+
+TRANSCRIPT_SESSION_READER_RUN="$WORK_DIR/transcript-session-reader"
+mkdir -p "$TRANSCRIPT_SESSION_READER_RUN/home" "$TRANSCRIPT_SESSION_READER_RUN/tmp"
+env -i HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SESSION_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRANSCRIPT_SESSION_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" "$TRANSCRIPT_SESSION_READER_RUN"
+
+SESSION_LIST_READER_RUN="$WORK_DIR/session-list-reader"
+mkdir -p "$SESSION_LIST_READER_RUN/home" "$SESSION_LIST_READER_RUN/tmp"
+env -i HOME="$SESSION_LIST_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_LIST_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-list-reader.ts" "$SESSION_LIST_READER_RUN"
+
+SESSION_LIST_LIVE_READER_RUN="$WORK_DIR/session-list-live-reader"
+mkdir -p "$SESSION_LIST_LIVE_READER_RUN/home" "$SESSION_LIST_LIVE_READER_RUN/tmp"
+env -i HOME="$SESSION_LIST_LIVE_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_LIVE_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_LIST_LIVE_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-list-live-reader.ts" "$SESSION_LIST_LIVE_READER_RUN"
+
+HEALTH_SESSION_COUNT_READER_RUN="$WORK_DIR/health-session-count-reader"
+mkdir -p "$HEALTH_SESSION_COUNT_READER_RUN/home" "$HEALTH_SESSION_COUNT_READER_RUN/tmp"
+env -i HOME="$HEALTH_SESSION_COUNT_READER_RUN/home" PATH="$PATH" TMPDIR="$HEALTH_SESSION_COUNT_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$HEALTH_SESSION_COUNT_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-health-session-count-reader.ts" "$HEALTH_SESSION_COUNT_READER_RUN"
+
+PROJECTED_SESSION_READER_RUN="$WORK_DIR/projected-session-reader"
+mkdir -p "$PROJECTED_SESSION_READER_RUN/home" "$PROJECTED_SESSION_READER_RUN/tmp"
+env -i HOME="$PROJECTED_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SESSION_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROJECTED_SESSION_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-session-reader.ts" "$PROJECTED_SESSION_READER_RUN"
+
+PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN="$WORK_DIR/projected-system-broadcast-failure"
+mkdir -p "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp"
+env -i HOME="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-system-broadcast-failure.ts" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN"
+
+TRANSCRIPT_SHUTDOWN_ORDER_RUN="$WORK_DIR/transcript-shutdown-order"
+mkdir -p "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp"
+env -i HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-shutdown-order.ts" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
