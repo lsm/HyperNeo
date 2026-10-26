@@ -84,7 +84,7 @@ export function NeoComposer({
   const currentPreview = useRef(boundPreview);
   currentPreview.current = boundPreview;
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
-  const collapsed = !focused && !draft && !needsDraft && !voiceBusy;
+  const collapsed = !focused && !draft && !needsDraft;
   const draftContext = t(
     boundPreview
       ? 'composer.previewContext'
@@ -471,7 +471,7 @@ export function NeoComposer({
               <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
             </button>
           )}
-          {!collapsed && (
+          {(!collapsed || voiceBusy) && (
             <Button
               type="submit"
               size="sm"

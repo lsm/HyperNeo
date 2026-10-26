@@ -72,7 +72,7 @@ try {
     const stop = form.getByRole('button', { name: 'Stop recording and keep the text as a draft', exact: true });
     await stop.waitFor();
     const sendRecording = form.getByRole('button', { name: 'Stop recording and send the message', exact: true });
-    await page.waitForFunction(() => document.querySelector('form.neo-composer-input.is-recording:not(.is-collapsed)'));
+    await page.waitForFunction(() => document.querySelector('form.neo-composer-input.is-recording'));
     await sendRecording.waitFor();
     const [r, rs] = await form.evaluate(el => [
       el.querySelector('[aria-label="Stop recording and keep the text as a draft"]'),

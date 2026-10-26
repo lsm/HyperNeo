@@ -1,9 +1,12 @@
-.neo-composer-input.is-collapsed {
-  display: grid;
+.neo-composer-input.is-collapsed:not(.is-recording) {
   width: 83%;
   margin-inline: auto;
   padding: 1px 2px;
   border-radius: 9999px;
+}
+
+.neo-composer-input.is-collapsed {
+  display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 8px;
@@ -44,6 +47,23 @@
 .neo-composer-input.is-collapsed .neo-composer-status {
   grid-column: 1 / -1;
   order: 4;
+}
+
+.neo-composer-input.is-collapsed.is-recording .neo-composer-draft {
+  display: none;
+}
+
+.neo-composer-input.is-collapsed.is-recording .neo-composer-actions {
+  grid-column: 2 / -1;
+  width: 100%;
+}
+
+.neo-composer-input.is-collapsed.is-recording .neo-composer-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 .neo-composer-input.is-focused.is-recording .neo-composer-tools {
