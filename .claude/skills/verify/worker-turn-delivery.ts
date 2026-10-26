@@ -64,15 +64,15 @@ try {
       const todo = todos.addTodo(id, worker, { title: id, doneWhen: 'Synthetic PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [] } }, instruction: 'Observe this worker', named: null }, at);
       sessions.create(id, { verb: 'send', ref });
       sessions.recordRef(id, ref, at);
-      sessions.recordSent(id, { inputBefore: at, opening: 'Observe this worker' });
+      sessions.recordSent(id, { inputBefore: at, opening: 'Observe this worker', receipt: { executionId: worker, inputId: `${worker}-input` } });
       todos.updateTodo(todo, { state: 'doing', startedAt: at, report: 'Previously retained result' }, at);
       const dispatch = await sessions.inputs.accept(id, root, { verb: 'send', ref }, 'Observe this worker', at);
       await sessions.inputs.recordOutcome(dispatch, { ref, receipt: { executionId: worker, inputId: `${worker}-input` } }, at);
     }
     const put = (id: string, type: string, text: string) => {
-      const uuid = crypto.randomUUID();
+      const uuid = id;
       const body = type === 'result' ? { type, uuid, subtype: 'success', result: text, is_error: false } : { type, uuid, message: { content: text } };
-      db.prepare("INSERT INTO sdk_messages(id,session_id,sdk_uuid,message_type,sdk_message,timestamp,send_status,is_terminal) VALUES (?,?,?,?,?,?,'consumed',?)").run(id, worker, uuid, type, JSON.stringify(body), new Date().toISOString(), type === 'result' ? 1 : 0);
+      db.prepare("INSERT INTO sdk_messages(id,session_id,sdk_uuid,message_type,sdk_message,timestamp,send_status,is_terminal,consumed_seq) VALUES (?,?,?,?,?,?,'consumed',?,?)").run(id, worker, uuid, type, JSON.stringify(body), new Date().toISOString(), type === 'result' ? 1 : 0, type === 'result' ? 2 : 1);
     };
     put(`${worker}-input`, 'user', 'Observe this worker');
     if (explicit) evidence.explicitReceipt = await rpc('message.send', { to: root, text: 'PR opened: synthetic milestone', kind: 'done', from: `session:${worker}` });
@@ -83,7 +83,7 @@ try {
     const delivered = messages().filter((text) => text.startsWith('Worker turn report') && text.includes(`todo ${worker}-`));
     evidence[worker] = { reportInputs: delivered.length, delivered, stored: [0, 1].map((index) => todos.getTodo(`${worker}-${index}`)) };
     assert.equal(delivered.length, mode === 'before' ? 2 : explicit ? 0 : 1);
-    for (let index = 0; index < 2; index++) assert.equal(todos.getTodo(`${worker}-${index}`)?.report, 'Previously retained result');
+    for (let index = 0; index < 2; index++) assert.equal(todos.getTodo(`${worker}-${index}`)?.report, 'Agent: PR opened: synthetic milestone');
   }
   evidence.recipientInputs = messages();
   console.log(JSON.stringify(evidence, null, 2));

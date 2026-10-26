@@ -1,6 +1,6 @@
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { defineDbOp } from '../db-gateway/db-op.ts';
+import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 const SELECT = `SELECT message_id AS messageId, conversation_id AS conversationId, sequence,
@@ -37,26 +37,48 @@ export const recordNeoSessionMessage = defineDbOp({
 export class NeoSessionMessageRepository {
   constructor(private readonly db: Database) {}
 
+  private select(where: string) {
+    return this.db.prepare(`${SELECT} ${where}`);
+  }
+
+  sentDuringTurn(input: { sender: string; recipient: string; from: number; to: number }) {
+    return !!this.select(
+      `WHERE conversation_id=(SELECT id FROM neo_conversation WHERE singleton=1)
+        AND from_session=? AND to_session=? AND created_at>=? AND created_at<=? LIMIT 1`
+    ).get(
+      input.sender,
+      input.recipient,
+      new Date(input.from).toISOString(),
+      new Date(input.to).toISOString()
+    );
+  }
+
   record(message: NeoSessionMessageDraft): Promise<void> {
     return gatewayFor(this.db).run(recordNeoSessionMessage, message);
   }
 
   get(conversationId: string, messageId: string): NeoSessionMessage | null {
     return (
-      (this.db
-        .prepare(`${SELECT} WHERE conversation_id = ? AND message_id = ?`)
-        .get(conversationId, messageId) as NeoSessionMessage | null) ?? null
+      (this.select('WHERE conversation_id = ? AND message_id = ?').get(
+        conversationId,
+        messageId
+      ) as NeoSessionMessage | null) ?? null
     );
   }
 
   latest(conversationId: string, limit: number): NeoSessionMessage[] {
     return (
-      this.db
-        .prepare(
-          `${SELECT} WHERE conversation_id = ? AND ${VISIBLE_IN_NEO}
+      this.select(
+        `WHERE conversation_id = ? AND ${VISIBLE_IN_NEO}
            ORDER BY created_at DESC, sequence DESC LIMIT ?`
-        )
-        .all(conversationId, limit) as NeoSessionMessage[]
+      ).all(conversationId, limit) as NeoSessionMessage[]
     ).reverse();
   }
 }
+
+export const sentDuringTurn = defineRepositoryOp(
+  'neo.turnReport.sentDuringTurn',
+  'read',
+  NeoSessionMessageRepository,
+  ['sentDuringTurn']
+);

@@ -63,6 +63,8 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
 On macOS, check `df -h /System/Volumes/Data` before every heavy verification
 run or dependency install. Stop if less than 25 GiB is free. Reuse one checkout
 and its dependencies; do not create baseline worktrees just to compare proofs.
+On macOS, also check `memory_pressure` before a heavy run; stop if system-wide
+free memory is below 25% or unavailable. Run only one heavy job at a time.
 For a metadata-only Bun helper taking `[arguments] <run>`, use:
 
 ```bash

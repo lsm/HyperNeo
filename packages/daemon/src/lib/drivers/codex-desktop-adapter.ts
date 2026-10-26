@@ -544,10 +544,14 @@ export async function readCodexTurn(
     const openedPrs = readOpenedPrs
       ? readOpenedPrs(detail.thread.rolloutPath, lines)
       : codexOpenedPrs(lines);
+    let startedAt: number | undefined;
     const turnEnds = lines.flatMap((line, index) => {
       const entry = parseLine(line),
         payload = entry?.payload ?? {},
         at = workEntryTime(entry?.timestamp);
+      if (entry?.type === 'event_msg' && payload.type === 'task_started') startedAt = at;
+      const turnStartedAt = startedAt;
+      if (entry?.type === 'event_msg' && payload.type === 'task_complete') startedAt = undefined;
       return entry?.type === 'event_msg' &&
         payload.type === 'task_complete' &&
         at !== undefined &&
@@ -559,6 +563,7 @@ export async function readCodexTurn(
                   ? payload.turn_id
                   : String(at),
               at,
+              startedAt: turnStartedAt,
               ...(codexHeartbeatQuiet(payload.last_agent_message) &&
               !completedTurnOutcome(payload, lines, index).outcome
                 ? { notify: false as const }

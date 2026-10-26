@@ -43,6 +43,9 @@ function setup(
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
+  db.prepare(
+    "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
+  ).run();
   new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
@@ -468,6 +471,48 @@ describe('neo todo runner', () => {
           sent ? 0 : 1
         );
         for (const todo of todos) expect(h.store.getTodo(todo.id)?.state).toBe('doing');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
+    'does not silence a new worker report for an unrelated send: %s',
+    async (scenario) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const startedAt = Date.now() + 100;
+        const sentAt = startedAt + (scenario === 'earlier' ? -10 : scenario === 'later' ? 200 : 10);
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+          (conversation_id,message_id,from_session,to_session,text,created_at)
+          VALUES ('conversation','unrelated',?,?, 'Old milestone',?)`)
+          .run(
+            scenario === 'other-sender' ? 'another-worker' : ref.id,
+            scenario === 'other-recipient' ? 'another-neo' : 'neo',
+            new Date(sentAt).toISOString()
+          );
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            turnEnds: [
+              {
+                id: 'new-turn',
+                ...(scenario === 'unknown-start' ? {} : { startedAt }),
+                at: startedAt + 100,
+                message: 'Blocked for a new reason',
+              },
+            ],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+        expect(h.told.at(-1)).toContain('Blocked for a new reason');
       } finally {
         h.db.close();
       }

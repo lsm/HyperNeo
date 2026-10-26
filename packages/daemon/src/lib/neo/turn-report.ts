@@ -5,7 +5,7 @@ import type { NeoTodoRunnerDeps } from './todo-runner.ts';
 import type { NeoTurnReportReceipts } from './turn-report-receipts.ts';
 
 type Live = { status: string; waitingFor?: string } | null;
-type Turn = { id: string; at: number; message: string };
+type Turn = { id: string; at: number; startedAt?: number; message: string };
 type Tell = NeoTodoRunnerDeps['tell'];
 
 export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as PipelineAPI)
@@ -17,9 +17,10 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       ref: WorkRef,
       live: Live,
       turn: Turn,
-      receipts: NeoTurnReportReceipts
-    ) => receipts.observe(todo.id, dispatchId, ref, live, turn),
-    ['todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'receipts'],
+      receipts: NeoTurnReportReceipts,
+      ask: NeoAsk
+    ) => receipts.observe(todo.id, dispatchId, ref, live, turn, ask.sessionId),
+    ['todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'receipts', 'ask'],
     'observation'
   )
   .pipe((observation: { live: Live }) => observation.live, ['observation'], 'live')
