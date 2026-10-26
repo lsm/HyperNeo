@@ -21,6 +21,10 @@ save_and_clean() {
 }
 trap save_and_clean EXIT
 mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
+PROOF_RUNTIME=(bun)
+if [[ ${VERIFY_PROOF_RUNTIME:-bun} = node ]]; then
+  PROOF_RUNTIME=(node --import tsx)
+fi
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$@" "$RUN" \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
   > "$RUN/proof.log" 2>&1

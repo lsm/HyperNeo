@@ -3,6 +3,7 @@ export interface RuntimeSocket<TData = unknown> {
   send(message: string): number | void;
   close(code?: number, reason?: string): void;
   readonly readyState: number;
+  getBufferedAmount?(): number;
 }
 
 export interface RuntimeWebSocketHandler<TData = unknown> {
@@ -10,6 +11,7 @@ export interface RuntimeWebSocketHandler<TData = unknown> {
   message?(ws: RuntimeSocket<TData>, message: string | Uint8Array): void | Promise<void>;
   close?(ws: RuntimeSocket<TData>, code?: number, reason?: string): void | Promise<void>;
   error?(ws: RuntimeSocket<TData>, error: unknown): void | Promise<void>;
+  drain?(ws: RuntimeSocket<TData>): void;
 }
 
 export type UpgradeFn = <TData>(req: Request, data: TData) => Response | null;

@@ -44,6 +44,9 @@ export async function createBunServer(options: ServerOptions): Promise<ServerHan
         error(ws: BunWebSocket, error: unknown) {
           return websocket.error?.(ws as unknown as RuntimeSocket, error);
         },
+        drain(ws: BunWebSocket) {
+          websocket.drain?.(ws as unknown as RuntimeSocket);
+        },
       }
     : undefined;
 
