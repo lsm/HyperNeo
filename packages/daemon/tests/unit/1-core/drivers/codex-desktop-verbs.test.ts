@@ -5,6 +5,7 @@ import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
   prepareWorkerSandbox,
   releaseWorkerSandbox,
+  workerSandboxPaths,
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -31,6 +32,12 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -61,16 +68,31 @@ describe('codexQueueDelivery', () => {
   test('a queued message is receipted by the user message id it appended, not an older copy', () => {
     const before = [heardAs('msg_old', 'next step')];
     const after = [...before, saidAt('ok'), heardAs('msg_new', 'next step\nwith detail')];
-    expect(codexQueueDelivery(after, 'next step', 't1', codexUserInputIds(before))).toEqual({
+    expect(
+      codexQueueDelivery(
+        after,
+        'next step\nwith detail',
+        't1',
+        codexUserInputIds(before),
+        'msg_new'
+      )
+    ).toEqual({
       delivered: true,
       receipt: { executionId: 't1', inputId: 'msg_new' },
     });
-    expect(codexQueueDelivery(before, 'next step', 't1', codexUserInputIds(before))).toEqual({
-      delivered: true,
+    expect(
+      codexQueueDelivery(before, 'next step', 't1', codexUserInputIds(before), 'msg_old')
+    ).toEqual({
+      delivered: false,
     });
-    expect(codexQueueDelivery([heard('next step')], 'next step', 't1', new Set())).toEqual({
-      delivered: true,
-    });
+    expect(codexQueueDelivery([heard('next step')], 'next step', 't1', new Set(), 'no-id')).toEqual(
+      {
+        delivered: false,
+      }
+    );
+    expect(
+      codexQueueDelivery(after, 'next step\nwith detail', 't1', new Set(), 'other-sender')
+    ).toEqual({ delivered: false });
   });
 });
 
@@ -475,10 +497,12 @@ describe('codex-desktop adapter status and send', () => {
       close: () => {},
     }),
     worktreesDir = '/codex/worktrees',
-    stdout = ''
+    stdout = '',
+    overrides: { newId?: () => string; onSpawn?: () => void } = {}
   ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
+      overrides.onSpawn?.();
       return {
         stdout: new Response(stdout).body,
         stderr: new Response(stderr).body,
@@ -504,7 +528,7 @@ describe('codex-desktop adapter status and send', () => {
       makeFolder: () => {},
       homeDir: '/Users/test',
       gitCheckout: async () => null,
-      newId: () => 'abcd1234-0000',
+      newId: overrides.newId ?? (() => 'abcd1234-0000'),
     });
   }
 
@@ -577,7 +601,28 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test('work.send steers a running Codex turn instead of queuing it', async () => {
+  test.each(['busy', 'idle'])(
+    'automatic input waits in the native queue for %s without starting another writer',
+    async (id) => {
+      const calls: string[] = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (method) => {
+          calls.push(method);
+          if (method !== 'thread/queue/add') throw new Error('Must only enqueue');
+          return { queuedSubmission: { id: 'pending-input' } };
+        },
+        close: () => {},
+      }));
+      expect(await driver.send!(ref(id), 'next task', user)).toEqual({
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'pending-input' },
+      });
+      expect(calls).toEqual(['thread/queue/add']);
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test('work.send queues automatic input behind the running turn', async () => {
     const calls: string[] = [];
     const driver = adapter(0, '', async () => ({
       call: async (method) => {
@@ -606,9 +651,9 @@ describe('codex-desktop adapter status and send', () => {
       )
     ).toEqual({
       kind: 'completed',
-      value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'live-turn' } },
+      value: { ok: true, value: { delivered: false, queuedSubmissionId: 'queued' } },
     });
-    expect(calls).toEqual(['thread/turns/list', 'turn/steer']);
+    expect(calls).toEqual(['thread/queue/add']);
   });
 
   test('stop interrupts the running turn through the shared app-server', async () => {
@@ -807,6 +852,70 @@ describe('codex-desktop adapter status and send', () => {
     });
   });
 
+  test.each(['native', 'cli'] as const)(
+    'automatic queue restores purged prepared-worker runtime before dispatch: %s',
+    async (route) => {
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      const env = workerSandboxPaths(root);
+      const runtime = join(env.TMPDIR, '..');
+      const readyAtDispatch: boolean[] = [];
+      const observe = () => readyAtDispatch.push(Object.values(env).every(existsSync));
+      try {
+        await prepareWorkerSandbox(root);
+        rmSync(runtime, { recursive: true, force: true });
+        const db = new Database(statePath);
+        db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+        db.close();
+        const driver = adapter(
+          0,
+          '',
+          async () => ({
+            call: async (method) => {
+              expect(method).toBe('thread/queue/add');
+              observe();
+              if (route === 'cli') throw new Error('method not found (-32601)');
+              return { queuedSubmission: { id: 'restored-queue' } };
+            },
+            close: () => {},
+          }),
+          undefined,
+          'restored-queue',
+          { onSpawn: observe }
+        );
+        expect(await driver.send!(ref('idle'), 'continue after idle', user)).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'restored-queue' },
+        });
+        expect(readyAtDispatch).toEqual(route === 'cli' ? [true, true] : [true]);
+      } finally {
+        rmSync(runtime, { recursive: true, force: true });
+      }
+    }
+  );
+
+  test('automatic queue routing logs the queue route without a steering-failure claim', async () => {
+    const config = getLoggerConfig();
+    configureLogger({ level: LogLevel.WARN, filter: ['*'], excludeFilter: [] });
+    const events: string[] = [];
+    const off = subscribeToStructuredLogs((event) => {
+      if (event.message.startsWith('work.send route')) events.push(event.message);
+    });
+    try {
+      const driver = adapter(0, '', async () => ({
+        call: async () => ({ queuedSubmission: { id: 'native-queue' } }),
+        close: () => {},
+      }));
+      await driver.send!(ref('idle'), 'routine next input', user);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toContain('"path":"queue"');
+      expect(events[0]).toContain('"reason":"native_queue"');
+    } finally {
+      off();
+      configureLogger(config);
+    }
+  });
+
   test('advertises separate messaging capabilities and queues natively without spawning', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
     let closed = 0;
@@ -850,7 +959,7 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   test.each(['NoActiveTurn', 'turn/steer: method not found (-32601)'])(
-    'work.send starts after NoActiveTurn and refuses an unsupported steer: %s',
+    'explicit steer refuses a turn that ended or cannot steer: %s',
     async (error) => {
       const driver = adapter(0, '', async () => ({
         call: async (method) => {
@@ -867,15 +976,10 @@ describe('codex-desktop adapter status and send', () => {
         reason: 'not_delivered',
         detail: expect.stringContaining(error),
       });
-      expect(await driver.send!(ref('busy'), 'later', user)).toMatchObject(
-        error === 'NoActiveTurn'
-          ? { ok: true, value: { delivered: true, startedTurnId: 'new-turn' } }
-          : { ok: false, reason: 'not_delivered' }
-      );
     }
   );
 
-  test('work.send never duplicates a server steer whose outcome is unknown; work.queue remains next-turn input', async () => {
+  test('explicit steer never duplicates a server steer whose outcome is unknown; work.queue remains next-turn input', async () => {
     let queued = 0;
     const driver = adapter(0, '', async () => ({
       call: async (method) => {
@@ -886,7 +990,7 @@ describe('codex-desktop adapter status and send', () => {
       },
       close: () => {},
     }));
-    expect(await driver.send!(ref('busy'), 'now', user)).toMatchObject({
+    expect(await driver.steer!(ref('busy'), 'now', user)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
     });
@@ -1156,17 +1260,105 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
+  test.each(
+    [false, true].flatMap((identical) => [false, true].map((reverse) => ({ identical, reverse })))
+  )(
+    'concurrent sends never share the first consumed input receipt (identical: $identical, reverse: $reverse)',
+    async ({ identical, reverse }) => {
+      const requests: Array<{
+        params: Record<string, unknown>;
+        resolve: (reply: unknown) => void;
+      }> = [];
+      let next = 0;
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method, params) => {
+            expect(method).toBe('thread/queue/add');
+            return new Promise((resolve) => {
+              requests.push({ params, resolve });
+              if (requests.length !== 2) return;
+              if (reverse) requests.reverse();
+              const first = requests[0].params;
+              const text = (first.input as { text: string }[])[0].text;
+              appendFileSync(
+                join(dir, 'finished.jsonl'),
+                `\n${heardAs(String(first.clientUserMessageId), text)}\n${saidAt('First reply only.')}`
+              );
+              requests.forEach((request, index) =>
+                request.resolve({ queuedSubmission: { id: `queue-${index}` } })
+              );
+            });
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { newId: () => `client-${next++}` }
+      );
+      const prefix = 'same prefix '.repeat(20);
+      const messages = [`${prefix} first`, `${prefix} ${identical ? 'first' : 'second'}`];
+      const results = await Promise.all(
+        messages.map((message) => driver.send!(ref('idle'), message, user))
+      );
+      const consumed = requests[0].params;
+      const receipt = { executionId: 'idle', inputId: String(consumed.clientUserMessageId) };
+      expect(
+        results.find((result) => result.ok && result.value.queuedSubmissionId === 'queue-0')
+      ).toEqual({
+        ok: true,
+        value: { delivered: true, queuedSubmissionId: 'queue-0', receipt },
+      });
+      expect(
+        results.find((result) => result.ok && result.value.queuedSubmissionId === 'queue-1')
+      ).toEqual({
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'queue-1' },
+      });
+      expect(await driver.status!(ref('idle'), undefined, receipt)).toMatchObject({
+        ok: true,
+        value: {
+          inputEvidence: {
+            state: 'observed',
+            exchange: [
+              { role: 'user', text: (consumed.input as { text: string }[])[0].text },
+              { role: 'agent', text: 'First reply only.' },
+            ],
+          },
+        },
+      });
+    }
+  );
+
+  test('CLI queue never attributes a concurrent matching input to an unrelated queue id', async () => {
+    const driver = adapter(0, '', undefined, undefined, 'cli-queue', {
+      onSpawn: () =>
+        appendFileSync(
+          join(dir, 'finished.jsonl'),
+          `\n${heardAs('another-input', 'next task')}\n${saidAt('Another sender reply.')}`
+        ),
+    });
+    expect(await driver.send!(ref('idle'), 'next task', user)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'cli-queue' },
+    });
+  });
+
   test('native queue preserves a fresh delivered input receipt for later evidence reads', async () => {
     appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('older', 'next step')}`);
     const driver = adapter(0, '', async () => ({
-      call: async (method) => {
+      call: async (method, params) => {
         if (method === 'thread/turns/list') return { data: [] };
-        appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('native-input', 'next step')}`);
+        appendFileSync(
+          join(dir, 'running.jsonl'),
+          `\n${heardAs(String(params.clientUserMessageId), 'next step')}`
+        );
         return { queuedSubmission: { id: 'native-queue' } };
       },
       close: () => {},
     }));
-    const receipt = { executionId: 'busy', inputId: 'native-input' };
+    const receipt = { executionId: 'busy', inputId: 'abcd1234-0000' };
     expect(await driver.queue!(ref('busy'), 'next step', user)).toEqual({
       ok: true,
       value: { delivered: true, queuedSubmissionId: 'native-queue', receipt },
@@ -1193,6 +1385,26 @@ describe('codex-desktop adapter status and send', () => {
     expect(await driver.queue!(ref('busy'), 'next step', user)).toEqual({
       ok: true,
       value: { delivered: false, queuedSubmissionId: 'still-queued' },
+    });
+  });
+
+  test('CLI queue acceptance does not reuse an earlier identical input as delivery evidence', async () => {
+    appendFileSync(join(dir, 'finished.jsonl'), '\n' + heardAs('old-input', 'next task'));
+    const driver = adapter(
+      0,
+      '',
+      async () => ({
+        call: async () => {
+          throw new Error('method not found (-32601)');
+        },
+        close: () => {},
+      }),
+      undefined,
+      'queued-cli-input'
+    );
+    expect(await driver.send!(ref('idle'), 'next task', user)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'queued-cli-input' },
     });
   });
 
@@ -1233,7 +1445,7 @@ describe('codex-desktop adapter status and send', () => {
     'an undiscovered active writer accepts idle input through its queue (consumed: %s)',
     async (consumed) => {
       const queued: string[] = [];
-      const receipt = { executionId: 'idle', inputId: 'writer-input' };
+      const receipt = { executionId: 'idle', inputId: 'abcd1234-0000' };
       const driver = adapter(0, '', async () => ({
         call: async (method, params) => {
           if (method === 'thread/turns/list')
@@ -1311,25 +1523,25 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each([
-    ['thread/resume', 'thread other already has an active writer'],
-    ['turn/start', 'thread idle already has an active writer'],
-  ])('does not queue for a different thread or a start failure: %s', async (phase, error) => {
+  test('automatic agent input keeps its attribution when queued', async () => {
+    let text = '';
     const driver = adapter(0, '', async () => ({
-      call: async (method) => {
-        if (method === 'thread/turns/list') return { data: [] };
-        if (method === phase) throw new Error(error);
-        if (method === 'thread/resume') return {};
-        throw new Error('Must not queue');
+      call: async (method, params) => {
+        expect(method).toBe('thread/queue/add');
+        text = (params.input as { text: string }[])[0].text;
+        return { queuedSubmission: { id: 'agent-queue' } };
       },
       close: () => {},
     }));
-    expect(await driver.send!(ref('idle'), 'continue', user)).toEqual({
-      ok: false,
-      reason: 'not_delivered',
-      detail: error,
-      ...(phase === 'thread/resume' ? { notSent: true } : {}),
+    const agent = {
+      from: 'session:neo',
+      caller: { source: 'internal' as const, role: 'neo' as const },
+    };
+    expect(await driver.send!(ref('idle'), 'new request', agent)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'agent-queue' },
     });
+    expect(text).toBe('new request\n[HyperNeo agent input]');
     expect(spawned).toEqual([]);
   });
 
@@ -1348,7 +1560,7 @@ describe('codex-desktop adapter status and send', () => {
         socket.on('message', (bytes) => {
           const request = JSON.parse(String(bytes));
           if (request.id === undefined) return;
-          if (request.method === 'turn/start') {
+          if (request.method === 'thread/queue/add') {
             if (refused)
               socket.send(
                 JSON.stringify({
@@ -1392,23 +1604,23 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each(['thread/turns/list', 'thread/resume', 'turn/start'])(
+  test.each(['thread/turns/list', 'turn/steer'])(
     'distinguishes a pre-send refusal from a lost acknowledgement at %s',
     async (phase) => {
       const accepted: string[] = [];
       const driver = adapter(0, '', async () => ({
         call: async (method, params) => {
-          if (method === 'turn/start') accepted.push(JSON.stringify(params.input));
+          if (method === 'turn/steer') accepted.push(JSON.stringify(params.input));
           if (method === phase) throw new Error('Synthetic connection lost');
-          if (method === 'thread/turns/list') return { data: [] };
-          if (method === 'thread/resume') return {};
+          if (method === 'thread/turns/list')
+            return { data: [{ id: 'active', status: 'inProgress' }] };
           throw new Error(`Unexpected ${method}`);
         },
         close: () => {},
       }));
-      const reply = await driver.send!(ref('idle'), 'answer the worker', user);
+      const reply = await driver.steer!(ref('idle'), 'answer the worker', user);
       expect(reply).toMatchObject({ ok: false, reason: 'not_delivered' });
-      if (phase === 'turn/start') {
+      if (phase === 'turn/steer') {
         expect(reply).not.toHaveProperty('notSent');
         expect(accepted).toHaveLength(1);
       } else {
@@ -1418,96 +1630,19 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each([false, true])(
-    'resumes saved idle work before sending, or reports resume failure: %s',
-    async (resumeFails) => {
-      const calls: Array<[string, Record<string, unknown>]> = [];
-      let loaded = false;
-      const driver = adapter(0, '', async () => ({
-        call: async (method, params) => {
-          calls.push([method, params]);
-          if (method === 'thread/turns/list')
-            return { data: [{ id: 'finished', status: 'completed' }] };
-          if (method === 'thread/resume') {
-            if (resumeFails) throw new Error('thread/resume: rollout unavailable');
-            loaded = true;
-            return { thread: { id: 'idle', status: { type: 'idle' }, turns: [] } };
-          }
-          if (method === 'turn/start') {
-            if (!loaded)
-              throw new Error('turn/start: {"code":-32600,"message":"thread not found: idle"}');
-            return { turn: { id: 'resumed-turn', status: 'inProgress', items: [] } };
-          }
-          throw new Error('Must not queue');
-        },
-        close: () => {},
-      }));
-      const result = await driver.send!(ref('idle'), 'continue saved work', user);
-      expect(result).toEqual(
-        resumeFails
-          ? {
-              ok: false,
-              reason: 'not_delivered',
-              detail: 'thread/resume: rollout unavailable',
-              notSent: true,
-            }
-          : { ok: true, value: { delivered: true, startedTurnId: 'resumed-turn' } }
-      );
-      expect(calls.map(([method]) => method)).toEqual([
-        'thread/turns/list',
-        'thread/resume',
-        ...(!resumeFails ? ['turn/start'] : []),
-      ]);
-      expect(calls[1]).toEqual(['thread/resume', { threadId: 'idle', excludeTurns: true }]);
-      expect(spawned).toEqual([]);
-    }
-  );
-
-  test.each([{ turns: [] }, { turns: [{ id: 'finished', status: 'completed' }] }])(
-    'idle send starts its marked input rather than accepting a stored queue receipt: %j',
-    async ({ turns }) => {
-      const calls: Array<[string, Record<string, unknown>]> = [];
-      const driver = adapter(0, '', async () => ({
-        call: async (method, params) => {
-          calls.push([method, params]);
-          if (method === 'thread/turns/list') return { data: turns };
-          if (method === 'thread/resume') return { thread: { id: 'idle', turns: [] } };
-          if (method === 'turn/start') return { turn: { id: 'started' } };
-          throw new Error('Must not queue');
-        },
-        close: () => {},
-      }));
-      const agent = {
-        from: 'session:neo',
-        caller: { source: 'internal' as const, role: 'neo' as const },
-      };
-      expect(await driver.send!(ref('idle'), 'new request', agent)).toEqual({
-        ok: true,
-        value: { delivered: true, startedTurnId: 'started' },
-      });
-      expect(calls).toEqual([
-        ['thread/turns/list', { threadId: 'idle', limit: 1 }],
-        ['thread/resume', { threadId: 'idle', excludeTurns: true }],
-        [
-          'turn/start',
-          {
-            threadId: 'idle',
-            input: [
-              { type: 'text', text: 'new request\n[HyperNeo agent input]', text_elements: [] },
-            ],
-          },
-        ],
-      ]);
-      expect(spawned).toEqual([]);
-    }
-  );
-
   test('send refuses archived threads and unavailable turn delivery', async () => {
     expect(await adapter().send?.(ref('old'), 'hi', user)).toMatchObject({
       ok: false,
       reason: 'not_open',
     });
-    expect(await adapter(1, 'no such thread\n').send?.(ref('idle'), 'hi', user)).toMatchObject({
+    expect(
+      await adapter(1, 'no such thread\n', async () => ({
+        call: async () => {
+          throw new Error('no such thread');
+        },
+        close: () => {},
+      })).send?.(ref('idle'), 'hi', user)
+    ).toMatchObject({
       ok: false,
       reason: 'not_delivered',
     });

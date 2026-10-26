@@ -26,5 +26,5 @@ if [[ ${VERIFY_PROOF_RUNTIME:-bun} = node ]]; then
   PROOF_RUNTIME=(node --import tsx)
 fi
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
+  HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
   > "$RUN/proof.log" 2>&1

@@ -122,6 +122,9 @@ error and mark the daemon proof blocked. An EADDRINUSE report for port 0 is
 inconclusive too; do not count unit results as a successful daemon run or weaken
 host protections to make the listener start.
 
+The wrapper forwards an explicitly selected VERIFY_CLAUDE path for native SDK
+proofs. It does not forward provider credentials or the human's configuration.
+
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
 
@@ -177,7 +180,9 @@ this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
 Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
 They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
-App-server-only fixtures are insufficient for the current desktop send route.
+Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
+sends use the native app-server queue; their proofs must show no Desktop ownership
+probe, open, resume or new writer.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

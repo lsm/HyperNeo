@@ -3,6 +3,7 @@ import {
   codingPollPageReads,
   codingPollPageWrites,
 } from '../../lib/neo/packs/coding/poll-http-db.ts';
+import { codingConnectorIdentityReads } from '../../lib/neo/packs/coding/connector-identity-db.ts';
 import { readWorkInput } from '../work-input.ts';
 import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
@@ -97,12 +98,13 @@ import {
   mailboxExpiryReads,
   mailboxExpiryWrites,
 } from '../repositories/mailbox-expiry-commands.ts';
-import { codingConnectorIdentityReads } from '../../lib/neo/packs/coding/connector-identity-db.ts';
+import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
     codingPollPageReads,
     codingPollPageWrites,
+    codingConnectorIdentityReads,
     readWorkInput,
     codingMergeReads,
     codingMergeWrites,
@@ -178,6 +180,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobStaleReclaimWrites,
     mailboxExpiryReads,
     mailboxExpiryWrites,
-    codingConnectorIdentityReads,
+    githubPollSuccessorWrites,
   ].map((op) => [op.name, op])
 );

@@ -6,6 +6,8 @@ import { GitHubService } from '../../../../src/lib/github/github-service';
 import { GITHUB_POLL } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import type { Database } from '../../../../src/storage/database';
+import { bindGateway, type DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { githubPollSuccessorWrites } from '../../../../src/storage/repositories/github-poll-successor-write';
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -73,7 +75,16 @@ describe('GitHubService — job-queue-driven polling', () => {
   }
 
   function makeJobQueue(listOverride?: ReturnType<typeof mock>) {
+    const raw = {} as SqliteDatabase;
+    bindGateway(raw, {
+      call: async (op, method, input) => {
+        expect(op).toBe(githubPollSuccessorWrites);
+        expect(method).toBe('enqueueUniquePending');
+        return enqueueMock(input);
+      },
+    } as unknown as DbGateway);
     return {
+      db: raw,
       enqueue: enqueueMock,
       listJobs: listOverride ?? listJobsMock,
       deleteJob: deleteJobMock,

@@ -354,16 +354,16 @@ describe('withCodexDesktopIpc', () => {
 
   describe('existing-thread work.send without a Desktop owner', () => {
     test.each(
-      (['steer', 'resume', 'queue'] as const).flatMap((route) =>
+      (['active', 'completed'] as const).flatMap((state) =>
         (['refused', 'hung'] as const).flatMap((launcher) =>
           (['missing', 'stale'] as const).map(
-            (connection) => [route, launcher, connection] as const
+            (connection) => [state, launcher, connection] as const
           )
         )
       )
     )(
-      'delivers through %s without Desktop, even if open would be %s and socket is %s',
-      async (route, launcher, connection) => {
+      'queues %s input even if Desktop open would be %s and socket is %s',
+      async (state, launcher, connection) => {
         const f = await fixture((message, _socket, send) =>
           send({
             type: 'response',
@@ -382,7 +382,13 @@ describe('withCodexDesktopIpc', () => {
         }
         const statePath = join(directory, 'state.sqlite');
         const rollout = join(directory, 'rollout.jsonl');
-        writeFileSync(rollout, '');
+        writeFileSync(
+          rollout,
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: state === 'active' ? 'task_started' : 'task_complete' },
+          }) + '\n'
+        );
         const db = new Database(statePath);
         db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
         CREATE TABLE projects (id TEXT, name TEXT);
@@ -400,7 +406,9 @@ describe('withCodexDesktopIpc', () => {
         const driver = createCodexDesktopAdapter({
           statePath,
           desktopSocketPath,
-          desktopRunning: async () => false,
+          desktopRunning: async () => {
+            throw new Error('Automatic input must not inspect Desktop ownership');
+          },
           worktreesDir: directory,
           machine: 'test',
           now: Date.now,
@@ -418,19 +426,6 @@ describe('withCodexDesktopIpc', () => {
           appServer: async () => ({
             call: async (method, params) => {
               calls.push(method);
-              if (method === 'thread/turns/list')
-                return {
-                  data: [
-                    { id: 'existing-turn', status: route === 'steer' ? 'inProgress' : 'completed' },
-                  ],
-                };
-              if (method === 'turn/steer') return { turnId: 'existing-turn' };
-              if (method === 'thread/resume') {
-                if (route === 'queue')
-                  throw new Error('thread thread-1 already has an active writer');
-                return {};
-              }
-              if (method === 'turn/start') return { turn: { id: 'resumed-turn' } };
               if (method === 'thread/queue/add') {
                 const text = (params.input as { text: string }[])[0].text;
                 appendFileSync(
@@ -441,7 +436,7 @@ describe('withCodexDesktopIpc', () => {
                     payload: {
                       type: 'message',
                       role: 'user',
-                      id: 'queued-input',
+                      id: params.clientUserMessageId,
                       content: [{ type: 'input_text', text }],
                     },
                   }) + '\n'
@@ -501,25 +496,13 @@ describe('withCodexDesktopIpc', () => {
               ok: true,
               value: {
                 delivered: true,
-                ...(route === 'steer'
-                  ? { steeredIntoTurnId: 'existing-turn' }
-                  : route === 'resume'
-                    ? { startedTurnId: 'resumed-turn' }
-                    : {
-                        queuedSubmissionId: 'existing-queue',
-                        receipt: { executionId: 'thread-1', inputId: 'queued-input' },
-                      }),
+                queuedSubmissionId: 'existing-queue',
+                receipt: { executionId: 'thread-1', inputId: 'existing-input' },
               },
             },
           });
-          expect(calls).toContain(
-            route === 'steer'
-              ? 'turn/steer'
-              : route === 'resume'
-                ? 'turn/start'
-                : 'thread/queue/add'
-          );
-          if (route !== 'resume') expect(calls).not.toContain('turn/start');
+          expect(calls).toEqual(['thread/queue/add']);
+          expect(f.seen).toEqual([]);
           expect(launches).toEqual([]);
         } finally {
           clearTimeout(timer);
@@ -694,7 +677,7 @@ describe('withCodexDesktopIpc', () => {
       });
     });
 
-    test('work.send returns the Desktop steer receipt through the operation result schema', async () => {
+    test('explicit work.send steer returns the Desktop receipt through the operation result schema', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -755,6 +738,7 @@ describe('withCodexDesktopIpc', () => {
           {
             ref: { adapter: driver.id, id: 'thread-1' },
             message: 'use the parser',
+            mode: 'steer',
             todoId: 'open-todo',
           },
           { source: 'mcp', role: 'neo', sessionId: 'neo' }

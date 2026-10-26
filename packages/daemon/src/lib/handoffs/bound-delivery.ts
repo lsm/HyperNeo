@@ -58,6 +58,7 @@ export const boundDeliveryContent = (superpipe({})('bound-batch-delivery') as Pi
             ? content
             : content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n\n'),
         createdAt: new Date(job.createdAt).toISOString(),
+        kind: 'worker-batch',
       });
       return loaded;
     },

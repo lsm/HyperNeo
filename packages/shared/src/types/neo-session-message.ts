@@ -1,3 +1,5 @@
+export type NeoSessionMessageKind = 'session' | 'worker-batch';
+
 export interface NeoSessionMessage {
   messageId: string;
   conversationId: string;
@@ -8,4 +10,5 @@ export interface NeoSessionMessage {
   toName: string | null;
   text: string;
   createdAt: string;
+  kind: NeoSessionMessageKind;
 }
