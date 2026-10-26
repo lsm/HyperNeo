@@ -165,8 +165,7 @@ describe('QueryOptionsBuilder', () => {
     it('should set allowDangerouslySkipPermissions when bypassPermissions', async () => {
       mockSession.config.permissionMode = 'bypassPermissions';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
@@ -2482,6 +2481,23 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('permission mode', () => {
+    it('starts prepared SDK workers outside auto while retaining their bypass restriction', async () => {
+      const root = join(handoffDataDir, 'permission-worker');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'protected')]);
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.permissionMode).toBe('default');
+        expect(options.allowDangerouslySkipPermissions).toBe(false);
+        expect(options.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
+        mockSession.config.permissionMode = 'plan';
+        expect((await builder.build()).permissionMode).toBe('plan');
+      } finally {
+        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+      }
+    });
+
     it('should use session config permission mode first', async () => {
       mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
@@ -2501,22 +2517,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.permissionMode).toBe('prompt');
     });
 
-    it('should default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it('should default to bypassPermissions at spawn', async () => {
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
 
     it.each([
-      ['unset', undefined, undefined, 'bypassPermissions', true],
-      ['default', 'default', undefined, 'bypassPermissions', true],
-      ['bypassPermissions', 'bypassPermissions', undefined, 'bypassPermissions', true],
-      ['acceptEdits', 'acceptEdits', 'acceptEdits', undefined, false],
-      ['plan', 'plan', 'plan', undefined, false],
-      ['legacy delegate', 'delegate', 'delegate', undefined, false],
+      ['unset', undefined, 'bypassPermissions', true],
+      ['default', 'default', 'bypassPermissions', true],
+      ['bypassPermissions', 'bypassPermissions', 'bypassPermissions', true],
+      ['acceptEdits', 'acceptEdits', 'acceptEdits', false],
+      ['plan', 'plan', 'plan', false],
+      ['legacy delegate', 'delegate', 'delegate', false],
     ])(
       'a global %s permission mode keeps its SDK output',
-      async (_name, permissionMode, sent, deferred, skipsPermissions) => {
+      async (_name, permissionMode, sent, skipsPermissions) => {
         (mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue(
           permissionMode ? { permissionMode } : {}
         );
@@ -2526,16 +2541,14 @@ describe('QueryOptionsBuilder', () => {
         });
         const options = await built.build();
         expect(options.permissionMode).toBe(sent);
-        expect(built.getDeferredPermissionMode()).toBe(deferred);
         expect(options.allowDangerouslySkipPermissions ?? false).toBe(skipsPermissions);
       }
     );
 
-    it('should map default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it('should map default to bypassPermissions at spawn', async () => {
       mockSession.config.permissionMode = 'default';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
   });
 
