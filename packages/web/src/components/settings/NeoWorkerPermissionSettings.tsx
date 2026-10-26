@@ -51,6 +51,39 @@ export function NeoWorkerPermissionSettings() {
           </select>
         </SettingsRow>
       </SettingsGroup>
+      <SettingsGroup>
+        <SettingsRow
+          label="Worker Unix sockets"
+          description="New worker sessions may connect to these human-approved sockets."
+        >
+          {(settings.workerUnixSockets ?? []).map((path) => (
+            <div key={path}>
+              <code>{path}</code>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={async () => {
+                  setSaving(true);
+                  try {
+                    await updateGlobalSettings({
+                      workerUnixSockets: settings.workerUnixSockets!.filter(
+                        (socket) => socket !== path
+                      ),
+                    });
+                  } catch {
+                    toast.error('Failed to remove worker socket');
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          {!settings.workerUnixSockets?.length && <span>No sockets allowed</span>}
+        </SettingsRow>
+      </SettingsGroup>
     </SettingsSection>
   );
 }

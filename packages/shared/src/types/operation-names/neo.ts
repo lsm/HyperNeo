@@ -38,6 +38,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.restart',
   'neo.rule.applyAnswer',
   'neo.rule.ask',
+  'neo.workerSocket.ask',
   'neo.rule.save',
   'neo.session.archive',
   'neo.session.mute',

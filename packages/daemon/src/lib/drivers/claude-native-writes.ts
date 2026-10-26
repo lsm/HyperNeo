@@ -1,7 +1,7 @@
 import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { prepareWorkerSandbox, workerSandboxPaths } from './worker-sandbox.ts';
+import { prepareWorkerSandbox, workerSandboxPaths, workerUnixSockets } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
@@ -10,7 +10,7 @@ const editRule = (path: string, tree = false) =>
   `Edit(/${path.replace(/([*?[\]\\])/g, '\\$1')}${tree ? '/**' : ''})`;
 let pending: Promise<void> = Promise.resolve();
 
-function policy(root: string, roots: string[], siblings: string[]) {
+function policy(root: string, roots: string[], siblings: string[], sockets = workerUnixSockets()) {
   return {
     env: workerSandboxPaths(root),
     sandbox: {
@@ -31,7 +31,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       },
       network: {
         allowedDomains: ['*'],
-        allowUnixSockets: [],
+        allowUnixSockets: sockets,
         allowAllUnixSockets: false,
         allowLocalBinding: true,
       },
@@ -56,7 +56,7 @@ async function writePolicy(root: string, value: ReturnType<typeof policy>) {
   await rename(temporary, settingsPath(root));
 }
 
-async function install(root: string, roots: string[]) {
+async function install(root: string, roots: string[], sockets: string[]) {
   const siblings = (await readdir(dirname(root), { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(dirname(root), entry.name));
@@ -75,7 +75,7 @@ async function install(root: string, roots: string[]) {
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');
-  await writeFile(settingsPath(root), JSON.stringify(policy(root, roots, siblings)), {
+  await writeFile(settingsPath(root), JSON.stringify(policy(root, roots, siblings, sockets)), {
     flag: 'wx',
     mode: 0o600,
   });
@@ -92,10 +92,16 @@ async function install(root: string, roots: string[]) {
   }
 }
 
-export function installClaudeNativeWrites(directory: string, roots: string[]): Promise<void> {
+export function installClaudeNativeWrites(
+  directory: string,
+  roots: string[],
+  sockets = workerUnixSockets()
+): Promise<void> {
   const next = pending
     .catch(() => {})
-    .then(() => install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))]));
+    .then(() =>
+      install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))], sockets)
+    );
   pending = next;
   return next;
 }
@@ -121,5 +127,9 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
     await writePolicy(directory, { ...computed, ...existing });
   }
-  return { ...computed, ...existing } as typeof computed;
+  const updated = { ...computed, ...existing } as typeof computed;
+  updated.sandbox.network.allowUnixSockets = computed.sandbox.network.allowUnixSockets;
+  updated.sandbox.network.allowAllUnixSockets = false;
+  await writePolicy(directory, updated);
+  return updated;
 }

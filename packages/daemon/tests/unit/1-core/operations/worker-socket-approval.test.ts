@@ -15,7 +15,7 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 
-const request = () => Reflect.apply(Reflect.get(store, 'requestWorkerSocket'), store, [session, socket]);
+const request = () => store.requestWorkerSocket(session, socket)!;
 
 test('a socket request raises exactly one card across repository re-creation', () => {
   const question = request();

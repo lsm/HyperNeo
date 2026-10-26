@@ -12,6 +12,7 @@ import {
 } from '../../lib/neo/todo-state.ts';
 import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
+import { SettingsRepository } from './settings-repository.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 import type {
   NeoAsk,
@@ -179,6 +180,38 @@ export interface NeoCardReplyContext {
 }
 
 export class NeoAskTodoRepository {
+  requestWorkerSocket(sessionId: string, socket: string) {
+    const id = neoDerivedId(`worker-socket:${socket}`);
+    const prior = this.getQuestion(id);
+    if (prior) return prior;
+    if (new SettingsRepository(this.db).getGlobalSettings().workerUnixSockets?.includes(socket))
+      return null;
+    const askId = neoDerivedId(`worker-socket-ask:${socket}`);
+    const text = `Workers need ${socket} to sign commits. Allow all workers to use it?`;
+    this.openAsk({
+      id: askId,
+      sessionId,
+      projectId: null,
+      originMessageId: null,
+      title: 'Worker socket access',
+      request: `worker-socket:${socket}`,
+      createdAt: Date.now(),
+    });
+    return this.askQuestion(
+      id,
+      askId,
+      {
+        text,
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'Decline',
+        yesLabel: 'Allow',
+        startTodos: null,
+      },
+      Date.now()
+    );
+  }
   get questionAnswers() {
     return new NeoQuestionAnswerRepository(
       this.db,
@@ -837,11 +870,21 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
+        const request = this.getAsk(question.askId)?.request;
+        const socket = request?.startsWith('worker-socket:')
+          ? request.slice('worker-socket:'.length)
+          : null;
+        if (socket && question.id === neoDerivedId(`worker-socket:${socket}`) && answer === 'yes') {
+          const settings = new SettingsRepository(this.db);
+          const allowed = settings.getGlobalSettings().workerUnixSockets ?? [];
+          settings.updateGlobalSettings({ workerUnixSockets: [...new Set([...allowed, socket])] });
+          rulesChanged = true;
+        }
         this.releaseStartTodos(question.id, now);
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
           const rules = applyNeoRuleAnswer(this.db, question.id);
-          rulesChanged = rules.ok && rules.changed;
+          rulesChanged ||= rules.ok && rules.changed;
         }
       }
       return answered;
@@ -985,5 +1028,5 @@ export const neoTodoWrites = defineRepositoryOp(
       super(db);
     }
   },
-  ['commitState']
+  ['commitState', 'requestWorkerSocket']
 );
