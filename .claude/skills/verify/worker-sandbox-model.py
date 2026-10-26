@@ -58,6 +58,24 @@ if os.environ.get('VERIFY_SECRET_READ') == '1':
         script.write(f"cat '{secret}' >/dev/null; printf '%s' \"$?\" > secret-read-status-{engine}.txt\n")
         script.write(f"cat readable-repo-fixture.txt > repo-read-result-{engine}.txt\n")
 requests = []
+if (run / 'verify-sockets').exists():
+    (worker / 'socket-probe.py').write_text('''import json, socket, sys
+from pathlib import Path
+run, engine = Path(sys.argv[1]), sys.argv[2]
+observed = {}
+for name in ['allowed', 'denied']:
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(3)
+        try:
+            client.connect(str(run / (name + '.sock')))
+            observed[name] = client.recv(128) == b'synthetic-socket-ok'
+        except OSError:
+            observed[name] = False
+Path('socket-observed.json').write_text(json.dumps(observed))
+assert observed == {'allowed': True, 'denied': False}, observed
+''')
+    with probe.open('a') as script:
+        script.write(f"/usr/bin/python3 ./socket-probe.py '{run}' '{engine}'\nprintf 'socket-status=%s\\n' \"$?\"\n")
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -148,6 +166,10 @@ try:
         (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
         assert observed['localServer'] and observed['localServer']['connected'], 'Worker could not listen on loopback and connect to its server'
     print(json.dumps(observed))
+    if (run / 'verify-sockets').exists():
+        sockets = json.loads((worker / 'socket-observed.json').read_text())
+        (run / f'evidence/{engine}-sockets.json').write_text(json.dumps(sockets))
+        assert sockets == {'allowed': True, 'denied': False}, sockets
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     assert observed['policyIntact'], 'BUG: worker removed its sandbox gate or settings'
     assert observed['networkAllowed'], 'Sandbox network probe failed'

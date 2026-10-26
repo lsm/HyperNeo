@@ -3,7 +3,12 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { homedir } from 'node:os';
 import { secretNamePatterns } from '../neo/secret-read-rules.ts';
-import { prepareWorkerSandbox, workerSandboxPaths, workerSecretPaths } from './worker-sandbox.ts';
+import {
+  prepareWorkerSandbox,
+  workerSandboxPaths,
+  workerSecretPaths,
+  workerUnixSockets,
+} from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
@@ -34,7 +39,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       },
       network: {
         allowedDomains: ['*'],
-        allowUnixSockets: [],
+        allowUnixSockets: workerUnixSockets(),
         allowAllUnixSockets: false,
         allowLocalBinding: true,
       },
@@ -115,6 +120,7 @@ function withSecretDenials(
   return {
     ...computed,
     ...existing,
+    env: existing?.env || computed.env,
     permissions: {
       ...computed.permissions,
       ...existing?.permissions,
@@ -123,6 +129,12 @@ function withSecretDenials(
     sandbox: {
       ...computed.sandbox,
       ...existing?.sandbox,
+      network: {
+        ...computed.sandbox.network,
+        ...existing?.sandbox?.network,
+        allowUnixSockets: computed.sandbox.network.allowUnixSockets,
+        allowAllUnixSockets: false,
+      },
       filesystem: {
         ...computed.sandbox.filesystem,
         ...existing?.sandbox?.filesystem,
@@ -151,12 +163,6 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     .then(JSON.parse)
     .catch(() => ({}));
   const before = JSON.stringify(existing);
-  if (!existing?.env || !existing?.sandbox) {
-    Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
-  }
-  if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
-    existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
-  }
   const upgraded = withSecretDenials(computed, existing);
   if (before !== JSON.stringify(upgraded)) await writePolicy(directory, upgraded);
   return upgraded;

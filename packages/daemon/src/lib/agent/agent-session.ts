@@ -1,3 +1,7 @@
+import type {
+  SessionToolApplication,
+  SessionToolChoiceKey,
+} from '@hyperneo/shared/types/session-tool-choice';
 import { sdkPendingRemoval } from '../../storage/repositories/sdk-message-transactions.ts';
 import type { ChildProcess } from 'node:child_process';
 import type {
@@ -1661,6 +1665,14 @@ export class AgentSession
       return { state: 'unverified', tools: [], skills: [], plugins: [], mcpServers: [] };
     }
     return this.queryRunner.getToolInventory();
+  }
+
+  async applyToolChoice(key: SessionToolChoiceKey): Promise<SessionToolApplication> {
+    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner)
+      return { application: 'restart_required', reason: 'provider_unverified' };
+    if (key.startsWith('skill:') && this.isQueryActiveOrStarting())
+      return { application: 'restart_required', reason: 'instructions_reload_unavailable' };
+    return this.queryRunner.applyToolChoice();
   }
 
   async refreshToolsContextUsage(): Promise<void> {

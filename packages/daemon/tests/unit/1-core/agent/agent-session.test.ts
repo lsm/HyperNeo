@@ -2980,6 +2980,39 @@ describe('AgentSession', () => {
       );
     });
 
+    describe('tool activation disclosure', () => {
+      it('leaves ACP attachment unverified without touching its query', async () => {
+        mockSession.config.provider = 'acp';
+        const setMcpServers = mock(async () => ({ added: [], removed: [], errors: {} }));
+        const interrupt = mock(async () => undefined);
+        agentSession.queryObject = {
+          setMcpServers,
+          interrupt,
+        } as unknown as AgentSession['queryObject'];
+        expect(await agentSession.applyToolChoice('mcp:browser')).toEqual({
+          application: 'restart_required',
+          reason: 'provider_unverified',
+        });
+        expect(setMcpServers).not.toHaveBeenCalled();
+        expect(interrupt).not.toHaveBeenCalled();
+      });
+      it('requires explicit restart for live instruction changes', async () => {
+        const interrupt = mock(async () => undefined);
+        agentSession.queryObject = { interrupt } as unknown as AgentSession['queryObject'];
+        expect(await agentSession.applyToolChoice('skill:guide')).toEqual({
+          application: 'restart_required',
+          reason: 'instructions_reload_unavailable',
+        });
+        expect(interrupt).not.toHaveBeenCalled();
+      });
+      it('keeps cold instruction choices for the next query without starting it', async () => {
+        expect(await agentSession.applyToolChoice('skill:guide')).toEqual({
+          application: 'next_query',
+        });
+        expect(agentSession.queryObject).toBeNull();
+      });
+    });
+
     it('should start with generation 0', () => {
       expect(agentSession.getQueryGeneration()).toBe(0);
     });

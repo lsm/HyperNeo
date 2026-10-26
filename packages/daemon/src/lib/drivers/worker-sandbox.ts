@@ -22,6 +22,14 @@ import {
 } from 'node:fs/promises';
 import { join } from 'node:path';
 
+let readWorkerSockets = (): string[] => [];
+
+export function configureWorkerSockets(read: () => string[]) {
+  readWorkerSockets = read;
+}
+
+export const workerUnixSockets = () => readWorkerSockets();
+
 export function workerSandboxPaths(root: string) {
   const base = process.platform === 'darwin' ? '/tmp' : tmpdir();
   const runtime = join(base, `hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`);
@@ -91,12 +99,21 @@ export async function prepareWorkerSandbox(root: string) {
   return env;
 }
 
-export function codexWorkerSandbox(root: string) {
+export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) {
   const env = workerSandboxPaths(root);
   const writableRoots = [root, join(root, '.git'), ...new Set(Object.values(env))];
   return {
     permissions: 'hyperneo-worker',
     config: {
+      features: {
+        network_proxy: {
+          enabled: true,
+          domains: { '*': 'allow' },
+          unix_sockets: Object.fromEntries(sockets.map((path) => [path, 'allow'])),
+          dangerously_allow_all_unix_sockets: false,
+          allow_local_binding: true,
+        },
+      },
       permissions: {
         'hyperneo-worker': {
           filesystem: {
@@ -109,7 +126,13 @@ export function codexWorkerSandbox(root: string) {
             ...Object.fromEntries(workerSecretPaths().map((path) => [path, 'deny'])),
             ...Object.fromEntries(secretNamePatterns(homedir()).map((path) => [path, 'deny'])),
           },
-          network: { enabled: true },
+          network: {
+            enabled: true,
+            domains: { '*': 'allow' },
+            unix_sockets: Object.fromEntries(sockets.map((path) => [path, 'allow'])),
+            dangerously_allow_all_unix_sockets: false,
+            allow_local_binding: true,
+          },
         },
       },
       shell_environment_policy: { set: env },
@@ -163,6 +186,7 @@ export async function persistCodexWorkerProfile(root: string) {
   const text = stringify({
     ...existing,
     permissions: { ...(existing.permissions as object), 'hyperneo-worker': profile },
+    features: { ...(existing.features as object), ...config.features },
     shell_environment_policy: {
       ...(existing.shell_environment_policy as object),
       set: config.shell_environment_policy.set,
