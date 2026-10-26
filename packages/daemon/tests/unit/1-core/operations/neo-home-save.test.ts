@@ -81,6 +81,71 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test('does not execute an inherited filter selected by writable home attributes', async () => {
+    await writeFile(join(root, '.gitattributes'), '*.md filter=home-probe\n');
+    await git('add', '.gitattributes');
+    await git('commit', '-m', 'Home attributes');
+    const config = join(fixture, 'gitconfig');
+    const marker = join(fixture, 'filter-ran-outside-home');
+    await git(
+      'config',
+      '--file',
+      config,
+      'filter.home-probe.clean',
+      `printf executed > '${marker}'; cat`
+    );
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = config;
+    try {
+      const result = await save({ path: 'filtered.md', content: 'Curated progress.' });
+      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+      expect(result.ok).toBe(true);
+      expect(await git('show', 'HEAD:filtered.md')).toBe('Curated progress.');
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
+  test.each(['file', 'parent'])(
+    'does not write outside home after a %s symlink swap following validation',
+    async (state) => {
+      const path = 'documents/raced.md';
+      await save({ path, content: 'Previous document.' });
+      const outside = join(fixture, 'outside');
+      await mkdir(outside);
+      await writeFile(join(outside, 'raced.md'), 'Outside sentinel.');
+      const bin = join(fixture, 'bin');
+      await mkdir(bin);
+      const action =
+        state === 'file'
+          ? `rm '${join(root, path)}'; ln -s '${join(outside, 'raced.md')}' '${join(root, path)}'`
+          : `mv '${join(root, 'documents')}' '${join(root, 'preserved-documents')}'; ln -s '${outside}' '${join(root, 'documents')}'`;
+      await writeFile(
+        join(bin, 'git'),
+        `#!/bin/sh
+set -eu
+for arg do
+ if [ "$arg" = 'HEAD:${path}' ] && [ ! -e '${join(fixture, 'raced')}' ]; then
+  touch '${join(fixture, 'raced')}'
+  ${action}
+ fi
+done
+exec /usr/bin/git "$@"
+`,
+        { mode: 0o755 }
+      );
+      const previous = process.env.PATH;
+      process.env.PATH = `${bin}:${previous}`;
+      try {
+        await save({ path, content: 'Requested new document.' }).catch(() => null);
+        expect(await readFile(join(fixture, 'raced'), 'utf8')).toBe('');
+        expect(await readFile(join(outside, 'raced.md'), 'utf8')).toBe('Outside sentinel.');
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    }
+  );
   test.each(['unreadable', 'dangling'])(
     'saves without reading a pre-existing %s ignore entry',
     async (state) => {
