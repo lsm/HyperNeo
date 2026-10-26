@@ -16,6 +16,15 @@ receipts retaining their payload fields and retry budget. A main-connection guar
 rejects every job INSERT throughout these operations. The baseline must fail;
 fixed Bun/Deno runs must show zero target main writes and both pending receipts.
 
+A fixture SQL trigger rejects a third input inside the actual writer transaction.
+Its public status must become failed with no delivery job. Command failures are
+tagged inside the operation body and cross the gateway only after the transaction
+unwinds; commit, transport and worker failures remain untagged. Unit coverage
+rejects a receipt read after insertion and verifies rollback. A separately
+committed receipt-loss regression commits the real job, then rejects the reply:
+the input must remain enqueued with its receipt intact, without guessed failure
+publication or replay. This does not establish real worker-death recovery.
+
 Save evidence/session-delivery-enqueue.json before removing owned temporary data.
 The helper restores its observer/SQL guard and closes resources in finally. It
 does not prove provider execution, restart recovery's separate resend callback,

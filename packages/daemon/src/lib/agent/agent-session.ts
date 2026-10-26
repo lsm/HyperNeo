@@ -193,6 +193,7 @@ import {
   type ContextClearBoundaryOwner,
   type DeliveryOutcome,
   type DriveTurnOutcome,
+  DeliveryEnqueueRejectedError,
   deliverMessage,
   deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
@@ -2975,6 +2976,7 @@ export class AgentSession
           origin: 'chat',
         });
       } catch (err) {
+        if (!(err instanceof DeliveryEnqueueRejectedError)) throw err;
         const failedDbId = await this.db.writeSDKMessage(
           'markDeliveryFailedByUuid',
           this.session.id,

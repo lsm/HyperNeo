@@ -5,6 +5,7 @@ import {
   deliveryConsumptionTimeoutOrDefault,
   type DriveTurnOutcome,
   deliverMessage,
+  DeliveryEnqueueRejectedError,
   drainDeliveryWaitersOnTerminalSDKMessage,
   flattenDeliveryText,
   isTerminalTurnError,
@@ -108,6 +109,24 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       await expect(deliverMessage(repo, SESSION, 'io-fail', { origin: 'chat' })).rejects.toThrow(
         /disk I\/O error/
       );
+    });
+
+    it('rolls back insertion if receipt loading fails before commit', async () => {
+      const prepare = db.prepare;
+      db.prepare = (...args) => {
+        if (args[0] === 'SELECT * FROM job_queue WHERE id = ?') {
+          throw new Error('synthetic receipt read failure');
+        }
+        return Reflect.apply(prepare, db, args);
+      };
+      try {
+        await expect(
+          deliverMessage(repo, SESSION, 'read-failed', { origin: 'chat' })
+        ).rejects.toBeInstanceOf(DeliveryEnqueueRejectedError);
+      } finally {
+        db.prepare = prepare;
+      }
+      expect(jobsFor(repo, SESSION)).toEqual([]);
     });
 
     it('waits for the writer receipt before resolving durable insertion', async () => {

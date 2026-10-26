@@ -79,6 +79,24 @@ try {
     evidence.chatStatus = await hub.request('operation.invoke', { name: 'message.status', input: { sessionId, messageId: chatUuid } });
     const jobs = raw.prepare("SELECT payload, max_retries, status FROM job_queue WHERE queue = 'message_delivery' AND json_extract(payload, '$.sessionId') = ? ORDER BY created_at, rowid").all(sessionId) as Array<{ payload: string; max_retries: number; status: string }>;
     evidence.jobs = jobs.map((job) => ({ ...job, payload: JSON.parse(job.payload) }));
+    const rejectedUuid = 'synthetic-sql-reject';
+    raw.exec(`CREATE TRIGGER reject_fixture_enqueue BEFORE INSERT ON job_queue
+      WHEN json_extract(NEW.payload, '$.messageUuid') = '${rejectedUuid}'
+      BEGIN SELECT RAISE(ABORT, 'synthetic enqueue rejection'); END`);
+    await app.db.saveUserMessage(sessionId, { type: 'user', uuid: rejectedUuid, message: { role: 'user', content: 'synthetic rejected input' } }, 'enqueued');
+    let rejectedFailures = 0;
+    try {
+      await app.internalEventBus.publish('message.persisted', {
+        sessionId, messageId: rejectedUuid, messageContent: 'synthetic rejected input',
+        userMessageText: 'synthetic rejected input', needsWorkspaceInit: false,
+        hasDraftToClear: false, sendStatus: 'enqueued', deliveryMode: 'immediate',
+      });
+    } catch (error) {
+      rejectedFailures = (error as { result?: { failures: unknown[] } }).result?.failures.length ?? -1;
+    }
+    evidence.rejectedFailures = rejectedFailures;
+    evidence.rejectedStatus = await hub.request('operation.invoke', { name: 'message.status', input: { sessionId, messageId: rejectedUuid } });
+    evidence.rejectedJobPresent = app.jobQueue.activeDeliveryMessageUuids(sessionId).has(rejectedUuid);
     evidence.healthAfter = await hub.request('system.health', {});
     assert.equal(mainSqlAttempts, 0, 'direct and recovery delivery enqueue must not write to main');
     assert.equal(evidence.recoveryQueued, true);
@@ -86,6 +104,9 @@ try {
     assert.deepEqual(evidence.recoveryStatus, { status: 'queued' });
     assert.deepEqual(evidence.chatStatus, { status: 'queued' });
     assert.equal(jobs.length, 2);
+    assert.equal(rejectedFailures, 1);
+    assert.deepEqual(evidence.rejectedStatus, { status: 'failed' });
+    assert.equal(evidence.rejectedJobPresent, false);
     for (const [uuid, origin] of [[recoveryUuid, 'recovery'], [chatUuid, 'chat']]) {
       const job = jobs.find((row) => JSON.parse(row.payload).messageUuid === uuid);
       assert(job);
