@@ -643,4 +643,10 @@ env -i HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRI
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-shutdown-order.ts" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN"
 
+SINGLE_MESSAGE_READER_RUN="$WORK_DIR/single-message-reader"
+mkdir -p "$SINGLE_MESSAGE_READER_RUN/home" "$SINGLE_MESSAGE_READER_RUN/tmp"
+env -i HOME="$SINGLE_MESSAGE_READER_RUN/home" PATH="$PATH" TMPDIR="$SINGLE_MESSAGE_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SINGLE_MESSAGE_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-single-message-reader.ts" "$SINGLE_MESSAGE_READER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
