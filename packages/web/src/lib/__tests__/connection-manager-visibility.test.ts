@@ -436,7 +436,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
     const network = () => (manager as unknown as { networkHandler: () => void }).networkHandler();
 
-    it('waits for the network while offline and reconnects a second after it returns', () => {
+    it('resumes on show even while offline and forces a reconnect once online returns', () => {
       const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
       try {
         setHidden(false);
@@ -445,17 +445,40 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
         transport.isSuspended.mockReturnValue(true);
         visibilityChangeHandler?.(new Event('visibilitychange'));
-        expect(transport.resume).not.toHaveBeenCalled();
+        expect(transport.resume).toHaveBeenCalledTimes(1);
 
+        transport.isSuspended.mockReturnValue(false);
+        transport.isReady.mockReturnValue(false);
         onLine.mockReturnValue(true);
         network();
         vi.advanceTimersByTime(900);
-        expect(transport.resume).not.toHaveBeenCalled();
+        expect(transport.forceReconnect).not.toHaveBeenCalled();
         vi.advanceTimersByTime(100);
-        expect(transport.resume).toHaveBeenCalledTimes(1);
+        expect(transport.forceReconnect).toHaveBeenCalledTimes(1);
       } finally {
         onLine.mockRestore();
       }
+    });
+
+    it('resumes a suspended socket on the periodic check when the page is visible', () => {
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      (
+        manager as unknown as { startPeriodicStateValidation: () => void }
+      ).startPeriodicStateValidation();
+      vi.advanceTimersByTime(60_000);
+      expect(transport.resume).toHaveBeenCalledTimes(1);
+      expect(transport.forceReconnect).not.toHaveBeenCalled();
+    });
+
+    it('keeps a hidden page suspended on the periodic check', () => {
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(true);
+      (
+        manager as unknown as { startPeriodicStateValidation: () => void }
+      ).startPeriodicStateValidation();
+      vi.advanceTimersByTime(60_000);
+      expect(transport.resume).not.toHaveBeenCalled();
     });
 
     it('keeps a loopback daemon connected while the OS reports offline', () => {
