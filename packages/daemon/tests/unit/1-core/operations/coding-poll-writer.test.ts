@@ -98,64 +98,64 @@ function fixture() {
   return { db, facts, request, calls: () => calls };
 }
 
-test('HTTP page writer retries preserve one acquisition and one observation', async () => {
-  const f = fixture(),
-    transaction = f.db.transaction.bind(f.db);
-  let attempts = 0;
-  const fault = spyOn(f.db, 'transaction').mockImplementation(((fn, mode) => {
+function failOuterWrites(db: Database, failures: number) {
+  const transaction = db.transaction.bind(db);
+  let attempts = 0,
+    depth = 0;
+  const fault = spyOn(db, 'transaction').mockImplementation(((fn, mode) => {
     const commit = transaction(fn, mode);
     return (...args) => {
-      if (mode === 'immediate' && !f.db.inTransaction && ++attempts < 3)
+      if (mode === 'immediate' && depth === 0 && ++attempts <= failures)
         throw new Error('database is locked');
-      return commit(...args);
+      depth++;
+      try {
+        return commit(...args);
+      } finally {
+        depth--;
+      }
     };
-  }) as typeof f.db.transaction);
+  }) as typeof db.transaction);
+  return { attempts: () => attempts, restore: () => fault.mockRestore() };
+}
+
+test('HTTP page writer retries preserve one acquisition and one observation', async () => {
+  const f = fixture(),
+    fault = failOuterWrites(f.db, 2);
   try {
     const pages = await Promise.all([
       f.facts.collect(subject, 'cycle', null, f.request, () => 100),
       f.facts.collect(subject, 'cycle', null, f.request, () => 100),
     ]);
     expect(await Promise.all(pages.map((page) => page.json()))).toEqual([[{ id: 7 }], [{ id: 7 }]]);
-    expect(attempts).toBe(3);
+    expect(fault.attempts()).toBe(3);
     expect(f.calls()).toBe(1);
     expect((await f.facts.readCurrent(subject, 100, Infinity)).observationRevision).toBe(1);
   } finally {
-    fault.mockRestore();
+    fault.restore();
     f.db.close();
   }
 });
 
 test('HTTP page writer exhaustion leaves missing coverage and allows a fresh retry', async () => {
   const f = fixture(),
-    transaction = f.db.transaction.bind(f.db);
-  let attempts = 0;
-  const fault = spyOn(f.db, 'transaction').mockImplementation(((fn, mode) => {
-    const commit = transaction(fn, mode);
-    return (...args) => {
-      if (mode === 'immediate' && !f.db.inTransaction) {
-        attempts++;
-        throw new Error('database is locked');
-      }
-      return commit(...args);
-    };
-  }) as typeof f.db.transaction);
+    fault = failOuterWrites(f.db, Infinity);
   try {
     await expect(f.facts.collect(subject, 'cycle', null, f.request, () => 100)).rejects.toThrow(
       'database is locked'
     );
-    expect(attempts).toBe(3);
+    expect(fault.attempts()).toBe(3);
     expect(f.calls()).toBe(1);
     expect((await f.facts.readCurrent(subject, 100, Infinity)).page).toMatchObject({
       status: 'unknown',
       reason: 'missing',
     });
-    fault.mockRestore();
+    fault.restore();
     expect(
       await (await f.facts.collect(subject, 'cycle', null, f.request, () => 200)).json()
     ).toEqual([{ id: 7 }]);
     expect(f.calls()).toBe(2);
   } finally {
-    fault.mockRestore();
+    fault.restore();
     f.db.close();
   }
 });
