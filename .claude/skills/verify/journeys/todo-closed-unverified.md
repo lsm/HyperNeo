@@ -15,6 +15,8 @@ successfully. The public ask read must say `Closed unverified`, carry
 restarting the isolated daemon. Evidence is `observed.json` and `proof.log`.
 The wrapper removes synthetic daemon data after preserving evidence.
 Both neo.ask.read and neo.snapshot must expose the same label and state.
+The agent then adds a follow-up todo for the same PR. The closed-unverified row
+must not reserve that URL or block recording the follow-up verification work.
 
 For web proof, first build packages/web, then pass `--web` after `verify` in the
 command above. Read the disposable run's evidence/ready.json while the helper
