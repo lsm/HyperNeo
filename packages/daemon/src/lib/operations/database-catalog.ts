@@ -157,7 +157,6 @@ export function createDatabaseOperationCatalog(
             ?.error ?? null,
       }),
       createSessionInspectionOperation({
-        readBinding: (id) => new NeoRepository(db.getDatabase()).getBindingBySession(id),
         readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
         readMessages: (id, limit, before) =>
           listSessionMessages(db.getDatabase(), id, limit, before),
