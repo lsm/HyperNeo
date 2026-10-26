@@ -27,6 +27,7 @@ const SECRET_DIRS = [
   'Library/Application Support/Arc',
   'Library/Application Support/Chromium',
   'Library/Application Support/Opera',
+  'Library/Application Support/com.operasoftware.Opera',
   'Library/Application Support/Vivaldi',
   'Library/Mail',
   'Library/Messages',

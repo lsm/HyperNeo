@@ -35,6 +35,7 @@ describe('neo read admission', () => {
       'Read(~/Library/Application Support/Arc/**)',
       'Read(~/Library/Application Support/Chromium/**)',
       'Read(~/Library/Application Support/Opera/**)',
+      'Read(~/Library/Application Support/com.operasoftware.Opera/**)',
       'Read(~/Library/Application Support/Vivaldi/**)',
       'Read(~/Library/Mail/**)',
       'Read(~/Library/Messages/**)',
