@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
 import { GitHubService } from '../../../../src/lib/github/github-service';
+import { Logger } from '../../../../src/lib/logger';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
@@ -212,6 +213,27 @@ describe('GitHubService refresh writer', () => {
     await expect(service.refreshPolling()).rejects.toThrow('writer unavailable');
     expect(pending()).toEqual(original);
     expect(service.isPolling()).toBe(true);
+  });
+
+  test('logs admission failure once and rethrows without automatically replaying', async () => {
+    const error = new Error('synthetic admission failure');
+    let attempts = 0;
+    bindGateway(fixture.db, {
+      call: async () => {
+        attempts++;
+        throw error;
+      },
+    } as unknown as DbGateway);
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      await expect(service.start()).rejects.toBe(error);
+      expect(attempts).toBe(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('GitHub polling refresh persistence failed', error);
+      expect(pending()).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   for (const failure of ['insert', 'receipt']) {
