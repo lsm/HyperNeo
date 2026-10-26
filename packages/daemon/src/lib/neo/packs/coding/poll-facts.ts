@@ -1,3 +1,6 @@
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { callCodingBranchDb } from './branch-facts-db.ts';
+import { codingPollPageReads, codingPollPageWrites } from './poll-http-db.ts';
 import { collectPollHttp } from './poll-http.ts';
 import { pollHttpMetadata, type CodingPollHttpMetadata } from './poll-http-metadata.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -95,6 +98,28 @@ export class CodingPollFactsRepository {
     return readPage(this.db, subject, now, maxAgeMs);
   }
 
+  readCurrent(subject: Subject, at: number, maxAgeMs: number) {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingPollPageReads, 'read', subject, at, maxAgeMs),
+      'coding.pollPage.db'
+    );
+  }
+
+  observeCurrent(subject: Subject, observation: Observation, at: number, revision: number) {
+    return callCodingBranchDb(
+      () =>
+        gatewayFor(this.db).call(
+          codingPollPageWrites,
+          'observe',
+          subject,
+          observation,
+          at,
+          revision
+        ),
+      'coding.pollPage.db'
+    );
+  }
+
   collect(
     subject: Subject,
     cycle: string,
@@ -105,12 +130,17 @@ export class CodingPollFactsRepository {
     return collectPollHttp(this, subject, cycle, validator, request, now);
   }
 
-  collectExternalEventPage(...args: Parameters<CodingPollFactsRepository['collect']>) {
+  async collectExternalEventPage(...args: Parameters<CodingPollFactsRepository['collect']>) {
     const [subject, cycle, validator, request, now = Date.now] = args;
-    this.db
-      .prepare(`DELETE FROM pack_coding_poll_facts WHERE attempted_at < ?
-        AND json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'`)
-      .run(now() - Math.max(15 * 60_000, 2 * this.externalEventPollIntervalMs));
+    await callCodingBranchDb(
+      () =>
+        gatewayFor(this.db).call(
+          codingPollPageWrites,
+          'prune',
+          now() - Math.max(15 * 60_000, 2 * this.externalEventPollIntervalMs)
+        ),
+      'coding.pollPage.prune'
+    );
     return this.collect(
       { ...subject, credentialId: `external-event-page:v1:${subject.credentialId}` },
       cycle,
@@ -118,6 +148,13 @@ export class CodingPollFactsRepository {
       request,
       now
     );
+  }
+
+  pruneExternalEventPages(before: number) {
+    return this.db
+      .prepare(`DELETE FROM pack_coding_poll_facts WHERE attempted_at < ?
+      AND json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'`)
+      .run(before).changes;
   }
 
   async acquire(

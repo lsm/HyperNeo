@@ -1,0 +1,41 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-poll-writer.test.ts:
+14 | test('HTTP page collection does not read coverage through the main repository', async () => {
+15 |   const db = new Database(':memory:');
+16 |   createCodingPackTables(db);
+17 |   const facts = new CodingPollFactsRepository(db);
+18 |   const main = spyOn(facts, 'read').mockImplementation(() => {
+19 |     throw new Error('poll coverage read on main repository');
+                   ^
+error: poll coverage read on main repository
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-poll-writer.test.ts:19:15)
+      at executePipe (/Users/lsm/.codex/worktrees/94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:574:16)
+      at continuePipeline (/Users/lsm/.codex/worktrees/94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:730:34)
+      at next (/Users/lsm/.codex/worktrees/94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:687:5)
+      at runPipeline (/Users/lsm/.codex/worktrees/94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:762:2)
+      at <anonymous> (/Users/lsm/.codex/worktrees/94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:823:4)
+      at new Promise (1:11)
+      at runPipelinePromise (/Users/lsm/.codex/worktrees/94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:822:58)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-poll-writer.test.ts:23:34)
+(fail) HTTP page collection does not read coverage through the main repository [3.32ms]
+108 |   collectExternalEventPage(...args: Parameters<CodingPollFactsRepository['collect']>) {
+109 |     const [subject, cycle, validator, request, now = Date.now] = args;
+110 |     this.db
+111 |       .prepare(`DELETE FROM pack_coding_poll_facts WHERE attempted_at < ?
+112 |         AND json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'`)
+113 |       .run(now() - Math.max(15 * 60_000, 2 * this.externalEventPollIntervalMs));
+             ^
+SQLiteError: attempt to write a readonly database
+      errno: 8,
+ byteOffset: -1,
+       code: "SQLITE_READONLY"
+
+      at #run (bun:sqlite:187:20)
+      at collectExternalEventPage (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/poll-facts.ts:113:8)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-poll-writer.test.ts:61:64)
+(fail) external page cleanup commits on the bound writer before HTTP acquisition [2.43ms]
+
+ 0 pass
+ 2 fail
+Ran 2 tests across 1 file. [49.00ms]

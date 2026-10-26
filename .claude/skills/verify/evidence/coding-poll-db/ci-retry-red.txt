@@ -1,0 +1,40 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon
+
+ ❯ tests/unit/1-core/operations/coding-poll-writer.test.ts (5 tests | 1 failed) 199ms
+   ✓ HTTP page collection does not read coverage through the main repository 25ms
+   ✓ external page cleanup commits on the bound writer before HTTP acquisition 4ms
+   × HTTP page writer retries preserve one acquisition and one observation 83ms
+   ✓ HTTP page writer exhaustion leaves missing coverage and allows a fresh retry 83ms
+   ✓ external cleanup failure rolls back and prevents the HTTP effect 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/coding-poll-writer.test.ts > HTTP page writer retries preserve one acquisition and one observation
+AssertionError: expected 4 to be 3 // Object.is equality
+
+- Expected
++ Received
+
+- 3
++ 4
+
+ ❯ tests/unit/1-core/operations/coding-poll-writer.test.ts:119:22
+    117|     ]);
+    118|     expect(await Promise.all(pages.map((page) => page.json()))).toEqua…
+    119|     expect(attempts).toBe(3);
+       |                      ^
+    120|     expect(f.calls()).toBe(1);
+    121|     expect((await f.facts.readCurrent(subject, 100, Infinity)).observa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed (5)
+   Start at  22:24:00
+   Duration  1.09s (transform 62%, tests 20%, import 12%, setup 5%, worker 1%)
+
