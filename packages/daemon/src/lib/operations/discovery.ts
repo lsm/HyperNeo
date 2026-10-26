@@ -174,7 +174,7 @@ export function createDiscoveryOperations(
     defineOperation({
       name: 'operations.list',
       description:
-        'List the operations meant for this session. Pass { all: true } for the full catalog and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
+        'List the operations meant for this session. Pass { all: true } for the full catalog the session tool profile advertises and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
       inputSchema: ListInputSchema,
       resultSchema: z.array(SummarySchema),
       execute: async ({ all, query }, caller) =>
