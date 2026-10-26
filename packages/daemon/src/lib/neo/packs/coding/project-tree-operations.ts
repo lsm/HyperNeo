@@ -1,4 +1,4 @@
-import { requireNeoTreeAuthor } from '../../project-author.ts';
+import { requireLocalTreeAuthor } from '../../project-author.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
@@ -44,11 +44,7 @@ export function requireNeoEpic(
 }
 
 export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRefStateReader) {
-  const authorize = (caller: OperationCaller) =>
-    requireNeoTreeAuthor(
-      caller,
-      caller.sessionId ? repo.getBindingBySession(caller.sessionId) : null
-    );
+  const authorize = (caller: OperationCaller) => requireLocalTreeAuthor(caller);
   const move = (superpipe({})('neo.project.move') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(authorize, 'caller', 'result:outcome')
@@ -105,10 +101,13 @@ export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRef
     defineOperation({
       name: 'neo.project.move',
       description:
-        'Move an avatar under another parent or root, preserving its asks and context. Root Neo or the human only; refuses cycles and stale revisions.',
+        'Move an avatar under another parent or root, preserving its asks and context. Any local session; refuses cycles and stale revisions.',
       inputSchema: Move,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true) })]),
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      policy: {
+        safetyClass: 'mutate',
+        roles: ['neo', 'workflow_worker', 'direct_task_worker', 'long_term_agent'],
+      },
       execute: move as (
         input: z.infer<typeof Move>,
         caller: OperationCaller
@@ -117,10 +116,13 @@ export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRef
     defineOperation({
       name: 'neo.project.section',
       description:
-        'Create a section only when needed, from a GitHub epic issue under its code project. It inherits the parent’s workspaces; repeated calls reuse the same section. Root Neo or the human only.',
+        'Create a section only when needed, from a GitHub epic issue under its code project. It inherits the parent’s workspaces; repeated calls reuse the same section. Any local session.',
       inputSchema: Section,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), projectId: z.string() })]),
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      policy: {
+        safetyClass: 'mutate',
+        roles: ['neo', 'workflow_worker', 'direct_task_worker', 'long_term_agent'],
+      },
       execute: section as (
         input: z.infer<typeof Section>,
         caller: OperationCaller

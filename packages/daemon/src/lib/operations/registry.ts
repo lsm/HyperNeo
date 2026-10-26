@@ -24,6 +24,15 @@ export interface OperationCaller {
   };
 }
 
+export function isAgentSessionCaller(caller: OperationCaller): boolean {
+  return (
+    caller.source === 'mcp' &&
+    !!caller.sessionId &&
+    !!caller.role &&
+    caller.role !== 'universal_read'
+  );
+}
+
 export type OperationSafetyClass = 'read' | 'mutate' | 'destructive' | 'human_only';
 
 export interface OperationPolicy {
