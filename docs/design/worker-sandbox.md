@@ -120,6 +120,8 @@ threads may need recreation rather than a workspaceWrite fallback.
 The daemon also installs the profile in the clone's protected `.codex/config.toml`
 so Desktop can resolve it after the bootstrap process exits. Other settings in
 that managed file survive refresh; generated config is locally Git-excluded.
+Exclusions are installed only during creation, before the worker runs; profile
+refresh never edits worker-controlled Git metadata.
 A pre-existing config without this clone's generated profile is refused without
 modification. Policy refresh does not invoke Git on worker-controlled metadata.
 Unconfirmed profile starts release their clone/runtime without an opening turn. Codex's

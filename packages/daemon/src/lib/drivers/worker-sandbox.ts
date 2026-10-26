@@ -201,7 +201,7 @@ export async function persistCodexWorkerProfile(root: string) {
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   await writeFile(temporary, text, { flag: 'wx', mode: 0o600 });
   await rename(temporary, path);
-  await excludeWorkerConfig(root, '/.codex/config.toml');
+  if (!entry) await excludeWorkerConfig(root, '/.codex/config.toml');
 }
 
 export async function excludeWorkerConfig(root: string, pattern: string) {
