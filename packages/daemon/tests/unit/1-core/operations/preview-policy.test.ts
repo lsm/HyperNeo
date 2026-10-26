@@ -44,6 +44,8 @@ describe('artifact capture policy', () => {
       '/tmp/report.md',
       '/synthetic/home/.codex/reports/report.md',
       '/synthetic/evidence/report.md',
+      '/synthetic/home/.claude/projects/report.md',
+      '/synthetic/home/.config/gh/report.md',
     ])
       expect(await admit(path)).toEqual({
         context,
@@ -85,6 +87,12 @@ describe('artifact capture policy', () => {
     expect(await admit(source)).toEqual({ accepted: false, reason: 'unsafe_path' });
   });
   test.each([
+    '.claude.json',
+    '.config/gh/hosts.yml',
+    '.claude/projects/synthetic/session.jsonl',
+    '.bash_history',
+    '.zsh_history',
+    'Library/Application Support/Synthetic/Default/Cookies',
     '.env',
     '.envrc',
     '.env.production',

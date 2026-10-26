@@ -102,12 +102,13 @@ function registrationService(db: Database, data: string, home: string) {
         id: caller.sessionId ?? binding?.workerSessionId ?? binding?.neoSessionId ?? 'local',
       }
     );
-    const fingerprint = createHash('sha256')
-      .update(JSON.stringify([plan, producer, input.title]))
-      .digest('hex');
+    const fingerprint = (producerRef: string) =>
+      createHash('sha256')
+        .update(JSON.stringify([plan, producerRef, input.title]))
+        .digest('hex');
     const previous = registry.receipt(input.context, input.requestId);
     const owner = await artifactCaptureOwner(db, data);
-    if (previous?.fingerprint === fingerprint) {
+    if (previous && previous.fingerprint === fingerprint(previous.producer_ref)) {
       const hash = await owner.hashSource(plan.root, plan.relativePath.split('/'));
       if (hash.accepted && hash.sha256 === previous.sha256)
         return { accepted: true, artifact: JSON.parse(previous.receipt).artifact };
@@ -134,7 +135,7 @@ function registrationService(db: Database, data: string, home: string) {
     return registry.save(
       input.context,
       previous ? randomUUID() : input.requestId,
-      fingerprint,
+      fingerprint(producer),
       snapshot.sha256,
       {
         daemonId: registry.daemonId,

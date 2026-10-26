@@ -14,7 +14,7 @@ export class ArtifactFileRepository {
   }
   receipt(context: ArtifactContext, requestId: string) {
     return this.db
-      .prepare(`SELECT fingerprint, sha256, receipt FROM artifact_files
+      .prepare(`SELECT fingerprint, sha256, receipt, producer_ref FROM artifact_files
       WHERE context_kind = ? AND context_id = ?
       AND (request_id = ? OR json_extract(receipt, '$.requestId') = ?)
       ORDER BY rowid DESC LIMIT 1`)
@@ -22,6 +22,7 @@ export class ArtifactFileRepository {
       fingerprint: string;
       sha256: string;
       receipt: string;
+      producer_ref: string;
     } | null;
   }
   save(

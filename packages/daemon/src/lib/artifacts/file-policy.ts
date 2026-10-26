@@ -94,11 +94,18 @@ export function sensitivePath(path: string): boolean {
     )
   )
     return true;
+  if (
+    /(?:^|\/)(?:\.config\/gh\/hosts\.ya?ml|\.claude\/projects\/.+\.jsonl)(?:$|\/)/i.test(
+      posix.normalize(path)
+    )
+  )
+    return true;
   return path.split('/').some((name) => {
     const lower = name.toLowerCase();
     return (
       secretName(name) ||
       lower.startsWith('.env') ||
+      ['.claude.json', '.bash_history', '.zsh_history', 'cookies'].includes(lower) ||
       ['.git', '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', 'keychains'].includes(
         lower
       ) ||

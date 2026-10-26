@@ -16,6 +16,18 @@ respectively. An unchanged retry returns the latest receipt, including after the
 source is renamed; a different chosen source also creates a revision. Existing
 snapshot ownership checks stay in force, independently of registration admission.
 
+The review regression also uses inert sentinels for `.claude.json`, GitHub's
+`hosts.yml`, Claude transcript JSONL, shell history and browser `Cookies`. Each
+must return `sensitive_path`; benign reports under `.claude/projects` and
+`.config/gh` remain allowed. Retry an unchanged ask-context registration first
+through local RPC and then Neo's MCP operation door: the receipt must stay equal.
+
+For the native operation-door proof without a listening socket, use the shared
+`proof-run.sh` setup with `PROOF=.claude/skills/verify/preview-register.ts`.
+It saves `review-findings.json`, asserting the same sensitive-path refusals and
+equal worker/Neo receipts through `invokeOperation`. This supplements the daemon
+proof; a loopback launch denied by the host remains an explicit verification gap.
+
 Credential names, secret names, traversal, final symlinks and parent-directory
 symlinks must refuse before returning file bytes. All paths are synthetic; the
 proof uses only inert synthetic sensitive-file sentinels. Save `attachment-paths.json` and the proof
