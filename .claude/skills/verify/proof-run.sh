@@ -24,8 +24,12 @@ mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
 PROOF_RUNTIME=(bun)
 if [[ ${VERIFY_PROOF_RUNTIME:-bun} = node ]]; then
   PROOF_RUNTIME=(node --import tsx)
+elif [[ ${VERIFY_PROOF_RUNTIME:-bun} = deno ]]; then
+  PROOF_RUNTIME=(deno run -A)
 fi
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
+  DENO_DIR="$RUN/deno-cache" \
   NODE_PATH="${NODE_PATH:-}" VERIFY_BROWSER="${VERIFY_BROWSER:-}" \
-  HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
+  HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" \
+  VERIFY_BROWSER="${VERIFY_BROWSER:-}" NODE_PATH="${NODE_PATH:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
   > "$RUN/proof.log" 2>&1

@@ -6,10 +6,10 @@ model mock, provider registration or GUI is needed. The helper owns two ephemera
 daemon boots and a fresh synthetic database. External registry servers are disabled.
 The synthetic MCP command is never launched.
 
-This is a Build slice. The new pipeline is invoked directly inside the isolated
-daemon and commits through the real database gateway/CAS primitive. It is not
-registered as an operation or wired into SDK building, legacy setters, session
-creation or UI. Caller authorization and live application belong to later wiring.
+This helper covers the original Build foundation: it invokes the pipeline directly
+inside the isolated daemon and commits through the real DB gateway/CAS primitive.
+It does not exercise later adapters, SDK building, session creation or UI.
+`session-tool-activation.md` now covers the authorized operation and live application.
 Legacy initialization requires an explicit pinned-slot reader using the captured
 snapshot metadata. The fixture reuses the startup migration's existing reader.
 

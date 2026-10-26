@@ -12,6 +12,7 @@ import {
 } from '../../lib/neo/todo-state.ts';
 import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
+import { SettingsRepository } from './settings-repository.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 import type {
   NeoAsk,
@@ -65,6 +66,11 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
   origin_message_id AS originMessageId, title, request, status, outcome, focused_session_json AS focusedSessionJson,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
+
+const ASK_ATTENTION = `(status = 'open'
+  OR EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
+    AND t.state NOT IN ('done', 'removed'))
+  OR EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open'))`;
 
 type AskRow = Omit<NeoAsk, 'focusedSession'> & { focusedSessionJson: string | null };
 const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
@@ -179,6 +185,53 @@ export interface NeoCardReplyContext {
 }
 
 export class NeoAskTodoRepository {
+  requestWorkerSocket(sessionId: string, socket: string) {
+    const id = neoDerivedId(`worker-socket:${socket}`);
+    const prior = this.getQuestion(id);
+    const allowed = new SettingsRepository(this.db).getGlobalSettings().workerUnixSockets ?? [];
+    if (prior) {
+      if (prior.state === 'answered' && prior.answer === 'yes' && !allowed.includes(socket)) {
+        this.changeQuestion(id, {
+          state: 'open',
+          answer: null,
+          answered_by: null,
+          answered_at: null,
+        });
+        this.touchAsk(prior.askId, Date.now());
+      }
+      return this.getQuestion(id);
+    }
+    if (allowed.includes(socket)) return null;
+    const askId = neoDerivedId(`worker-socket-ask:${socket}`);
+    const display = socket.replace(
+      /\p{Bidi_Control}/gu,
+      (char) => `\\u${char.codePointAt(0)!.toString(16).padStart(4, '0')}`
+    );
+    const text = `Workers need ${display} to sign commits. Allow all workers to use it?`;
+    this.openAsk({
+      id: askId,
+      sessionId,
+      projectId: null,
+      originMessageId: null,
+      title: 'Worker socket access',
+      request: `worker-socket:${socket}`,
+      createdAt: Date.now(),
+    });
+    return this.askQuestion(
+      id,
+      askId,
+      {
+        text,
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'Decline',
+        yesLabel: 'Allow',
+        startTodos: null,
+      },
+      Date.now()
+    );
+  }
   get questionAnswers() {
     return new NeoQuestionAnswerRepository(
       this.db,
@@ -207,16 +260,34 @@ export class NeoAskTodoRepository {
     >;
   }
 
-  snapshot(projectId: string | null | undefined, limit: number) {
-    const asks = this.listAsks(projectId, limit);
+  snapshot(
+    projectId: string | null | undefined,
+    limit: number,
+    work = false,
+    before?: { updatedAt: number; id: string }
+  ) {
+    const asks = this.listAsks(projectId, limit, work, before);
     const ids = asks.map((ask) => ask.id);
     const todos = this.listTodosForAsks(ids);
+    const questions = this.listQuestionsForAsks(ids);
+    const attention = new Set([
+      ...todos
+        .filter((todo) => !['done', 'removed'].includes(todo.state))
+        .map((todo) => todo.askId),
+      ...questions
+        .filter((question) => question.state === 'open')
+        .map((question) => question.askId),
+    ]);
+    const last = asks.filter((ask) => ask.status !== 'open' && !attention.has(ask.id)).at(-1);
+    const unlisted = this.countAsks(projectId) - asks.length;
     return {
       asks,
-      unlisted: this.countAsks(projectId) - asks.length,
+      unlisted,
+      historyCursor:
+        work && unlisted > 0 && last ? { updatedAt: last.updatedAt, id: last.id } : null,
       facts: {
         todos,
-        questions: this.listQuestionsForAsks(ids),
+        questions,
         links: new NeoTodoSessionRepository(this.db).readLinksForTodos(
           todos.map((todo) => todo.id)
         ),
@@ -385,14 +456,30 @@ export class NeoAskTodoRepository {
     return this.getAsk(id)!;
   }
 
-  settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {
+  settleAsk(
+    ask: NeoAsk,
+    status: 'done' | 'dropped',
+    outcome: string,
+    now: number,
+    unverified: readonly string[] = []
+  ): NeoAsk {
     this.db
       .prepare(
         "UPDATE neo_asks SET status = ?, outcome = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = 'open'"
       )
       .run(status, outcome, now, now, ask.id);
     for (const todo of this.listTodos(ask.id))
-      if (['todo', 'doing', 'blocked'].includes(todo.state))
+      if (unverified.includes(todo.id))
+        this.writeTodo(
+          todo,
+          {
+            state: 'closed_unverified',
+            reason: `Ask closed without verifying: ${todo.doneWhen}${todo.reason ? `\n${todo.reason}` : ''}`,
+            finishedAt: now,
+          },
+          now
+        );
+      else if (['todo', 'doing', 'blocked'].includes(todo.state))
         this.updateTodo(
           todo,
           { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
@@ -406,14 +493,31 @@ export class NeoAskTodoRepository {
     return foundAsk(this.db.prepare(`${ASK_SELECT} WHERE id = ?`).get(id) as AskRow | null);
   }
 
-  listAsks(projectId: string | null | undefined, limit: number): NeoAsk[] {
+  listAsks(
+    projectId: string | null | undefined,
+    limit: number,
+    work = false,
+    before?: { updatedAt: number; id: string }
+  ): NeoAsk[] {
+    const window = work
+      ? `(?6 = 1 AND ${ASK_ATTENTION}) OR id IN (
+          SELECT id FROM neo_asks WHERE (?1 = 0 OR project_id IS ?2) AND NOT ${ASK_ATTENTION}
+            AND (?4 IS NULL OR (updated_at, id) < (?4, ?5))
+          ORDER BY updated_at DESC, id DESC LIMIT ?3)`
+      : `id IN (SELECT id FROM neo_asks WHERE (?1 = 0 OR project_id IS ?2)
+          ORDER BY status = 'open' DESC, updated_at DESC LIMIT ?3)`;
     return (
       this.db
         .prepare(
-          `${ASK_SELECT} WHERE (?1 = 0 OR project_id IS ?2)
-          ORDER BY status = 'open' DESC, updated_at DESC LIMIT ?3`
+          `${ASK_SELECT} WHERE (?1 = 0 OR project_id IS ?2) AND (${window})
+          ORDER BY status = 'open' DESC, updated_at DESC, id DESC`
         )
-        .all(projectId === undefined ? 0 : 1, projectId ?? null, limit) as AskRow[]
+        .all(
+          projectId === undefined ? 0 : 1,
+          projectId ?? null,
+          limit,
+          ...(work ? [before?.updatedAt ?? null, before?.id ?? null, before ? 0 : 1] : [])
+        ) as AskRow[]
     ).map(toAsk);
   }
 
@@ -837,11 +941,21 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
+        const request = this.getAsk(question.askId)?.request;
+        const socket = request?.startsWith('worker-socket:')
+          ? request.slice('worker-socket:'.length)
+          : null;
+        if (socket && question.id === neoDerivedId(`worker-socket:${socket}`) && answer === 'yes') {
+          const settings = new SettingsRepository(this.db);
+          const allowed = settings.getGlobalSettings().workerUnixSockets ?? [];
+          settings.updateGlobalSettings({ workerUnixSockets: [...new Set([...allowed, socket])] });
+          rulesChanged = true;
+        }
         this.releaseStartTodos(question.id, now);
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
           const rules = applyNeoRuleAnswer(this.db, question.id);
-          rulesChanged = rules.ok && rules.changed;
+          rulesChanged ||= rules.ok && rules.changed;
         }
       }
       return answered;
@@ -985,5 +1099,5 @@ export const neoTodoWrites = defineRepositoryOp(
       super(db);
     }
   },
-  ['commitState']
+  ['commitState', 'requestWorkerSocket']
 );

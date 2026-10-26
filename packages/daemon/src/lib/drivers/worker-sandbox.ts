@@ -6,6 +6,22 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { WorkerSandboxMode } from '@hyperneo/shared';
+
+let readWorkerSockets = (): string[] => [];
+let readWorkerSandbox = (): WorkerSandboxMode => 'off';
+
+export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
+  readWorkerSandbox = read;
+}
+
+export const workerSandboxOn = () => readWorkerSandbox() === 'always';
+
+export function configureWorkerSockets(read: () => string[]) {
+  readWorkerSockets = read;
+}
+
+export const workerUnixSockets = () => readWorkerSockets();
 
 export function workerSandboxPaths(root: string) {
   const base = process.platform === 'darwin' ? '/tmp' : tmpdir();
@@ -76,12 +92,21 @@ export async function prepareWorkerSandbox(root: string) {
   return env;
 }
 
-export function codexWorkerSandbox(root: string) {
+export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) {
   const env = workerSandboxPaths(root);
   const writableRoots = [root, join(root, '.git'), ...new Set(Object.values(env))];
   return {
     sandbox: 'workspace-write',
     config: {
+      features: {
+        network_proxy: {
+          enabled: true,
+          domains: { '*': 'allow' },
+          unix_sockets: Object.fromEntries(sockets.map((path) => [path, 'allow'])),
+          dangerously_allow_all_unix_sockets: true,
+          allow_local_binding: true,
+        },
+      },
       sandbox_workspace_write: {
         writable_roots: writableRoots,
         exclude_slash_tmp: true,

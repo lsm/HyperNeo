@@ -93,3 +93,33 @@ test('picking a mode saves it without dropping the rest of the Neo settings', ()
     neo: { ...neo, workerPermissionMode: 'acceptEdits' },
   });
 });
+
+test('settings shows allowed worker sockets and removes only the selected entry', () => {
+  settle();
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    ...globalSettings.value!,
+    workerUnixSockets: ['/synthetic/agent.sock', '/synthetic/db.sock'],
+  };
+  render(<NeoModelSettings />);
+  expect(screen.getByText('/synthetic/agent.sock')).toBeTruthy();
+  expect(screen.getByText('/synthetic/db.sock')).toBeTruthy();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]);
+  expect(updateGlobalSettings).toHaveBeenCalledWith({ workerUnixSockets: ['/synthetic/db.sock'] });
+});
+
+test('empty socket settings grant no access', () => {
+  settle();
+  render(<NeoModelSettings />);
+  expect(screen.getByText('No sockets allowed')).toBeTruthy();
+  expect(updateGlobalSettings).not.toHaveBeenCalled();
+});
+
+test('the worker sandbox shows off when unset and saves the chosen mode', async () => {
+  settle();
+  render(<NeoModelSettings />);
+  const select = screen.getByRole('combobox', { name: 'Worker sandbox' }) as HTMLSelectElement;
+  expect(select.value).toBe('off');
+  expect([...select.options].map((option) => option.value)).toEqual(['off', 'always']);
+  fireEvent.change(select, { target: { value: 'always' } });
+  expect(updateGlobalSettings).toHaveBeenCalledWith({ workerSandbox: 'always' });
+});

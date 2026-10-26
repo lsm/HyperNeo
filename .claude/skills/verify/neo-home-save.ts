@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 const [port, run, mode = 'normal'] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home-save.ts <test-port> <run-dir>');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
@@ -74,6 +74,58 @@ if (mode === 'inherited-filters') {
     await writeFile(config, original);
   }
   console.log('PASS: save and read RPC preserve exact bytes without running inherited clean, smudge or process filters.');
+  process.exit(0);
+}
+if (mode === 'write-races') {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  const evidence = [];
+  for (const state of ['file', 'parent']) {
+    const path = `race-${state}/doc.md`;
+    const original = await rpc({ ...input, path, content: 'Original home bytes.' });
+    if (!original.ok) throw new Error('Cannot seed race document');
+    const before = await git('rev-parse', 'HEAD');
+    const outside = `${run}/outside-${state}`;
+    const marker = `${run}/raced-${state}`;
+    const backup = `${root}/preserved-${state}`;
+    await mkdir(outside);
+    await writeFile(`${outside}/doc.md`, 'Outside sentinel.');
+    const action = state === 'file'
+      ? `rm "$neo_root/${path}"; ln -s "$neo_outside/doc.md" "$neo_root/${path}"`
+      : `mv "$neo_root/race-${state}" "$neo_backup"; ln -s "$neo_outside" "$neo_root/race-${state}"`;
+    await writeFile(`${run}/bin/git`, `#!/bin/sh
+set -eu
+neo_root=${quote(root)}
+neo_outside=${quote(outside)}
+neo_marker=${quote(marker)}
+neo_backup=${quote(backup)}
+for arg do
+ if [ "$arg" = add ] && [ "$(pwd -P)" = "$neo_root" ] && [ ! -e "$neo_marker" ]; then
+  touch "$neo_marker"
+  ${action}
+  exit 91
+ fi
+done
+exec /usr/bin/git "$@"
+`, { mode: 0o755 });
+    const failed = await rpc({ ...input, path, content: 'New home bytes.' }).catch((error) => ({ ok: false, error: error.message }));
+    const outsideBytes = await readFile(`${outside}/doc.md`, 'utf8');
+    const afterFailure = await git('rev-parse', 'HEAD');
+    const raced = await readFile(marker, 'utf8');
+    evidence.push({ state, failed, outsideBytes, before, afterFailure, raced });
+    await writeFile(`${run}/evidence/neo-home-write-races.json`, JSON.stringify(evidence, null, 2));
+    if (failed.ok || outsideBytes !== 'Outside sentinel.' || before !== afterFailure || raced !== '') throw new Error('Rollback followed a swapped path or did not run the race');
+    if (state === 'parent') {
+      await rm(`${root}/race-${state}`);
+      await rename(backup, `${root}/race-${state}`);
+    } else if ((await lstat(`${root}/${path}`)).isSymbolicLink()) throw new Error('Leaf rollback did not replace the symlink');
+    await writeFile(`${root}/${path}`, 'Original home bytes.');
+    const recovered = await rpc({ ...input, path, content: 'Recovered home bytes.' });
+    if (!recovered.ok || await git('show', `HEAD:${path}`) !== 'Recovered home bytes.' || await readFile(`${outside}/doc.md`, 'utf8') !== 'Outside sentinel.') throw new Error('Save did not recover after restoring the owned home entry');
+    Object.assign(evidence[evidence.length - 1], { recovered });
+    await writeFile(`${run}/evidence/neo-home-write-races.json`, JSON.stringify(evidence, null, 2));
+    await rm(`${run}/bin/git`);
+  }
+  console.log('PASS: real save RPC preserves outside bytes through leaf/parent swaps and recovers after ordinary home repair.');
   process.exit(0);
 }
 if (mode === 'ignore-repair') {

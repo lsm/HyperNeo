@@ -2,6 +2,37 @@ import * as nodeDns from 'node:dns';
 import * as nodeNet from 'node:net';
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../src/lib/providers/registry';
+import { vi } from 'vitest';
+
+vi.mock('../src/lib/acp/acp-safe-fs.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/acp/acp-safe-fs.ts')>();
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const helper = fileURLToPath(new URL('./helpers/native-workspace-replace.ts', import.meta.url));
+  return {
+    ...actual,
+    replaceFileWithinWorkspace: async (
+      workspace: string,
+      segments: string[],
+      data: Uint8Array | null,
+      signal?: AbortSignal
+    ) => {
+      if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
+      const child = spawnSync('bun', [helper], {
+        input: JSON.stringify({
+          workspace,
+          segments,
+          data: data === null ? null : Buffer.from(data).toString('base64'),
+        }),
+        encoding: 'utf8',
+      });
+      if (child.error) throw child.error;
+      const result = JSON.parse(child.stdout || '{}');
+      if (child.status || !result.ok)
+        throw Object.assign(new Error(result.message ?? child.stderr), { code: result.code });
+    },
+  };
+});
 
 process.env.NODE_ENV = 'test';
 

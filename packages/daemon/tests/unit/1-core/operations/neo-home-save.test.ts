@@ -107,6 +107,47 @@ describe('Neo home save', () => {
       }
     }
   );
+  test.each(['file', 'parent'])(
+    'does not write outside home after a %s symlink swap following validation',
+    async (state) => {
+      const path = 'documents/raced.md';
+      await save({ path, content: 'Previous document.' });
+      const outside = join(fixture, 'outside');
+      await mkdir(outside);
+      await writeFile(join(outside, 'raced.md'), 'Outside sentinel.');
+      const bin = join(fixture, 'bin');
+      await mkdir(bin);
+      const action =
+        state === 'file'
+          ? `rm '${join(root, path)}'; ln -s '${join(outside, 'raced.md')}' '${join(root, path)}'`
+          : `mv '${join(root, 'documents')}' '${join(root, 'preserved-documents')}'; ln -s '${outside}' '${join(root, 'documents')}'`;
+      await writeFile(
+        join(bin, 'git'),
+        `#!/bin/sh
+set -eu
+for arg do
+ if [ "$arg" = add ] && [ ! -e '${join(fixture, 'raced')}' ]; then
+  touch '${join(fixture, 'raced')}'
+  ${action}
+  exit 9
+ fi
+done
+exec /usr/bin/git "$@"
+`,
+        { mode: 0o755 }
+      );
+      const previous = process.env.PATH;
+      process.env.PATH = `${bin}:${previous}`;
+      try {
+        await save({ path, content: 'Requested new document.' }).catch(() => null);
+        expect(await readFile(join(fixture, 'raced'), 'utf8')).toBe('');
+        expect(await readFile(join(outside, 'raced.md'), 'utf8')).toBe('Outside sentinel.');
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    }
+  );
   test.each(['first save', 'legacy ignore'])('preserves runtime folders on %s', async (state) => {
     const prior = process.env.GIT_CONFIG_GLOBAL;
     try {

@@ -21,8 +21,10 @@ In outcome mode, the worker's MCP door must refuse neo.ask.outcome. Its explicit
 settled report instead reaches Neo through message.send and the real mailbox.
 That report alone must not record or close the ask. The scripted owning Neo then
 calls neo.ask.outcome with the decision, document and PR links, and adds an
-execution todo with the existing coding PR check. Premature neo.ask.settle must
-still refuse unfinished todos. Restart the test daemon and assert the same
+execution todo with the existing coding PR check. Leave the ask open: recording
+the discussion outcome does not settle its execution. Explicit settlement is
+covered by ask-bookkeeping-actions.md, where unfinished todos close unverified.
+Restart the test daemon and assert the same
 outcome, source link, open ask and pending execution remain in neo.snapshot.
 
 Headless 1440px/390px screenshots show the outcome's working Markdown links in
