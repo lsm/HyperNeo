@@ -132,7 +132,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
 
   const relayed = () => spawned.find((call) => call.args.includes('HyperNeo relay'))?.args.at(-1);
 
-  test.each(['cli', 'unknown', 'ambiguous'] as const)(
+  test.each(['unknown', 'ambiguous'] as const)(
     'native wake refuses a %s target owner before opening or requesting any helper',
     async (owner) => {
       write(record('t1'));
@@ -150,6 +150,35 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       expect(spawned).toEqual([]);
     }
   );
+
+  test('a CLI owner accepts direct inbox input without requiring Desktop ownership', async () => {
+    write(record('t1'));
+    live = [{ sessionId: 'cli-t1', status: 'idle', pid: 1, owner: 'cli' }];
+    const context = {
+      from: 'session:neo',
+      caller: { source: 'internal' as const, role: 'neo' as const },
+    };
+    const receipt = { executionId: 'cli-t1', inputId: 'pending-input' };
+    const received: string[] = [];
+    const result = await runClaudeDesktopWake(
+      target,
+      'next task',
+      {
+        ...deps(),
+        sendInbox: async (_id, message) => {
+          received.push(message);
+          return { ok: true, value: { delivered: false, receipt } };
+        },
+      },
+      context
+    );
+    expect(received).toEqual(['next task']);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { delivered: false, unconfirmed: true, receipt },
+    });
+    expect(spawned).toEqual([]);
+  });
 
   test('refuses a CLI-owned RC helper without sending or changing its permissions', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
