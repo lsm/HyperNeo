@@ -5,6 +5,7 @@ import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
   prepareWorkerSandbox,
   releaseWorkerSandbox,
+  workerSandboxPaths,
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -31,6 +32,12 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -843,6 +850,70 @@ describe('codex-desktop adapter status and send', () => {
       reason: 'not_delivered',
       detail: 'rename refused',
     });
+  });
+
+  test.each(['native', 'cli'] as const)(
+    'automatic queue restores purged prepared-worker runtime before dispatch: %s',
+    async (route) => {
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      const env = workerSandboxPaths(root);
+      const runtime = join(env.TMPDIR, '..');
+      const readyAtDispatch: boolean[] = [];
+      const observe = () => readyAtDispatch.push(Object.values(env).every(existsSync));
+      try {
+        await prepareWorkerSandbox(root);
+        rmSync(runtime, { recursive: true, force: true });
+        const db = new Database(statePath);
+        db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+        db.close();
+        const driver = adapter(
+          0,
+          '',
+          async () => ({
+            call: async (method) => {
+              expect(method).toBe('thread/queue/add');
+              observe();
+              if (route === 'cli') throw new Error('method not found (-32601)');
+              return { queuedSubmission: { id: 'restored-queue' } };
+            },
+            close: () => {},
+          }),
+          undefined,
+          'restored-queue',
+          { onSpawn: observe }
+        );
+        expect(await driver.send!(ref('idle'), 'continue after idle', user)).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'restored-queue' },
+        });
+        expect(readyAtDispatch).toEqual(route === 'cli' ? [true, true] : [true]);
+      } finally {
+        rmSync(runtime, { recursive: true, force: true });
+      }
+    }
+  );
+
+  test('automatic queue routing logs the queue route without a steering-failure claim', async () => {
+    const config = getLoggerConfig();
+    configureLogger({ level: LogLevel.WARN, filter: ['*'], excludeFilter: [] });
+    const events: string[] = [];
+    const off = subscribeToStructuredLogs((event) => {
+      if (event.message.startsWith('work.send route')) events.push(event.message);
+    });
+    try {
+      const driver = adapter(0, '', async () => ({
+        call: async () => ({ queuedSubmission: { id: 'native-queue' } }),
+        close: () => {},
+      }));
+      await driver.send!(ref('idle'), 'routine next input', user);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toContain('"path":"queue"');
+      expect(events[0]).toContain('"reason":"native_queue"');
+    } finally {
+      off();
+      configureLogger(config);
+    }
   });
 
   test('advertises separate messaging capabilities and queues natively without spawning', async () => {
