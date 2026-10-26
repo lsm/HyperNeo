@@ -7,6 +7,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
 import { Logger } from '../logger.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { credentialStoreWrites } from '../../storage/repositories/credential-store-writes.ts';
 
 const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
 const ENCRYPTION_KEY_ENV = 'HYPERNEO_PROVIDER_CREDENTIAL_KEY';
@@ -477,23 +479,20 @@ export class DatabaseCredentialStore implements CredentialStore {
     const cipher = createCipheriv('aes-256-gcm', this.key, iv);
     const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
-    this.db
-      .prepare(
-        `INSERT INTO provider_credentials (provider_id, encrypted_data, iv, tag, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(provider_id) DO UPDATE SET
-           encrypted_data = excluded.encrypted_data,
-           iv = excluded.iv,
-           tag = excluded.tag,
-           updated_at = excluded.updated_at`
-      )
-      .run(providerIdFrom(service, account), encrypted, iv, tag, Date.now());
+    await gatewayFor(this.db).call(credentialStoreWrites, 'set', {
+      providerId: providerIdFrom(service, account),
+      encrypted,
+      iv,
+      tag,
+    });
   }
 
   async delete(service: string, account: string): Promise<void> {
-    this.db
-      .prepare('DELETE FROM provider_credentials WHERE provider_id = ?')
-      .run(providerIdFrom(service, account));
+    await gatewayFor(this.db).call(
+      credentialStoreWrites,
+      'delete',
+      providerIdFrom(service, account)
+    );
   }
 
   async listServices(prefix: string): Promise<string[]> {
