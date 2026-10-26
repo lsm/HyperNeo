@@ -115,6 +115,25 @@ test('card writes after the migration stay indexed through triggers', () => {
   }
 });
 
+test('moving a todo to another ask re-points its indexed card', () => {
+  const db = cardDb();
+  try {
+    runMigration461(db);
+    db.prepare(
+      `INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
+       VALUES ('ask-3', 'neo:c', '第二个请求', 'Second request', 5, 5)`
+    ).run();
+    db.prepare(`UPDATE neo_todos SET ask_id = 'ask-3' WHERE id = 'todo-1'`).run();
+    expect(matches(db, 'Upload')).toEqual([
+      { source: 'todo', entity_id: 'todo-1', ask_id: 'ask-3' },
+    ]);
+    db.prepare(`DELETE FROM neo_asks WHERE id = 'ask-1'`).run();
+    expect(matches(db, 'TestFlight')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
 test('card search migration is repeatable and skips databases without Neo tables', () => {
   const db = cardDb();
   const plain = new Database(':memory:');
