@@ -385,14 +385,30 @@ export class NeoAskTodoRepository {
     return this.getAsk(id)!;
   }
 
-  settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {
+  settleAsk(
+    ask: NeoAsk,
+    status: 'done' | 'dropped',
+    outcome: string,
+    now: number,
+    unverified: readonly string[] = []
+  ): NeoAsk {
     this.db
       .prepare(
         "UPDATE neo_asks SET status = ?, outcome = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = 'open'"
       )
       .run(status, outcome, now, now, ask.id);
     for (const todo of this.listTodos(ask.id))
-      if (['todo', 'doing', 'blocked'].includes(todo.state))
+      if (unverified.includes(todo.id))
+        this.writeTodo(
+          todo,
+          {
+            state: 'closed_unverified',
+            reason: `Ask closed without verifying: ${todo.doneWhen}`,
+            finishedAt: now,
+          },
+          now
+        );
+      else if (['todo', 'doing', 'blocked'].includes(todo.state))
         this.updateTodo(
           todo,
           { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },

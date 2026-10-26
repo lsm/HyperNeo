@@ -321,17 +321,13 @@ export function createNeoAskRecordOperations(
               `todos_unfinished: closed unverified: ${unfinished.map((todo) => `${todo.title} (${todo.id}): ${todo.doneWhen}`).join('; ')}`,
             ]
           : [];
-        for (const todo of unfinished)
-          store.updateTodo(
-            todo,
-            {
-              state: 'closed_unverified',
-              reason: `Ask closed without verifying: ${todo.doneWhen}`,
-              finishedAt: Date.now(),
-            },
-            Date.now()
-          );
-        const settled = store.settleAsk(ask, input.status, input.outcome, Date.now());
+        const settled = store.settleAsk(
+          ask,
+          input.status,
+          input.outcome,
+          Date.now(),
+          unfinished.map((todo) => todo.id)
+        );
         for (const todo of store.listTodos(ask.id))
           if (!swept.has(todo.id) && sessions.readRef(todo.id)) await controls.stop(todo);
         return {
