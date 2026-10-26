@@ -1,4 +1,5 @@
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
+import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
   codingPollPageReads,
@@ -112,6 +113,7 @@ import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
     neoTodoMutationReads,
+    neoTodoMutations,
     codingPollPageReads,
     codingPollPageWrites,
     readWorkInput,

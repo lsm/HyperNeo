@@ -86,6 +86,31 @@ try {
   assert.equal(ordinaryContext?.autoCompactThreshold, 700_000);
   evidence.ordinaryExplicit = { info: ordinaryInfo, threshold: ordinaryContext?.autoCompactThreshold };
 
+  const small = { id: 'fixture-small', name: 'Synthetic small', provider: 'anthropic', available: true, contextWindow: 200_000, autoCompactPercent: 80 } as ModelInfo;
+  setModelsCache(new Map([['global', [model, small]]]));
+  await live.stateManager.setProcessing('model-switch-pending-save');
+  evidence.pendingSwitchSave = await call('neo.preferences.set', {
+    model: small.id,
+    provider: 'anthropic',
+    thinkingLevel: 'off',
+    fallbacks: [{ model: model.id, provider: 'anthropic', thinkingLevel: 'off', autoCompactPercent: 70 }],
+  });
+  evidence.whileSwitchPending = {
+    model: live.getSessionData().config.model,
+    percent: (await info())?.autoCompactPercent,
+  };
+  assert.equal(live.getSessionData().config.model, model.id);
+  assert.equal((await info())?.autoCompactPercent, 70);
+  await live.stateManager.setIdle();
+  evidence.afterSwitchLanded = {
+    model: live.getSessionData().config.model,
+    percent: (await info())?.autoCompactPercent,
+    pending: live.getSessionData().metadata.pendingAutoCompactPercent,
+  };
+  assert.equal(live.getSessionData().config.model, small.id);
+  assert.equal((await info())?.autoCompactPercent, 80);
+  assert.equal(live.getSessionData().metadata.pendingAutoCompactPercent, undefined);
+
   const repo = new NeoRepository(app.db.getDatabase());
   const project = 'synthetic-project';
   repo.saveProject({ id: project, title: 'Synthetic project', summary: '', context: '' }, 0);

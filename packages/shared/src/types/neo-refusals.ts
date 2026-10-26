@@ -110,6 +110,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   invalid_work_id: 'The card id is empty. Pass a card id from neo.snapshot.',
   avatar_required:
     'Only Neo’s own session for this conversation can publish. Use that session’s publication tool.',
+  local_session_required:
+    'Changing the project tree needs a daemon session or the local CLI. Run it from a session or as the local user.',
   main_neo_only:
     'Only main Neo or the human can do this. Ask main Neo to do it, or do it from main.',
   needs_human:
