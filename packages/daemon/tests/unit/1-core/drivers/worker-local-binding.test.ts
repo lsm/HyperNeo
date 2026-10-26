@@ -11,14 +11,16 @@ import {
   workerSandboxPaths,
 } from '../../../../src/lib/drivers/worker-sandbox.ts';
 
+let fixture: string;
 let root: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'worker-loopback-'));
+  fixture = mkdtempSync(join(tmpdir(), 'worker-loopback-'));
+  root = join(fixture, 'worker');
   mkdirSync(join(root, '.git/info'), { recursive: true });
 });
 afterEach(() => {
   rmSync(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
-  rmSync(root, { recursive: true, force: true });
+  rmSync(fixture, { recursive: true, force: true });
 });
 
 const settings = () => JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
