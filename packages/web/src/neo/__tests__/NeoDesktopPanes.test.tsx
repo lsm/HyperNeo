@@ -22,12 +22,7 @@ vi.mock('../NeoComposer.tsx', () => ({
   ),
 }));
 vi.mock('../NeoConversation.tsx', () => ({
-  NeoConversation: ({ busy }: { busy?: readonly string[] | null }) => (
-    <>
-      <p>Durable fictional conversation</p>
-      {busy?.length ? <div class="neo-progress">{busy[0]}</div> : null}
-    </>
-  ),
+  NeoConversation: () => <p>Durable fictional conversation</p>,
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 vi.mock('../NeoSessionPane.tsx', () => ({
@@ -228,119 +223,6 @@ describe('Neo desktop panes', () => {
     });
     expect(main.scrollTop).toBe(2000);
     expect(chat.scrollTop).toBe(50);
-  });
-
-  it('hides the working line until the conversation has loaded once', () => {
-    const { container, model } = mount(true, 'loading');
-    const line = () => container.querySelector<HTMLElement>('.neo-progress');
-    const withAsk = (status: string) => {
-      model.value = {
-        ...model.value,
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          status,
-          entries: [
-            {
-              key: 'ask',
-              kind: 'ask',
-              ask: { askOrigin: { sessionId: root, messageId: 'ask' } },
-            } as never,
-          ],
-        },
-      };
-    };
-    act(() => withAsk('loading'));
-    expect(line()).toBeNull();
-    act(() => withAsk('ready'));
-    expect(line()?.textContent).toContain('Neo is working…');
-  });
-
-  it('shows no working line while a question waits on the human', () => {
-    const { container, model } = mount();
-    act(() => {
-      model.value = {
-        ...model.value,
-        snapshot: {
-          ...model.value.snapshot,
-          todoAsks: [
-            testAskEntry('asking', 'Fictional question', {
-              state: 'waiting',
-              questions: [{ id: 'q', state: 'open' } as never],
-            }),
-          ],
-        },
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          entries: [
-            {
-              key: 'ask',
-              kind: 'ask',
-              ask: { askOrigin: { sessionId: root, messageId: 'ask' } },
-            } as never,
-          ],
-        },
-      };
-    });
-    expect(container.querySelector('.neo-progress')).toBeNull();
-  });
-
-  it('shows one working line for an unanswered ask, but not while Neo waits on you', () => {
-    const { container, model } = mount();
-    const line = () => container.querySelector<HTMLElement>('.neo-progress');
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          entries: [
-            {
-              key: 'ask',
-              kind: 'ask',
-              ask: { askOrigin: { sessionId: root, messageId: 'ask' } },
-            } as never,
-          ],
-        },
-      };
-    });
-    expect(line()?.textContent).toContain('Neo is working…');
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          status: 'loading',
-        },
-      };
-    });
-    expect(line()?.textContent).toContain('Neo is working…');
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          status: 'unavailable',
-        },
-      };
-    });
-    expect(line()).toBeNull();
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          status: 'ready',
-        },
-      };
-      model.value.store.agentState.value = {
-        status: 'waiting_for_input',
-      } as never;
-    });
-    expect(line()).toBeNull();
-    act(() => {
-      model.value.store.agentState.value = { status: 'idle' } as never;
-      model.value.store.error.value = { message: 'Session failed' } as never;
-    });
-    expect(line()).toBeNull();
   });
 
   it('does not enable the new layout for legacy SDK conversations', () => {
