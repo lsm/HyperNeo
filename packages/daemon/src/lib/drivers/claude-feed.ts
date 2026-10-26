@@ -49,6 +49,7 @@ const TEMP_ROOTS = [
 ];
 
 type Block = { type?: string; text?: string };
+type PeerOrigin = { kind?: string; body?: unknown };
 type TranscriptLine = {
   type?: string;
   uuid?: string;
@@ -57,6 +58,8 @@ type TranscriptLine = {
   isSidechain?: boolean;
   cwd?: string;
   message?: { content?: unknown };
+  origin?: PeerOrigin;
+  attachment?: { type?: string; origin?: PeerOrigin };
 };
 
 export function claudeProjectsRoot(): string {
@@ -92,6 +95,14 @@ function spokenText(content: unknown, role: 'user' | 'assistant'): string {
   return blocks
     .filter((block) => block.type === 'text' && typeof block.text === 'string')
     .map((block) => (block.text ?? '').trim())
+    .map((text) => {
+      const peer =
+        role === 'user' &&
+        /^<cross-session-message\b[^>]*>\n(\[worker-answer:[\s\S]*)\n<\/cross-session-message>$/.exec(
+          text
+        );
+      return peer ? peer[1] : text;
+    })
     .filter(
       (text) =>
         text &&
@@ -104,16 +115,34 @@ export function claudeTranscriptTurns(lines: readonly string[], sessionId: strin
   return lines.flatMap((line) => {
     try {
       const record = JSON.parse(line) as TranscriptLine;
-      const role = record.type;
-      if ((role !== 'user' && role !== 'assistant') || record.isMeta || record.isSidechain)
+      const origin =
+        record.type === 'user'
+          ? record.origin
+          : record.type === 'attachment' && record.attachment?.type === 'queued_command'
+            ? record.attachment.origin
+            : undefined;
+      const peerAnswer =
+        origin?.kind === 'peer' &&
+        typeof origin.body === 'string' &&
+        origin.body.startsWith('[worker-answer:')
+          ? origin.body
+          : null;
+      const role = peerAnswer ? 'user' : record.type;
+      if (
+        (role !== 'user' && role !== 'assistant') ||
+        (record.isMeta && !peerAnswer) ||
+        record.isSidechain
+      )
         return [];
-      const text = spokenText(record.message?.content, role);
+      const text = peerAnswer ?? spokenText(record.message?.content, role);
       const at = Date.parse(record.timestamp ?? '');
-      if (!text || !record.uuid || !Number.isFinite(at)) return [];
+      const messageId =
+        record.uuid ?? (peerAnswer ? `${sessionId}:${peerAnswer.split('\n')[0]}` : null);
+      if (!text || !messageId || !Number.isFinite(at)) return [];
       return [
         {
-          sourceId: record.uuid,
-          messageId: record.uuid,
+          sourceId: messageId,
+          messageId,
           sessionId,
           role,
           text,

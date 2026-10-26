@@ -5,7 +5,8 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { SendMessageResultSchema } from '../messaging/message-send.ts';
 import { WorkDeliverySchema } from '../drivers/types.ts';
 import { renderRemoteAddress } from '../mailbox/address.ts';
-import { driverWorkCaller, readDriverLanded } from './driver-work.ts';
+import { driverWorkCaller } from './driver-work.ts';
+import { ReadWorkResultSchema } from '../drivers/read-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
 import type { NeoService } from './service.ts';
@@ -111,12 +112,26 @@ export function createNeoQuestionAnswerDelivery(
           if (sent.success && !sent.data.value.unconfirmed) receipt = key;
           else if (NotSent.safeParse(value).success) store.questionAnswers.retry(route.id, key);
         } else {
-          const status = await invoke(caller, 'work.status', {
-            ref,
-            since: Math.max(0, (route.attemptedAt ?? route.answeredAt ?? 0) - 1),
+          const marker = `[worker-answer:${key}]`;
+          const result = await invoke(caller, 'work.read', {
+            sessionId: ref.id,
+            ...(ref.daemon ? { daemon: ref.daemon } : {}),
+            input: { adapter: ref.adapter, marker },
           });
+          const read = ReadWorkResultSchema.safeParse(
+            result.kind === 'completed' ? result.value : null
+          );
           if (
-            readDriverLanded(status, { opening: `[worker-answer:${key}]`, inputBefore: 0 }) !== null
+            read.success &&
+            read.data.ok &&
+            read.data.value.sessionId === ref.id &&
+            read.data.value.matchedInput?.adapter === ref.adapter &&
+            read.data.value.matchedInput.marker === marker &&
+            read.data.value.turns.some(
+              (turn) =>
+                turn.role === 'user' &&
+                (turn.text === marker || turn.text.startsWith(`${marker}\n`))
+            )
           )
             receipt = key;
         }
