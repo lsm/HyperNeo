@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startSigningAgent } from './signing-agent.ts';
 import { startCodexBootstrapServer } from '../../../packages/daemon/src/lib/drivers/codex-app-server.ts';
 import { queueCodexMessage, type CodexDesktopAdapterDeps } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
 import { codexWorkerSandbox, prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
@@ -20,8 +21,9 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 const git = spawnSync('git', ['init', '--initial-branch=dev'], { cwd: worker, encoding: 'utf8' });
 assert.equal(git.status, 0, git.stderr);
 await prepareWorkerSandbox(worker);
+const signing = startSigningAgent(run);
 const model = spawn('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, worker, 'codex-app-server'], {
-  env: { ...process.env, VERIFY_LOOPBACK: '1', VERIFY_SECRET_READ: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, VERIFY_LOOPBACK: '1', VERIFY_SECRET_READ: '1', ...signing.env }, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let modelLog = '';
 model.stdout.on('data', chunk => { modelLog += chunk; });
@@ -80,13 +82,16 @@ try {
     secretRefused: readFileSync(join(worker, 'secret-read-status-codex-app-server.txt'), 'utf8') !== '0' && readFileSync(join(worker, 'secret-read-result-codex-app-server.txt'), 'utf8') === '',
     repoReadable: readFileSync(join(worker, 'repo-read-result-codex-app-server.txt'), 'utf8') === 'synthetic-repo-readable',
     outsideRefused: !existsSync(join(run, 'codex-app-server-outside/escaped.txt')),
+    signedCommit: existsSync(join(worker, 'signed-codex-app-server.txt')) && readFileSync(join(worker, 'signed-codex-app-server.txt'), 'utf8').trim() === '1',
   };
   writeFileSync(join(run, 'evidence/queued-loopback.json'), JSON.stringify(observed, null, 2));
   assert.equal(observed.profileId, sandbox.permissions, 'Queued turn lost its named worker profile');
   assert(observed.secretRefused && observed.repoReadable, 'Secret denial and ordinary repository reads must both hold');
   assert(observed.localServer?.connected, 'Queued worker could not start/connect to a loopback server');
   assert(observed.outsideRefused, 'Worker wrote outside its allowed roots');
+  assert(observed.signedCommit, 'Queued worker could not sign a commit through the agent socket');
 } finally {
+  signing.stop();
   await server?.close();
   writeFileSync(join(run, 'codex-app-server-finish'), 'done');
   model.kill();

@@ -98,8 +98,8 @@ OS containment of native file tools or arbitrary MCP/helper processes.
 Prepared Claude starts/resumes explicitly pass the clone's generated settings file;
 local-source loading alone does not apply its protected environment variables.
 Runtime roots are re-created on resume/query and sibling-policy refresh. Claude
-HTTP(S) hosts are allowed through its proxy. Unix sockets are denied by default;
-only human-approved exact paths in Worker Unix sockets are granted to new sessions.
+HTTP(S) hosts are allowed through its proxy. Workers may reach Unix sockets,
+including signing agents; filesystem read denials do not contain host IPC.
 Live GitHub push/authentication is unverified.
 
 Pre-upgrade prepared Claude sessions repair missing env/sandbox defaults before

@@ -20,7 +20,8 @@ live daemon or port 8399 is used.
 Before the fix, `queued-loopback.json` lacks a successful local-server receipt
 and model requests retain the real binding denial. Afterward the calls show
 `thread/settings/update` before `thread/queue/add`, `localServer.connected` is
-true and `outsideRefused` remains true. The helper stops both processes and
+true, `signedCommit` is true (an SSH-signed commit through a throwaway `ssh-agent`
+socket outside the worker) and `outsideRefused` remains true. The helper stops both processes and
 releases worker runtime roots; the wrapper retains evidence and removes its data.
 The recorded turn context must select `hyperneo-worker`. The helper first selects
 a separate restricted named profile, then checks that production queue admission

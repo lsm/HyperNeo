@@ -57,6 +57,13 @@ if os.environ.get('VERIFY_SECRET_READ') == '1':
     with probe.open('a') as script:
         script.write(f"cat '{secret}' > secret-read-result-{engine}.txt; printf '%s' \"$?\" > secret-read-status-{engine}.txt\n")
         script.write(f"cat readable-repo-fixture.txt > repo-read-result-{engine}.txt\n")
+if os.environ.get('VERIFY_SIGNING_SOCK'):
+    with probe.open('a') as script:
+        script.write(f"""signed="${{TMPDIR:-{worker}/fallback-tmp}}/signed-{engine}"; rm -rf "$signed"; git init -q "$signed"
+git -C "$signed" -c user.name=Synthetic -c user.email=synthetic@example.invalid -c gpg.format=ssh -c 'user.signingkey=key::{os.environ['VERIFY_SIGNING_KEY']}' commit -q -S --allow-empty -m signed
+printf 'signing-status=%s\\n' "$?"
+git -C "$signed" cat-file commit HEAD | grep -c 'BEGIN SSH SIGNATURE' > signed-{engine}.txt
+""".replace('git -C', "SSH_AUTH_SOCK='" + os.environ['VERIFY_SIGNING_SOCK'] + "' git -C"))
 requests = []
 if (run / 'verify-sockets').exists():
     (worker / 'socket-probe.py').write_text('''import json, socket, sys
@@ -166,6 +173,11 @@ try:
         observed['localServer'] = json.loads(local.read_text()) if local.exists() else None
         (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
         assert observed['localServer'] and observed['localServer']['connected'], 'Worker could not listen on loopback and connect to its server'
+    if os.environ.get('VERIFY_SIGNING_SOCK'):
+        signed = worker / f'signed-{engine}.txt'
+        observed['signedCommit'] = signed.exists() and signed.read_text().strip() == '1'
+        (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
+        assert observed['signedCommit'], 'Worker could not sign a commit through the agent socket'
     print(json.dumps(observed))
     if (run / 'verify-sockets').exists():
         sockets = json.loads((worker / 'socket-observed.json').read_text())

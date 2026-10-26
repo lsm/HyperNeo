@@ -27,5 +27,6 @@ if [[ ${VERIFY_PROOF_RUNTIME:-bun} = node ]]; then
 fi
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
   NODE_PATH="${NODE_PATH:-}" VERIFY_BROWSER="${VERIFY_BROWSER:-}" \
-  HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
+  HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" \
+  VERIFY_BROWSER="${VERIFY_BROWSER:-}" NODE_PATH="${NODE_PATH:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
   > "$RUN/proof.log" 2>&1

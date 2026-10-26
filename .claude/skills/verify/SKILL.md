@@ -40,7 +40,11 @@ cd packages/web && bun run build && cd ../..
 - If the host denies `taskpolicy` or `nice` priority changes, set
   `VERIFY_NORMAL_PRIORITY=1`; isolation is unchanged. `VERIFY_REPO` selects
   the source checkout for shared upgrade tooling only.
-- `$RUN` is a fresh directory (default: a new `mktemp -d`). It holds `data/`
+- `$RUN` is a fresh `hyperneo-verify.*` directory. Create it by wrapping the
+  journey in `with-run.sh`, which removes it on success, failure and interrupt
+  (`VERIFY_KEEP_RUN=1` keeps it and prints the path), or by hand with
+  `mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX"` plus
+  `trap 'rm -rf "$RUN"' EXIT` in the owning shell. It holds `data/`
   (DB), `home/`, `bin/gh`, the logs, the pid files and `evidence/`.
 - Ready signal: `ready: http://127.0.0.1:<port>  run dir: <run>`. The daemon log
   shows `HyperNeo Test Server` and `Database: <run>/data/daemon.db`.
@@ -57,6 +61,18 @@ do not change browser permissions or system settings to work around it.
 An installed browser that aborts with `SIGABRT` or `EPERM` is blocked too. Keep
 its launch log and use component evidence as a fallback, explicitly leaving
 screenshots and visual layout unverified.
+If browser origin approval is denied, retain that refusal and leave visual proof
+unverified. Do not retry through another browser or transport to bypass it;
+release the helper and preserve its daemon evidence before cleanup.
+Trust the wrapper exit status, not a helper's PASS line. A closed-database error
+from background Neo recovery during shutdown makes the daemon proof fail, even
+if its reader assertions passed. Retain the log; ask-bookkeeping-actions provides
+a listener-free MCP/public-reader/audit proof, without claiming daemon startup
+or shutdown verification.
+
+The shared proof-run.sh wrapper forwards only these explicitly selected browser
+dependency paths, alongside VERIFY_CLAUDE. Other parent environment values stay
+scrubbed; set the browser paths on the wrapper invocation when using --web.
 
 Give it a model, once per run (stored in the run's DB only):
 

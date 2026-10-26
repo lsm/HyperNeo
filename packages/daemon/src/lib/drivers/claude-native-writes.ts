@@ -40,7 +40,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       network: {
         allowedDomains: ['*'],
         allowUnixSockets: workerUnixSockets(),
-        allowAllUnixSockets: false,
+        allowAllUnixSockets: true,
         allowLocalBinding: true,
       },
     },
@@ -133,7 +133,7 @@ function withSecretDenials(
         ...computed.sandbox.network,
         ...existing?.sandbox?.network,
         allowUnixSockets: computed.sandbox.network.allowUnixSockets,
-        allowAllUnixSockets: false,
+        allowAllUnixSockets: computed.sandbox.network.allowAllUnixSockets,
       },
       filesystem: {
         ...computed.sandbox.filesystem,

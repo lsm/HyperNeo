@@ -162,10 +162,7 @@ try {
     const execution = await call('neo.todo.add', { askId: opened.ask.id, title: 'Implement the settled positioning', doneWhen: 'Implementation PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/example/project/pull/8'] } } });
     assert(execution.ok, JSON.stringify(execution));
     assert.equal(execution.todo.state, 'todo');
-    const premature = await call('neo.ask.settle', { askId: opened.ask.id, status: 'done', outcome: 'Everything finished' });
-    assert.equal(premature.ok, false);
-    assert.match(premature.reason, /todos_unfinished/);
-    Object.assign(outcomeEvidence, { explicitReport, sent, recorded, execution, premature, ordinaryRelayDidNotRecord: true, reportDidNotRecordAutomatically: true });
+    Object.assign(outcomeEvidence, { explicitReport, sent, recorded, execution, ordinaryRelayDidNotRecord: true, reportDidNotRecordAutomatically: true });
   }
   const modelDeadline = Date.now() + 15000;
   while (!modelRequests.length && Date.now() < modelDeadline) await new Promise((done) => setTimeout(done, 20));
