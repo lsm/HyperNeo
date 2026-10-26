@@ -1,4 +1,5 @@
 import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
+import { sessionListReads } from '../../storage/repositories/session-list-read.ts';
 import type {
   CreateSessionRequest,
   GetSessionToolInventoryRequest,
@@ -279,10 +280,12 @@ export function setupSessionHandlers(
   messageHub.onRequest(
     'session.list',
     async (data: { status?: string; includeArchived?: boolean } | undefined) => {
-      const sessions = sessionManager.listSessions({
-        status: data?.status,
-        includeArchived: data?.includeArchived,
-      });
+      const sessions = await sessionManager
+        .getDatabase()
+        .gateway.call(sessionListReads, 'listSessions', {
+          status: data?.status,
+          includeArchived: data?.includeArchived,
+        });
       return { sessions };
     }
   );
