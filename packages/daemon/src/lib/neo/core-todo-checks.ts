@@ -41,6 +41,19 @@ function sentence(check: CoreCheck): string {
   return `The running daemon build contains ${check.params.repo}@${check.params.sha}.`;
 }
 
+function doneWhen(rule: NeoTodoCheck) {
+  const parsed = rule.pack === 'core' ? Check.safeParse(rule) : null;
+  return parsed?.success ? sentence(parsed.data) : null;
+}
+
+export const coreTodoPolicy = {
+  doneWhen,
+  refuse: (draft: Pick<NeoTodo, 'check'>) =>
+    doneWhen(draft.check!)
+      ? null
+      : 'invalid_core_check: use human_confirmed {questionId}, evidence {artifact} or {path}, or deployed {repo: lsm/HyperNeo, sha: full commit}.',
+};
+
 export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
   const store = new NeoAskTodoRepository(db);
   const artifacts = new ArtifactFileReadRepository(db);
@@ -97,10 +110,6 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
       'observed'
     )
     .endAsync('observed') as (todo: NeoTodo) => Promise<NeoTodoCheckResult>;
-  function doneWhen(rule: NeoTodoCheck) {
-    const parsed = rule.pack === 'core' ? Check.safeParse(rule) : null;
-    return parsed?.success ? sentence(parsed.data) : null;
-  }
   return {
     id: 'core',
     describe: 'Shared completion checks',
@@ -113,12 +122,8 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
     todos: {
       schema: () => {},
       check,
-      doneWhen,
+      ...coreTodoPolicy,
       statusLine: () => null,
-      refuse: (draft) =>
-        doneWhen(draft.check!)
-          ? null
-          : 'invalid_core_check: use human_confirmed {questionId}, evidence {artifact} or {path}, or deployed {repo: lsm/HyperNeo, sha: full commit}.',
     },
   };
 }

@@ -37,7 +37,7 @@ const read: DbOp<{method: string; args: unknown[]}, Outcome> = {
 };
 const plan = (input: unknown) => app.db.gateway.run(read, {method:'plan',args:[input,10,[]]});
 const visible = () => hub.request<{ok: true; entry: {todos: NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
-const report: Record<string, unknown> = {mode, planningActivated: false, mutationRpcActivated: false};
+const report: Record<string, unknown> = {mode, plannerRegistered: false, mutationRpcActivated: false};
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
@@ -70,7 +70,7 @@ try {
     assert(proposed.ok && proposed.patch);
     assert.equal(proposed.patch.doneWhen,`File ${join(run,'not-created')} exists.`);
     assert.equal((await plan({kind:'remove',todoId:'first',reason:'Only a plan'})).ok,true);
-    report.planningActivated = true;
+    report.plannerRegistered = true;
     report.records = planned.records;
     report.derivedCheck = proposed.patch.check;
   }

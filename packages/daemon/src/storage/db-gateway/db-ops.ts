@@ -1,3 +1,4 @@
+import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
   codingPollPageReads,
@@ -109,6 +110,7 @@ import { sessionProjectionReads } from '../repositories/session-projection-read.
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    neoTodoMutationReads,
     codingPollPageReads,
     codingPollPageWrites,
     readWorkInput,

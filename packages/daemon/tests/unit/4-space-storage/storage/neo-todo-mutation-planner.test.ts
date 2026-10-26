@@ -123,6 +123,35 @@ describe('Read-only todo mutation plans', () => {
     expect(await plan(input)).toMatchObject({ ok: false, reason: expect.stringContaining(reason) });
   });
 
+  test('artifact plans accept only the matching authorized reference', async () => {
+    const ref = {
+      daemonId: 'synthetic',
+      artifactId: 'artifact',
+      title: 'Report',
+      kind: 'text',
+      byteLength: 1,
+    };
+    const input = {
+      kind: 'edit',
+      todoId: 'first',
+      done: 'reported',
+      evidence: 'Full evidence',
+      artifacts: [ref],
+    };
+    expect(await plan(input)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('invalid_artifact_reference:'),
+    });
+    expect(await plan(input, [ref])).toMatchObject({
+      ok: true,
+      patch: { artifacts: [ref], report: 'Full evidence' },
+    });
+    expect(await plan({ ...input, artifacts: [{ ...ref, byteLength: 2 }] }, [ref])).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('invalid_artifact_reference:'),
+    });
+  });
+
   test('a removed todo refuses edits', async () => {
     store.updateTodo(store.getTodo('first')!, { state: 'removed' }, 2);
     expect(await plan({ kind: 'edit', todoId: 'first', title: 'Ignored' })).toMatchObject({
