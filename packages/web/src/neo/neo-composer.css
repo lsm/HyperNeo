@@ -1,0 +1,73 @@
+.neo-composer-input.is-collapsed {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.neo-composer-input.is-collapsed > :not(textarea, input, .neo-composer-toolbar) {
+  grid-column: 1 / -1;
+}
+
+.neo-composer-input.is-collapsed > textarea {
+  grid-column: 2;
+  order: 2;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.neo-composer-input.is-collapsed .neo-composer-toolbar,
+.neo-composer-input.is-collapsed .neo-composer-tools {
+  display: contents;
+}
+
+.neo-composer-input.is-collapsed .neo-composer-tools > button {
+  grid-column: 1;
+  order: 1;
+  width: 44px;
+  height: 44px;
+}
+
+.neo-composer-input.is-collapsed .neo-composer-preferences {
+  display: none;
+}
+
+.neo-composer-input.is-collapsed .neo-composer-actions {
+  grid-column: 3;
+  order: 3;
+}
+
+.neo-composer-input.is-collapsed .neo-composer-status {
+  grid-column: 1 / -1;
+  order: 4;
+}
+
+.neo-composer-input.is-collapsed.is-recording .neo-composer-draft {
+  display: none;
+}
+
+.neo-composer-input.is-collapsed.is-recording .neo-composer-actions {
+  grid-column: 2 / -1;
+  width: 100%;
+}
+
+.neo-composer-input.is-collapsed.is-recording .neo-composer-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.neo-composer-input.is-focused.is-recording .neo-composer-tools {
+  display: none;
+}
+
+.neo-composer-input.is-focused.is-recording .neo-composer-actions {
+  flex: 1;
+}
+
+.neo-composer-tools > button {
+  min-width: 44px;
+  min-height: 44px;
+}
