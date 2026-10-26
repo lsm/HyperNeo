@@ -1,6 +1,6 @@
-import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
   NeoAskTodoRepository,
@@ -10,12 +10,13 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { dispatchNeoInput } from './dispatch-input.ts';
 import {
   driverWorkCall,
   driverWorkCaller,
   messageOpening,
-  neoCardSent,
   type NeoDriverTarget,
+  neoCardSent,
   readDriverActivity,
   readDriverFollowUp,
   readDriverLive,
@@ -28,7 +29,6 @@ import {
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
-import { dispatchNeoInput } from './dispatch-input.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
@@ -298,6 +298,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         workId: todo.id,
         goal: null,
         doneWhen: todo.doneWhen,
+        checkKind: todo.check?.kind ?? null,
       },
       formatGoal
     );
@@ -706,6 +707,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       workId: todo.id,
       goal: null,
       doneWhen: todo.doneWhen,
+      checkKind: todo.check?.kind ?? null,
     });
     const status = await deps.invoke(caller(ask), 'work.status', { ref });
     if (readDriverLive(status)?.status === 'needs_you')

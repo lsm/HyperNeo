@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
-import type { MessageHub } from '@hyperneo/shared';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
+import type { MessageHub } from '@hyperneo/shared';
 import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
 import {
-  InternalEventBus,
   type DaemonInternalEventMap,
+  InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -112,8 +112,25 @@ test('installed builtins keep identity and settings select without rebuilding th
       workId: 'todo',
       goal: null,
       doneWhen: 'PR merged',
+      checkKind: 'pr_merged',
     })
   ).toContain(NEO_WORK_GOAL_MERGE);
+  expect(
+    service.installedPacks()[0].workGoal?.('Ship', {
+      workId: 'todo',
+      goal: null,
+      doneWhen: 'PR #42 is live on main',
+      checkKind: 'pr_merged',
+    })
+  ).toContain(NEO_WORK_GOAL_MERGE);
+  expect(
+    service.installedPacks()[0].workGoal?.('Ship', {
+      workId: 'todo',
+      goal: null,
+      doneWhen: 'Merged',
+      checkKind: null,
+    })
+  ).not.toContain(NEO_WORK_GOAL_MERGE);
 });
 
 test('an installed legacy todo check observes reader replacements and retains its claims', async () => {

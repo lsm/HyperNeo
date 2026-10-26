@@ -1,9 +1,9 @@
-import type { WorkerIdentity } from './worker-identity.ts';
-import type { NeoSessionMessage } from './neo-session-message.ts';
-import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
+import type { NeoSessionMessage } from './neo-session-message.ts';
+import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoModelPreference } from './settings.ts';
+import type { WorkerIdentity } from './worker-identity.ts';
 
 export interface NeoWorkDriverReceipt {
   workId: string;
@@ -25,6 +25,7 @@ export interface NeoWorkGoal {
   workId: string;
   goal: string | null;
   doneWhen: string | null;
+  checkKind?: string | null;
 }
 
 export const NEO_WORK_CLOSED_DONE_PREFIX = 'Closed as done by ';
