@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import * as fileOperations from 'node:fs/promises';
 import {
   mkdtempSync,
   mkdirSync,
@@ -26,6 +27,10 @@ import {
   readClaudeWorkerSandbox,
 } from '../../../../src/lib/drivers/claude-native-writes.ts';
 
+vi.mock('node:fs/promises', async (original) => ({
+  ...(await original<typeof import('node:fs/promises')>()),
+}));
+
 vi.mock('../../../../src/lib/drivers/worker-sandbox.ts', async (original) => {
   const actual = await original<typeof import('../../../../src/lib/drivers/worker-sandbox.ts')>();
   return {
@@ -50,6 +55,36 @@ afterEach(() => {
 });
 const settingsPath = () => join(root, '.claude/settings.local.json');
 const settings = () => JSON.parse(readFileSync(settingsPath(), 'utf8'));
+
+test('a Git exclude swapped after inspection cannot change host bytes', async () => {
+  const path = join(root, '.git/info/exclude');
+  writeFileSync(path, 'synthetic excludes\n');
+  const host = join(fixture, 'synthetic-host-file');
+  const original = 'synthetic host bytes\n';
+  writeFileSync(host, original);
+  const inspect = fileOperations.lstat;
+  let swapped = false;
+  const race = vi.spyOn(fileOperations, 'lstat').mockImplementation(async (candidate) => {
+    const entry = await inspect(candidate);
+    if (candidate === path) {
+      rmSync(path);
+      symlinkSync(host, path);
+      swapped = true;
+    }
+    return entry;
+  });
+  try {
+    const failure = await persistCodexWorkerProfile(root).then(
+      () => null,
+      (error) => error
+    );
+    expect(swapped).toBe(true);
+    expect(readFileSync(host, 'utf8')).toBe(original);
+    expect(failure).toBeInstanceOf(Error);
+  } finally {
+    race.mockRestore();
+  }
+});
 
 test.each([
   ['Codex', 'exclude'],
