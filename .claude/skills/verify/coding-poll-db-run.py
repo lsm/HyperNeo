@@ -14,6 +14,7 @@ parser.add_argument('mode', choices=['before', 'verify'])
 parser.add_argument('--executable')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[3]
+subprocess.run(['bash', str(repo / '.claude/skills/verify/resource-check.sh')], check=True)
 pressure = subprocess.check_output(['memory_pressure'], text=True)
 print(pressure, flush=True)
 match = re.search(r'System-wide memory free percentage: (\d+)%', pressure)

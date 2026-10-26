@@ -1,9 +1,14 @@
+import type { SQLiteValue } from '../types.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { GlobalToolsConfig, GlobalSettings } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 export class SettingsRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private reactiveDb?: ReactiveDatabase
+  ) {}
 
   getGlobalToolsConfig(): GlobalToolsConfig {
     const stmt = this.db.prepare(`SELECT config FROM global_tools_config WHERE id = 1`);
@@ -82,17 +87,49 @@ export class SettingsRepository {
   }
 
   saveGlobalSettings(settings: GlobalSettings): void {
-    const stmt = this.db.prepare(`
-			INSERT OR REPLACE INTO global_settings (id, settings, updated_at)
-			VALUES (1, ?, datetime('now'))
-		`);
-    stmt.run(JSON.stringify(settings));
+    this.writeGlobalSettings(settings);
   }
 
   updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
-    const current = this.getGlobalSettings();
-    const updated = { ...current, ...updates };
-    this.saveGlobalSettings(updated);
-    return updated;
+    const persisted = this.writeGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ...updates }, updates);
+    return { ...DEFAULT_GLOBAL_SETTINGS, ...persisted, ...updates };
+  }
+
+  private writeGlobalSettings(
+    settings: GlobalSettings,
+    updates?: Partial<GlobalSettings>
+  ): GlobalSettings {
+    const values: SQLiteValue[] = [JSON.stringify(settings)];
+    let merged = 'excluded.settings';
+    if (updates !== undefined) {
+      merged = `CASE WHEN json_valid(global_settings.settings)
+        THEN CASE WHEN json_type(global_settings.settings) = 'object'
+          THEN global_settings.settings ELSE '{}' END ELSE '{}' END`;
+      const removed: string[] = [];
+      const assigned: string[] = [];
+      const assignments: SQLiteValue[] = [];
+      for (const [key, value] of Object.entries(updates)) {
+        const path = `$.${JSON.stringify(key)}`;
+        if (value === undefined) {
+          removed.push('?');
+          values.push(path);
+        } else {
+          assigned.push('?, json(?)');
+          assignments.push(path, JSON.stringify(value));
+        }
+      }
+      if (removed.length) merged = `json_remove(${merged}, ${removed.join(', ')})`;
+      if (assigned.length) merged = `json_set(${merged}, ${assigned.join(', ')})`;
+      values.push(...assignments);
+    }
+    const row = this.db
+      .prepare(`
+      INSERT INTO global_settings (id, settings, updated_at) VALUES (1, ?, datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET settings = ${merged}, updated_at = excluded.updated_at
+      RETURNING settings
+    `)
+      .get(...values) as { settings: string };
+    this.reactiveDb?.notifyChange('global_settings');
+    return JSON.parse(row.settings) as GlobalSettings;
   }
 }

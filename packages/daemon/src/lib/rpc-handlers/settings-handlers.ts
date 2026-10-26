@@ -1,3 +1,4 @@
+export { keepNeoOwnedSettings } from '../global-settings-patch.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { GlobalSettings } from '@hyperneo/shared';
@@ -98,7 +99,6 @@ export function registerSettingsHandlers(
           exaMutation
         );
         const runCredentialMutations = async () => {
-          const priorSettings = settingsManager.getGlobalSettings();
           const needsCredentialSnapshot = credentialManager
             ? Boolean(
                 voiceMutation.storeKey ||
@@ -115,9 +115,8 @@ export function registerSettingsHandlers(
             needsCredentialSnapshot && (exaMutation.storeKey || exaMutation.remove)
               ? ((await credentialManager?.getCredentials(EXA_CREDENTIAL_PROVIDER_ID)) ?? null)
               : null;
-          const result = settingsManager.updateGlobalSettings(
-            keepNeoOwnedSettings(updates, settingsManager.getGlobalSettings())
-          );
+          const { settings: result, ...rollback } =
+            await settingsManager.updateGlobalSettingsAsync(updates);
           try {
             await applyCredentialMutation(
               voiceMutation,
@@ -130,7 +129,7 @@ export function registerSettingsHandlers(
               EXA_CREDENTIAL_PROVIDER_ID
             );
           } catch (error) {
-            settingsManager.saveGlobalSettings(priorSettings);
+            await settingsManager.rollbackGlobalSettingsAsync(rollback);
             await restorePriorCredential(
               priorVoiceCredential,
               credentialManager,
@@ -370,29 +369,6 @@ function normalizeEndpoint(endpoint: string): string {
   } catch {
     return endpoint;
   }
-}
-
-export function keepNeoOwnedSettings(
-  updates: Partial<GlobalSettings>,
-  current: GlobalSettings
-): Partial<GlobalSettings> {
-  if (!updates.neo) return updates;
-  const {
-    standingRules: _rules,
-    preferences: _preferences,
-    mutedSessions: _muted,
-    ...neo
-  } = updates.neo;
-  const { standingRules, preferences, mutedSessions } = current.neo ?? {};
-  return {
-    ...updates,
-    neo: {
-      ...neo,
-      ...(standingRules ? { standingRules } : {}),
-      ...(preferences ? { preferences } : {}),
-      ...(mutedSessions ? { mutedSessions } : {}),
-    },
-  };
 }
 
 export function publishGlobalSettings(

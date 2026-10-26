@@ -1,7 +1,8 @@
 # HTTP polling page commands through the DB gateway
 
 Use the existing checkout and installed dependencies. Run heavy jobs serially.
-The runner prints `memory_pressure` and disk space and refuses to run under
+The runner first invokes the shared `resource-check.sh`, records memory and disk
+space, and refuses to run under
 25% free memory or 25 GiB free disk:
 
 ```sh

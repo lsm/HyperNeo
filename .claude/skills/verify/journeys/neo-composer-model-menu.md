@@ -14,6 +14,7 @@ dir and DB, and a local mock Anthropic API. The helper creates the synthetic
 Anthropic provider on that daemon only, saves Sonnet with a 70% auto-compact
 percent as Neo's starting model, then drives `/neo`:
 
+- Focus the message field to expand the composer and reveal preferences.
 - The composer's "Model and thinking" menu lists models and a Thinking slider.
   It has no link and no Restart Neo.
 - Moving Thinking to 16K and then picking Haiku are read back from

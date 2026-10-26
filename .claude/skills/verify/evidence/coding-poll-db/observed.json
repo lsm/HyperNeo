@@ -3865,5 +3865,68 @@
     "The synthetic 1.2-second writer lock plus 300 ms response delay makes the supplementary collector exceed the 250 ms affected-operation target. The complete polling RPC was not tested under that lock because other watched-repo and event-family writes are outside this slice.",
     "Gateway elapsed time and serialized sizes are recorded; queue, SQL and clone time are not separately attributed.",
     "Connector PR and review-thread adapters still use synchronous poll repository calls and are separate subsequent lane-A slices. No claim of whole-daemon main SQL absence or production deployment."
-  ]
+  ],
+  "baseMerge": {
+    "parent": "c36811dfa0b4cf36aefb2152297c077d2316a51a",
+    "fullCheck": "passed",
+    "focusedTests": 18,
+    "focusedAssertions": 76,
+    "productionChangedLines": 99,
+    "baselineFilesUnchanged": {
+      "poll-facts.ts": true,
+      "poll-http.ts": true
+    },
+    "testedSourcesSha256": {
+      "packages/daemon/src/lib/neo/packs/coding/poll-facts.ts": "8818219f25ccde11de75b5a1acca9e8692a7d99d0a1e2255b5849464386a838d",
+      "packages/daemon/src/lib/neo/packs/coding/poll-http.ts": "23cd91f476376bd7f34222678179187e9a2609f29568139854e15240b349149a",
+      "packages/daemon/src/lib/neo/packs/coding/poll-http-db.ts": "afe30e259e95ee530be0612c9743a446f6577228fa28bc81c8a6f5ac2e2e1b68",
+      "packages/daemon/src/storage/db-gateway/db-ops.ts": "adf96948d8824d62feedb64e3909b5f7fa0c8b2ec1940a91ef79e23f223f68c4"
+    },
+    "evidence": {
+      "bun": {
+        "folder": "bun-verify-1",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 256,
+        "eventsPerCycle": [
+          2,
+          2,
+          2,
+          4,
+          4
+        ],
+        "maxLoopLagMs": 6.205791999999747,
+        "contention": {
+          "healthMs": 0.4890830000003916,
+          "collectionMs": 1505.4595,
+          "affectedCollectionUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 57,
+        "freeGiBBefore": 260.1889114379883,
+        "temporaryDaemonDataRemoved": true
+      },
+      "deno": {
+        "folder": "deno-verify-1",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 256,
+        "eventsPerCycle": [
+          2,
+          2,
+          2,
+          4,
+          4
+        ],
+        "maxLoopLagMs": 4.887624999999844,
+        "contention": {
+          "healthMs": 0.6034589999999298,
+          "collectionMs": 1525.0746249999997,
+          "affectedCollectionUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 55,
+        "freeGiBBefore": 260.1708450317383,
+        "temporaryDaemonDataRemoved": true
+      }
+    }
+  }
 }

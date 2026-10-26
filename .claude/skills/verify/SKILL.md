@@ -50,6 +50,9 @@ executable and `NODE_PATH` for existing Playwright dependencies. A cached browse
 directory may be incomplete: if launch reports missing framework files, retain
 the error and report browser proof as pending. An aborted launch is not a pass;
 do not change browser permissions or system settings to work around it.
+An installed browser that aborts with `SIGABRT` or `EPERM` is blocked too. Keep
+its launch log and use component evidence as a fallback, explicitly leaving
+screenshots and visual layout unverified.
 
 Give it a model, once per run (stored in the run's DB only):
 
@@ -60,9 +63,19 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
 
 ## In-process RPC proofs
 
-On macOS, check `df -h /System/Volumes/Data` before every heavy verification
-run or dependency install. Stop if less than 25 GiB is free. Reuse one checkout
+On macOS, run `bash .claude/skills/verify/resource-check.sh` before every heavy
+verification job or dependency install. It checks `memory_pressure` and disk
+space; stop if free memory is below 25% or disk space below 25 GiB. Run only
+one heavy job at a time (proof daemon, suite, full check or build), and wait
+for it to finish and clean up before starting the next. Reuse one checkout
 and its dependencies; do not create baseline worktrees just to compare proofs.
+The resource check must succeed before launching a job; chain it with `&&`
+or use a shell with `set -e`. For example:
+
+```bash
+bash .claude/skills/verify/resource-check.sh && bun run check
+```
+
 For a metadata-only Bun helper taking `[arguments] <run>`, use:
 
 ```bash
