@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -49,6 +50,31 @@ afterEach(() => {
 });
 const settingsPath = () => join(root, '.claude/settings.local.json');
 const settings = () => JSON.parse(readFileSync(settingsPath(), 'utf8'));
+
+test.each([
+  ['Codex', 'exclude'],
+  ['Codex', 'info'],
+  ['Claude', 'exclude'],
+  ['Claude', 'info'],
+])('%s refuses a symlinked Git %s without changing host bytes', async (engine, target) => {
+  const outside = join(fixture, 'synthetic-host');
+  mkdirSync(outside);
+  const path = join(outside, 'exclude');
+  const original = 'synthetic host file\n';
+  writeFileSync(path, original);
+  const link = join(root, '.git/info', target === 'info' ? '' : 'exclude');
+  rmSync(link, { recursive: true, force: true });
+  symlinkSync(target === 'info' ? outside : path, link);
+  const failure = await (engine === 'Codex'
+    ? persistCodexWorkerProfile(root)
+    : installClaudeNativeWrites(root, [join(fixture, 'source')])
+  ).then(
+    () => null,
+    (error) => error
+  );
+  expect(readFileSync(path, 'utf8')).toBe(original);
+  expect(failure).toBeInstanceOf(Error);
+});
 
 test('Codex selected profile denies synthetic credentials and permits repository reads', () => {
   const launch = codexWorkerSandbox(root) as unknown as {
