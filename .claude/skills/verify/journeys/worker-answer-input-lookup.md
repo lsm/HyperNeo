@@ -19,9 +19,11 @@ and another worker must not count. A marker available only on the attached peer
 must be found only through that named owning daemon. Restart the querying daemon
 and confirm both old identities remain readable from its persisted history.
 
-A synthetic Claude Desktop record maps local_card to the CLI transcript's worker
-ID. Reading that Desktop owner must find the indexed Claude input, while using
-the raw CLI ID as a Desktop owner must fail. The helper also starts one synthetic
+A synthetic Claude Desktop record maps local_card to the CLI transcript's UUID.
+Reading that Desktop owner must find answers in actual claudeInboxFrame wrappers,
+peer-origin meta inputs and queued peer attachments; the raw CLI ID must not
+impersonate its Desktop owner. The same inputs remain readable as Claude Code
+work on that exact CLI session. The helper also starts one synthetic
 pinned Copilot SDK peer and adds past/future-dated inputs followed by 160 later
 entries exceeding its 256-KiB history page. Both exact markers must remain
 readable after restart without resuming the peer; an unowned ID must not match.
