@@ -292,10 +292,10 @@ function segmentHasAllowedHead(segment: string, prefixes: readonly string[]): bo
 
 export function isBashCommandAllowed(command: string, prefixes: readonly string[]): boolean {
   if (prefixes.length === 0) return false;
-  return checkCommandText(command, (segment) => segmentHasAllowedHead(segment, prefixes));
+  return checkCommandText(command, prefixes);
 }
 
-function checkCommandText(text: string, visit: (segment: string) => boolean): boolean {
+function checkCommandText(text: string, prefixes: readonly string[]): boolean {
   const n = text.length;
   let i = 0;
   let current = '';
@@ -307,7 +307,7 @@ function checkCommandText(text: string, visit: (segment: string) => boolean): bo
     const segment = current;
     current = '';
     lineHasContent = false;
-    if (!visit(segment)) ok = false;
+    if (!segmentHasAllowedHead(segment, prefixes)) ok = false;
     return ok;
   };
 
@@ -339,13 +339,13 @@ function checkCommandText(text: string, visit: (segment: string) => boolean): bo
         }
         if (text[i] === '$' && text[i + 1] === '(') {
           const span = extractBalancedParen(text, i + 1);
-          if (!checkCommandText(span.content, visit)) ok = false;
+          if (!checkCommandText(span.content, prefixes)) ok = false;
           i = span.end;
           continue;
         }
         if (text[i] === '`') {
           const span = extractBacktick(text, i);
-          if (!checkCommandText(span.content, visit)) ok = false;
+          if (!checkCommandText(span.content, prefixes)) ok = false;
           i = span.end;
           continue;
         }
@@ -369,7 +369,7 @@ function checkCommandText(text: string, visit: (segment: string) => boolean): bo
     }
     if (ch === '$' && text[i + 1] === '(') {
       const span = extractBalancedParen(text, i + 1);
-      if (!checkCommandText(span.content, visit)) ok = false;
+      if (!checkCommandText(span.content, prefixes)) ok = false;
       current += '$()';
       lineHasContent = true;
       i = span.end;
@@ -377,7 +377,7 @@ function checkCommandText(text: string, visit: (segment: string) => boolean): bo
     }
     if (ch === '`') {
       const span = extractBacktick(text, i);
-      if (!checkCommandText(span.content, visit)) ok = false;
+      if (!checkCommandText(span.content, prefixes)) ok = false;
       current += '``';
       lineHasContent = true;
       i = span.end;
@@ -454,154 +454,4 @@ function checkCommandText(text: string, visit: (segment: string) => boolean): bo
   }
   flush();
   return ok;
-}
-
-export const NEO_SLEEP_MAX_SECONDS = 300;
-
-type SleepVerdict = 'none' | 'allowed' | 'denied';
-
-const SLEEP_DURATION = /^(\d+(?:\.\d+)?)([smhd]?)$/;
-const SLEEP_BOUNDARY = new Set([
-  ' ',
-  '\t',
-  '\n',
-  '\r',
-  '(',
-  ')',
-  '{',
-  '}',
-  ';',
-  '|',
-  '&',
-  '<',
-  '>',
-]);
-
-function normalizeSleepText(text: string): string {
-  return text
-    .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(Number.parseInt(h, 16)))
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)))
-    .replace(/\\U([0-9a-fA-F]{8})/g, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)))
-    .replace(/\\([0-7]{1,3})/g, (_, o) => String.fromCharCode(Number.parseInt(o, 8)))
-    .replace(/\\(.)/g, '$1')
-    .replace(/\$(?=['"])/g, '')
-    .replace(/['"]/g, '');
-}
-
-function isSleepToken(token: string): boolean {
-  return token === 'sleep' || token.endsWith('/sleep');
-}
-
-function containsSleepWord(text: string): boolean {
-  let boundaryEnd = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text.startsWith('sleep', i)) {
-      const after = text[i + 5];
-      const wordEnd = after === undefined || SLEEP_BOUNDARY.has(after);
-      const before = text.slice(boundaryEnd, i);
-      if (wordEnd && (i === boundaryEnd || /[/.=]$/.test(before))) return true;
-    }
-    if (SLEEP_BOUNDARY.has(text[i])) boundaryEnd = i + 1;
-  }
-  return false;
-}
-
-function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
-  let s = normalizeSleepText(segment).trim();
-  if (!s) return 'none';
-  s = s
-    .replace(/^[({]+/, '')
-    .replace(/[})]+$/, '')
-    .trim();
-  if (!s) return 'none';
-  const stripped = stripLeadingAssignments(s);
-  if (stripped === null || !stripped)
-    return stripped === null && containsSleepWord(s) ? 'invalid' : 'none';
-  const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
-  if (!head) return 'none';
-  if (head === 'read' || head.endsWith('/read')) return 'invalid';
-  if (head !== '[' && head !== '[[' && /[$`{}*?[\]]/.test(head)) return 'invalid';
-  if (!isSleepToken(head)) return containsSleepWord(stripped) ? 'invalid' : 'none';
-  if (args.length === 0) return 'invalid';
-  let total = 0;
-  for (const arg of args) {
-    const match = arg.match(SLEEP_DURATION);
-    if (!match) return 'invalid';
-    const unit = match[2] === 'm' ? 60 : match[2] === 'h' ? 3600 : match[2] === 'd' ? 86400 : 1;
-    total += Number.parseFloat(match[1]) * unit;
-  }
-  return total;
-}
-
-const FUNCTION_DEFINITION_BODY =
-  /(?:^|[\s;&|()])(?:function\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*[({]|(?:^|[\s;&|()])function\s+[A-Za-z_][A-Za-z0-9_]*\s*\{/g;
-
-function sleepInsideFunctionBody(command: string): boolean {
-  const text = normalizeSleepText(command);
-  for (const match of text.matchAll(FUNCTION_DEFINITION_BODY)) {
-    const open = match[0].endsWith('(') ? '(' : '{';
-    const close = open === '(' ? ')' : '}';
-    const start = (match.index ?? 0) + match[0].length - 1;
-    let depth = 0;
-    for (let i = start; i < text.length; i++) {
-      if (text[i] === open) depth++;
-      else if (text[i] === close) {
-        depth--;
-        if (depth === 0) {
-          if (containsSleepWord(text.slice(start + 1, i))) return true;
-          break;
-        }
-      }
-    }
-    if (depth > 0 && containsSleepWord(text.slice(start + 1))) return true;
-  }
-  return false;
-}
-
-function splitCommandText(command: string): string[] {
-  const segments: string[] = [];
-  checkCommandText(command, (segment) => {
-    segments.push(segment);
-    return true;
-  });
-  return segments;
-}
-
-export function sleepCommandVerdict(
-  command: string,
-  maxSeconds: number = NEO_SLEEP_MAX_SECONDS
-): SleepVerdict {
-  if (sleepInsideFunctionBody(command)) return 'denied';
-  let seen = false;
-  let total = 0;
-  let clean = true;
-  for (const segment of splitCommandText(command)) {
-    const seconds = sleepSegmentSeconds(segment);
-    if (seconds === 'none') continue;
-    seen = true;
-    if (seconds === 'invalid') clean = false;
-    else total += seconds;
-  }
-  if (seen) return clean && total <= maxSeconds ? 'allowed' : 'denied';
-  return containsSleepWord(normalizeSleepText(command)) ? 'denied' : 'none';
-}
-
-export function createSleepBoundHook(maxSeconds: number = NEO_SLEEP_MAX_SECONDS): HookCallback {
-  return async (input) => {
-    if (input.hook_event_name !== 'PreToolUse') return {};
-    const command = (input.tool_input as Record<string, unknown> | undefined)?.command;
-    if (typeof command !== 'string') return {};
-    const verdict = sleepCommandVerdict(command, maxSeconds);
-    if (verdict === 'none') return {};
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse' as const,
-        permissionDecision: verdict === 'allowed' ? ('allow' as const) : ('deny' as const),
-        permissionDecisionReason:
-          verdict === 'allowed'
-            ? `Bounded sleep admitted for the Neo coordinator; waits above ${maxSeconds}s stay vetoed.`
-            : `Sleep waits above ${maxSeconds}s or with computed durations stay vetoed for the Neo coordinator.`,
-      },
-    };
-  };
 }

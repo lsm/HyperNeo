@@ -13,7 +13,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:synthetic-startup';
 const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
-const allowed = [...tools, 'mcp__hyperneo-operations__invoke', 'mcp__fetch-mcp', 'Bash(sleep:*)'];
+const allowed = [...tools, 'mcp__hyperneo-operations__invoke', 'mcp__fetch-mcp'];
 
 describe('Neo startup configuration', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
