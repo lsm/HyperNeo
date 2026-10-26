@@ -23,3 +23,7 @@ The shared draft schema also covers todos supplied to neo.ask.open. Focused
 contracts cover missing/null checks, unsupported kinds, removed input fields,
 legacy rows, URL edits and current completion-check revalidation. This proof
 covers agent/RPC receipts and persisted state; it does not verify visual layout.
+
+Keep coding-specific check examples in the coding pack guidance. Run the existing
+neo-packs contract alongside the input contracts: common todo tool definitions
+must remain independent of pack-specific kinds.

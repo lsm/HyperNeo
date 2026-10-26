@@ -9,7 +9,7 @@ requires recorded merge gates and deployment smoke before the todo completes. Us
 "owner/repo#N"}}. NOT_PLANNED fails the todo; open or unreadable never completes it.
 Keep the repository's review and merge rules. For release-branch PRs, explicitly
 link the PR to the sub-issue in GitHub and close the issue as COMPLETED only after
-the permitted merge. Existing pr_merged todos keep working. Read GitHub facts with
+the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working. Read GitHub facts with
 neo.github.read; never ask the human to confirm them. Name refs as owner/repo#N.
 Put the repository's merge rule in a coding todo's instruction: merge by hand
 after the review it uses approves the latest head and required checks are green,
