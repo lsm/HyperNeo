@@ -71,6 +71,31 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test('does not execute an inherited filter selected by writable home attributes', async () => {
+    await writeFile(join(root, '.gitattributes'), '*.md filter=home-probe\n');
+    await git('add', '.gitattributes');
+    await git('commit', '-m', 'Home attributes');
+    const config = join(fixture, 'gitconfig');
+    const marker = join(fixture, 'filter-ran-outside-home');
+    await git(
+      'config',
+      '--file',
+      config,
+      'filter.home-probe.clean',
+      `printf executed > '${marker}'; cat`
+    );
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = config;
+    try {
+      const result = await save({ path: 'filtered.md', content: 'Curated progress.' });
+      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+      expect(result.ok).toBe(true);
+      expect(await git('show', 'HEAD:filtered.md')).toBe('Curated progress.');
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
   test.each(['first save', 'legacy ignore'])('preserves runtime folders on %s', async (state) => {
     const prior = process.env.GIT_CONFIG_GLOBAL;
     try {
