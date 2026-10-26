@@ -71,6 +71,23 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test.each(['new', 'empty', 'tracked'])(
+    'commits a %s document already written through file tools',
+    async (state) => {
+      const path = 'written.md';
+      if (state === 'tracked') await save({ path, content: 'Previously committed.' });
+      const content = state === 'empty' ? '' : 'Edited through ordinary file tools.\n';
+      await writeFile(join(root, path), content);
+      const before = await git('rev-parse', 'HEAD');
+      const saved = await save({ path, content });
+      expect(saved.ok).toBe(true);
+      expect(saved.commit).not.toBe(before);
+      expect(await git('show', `HEAD:${path}`)).toBe(content.trim());
+      const head = await git('rev-parse', 'HEAD');
+      expect(await save({ path, content })).toMatchObject({ ok: true, commit: head });
+      expect(await git('rev-parse', 'HEAD')).toBe(head);
+    }
+  );
   test('leaves an existing ignore symlink and its outside target untouched', async () => {
     await writeFile(join(root, '.gitignore'), '# Legacy home\n');
     await git('commit', '-am', 'Legacy ignores');

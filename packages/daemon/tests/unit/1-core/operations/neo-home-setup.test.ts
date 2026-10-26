@@ -194,21 +194,33 @@ describe('Neo home setup', () => {
       expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
     }
   );
-  test('initializes without adopting pre-existing staged bootstrap documents', async () => {
-    await writeFile(join(root, 'README.md'), 'Preserved home introduction.');
-    await writeFile(join(root, 'direction.md'), 'Pending direction draft.');
-    await writeFile(join(root, '.gitignore'), '.coordinators/\n');
-    await git('add', '--', 'README.md', '.gitignore', 'direction.md');
-    home = new NeoHomeRepository(root, repo);
-    expect(await init()).toMatchObject({ ok: true });
-    expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
-    expect(await git('diff', '--cached', '--name-only')).toBe(
-      '.gitignore\nREADME.md\ndirection.md'
-    );
-    expect(await git('ls-tree', '--name-only', 'HEAD')).toBe('');
-    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Pending direction draft.');
-    expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
-  });
+  test.each([false, true])(
+    'initializes without adopting staged bootstrap documents (retry: %s)',
+    async (retry) => {
+      await writeFile(join(root, 'README.md'), 'Preserved home introduction.');
+      await writeFile(join(root, 'direction.md'), 'Pending direction draft.');
+      await writeFile(join(root, '.gitignore'), '.coordinators/\n');
+      await git('add', '--', 'README.md', '.gitignore', 'direction.md');
+      home = new NeoHomeRepository(root, repo);
+      if (retry) {
+        await git('config', 'user.email', '');
+        await expect(init()).rejects.toThrow();
+        expect(await git('diff', '--cached', '--name-only')).toBe(
+          '.gitignore\nREADME.md\ndirection.md'
+        );
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('.coordinators/\n');
+        await git('config', 'user.email', 'verify@example.invalid');
+      }
+      expect(await init()).toMatchObject({ ok: true });
+      expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
+      expect(await git('diff', '--cached', '--name-only')).toBe(
+        '.gitignore\nREADME.md\ndirection.md'
+      );
+      expect(await git('ls-tree', '--name-only', 'HEAD')).toBe('');
+      expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Pending direction draft.');
+      expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
+    }
+  );
   test('bootstraps without committing pre-existing staged changes', async () => {
     await git('init', '--quiet');
     await writeFile(join(root, 'human.md'), 'Human draft.');
