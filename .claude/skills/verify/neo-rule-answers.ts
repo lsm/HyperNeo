@@ -29,7 +29,7 @@ for (const phase of ['initial', 'restart']) {
       ws!.onmessage = (event) => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return;
         clearTimeout(timer); evidence.push({ phase, name, input, reply });
         if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
-      ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+      ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: name === 'settings.global.update' ? name : 'operation.invoke', data: name === 'settings.global.update' ? input : { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
     });
     const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'neo:10000000-0000-4000-8000-000000000002', role: 'neo' }));
     const mcp = async (name: string, input: unknown) => {
@@ -59,6 +59,9 @@ for (const phase of ['initial', 'restart']) {
       const sources = app.db.getGlobalSettings().neo?.standingRuleSources;
       assert.deepEqual(sources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
       evidence.push({ approvalSources: sources });
+      await rpc('settings.global.update', { updates: { neo: { workerPermissionMode: 'default', standingRuleSources: {} } } });
+      assert.deepEqual((await rpc('neo.snapshot', {})).standingRuleSources, sources);
+      assert.equal(app.db.getGlobalSettings().neo?.workerPermissionMode, 'default');
       const many = Array.from({ length: 25 }, (_, i) => `Extra rule ${i}.`);
       assert.equal((await rpc('neo.rule.save', { add: many })).ok, true);
       assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, [...edit.add, ...many]);
