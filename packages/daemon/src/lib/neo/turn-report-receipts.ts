@@ -4,7 +4,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { sentDuringTurn } from '../../storage/repositories/neo-session-message-repository.ts';
-import { renderRemoteAddress } from '../mailbox/address.ts';
+import { qualifyRemoteOrigin, renderAddress } from '../mailbox/address.ts';
 
 type Live = { status: string; waitingFor?: string } | null;
 type Observation = { live: Live; baseline: string | null };
@@ -27,7 +27,7 @@ export class NeoTurnReportReceipts {
     dispatchId: string,
     ref: WorkRef,
     live: Live,
-    turn: { id: string; at: number; startedAt?: number; message: string },
+    turn: { id: string; at: number; startedAt?: number; senderMachine?: string; message: string },
     recipient: string
   ) {
     const scope = [todoId, dispatchId, ref.adapter, ref.id, ref.daemon ?? null];
@@ -55,11 +55,13 @@ export class NeoTurnReportReceipts {
     );
     if (observation.baseline === hash) this.acknowledge(messageId);
     if (this.receipts.submissionReceipt<boolean>(previousId, 'v2')) this.acknowledge(messageId);
+    const localSender = ref.adapter === 'hyperneo' ? ref.id : `${ref.adapter}:${ref.id}`;
     const sender = ref.daemon
-      ? renderRemoteAddress({ kind: 'remote-session', daemonId: ref.daemon, sessionId: ref.id })
-      : ref.adapter === 'hyperneo'
-        ? ref.id
-        : `${ref.adapter}:${ref.id}`;
+      ? qualifyRemoteOrigin(
+          renderAddress({ kind: 'session', sessionId: localSender }),
+          turn.senderMachine ?? ref.daemon
+        )
+      : localSender;
     if (
       turn.startedAt !== undefined &&
       (await gatewayFor(this.db).call(sentDuringTurn, 'sentDuringTurn', {

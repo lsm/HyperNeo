@@ -188,6 +188,7 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
         lastActivityAt: z.number(),
         lastReply: z.string().optional(),
         lastReplyAt: z.number().optional(),
+        place: PlaceSchema.optional(),
         recentInputs: z.array(WorkInputSchema).optional(),
         exchange: z.array(WorkExchangeEntrySchema).optional(),
         exchangeCut: z.boolean().optional(),
@@ -486,8 +487,11 @@ function settleAttributedDriverWork(
 }
 
 export function readDriverTurnEnds(outcome: OperationOutcome) {
-  const ends = z.array(WorkTurnEndSchema).safeParse(parseDriverStatus(outcome)?.turnEnds);
-  return ends.success ? ends.data : [];
+  const status = parseDriverStatus(outcome);
+  const ends = z.array(WorkTurnEndSchema).safeParse(status?.turnEnds);
+  return ends.success
+    ? ends.data.map((turn) => ({ ...turn, senderMachine: status?.place?.machine }))
+    : [];
 }
 
 export function readDriverFollowUp(

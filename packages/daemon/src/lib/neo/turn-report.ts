@@ -5,7 +5,7 @@ import type { NeoTodoRunnerDeps } from './todo-runner.ts';
 import type { NeoTurnReportReceipts } from './turn-report-receipts.ts';
 
 type Live = { status: string; waitingFor?: string } | null;
-type Turn = { id: string; at: number; startedAt?: number; message: string };
+type Turn = { id: string; at: number; startedAt?: number; senderMachine?: string; message: string };
 type Tell = NeoTodoRunnerDeps['tell'];
 
 export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as PipelineAPI)

@@ -32,3 +32,21 @@ No additional input may reach Neo; preserve the per-scenario replay counts.
 Evidence is observed.json with all recipient input bytes, send receipt, counts
 and todo records. This proves daemon receipt/storage, not model consumption or
 GUI rendering. The wrapper preserves evidence and removes synthetic daemon data.
+
+## Remote sender identities
+
+The helper also owns an ephemeral loopback work.status peer whose source machine
+differs from the local attachment alias. For HyperNeo, Codex and Claude Code refs,
+the real remote-send forwarder submits an explicit report through Neo's actual
+RPC door. The report's recorded from_session must retain the source machine and
+native adapter prefix. Neo's real driver-refresh job must suppress the separate
+turn report for that same sender. The status peer is synthetic; native worker
+execution is not claimed. The helper detaches and stops both owned connections.
+
+On the pre-sender-fix head, `sender-before` mode observes one extra turn report
+for each of the three remote senders. In `verify` mode all three have zero extra
+reports. Preserve the remote status replies, recorded sender IDs, send receipts
+and incoming report bytes. Unit contracts also cover local native sender IDs and
+prove that the same session ID on another source machine does not suppress a
+new report. Missing source-machine metadata retains the older exact attachment
+lookup and never performs a suffix-only match.
