@@ -333,7 +333,6 @@ export function liveThinkingUpdate(
 export class QueryOptionsBuilder {
   private operationServer?: SdkMcpServerConfig;
   private askUserQuestionHook?: HookCallback;
-  private deferredPermissionMode?: PermissionMode;
   private effectiveFallbackCaptured = false;
   private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
@@ -344,10 +343,6 @@ export class QueryOptionsBuilder {
 
   setAskUserQuestionHook(hook: HookCallback): void {
     this.askUserQuestionHook = hook;
-  }
-
-  getDeferredPermissionMode(): PermissionMode | undefined {
-    return this.deferredPermissionMode;
   }
 
   getCurrentPermissionMode(): PermissionMode {
@@ -511,7 +506,12 @@ export class QueryOptionsBuilder {
     if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
     if (handoffDirectory) workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
-    const permissionMode = this.getPermissionMode();
+    const requestedPermissionMode = this.getPermissionMode();
+    const permissionMode =
+      requestedPermissionMode === 'bypassPermissions' &&
+      workerSandbox?.permissions.disableBypassPermissionsMode === 'disable'
+        ? 'default'
+        : requestedPermissionMode;
     const pluginsFromSkills = [
       ...this.buildPluginsFromSkills(toolInputs),
       ...this.buildPluginsFromBuiltinSkills(toolInputs),
@@ -676,11 +676,7 @@ export class QueryOptionsBuilder {
     );
 
     if (permissionMode === 'bypassPermissions') {
-      delete queryOptions.permissionMode;
       delete queryOptions.allowedTools;
-      this.deferredPermissionMode = 'bypassPermissions';
-    } else {
-      this.deferredPermissionMode = undefined;
     }
 
     const cleanedOptions = Object.fromEntries(

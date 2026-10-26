@@ -122,6 +122,9 @@ error and mark the daemon proof blocked. An EADDRINUSE report for port 0 is
 inconclusive too; do not count unit results as a successful daemon run or weaken
 host protections to make the listener start.
 
+The wrapper forwards an explicitly selected VERIFY_CLAUDE path for native SDK
+proofs. It does not forward provider credentials or the human's configuration.
+
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
 

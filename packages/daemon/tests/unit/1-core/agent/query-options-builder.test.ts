@@ -129,8 +129,6 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.sandbox = { enabled: false };
       await releaseWorkerSandbox(root);
       const options = await builder.build();
-      expect(options.permissionMode).toBe('default');
-      expect(options.allowDangerouslySkipPermissions).toBe(false);
       expect(options.sandbox).toMatchObject({
         enabled: true,
         allowUnsandboxedCommands: false,
@@ -2483,6 +2481,23 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('permission mode', () => {
+    it('starts prepared SDK workers outside auto while retaining their bypass restriction', async () => {
+      const root = join(handoffDataDir, 'permission-worker');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'protected')]);
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.permissionMode).toBe('default');
+        expect(options.allowDangerouslySkipPermissions).toBe(false);
+        expect(options.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
+        mockSession.config.permissionMode = 'plan';
+        expect((await builder.build()).permissionMode).toBe('plan');
+      } finally {
+        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+      }
+    });
+
     it('should use session config permission mode first', async () => {
       mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();

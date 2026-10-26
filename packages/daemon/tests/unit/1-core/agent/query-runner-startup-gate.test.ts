@@ -623,8 +623,10 @@ describe('QueryRunner startup gate', () => {
     });
   });
 
-  it('registers the AskUserQuestion hook and applies the deferred mode after spawn (runQuery wiring)', async () => {
-    const setPermissionMode = mock(async () => {});
+  it('registers the AskUserQuestion hook without changing the spawn permission mode', async () => {
+    const setPermissionMode = mock(async () => {
+      throw new Error('Bypass disabled by worker policy');
+    });
     const buildOverrides: Array<{ askUserQuestionHook?: unknown }> = [];
     const preToolUseHook = mock(async () => ({}));
     const createPreToolUseHook = mock(() => preToolUseHook);
@@ -639,12 +641,11 @@ describe('QueryRunner startup gate', () => {
       optionsBuilder: {
         build: async (overrides?: { askUserQuestionHook?: unknown }) => {
           buildOverrides.push(overrides ?? {});
-          return { model: 'claude-sonnet-4-20250514' };
+          return { model: 'claude-sonnet-4-20250514', permissionMode: 'default' };
         },
         addSessionStateOptions: (options: unknown) => options,
         setCanUseTool: () => {},
         setAskUserQuestionHook: () => {},
-        getDeferredPermissionMode: () => 'bypassPermissions',
         getEffectiveMcpServers: () => ({}),
       } as unknown as QueryOptionsBuilder,
       askUserQuestionHandler: {
@@ -656,7 +657,6 @@ describe('QueryRunner startup gate', () => {
     runner.start();
     await waitFor(() => spawned.length === 1);
     await waitFor(() => buildOverrides.some((overrides) => overrides.askUserQuestionHook));
-    await waitFor(() => setPermissionMode.mock.calls.length > 0);
     await settle();
 
     const installedHook = buildOverrides.find((overrides) => overrides.askUserQuestionHook)
@@ -676,7 +676,7 @@ describe('QueryRunner startup gate', () => {
       { signal: new AbortController().signal }
     );
     expect(preToolUseHook).toHaveBeenCalled();
-    expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+    expect(setPermissionMode).not.toHaveBeenCalled();
 
     await completeQuery(spawned[0], waitFor);
     await ctx.queryPromise;
