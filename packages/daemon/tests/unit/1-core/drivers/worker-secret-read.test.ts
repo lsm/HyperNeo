@@ -116,6 +116,20 @@ test('a tracked project config is refused without changing repository bytes', as
   expect(readFileSync(path, 'utf8')).toBe(original);
 });
 
+test('profile metadata checks never execute worker-configured Git monitors', async () => {
+  execFileSync('git', ['init', '-q', root]);
+  writeFileSync(join(root, 'README'), 'synthetic repository');
+  execFileSync('git', ['-C', root, 'add', 'README']);
+  const marker = join(fixture, 'monitor-executed');
+  const hook = join(fixture, 'monitor.sh');
+  writeFileSync(hook, `#!/bin/sh\nprintf synthetic > '${marker}'\nprintf 'token\\0'\n`, {
+    mode: 0o700,
+  });
+  execFileSync('git', ['-C', root, 'config', 'core.fsmonitor', hook]);
+  await persistCodexWorkerProfile(root);
+  expect(() => readFileSync(marker)).toThrow();
+});
+
 test.each([undefined, [], [{ id: 'hyperneo-worker', allowed: false }]])(
   'Codex refuses missing or disallowed profiles (%j)',
   async (data) => {
