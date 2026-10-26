@@ -4,7 +4,7 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
-## [0.49.0] - 2026-10-25
+## [0.49.0] - 2026-10-26
 
 ### Added
 
@@ -23,12 +23,16 @@ All notable changes to HyperNeo will be documented in this file.
 
 ### Fixed
 
+- **Model discovery**: Keep cold SDK startup within bounded parallel discovery, return healthy providers when another stalls, and let browser model lists wait for discovery (#8930).
+- **Neo chat**: Keep the scrolled-up view stable and hide system-forwarded worker messages from the human conversation (#8927, #8922).
+- **SDK startup**: Start sessions without inheriting auto mode, and allow workers to run isolated local test servers (#8923, #8925).
+- **Desktop delivery**: Queue Codex work even when Desktop ownership is temporarily unavailable (#8879).
 - **New-user sessions**: Resolve model targets with thinking effort, keep non-coding work in one visible folder, and isolate automatic project discovery (#8617, #8621, #8620).
 - **Tools panel**: Show the tools observed in the current SDK query (#8636, #8641).
 - **Neo work**: Deliver worker milestones and card answers reliably; keep Waiting on you cards first with stable ordering (#8843, #8834, #8911).
 - **File previews**: Preserve preview and draft context and allow explicit non-sensitive attachment paths (#8801, #8811, #8883).
-- **Responsiveness**: Move queued work and settings writes to the database writer, reclaim stale jobs, and keep slow WebSocket clients connected (#8898, #8868, #8905, #8871).
-- **Coding ledger**: Reduce review-query overhead and scan fairly across quota failures (#8861, #8893).
+- **Responsiveness**: Move queued work, native feed, GitHub poll, mailbox and settings writes to the database writer, reclaim stale jobs, and keep slow WebSocket clients connected (#8898, #8868, #8905, #8871, #8931, #8921, #8917, #8882).
+- **Coding ledger**: Reduce review-query overhead, scan fairly across quota failures, and diagnose stale approved PR observations (#8861, #8893, #8906).
 - **Worker isolation**: Enforce the prepared worker OS write sandbox (#8632).
 - **Device pairing**: Restore `hyperneo pair` and `hyperneo devices` in compiled binaries and list both commands in help (#8615).
 - **First start**: Download the Claude Code SDK without blocking the event loop, load embeddings in compiled binaries, and preserve explicit test mode in compiled entrypoints (#8599, #8601, #8612).

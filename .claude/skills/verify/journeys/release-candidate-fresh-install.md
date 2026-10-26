@@ -37,6 +37,7 @@ the exact CLI candidate. Retain its result alongside the CLI evidence.
 
 Supply VERIFY_NODE, NODE_PATH and VERIFY_BROWSER to the parent helper to run
 release-candidate-web.mjs before daemon cleanup. It screenshots actual /neo with
+the browser's HOME and TMPDIR inside the same disposable isolated run and
 the published answer and the life-admin session transcript at 1280×900. The command helper
 itself proves compiled entrypoints/RPC/SDK paths, not native iOS or Desktop rendering.
 If binding is denied, preserve the exact error and report blocked; never work around
