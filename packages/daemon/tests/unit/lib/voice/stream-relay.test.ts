@@ -298,6 +298,68 @@ describe('VoiceStream against a stub Deepgram server', () => {
     expect(JSON.stringify(logs)).not.toContain('PRIVATE_');
   });
 
+  test('a server 1011 close logs who closed, the code, and stream timing without the peer reason', async () => {
+    onAudio = (socket) => {
+      socket.send(results('PRIVATE_TRANSCRIPT', false));
+      socket.close(1011, 'PRIVATE_CLOSE_REASON');
+    };
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const end = logs.find((event) => event.message === 'voice.stream.end');
+    expect(end?.metadata).toMatchObject({
+      streamId: 's1',
+      closedBy: 'server',
+      code: 1011,
+      reason: 'server_error',
+      peerReasonBytes: Buffer.byteLength('PRIVATE_CLOSE_REASON'),
+    });
+    expect(typeof end?.metadata?.durationMs).toBe('number');
+    expect(typeof end?.metadata?.sinceLastAudioMs).toBe('number');
+    expect(typeof end?.metadata?.sinceLastResultMs).toBe('number');
+    expect(JSON.stringify(logs)).not.toContain('PRIVATE_');
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+  });
+
+  test('a client cancel logs the end as client-closed with the normal close code', async () => {
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    stream.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(logs.find((event) => event.message === 'voice.stream.end')?.metadata).toMatchObject({
+      closedBy: 'client',
+      code: 1000,
+      reason: 'normal_closure',
+    });
+  });
+
+  test('a relay-initiated close logs the end as relay-closed', async () => {
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    stream.close('idle_timeout');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(logs.find((event) => event.message === 'voice.stream.end')?.metadata).toMatchObject({
+      closedBy: 'relay',
+      code: 1000,
+    });
+  });
+
+  test('a server keepalive ping shows up in the end log timing', async () => {
+    onAudio = (socket) => {
+      socket.ping();
+      socket.send(results('hi', false));
+    };
+    onCloseStream = (socket) => socket.close(1000);
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await stream.stop();
+    const end = logs.find((event) => event.message === 'voice.stream.end');
+    expect(end?.metadata?.closedBy).toBe('server');
+    expect(typeof end?.metadata?.sinceLastPingMs).toBe('number');
+  });
+
   test('a stream that never heard any text falls back to batch with the buffered audio', async () => {
     onAudio = () => {};
     onCloseStream = (socket) => socket.close(1000);
