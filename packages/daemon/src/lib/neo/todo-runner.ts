@@ -434,6 +434,32 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
   };
 
+  const recoverStart = (superpipe({})('neo.todo.recover-committed-start') as PipelineAPI)
+    .input(['todoId'])
+    .pipe(
+      (todoId: string) =>
+        deps.write(neoTodoRunnerWrites, { method: 'recover', args: [todoId, Date.now()] }),
+      'todoId',
+      'receipt'
+    )
+    .pipe(
+      (receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['recover']>) => {
+        if (receipt.changed) deps.changed();
+        return receipt.recovery ? { value: receipt.recovery } : { reason: null };
+      },
+      'receipt',
+      'result:recovery'
+    )
+    .pipe(
+      async ({ todo, ask }: { todo: NeoTodo; ask: NeoAsk }) => {
+        if (['done', 'failed', 'blocked'].includes(todo.state))
+          await deps.tell(ask, todo, neoTodoNote(todo));
+      },
+      'recovery',
+      'notified'
+    )
+    .endAsync('notified') as (todoId: string) => Promise<void | null>;
+
   const noteNeedsYou = async (
     todoId: string,
     ask: NeoAsk,
@@ -820,26 +846,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
       for (const todoId of await sessions.read('unrecordedStarts')) {
-        const todo = store.getTodo(todoId);
-        const ask = todo ? store.getAsk(todo.askId) : null;
-        if (
-          todo?.state !== 'doing' ||
-          !ask ||
-          starting.has(todoId) ||
-          sessions.readRef(todoId) !== null
-        )
-          continue;
-        sessions.recordStartInterrupted(todoId);
-        await finish(
-          todo,
-          ask,
-          planNeoTodoFailure(
-            todo,
-            'Start was interrupted; a session may have started without being recorded.',
-            Date.now()
-          ),
-          Date.now()
-        ).catch((error) => warn('Todo start recovery pending', error));
+        if (starting.has(todoId)) continue;
+        await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
       }
       for (const { todoId, ref } of await sessions.read('awaitingReports'))
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
