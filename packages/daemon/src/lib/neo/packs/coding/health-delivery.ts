@@ -52,6 +52,7 @@ export async function deliverCodingHealth(
         metadata: {
           repo,
           key: notice.key,
+          pending: notice.pending,
           coverage: health!.reason,
           lagMs: Math.max(0, now - (health!.completeAt ?? health!.firstMissAt ?? now)),
           nextRetryAt: health!.nextRetryAt,

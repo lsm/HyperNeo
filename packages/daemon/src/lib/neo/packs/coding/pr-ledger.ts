@@ -1,4 +1,5 @@
-import { codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
+import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
+import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
 import { posix } from 'node:path';
 import {
   CodingStageFactsRepository,
@@ -9,7 +10,11 @@ import {
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
-import { CodingRepoHealthRepository, type RepoHealthCycle } from './health-state.ts';
+import {
+  codingPendingDiagnostics,
+  CodingRepoHealthRepository,
+  type RepoHealthCycle,
+} from './health-state.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { CodingAncestryFactsRepository } from './ancestry-facts.ts';
 import { CodingRefFactsRepository } from './ref-facts.ts';
@@ -298,10 +303,14 @@ type CodingLedgerSnapshotRow = {
   title: string;
   state: CodingPrState;
   since: number;
+  readAt: number;
   owner: string | null;
 };
 
-function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
+function codingLedgerSnapshotRow(
+  row: CodingLedgerSnapshotRow,
+  health?: ReturnType<CodingRepoHealthRepository['read']>
+) {
   const owner = row.owner
     ? (JSON.parse(row.owner) as { adapter: string; id: string; daemon?: string })
     : null;
@@ -309,6 +318,7 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
     pr: `${row.repo}#${row.number}`,
     title: row.title.slice(0, 80),
     state: row.state,
+    ...(row.state === 'approved_pending' ? codingPendingDiagnostics(row.readAt, health) : {}),
     since: new Date(row.since).toISOString(),
     ownerAdapter: owner?.adapter ?? null,
     ownerId: owner?.id ?? null,
@@ -626,6 +636,10 @@ export class CodingPrLedgerRepository {
     );
   }
 
+  canonicalRepo(repo: string): string {
+    return codingCanonicalRepo(this.db, repo);
+  }
+
   watches(repo: string): boolean {
     return codingRepoWatched(this.db, repo);
   }
@@ -665,7 +679,7 @@ export class CodingPrLedgerRepository {
     pinned: readonly { todoId: string; url: string; state: string | null }[] = []
   ): Record<string, string | number | null>[] {
     const select =
-      'SELECT repo, number, title, state, state_since AS since, owner FROM pack_coding_pr_ledger';
+      'SELECT repo, number, title, state, state_since AS since, read_at AS readAt, owner FROM pack_coding_pr_ledger';
     const own = pinned.flatMap((claim) => {
       const match = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i.exec(claim.url);
       if (!match) return [];
@@ -680,7 +694,7 @@ export class CodingPrLedgerRepository {
         {
           todoId: claim.todoId,
           ...(row
-            ? codingLedgerSnapshotRow(row)
+            ? codingLedgerSnapshotRow(row, this.health.read(row.repo))
             : {
                 pr: `${repo}#${match[2]}`,
                 title: null,
@@ -711,7 +725,9 @@ export class CodingPrLedgerRepository {
       ) as CodingLedgerSnapshotRow[];
     return [
       ...own,
-      ...rows.map(codingLedgerSnapshotRow).filter((row) => !owned.has(row.pr)),
+      ...rows
+        .map((row) => codingLedgerSnapshotRow(row, this.health.read(row.repo)))
+        .filter((row) => !owned.has(row.pr)),
     ].filter((row) => this.watches(row.pr.split('#')[0]));
   }
 
@@ -763,6 +779,17 @@ const planLedgerHealth = (superpipe({})('coding-ledger-cycle-outcome') as Pipeli
             : value?.data
               ? 'partial'
               : 'failed',
+        ...(!complete
+          ? {
+              error:
+                value?.quota?.deferred ||
+                (typeof value?.error === 'string' && isRateLimitError(value.error))
+                  ? 'rate_limited'
+                  : value?.data
+                    ? 'partial'
+                    : 'lookup_failed',
+            }
+          : {}),
         ...(Number.isSafeInteger(retryAt) && retryAt > now ? { retryAt } : {}),
         ...(value?.quota ? { quota: value.quota } : {}),
       };
@@ -781,9 +808,16 @@ export async function reconcileCodingPrLedger(
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
   const last = ledger.lastReads();
+  const pending = ledger.list().filter((row) => row.state === 'approved_pending');
+  const pendingFor = (repo: string) => {
+    const canonical = ledger.canonicalRepo(repo);
+    return pending.filter((row) => row.repo === canonical);
+  };
   const order = repos
     .filter((repo) => ledger.watches(repo))
-    .sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
+    .sort(
+      (a, b) => (last.get(ledger.canonicalRepo(a)) ?? 0) - (last.get(ledger.canonicalRepo(b)) ?? 0)
+    );
   for (const repo of order) {
     if (!ledger.watches(repo)) continue;
     const before = ledger.health.read(repo);
@@ -792,10 +826,13 @@ export async function reconcileCodingPrLedger(
     if (!ledger.watches(repo)) continue;
     const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
     const cycle = planLedgerHealth(raw, planned !== null, now);
-    const health = await ledger.write('recordHealth', repo, cycle);
+    if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
+    const health = await ledger.write('recordHealth', repo, {
+      ...cycle,
+      pending: pendingFor(repo),
+    });
     if (health.misses === CODING_LEDGER_WARN_SKIPS && before?.misses !== health.misses)
       log.warn('PR ledger coverage missed three eligible cycles', { repo, reason: health.reason });
-    if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
     if (planned && planned.repo !== repo.toLowerCase())
       await ledger.write('dropRepo', repo.toLowerCase());
     if (planned && !seen.has(planned.repo))

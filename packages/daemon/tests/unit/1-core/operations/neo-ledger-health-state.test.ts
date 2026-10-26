@@ -18,6 +18,42 @@ function using(run: (db: Database, ledger: CodingPrLedgerRepository) => void) {
 }
 
 describe('durable repository cycle health', () => {
+  test('timestamps a changed cooldown error once and retains it after recovery', () =>
+    using((_db, ledger) => {
+      ledger.recordHealth(repo, { at: 100, outcome: 'failed', error: 'lookup_failed' });
+      for (const at of [200, 300])
+        expect(
+          ledger.recordHealth(repo, {
+            at,
+            outcome: 'cooldown',
+            retryAt: 1000,
+            error: 'rate_limited',
+          })
+        ).toMatchObject({ lastError: 'rate_limited', lastErrorAt: 200 });
+      expect(ledger.recordHealth(repo, { at: 1000, outcome: 'complete' })).toMatchObject({
+        lastError: 'rate_limited',
+        lastErrorAt: 200,
+        nextRetryAt: null,
+      });
+    }));
+
+  test('learning a rename preserves and accepts an already pending alias notice', () =>
+    using((db, ledger) => {
+      const alias = 'synthetic/old-health';
+      for (const at of [100, 200, 300]) ledger.recordHealth(alias, { at, outcome: 'failed' });
+      const previous = ledger.health.read(alias)!;
+      const legacy = db
+        .prepare('SELECT health_json FROM pack_coding_repo_health WHERE repo=?')
+        .get(alias);
+      ledger.recordAlias(alias, repo);
+      expect(ledger.health.read(repo)).toEqual(previous);
+      ledger.acceptHealthNotice(repo, previous.notices![0].key, 400);
+      expect(ledger.health.read(alias)?.notices?.[0].acceptedAt).toBe(400);
+      expect(ledger.health.read(repo)).toEqual(ledger.health.read(alias));
+      expect(
+        db.prepare('SELECT health_json FROM pack_coding_repo_health WHERE repo=?').get(alias)
+      ).toEqual(legacy);
+    }));
   test('missing health is unknown and an unreached repository has no invented attempt', () =>
     using((_db, ledger) => {
       expect(ledger.health).toBeDefined();
