@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { initializeCodingWatches } from '../../../../src/lib/neo/packs/coding/watched-repos.ts';
+import { deliverCodingHealth } from '../../../../src/lib/neo/packs/coding/health-delivery.ts';
 import {
   CodingPrLedgerRepository,
   reconcileCodingPrLedger,
@@ -49,6 +51,154 @@ describe('ledger reconciliation health', () => {
         });
         expect(ledger.list()).toEqual([]);
       }));
+  test('stale approved-pending snapshots retain acquisition diagnostics and raise one notice through cooldown', () =>
+    using(async (db, ledger) => {
+      const start = 10_000_000,
+        stale = start + 15 * 60_000,
+        reset = stale + 60_000;
+      ledger.replace(
+        repos[0],
+        [
+          {
+            repo: repos[0],
+            number: 1,
+            title: 'Ready after CI',
+            branch: 'topic',
+            head: 'approved-head',
+            state: 'approved_pending',
+            closedAt: null,
+          },
+        ],
+        start
+      );
+      ledger.recordHealth(repos[0], { at: start, outcome: 'complete' });
+      await reconcileCodingPrLedger(
+        ledger,
+        repos,
+        async () => ({
+          error: 'HTTP 429 token=synthetic-do-not-persist',
+          retryAt: reset,
+          quota: {
+            status: 429,
+            resource: 'graphql',
+            remaining: 0,
+            resetAt: reset,
+            requestId: 'synthetic',
+            retryAfterMs: null,
+            credentialBucket: 'synthetic:1',
+            retryAt: reset,
+          },
+        }),
+        stale
+      );
+      const snapshot = ledger.snapshot(null, stale)[0];
+      expect(snapshot).toMatchObject({
+        readAt: start,
+        completeAt: start,
+        nextRetryAt: reset,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+      const notices = ledger.health.read(repos[0])?.notices ?? [];
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({
+        pending: {
+          number: 1,
+          head: 'approved-head',
+          readAt: start,
+          completeAt: start,
+          nextRetryAt: reset,
+          lastError: 'rate_limited',
+          lastErrorAt: stale,
+        },
+      });
+      expect(notices[0].text).toContain('approved_pending');
+      expect(notices[0].text).toContain('readAt=');
+      expect(JSON.stringify(ledger.health.read(repos[0]))).not.toContain(
+        'synthetic-do-not-persist'
+      );
+      await reconcileCodingPrLedger(
+        new CodingPrLedgerRepository(db),
+        repos,
+        async (_repo, quota) => ({
+          error: 'GitHub acquisition cooldown',
+          retryAt: reset,
+          quota: { ...quota!, deferred: true },
+        }),
+        stale + 1
+      );
+      expect(ledger.health.read(repos[0])?.notices).toEqual(notices);
+      expect(ledger.snapshot(null, stale + 1)[0]).toMatchObject({
+        readAt: start,
+        completeAt: start,
+        nextRetryAt: reset,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+      ledger.acceptHealthNotice(repos[0], notices[0].key, stale + 2);
+      await reconcileCodingPrLedger(ledger, repos, async (repo) => response(repo), reset);
+      expect(ledger.health.read(repos[0])).toMatchObject({
+        completeAt: reset,
+        nextRetryAt: null,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+      expect(ledger.health.read(repos[0])?.notices?.[0].pending).toEqual(notices[0].pending);
+    }));
+  test('an aliased target exposes canonical pending diagnostics and delivers one durable notice', () =>
+    using(async (db, ledger) => {
+      const alias = 'synthetic/old',
+        canonical = 'synthetic/renamed';
+      const start = 10_000_000,
+        stale = start + 15 * 60_000,
+        reset = stale + 60_000;
+      initializeCodingWatches(db, [alias]);
+      ledger.recordHealth(alias, { at: start, outcome: 'complete' });
+      ledger.recordAlias(alias, canonical);
+      ledger.replace(
+        canonical,
+        [
+          {
+            repo: canonical,
+            number: 1,
+            title: 'Renamed pending work',
+            branch: 'topic',
+            head: 'renamed-head',
+            state: 'approved_pending',
+            closedAt: null,
+          },
+        ],
+        start
+      );
+      await reconcileCodingPrLedger(
+        ledger,
+        [alias.toUpperCase()],
+        async () => ({ error: 'HTTP 429', retryAt: reset }),
+        stale
+      );
+      expect(ledger.snapshot([alias], stale)[0]).toMatchObject({
+        pr: `${canonical}#1`,
+        readAt: start,
+        completeAt: start,
+        nextRetryAt: reset,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+      const wakes: string[] = [];
+      for (const instance of [ledger, new CodingPrLedgerRepository(db)])
+        await deliverCodingHealth(
+          instance,
+          [alias],
+          async (key) => {
+            wakes.push(key);
+            return true;
+          },
+          stale + 1
+        );
+      expect(wakes).toEqual([`github-pending:${canonical}#1:renamed-head:${start}`]);
+      expect(ledger.health.read(alias)?.notices?.[0].acceptedAt).toBe(stale + 1);
+      expect(ledger.health.read(canonical)).toEqual(ledger.health.read(alias));
+    }));
   test('unattributed low-budget summaries do not starve targets across reopening', () =>
     using(async (db, ledger) => {
       const reads: string[] = [];

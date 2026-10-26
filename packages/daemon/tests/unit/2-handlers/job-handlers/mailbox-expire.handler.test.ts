@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
   createMailboxExpireHandler,
   enqueueMailboxExpireIfMissing,
@@ -9,6 +9,8 @@ import type { MailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { mailboxExpiryReads } from '../../../../src/storage/repositories/mailbox-expiry-commands';
 
 const fakeJob = {
   id: 'mailbox-expire-job',
@@ -57,12 +59,13 @@ describe('createMailboxExpireHandler', () => {
   });
 
   test('preserves the next sweep when expiration fails', async () => {
-    const listJobs = spyOn(mailbox.jobQueue, 'listJobs');
-    listJobs
-      .mockImplementationOnce(() => [])
-      .mockImplementationOnce(() => {
-        throw new Error('sqlite busy');
-      });
+    const inline = new DbGateway(':memory:', mailbox.db);
+    bindGateway(mailbox.db, {
+      call: (op, method, ...args) => {
+        if (op === mailboxExpiryReads) return Promise.reject(new Error('sqlite busy'));
+        return Reflect.apply(inline.call, inline, [op, method, ...args]);
+      },
+    } as DbGateway);
 
     await expect(createMailboxExpireHandler(mailbox.jobQueue)(fakeJob)).rejects.toThrow(
       'sqlite busy'
@@ -73,6 +76,16 @@ describe('createMailboxExpireHandler', () => {
       limit: 10,
     });
     expect(pending).toHaveLength(1);
+  });
+
+  test('concurrent expiry handlers retain a single pending successor', async () => {
+    const handler = createMailboxExpireHandler(mailbox.jobQueue);
+    await Promise.all([handler(fakeJob), handler(fakeJob)]);
+    const pending = mailbox.jobQueue.listJobs({ queue: MAILBOX_EXPIRE_FIRE, status: 'pending' });
+    expect(pending).toHaveLength(1);
+    const due = pending[0].runAt;
+    await handler(fakeJob);
+    expect(mailbox.jobQueue.getJob(pending[0].id)?.runAt).toBe(due);
   });
 
   test('expires mailbox entries and self-schedules the next sweep', async () => {

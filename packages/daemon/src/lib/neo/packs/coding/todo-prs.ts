@@ -455,12 +455,14 @@ export function codingTodoCheckRefusal(
       ? null
       : 'issue_closed_invalid_issue: params.issue must be owner/repo#N.';
   if (draft.check?.kind !== 'pr_merged') return null;
-  if (!draft.instruction && !codingCheckRefs(draft.check).length)
-    return 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.';
   const urls = draft.check.params.urls;
-  return urls !== undefined &&
+  if (
+    urls !== undefined &&
     (!Array.isArray(urls) || urls.some((url) => typeof url !== 'string' || !codingPrKey(url)))
-    ? 'pr_merged_invalid_urls: every URL must name a pull request.'
+  )
+    return 'pr_merged_invalid_urls: every URL must name a pull request.';
+  return !draft.instruction && !codingCheckRefs(draft.check).length
+    ? 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
     : null;
 }
 
@@ -602,7 +604,11 @@ export function createCodingTodoPack(
             },
           }
         : null,
-    refuse: (draft, peers = []) => {
+    refuse: (draft) => {
+      const refused = codingTodoCheckRefusal(draft);
+      return refused?.startsWith('pr_merged_needs_urls:') ? null : refused;
+    },
+    record: (draft, peers = []) => {
       const refused = codingTodoCheckRefusal(draft);
       if (refused || draft.check?.kind !== 'pr_merged') return refused;
       const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];

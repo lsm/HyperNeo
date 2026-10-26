@@ -3,6 +3,7 @@ import {
   codingPollPageReads,
   codingPollPageWrites,
 } from '../../lib/neo/packs/coding/poll-http-db.ts';
+import { readWorkInput } from '../work-input.ts';
 import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
   codingAncestryReads,
@@ -92,12 +93,17 @@ import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue
 import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
 import { jobStaleReclaimWrites } from '../repositories/job-stale-reclaim-write.ts';
+import {
+  mailboxExpiryReads,
+  mailboxExpiryWrites,
+} from '../repositories/mailbox-expiry-commands.ts';
 import { codingConnectorIdentityReads } from '../../lib/neo/packs/coding/connector-identity-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
     codingPollPageReads,
     codingPollPageWrites,
+    readWorkInput,
     codingMergeReads,
     codingMergeWrites,
     codingAncestryReads,
@@ -170,6 +176,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     credentialStoreWrites,
     enqueueSessionDelivery,
     jobStaleReclaimWrites,
+    mailboxExpiryReads,
+    mailboxExpiryWrites,
     codingConnectorIdentityReads,
   ].map((op) => [op.name, op])
 );

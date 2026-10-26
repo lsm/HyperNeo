@@ -7,7 +7,12 @@ import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 import { joinFinals, streamProtocol, type StreamProtocol } from './stream-protocols.ts';
 
-import { voiceDiagnostic, voiceSocketReason, voiceSocketErrorCode } from './diagnostics.ts';
+import {
+  voiceDiagnostic,
+  voiceSocketReason,
+  voiceSocketErrorCode,
+  voicePeerReasonBytes,
+} from './diagnostics.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
@@ -139,7 +144,7 @@ async function openAsrSocket(
           clientId: deps.clientId,
           code,
           reason: voiceSocketReason(code),
-          peerReasonBytes: reason.byteLength,
+          peerReasonBytes: voicePeerReasonBytes(reason),
         })
       );
       socket.once('open', () => {
@@ -159,6 +164,7 @@ async function openAsrSocketWithin(
   protocol: StreamProtocol,
   deps: VoiceStreamDeps
 ): Promise<Gate<WebSocket>> {
+  const startedAt = Date.now();
   const opening = openAsrSocket(streamId, voice, url, protocol, deps);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<Gate<WebSocket>>((resolve) => {
@@ -171,7 +177,19 @@ async function openAsrSocketWithin(
   clearTimeout(timer);
   if ('reason' in opened)
     void opening.then((late) => {
-      if ('value' in late) late.value.close(1000);
+      if (!('value' in late)) return;
+      late.value.once('close', (code, reason) =>
+        voiceDiagnostic('voice.stream.end', {
+          streamId,
+          clientId: deps.clientId,
+          closedBy: 'relay',
+          code,
+          reason: voiceSocketReason(code),
+          peerReasonBytes: voicePeerReasonBytes(reason),
+          durationMs: Date.now() - startedAt,
+        })
+      );
+      late.value.close(1000);
     });
   return opened;
 }
@@ -207,6 +225,11 @@ export class VoiceStream {
   private protocol: StreamProtocol | null = null;
   private finals: string[] = [];
   private partial = '';
+  private closeInitiator: 'client' | 'relay' | null = null;
+  private lastAudioSentAt: number | null = null;
+  private lastResultAt: number | null = null;
+  private lastPingAt: number | null = null;
+  private lastPongAt: number | null = null;
   private stopping: Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > | null = null;
@@ -281,17 +304,43 @@ export class VoiceStream {
     socket.on('message', (data, isBinary) => {
       const parsed = isBinary || this.cancelled ? null : protocol.parse(data.toString());
       if (!parsed) return;
+      this.lastResultAt = Date.now();
       if (parsed.isFinal) {
         if (parsed.text) this.finals.push(parsed.text);
         this.partial = '';
       } else this.partial = parsed.text;
       this.deps.push({ streamId: this.id, text: this.text(), isFinal: false });
     });
-    socket.on('close', () => {
+    socket.on('ping', () => {
+      this.lastPingAt = Date.now();
+    });
+    socket.on('pong', () => {
+      this.lastPongAt = Date.now();
+    });
+    socket.on('close', (code, reason) => {
       if (this.socket === socket) this.socket = null;
+      this.logEnd(code, reason);
     });
     socket.on('error', () => {
       if (this.socket === socket) this.socket = null;
+    });
+  }
+
+  private logEnd(code: number, peerReason: unknown): void {
+    const now = Date.now();
+    const since = (at: number | null) => (at === null ? null : now - at);
+    voiceDiagnostic('voice.stream.end', {
+      streamId: this.id,
+      clientId: this.deps.clientId,
+      closedBy: this.closeInitiator ?? 'server',
+      code,
+      reason: voiceSocketReason(code),
+      peerReasonBytes: voicePeerReasonBytes(peerReason),
+      durationMs: now - this.startedAt,
+      sinceLastAudioMs: since(this.lastAudioSentAt),
+      sinceLastResultMs: since(this.lastResultAt),
+      sinceLastPingMs: since(this.lastPingAt),
+      sinceLastPongMs: since(this.lastPongAt),
     });
   }
 
@@ -305,8 +354,10 @@ export class VoiceStream {
       return 'Audio data exceeds the 10 MB voice input limit';
     this.chunks.push(pcm);
     this.bytes += pcm.byteLength;
-    if (this.socket?.readyState === WebSocket.OPEN && this.protocol)
+    if (this.socket?.readyState === WebSocket.OPEN && this.protocol) {
       this.socket.send(this.protocol.audio(pcm));
+      this.lastAudioSentAt = Date.now();
+    }
     return null;
   }
 
@@ -395,12 +446,15 @@ export class VoiceStream {
 
   cancel(): void {
     this.cancelled = true;
+    if (!this.closeInitiator) this.closeInitiator = 'client';
     this.chunks = [];
     this.bytes = 0;
     this.close();
   }
 
   close(reason = 'closed'): void {
+    if (!this.closeInitiator)
+      this.closeInitiator = reason === 'client_disconnected' ? 'client' : 'relay';
     voiceDiagnostic('voice.stream.close', {
       streamId: this.id,
       clientId: this.deps.clientId,
