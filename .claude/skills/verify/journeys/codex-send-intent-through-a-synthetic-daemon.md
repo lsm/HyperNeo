@@ -20,6 +20,11 @@ then becomes idle and consumes that same queued input exactly once. work.status
 must show the matching input and reply; queue acceptance alone is not delivery.
 Explicit steer still returns its confirmed active turn ID; a known refusal must
 not also enqueue. New-thread creation retains its Desktop handoff.
+The queue fixture then explicitly rejects an input with the typed active-writer
+precondition response. work.send must return notSent true so callers can retry.
+A later queue request loses its acknowledgment after dispatch: that response
+must remain uncertain, without notSent or a second queue submission. Explicit
+steering retains the same distinction between pre-send failure and a lost reply.
 
 The failing reproduction is committed before the fix: the unchanged adapter
 steers instead of returning a queue ID. Retain observed.json, proof.log and

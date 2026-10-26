@@ -832,6 +832,16 @@ export async function queueCodexMessage(
         )
       )
         return queueCodexCliMessage(detail, message, deps);
+      if (
+        error instanceof CodexRequestError &&
+        z
+          .object({
+            code: z.literal(-32600),
+            message: z.string().includes(`thread ${detail.thread.id} already has an active writer`),
+          })
+          .safeParse(error.rejection).success
+      )
+        return reject('not_delivered', error.message, true);
       throw error;
     }
     const { queuedSubmission } = z

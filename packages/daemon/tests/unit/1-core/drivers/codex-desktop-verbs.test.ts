@@ -1436,7 +1436,8 @@ describe('codex-desktop adapter status and send', () => {
         call: async (method, params) => {
           if (method === 'turn/steer') accepted.push(JSON.stringify(params.input));
           if (method === phase) throw new Error('Synthetic connection lost');
-          if (method === 'thread/turns/list') return { data: [{ id: 'active', status: 'inProgress' }] };
+          if (method === 'thread/turns/list')
+            return { data: [{ id: 'active', status: 'inProgress' }] };
           throw new Error(`Unexpected ${method}`);
         },
         close: () => {},
