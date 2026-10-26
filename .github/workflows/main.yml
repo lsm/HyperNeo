@@ -207,7 +207,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run Deno boot smoke
-        run: ./scripts/deno-smoke.sh
+        run: python3 .claude/skills/verify/deno-smoke-fixture-isolation.py
 
   # ============================================
   # PATH FILTERS
