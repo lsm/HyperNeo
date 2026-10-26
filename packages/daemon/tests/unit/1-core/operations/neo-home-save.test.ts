@@ -72,6 +72,27 @@ afterEach(async () => {
 
 describe('Neo home save', () => {
   test.each([false, true])(
+    'does not adopt human ignore edits during repair (staged: %s)',
+    async (staged) => {
+      await writeFile(join(root, '.gitignore'), '# Legacy home\n');
+      await git('commit', '-am', 'Legacy ignores');
+      const pending = '# Legacy home\nhuman-draft/\n';
+      await writeFile(join(root, '.gitignore'), pending);
+      if (staged) await git('add', '.gitignore');
+      const saved = await save({ path: 'digest.md', content: 'Curated progress.\n' });
+      expect(saved.ok).toBe(true);
+      expect(await git('show', 'HEAD:.gitignore')).toBe('# Legacy home');
+      expect(await readFile(join(root, '.gitignore'), 'utf8')).toContain(pending);
+      expect(await git('diff', '--cached', '--name-only')).toBe(staged ? '.gitignore' : '');
+      if (staged) expect(await git('show', ':.gitignore')).toBe(pending.trim());
+      const head = await git('rev-parse', 'HEAD');
+      expect(await save({ path: 'digest.md', content: 'Curated progress.\n' })).toMatchObject({
+        ok: true,
+      });
+      expect(await git('rev-parse', 'HEAD')).toBe(head);
+    }
+  );
+  test.each([false, true])(
     'ignore repair leaves an unrelated direction draft uncommitted (staged: %s)',
     async (staged) => {
       await writeFile(join(root, '.gitignore'), '# Legacy home\n');

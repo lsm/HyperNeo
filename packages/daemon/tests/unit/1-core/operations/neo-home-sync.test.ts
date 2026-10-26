@@ -96,6 +96,19 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test('publishes the requested document without adopting staged human ignore edits', async () => {
+    await commit(root, '.gitignore', '# Legacy home\n');
+    await git(root, 'push');
+    const pending = '# Legacy home\nhuman-draft/\n';
+    await writeFile(join(root, '.gitignore'), pending);
+    await git(root, 'add', '.gitignore');
+    const saved = await call('neo.home.save', input);
+    expect(saved.ok).toBe(true);
+    expect(await git(remote, 'show', 'main:.gitignore')).toBe('# Legacy home');
+    expect(await git(root, 'show', ':.gitignore')).toBe(pending.trim());
+    expect(await git(root, 'diff', '--cached', '--name-only')).toBe('.gitignore');
+    expect(await git(remote, 'show', 'main:digest.md')).toBe(input.content.trim());
+  });
   test('saves with origin and an unrelated staged document while fetching peer progress', async () => {
     await writeFile(join(root, 'staged.md'), 'Unrelated draft.\n');
     await git(root, 'add', 'staged.md');

@@ -202,8 +202,10 @@ describe('Neo home setup', () => {
     home = new NeoHomeRepository(root, repo);
     expect(await init()).toMatchObject({ ok: true });
     expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
-    expect(await git('diff', '--cached', '--name-only')).toBe('README.md\ndirection.md');
-    expect(await git('ls-tree', '--name-only', 'HEAD')).toBe('.gitignore');
+    expect(await git('diff', '--cached', '--name-only')).toBe(
+      '.gitignore\nREADME.md\ndirection.md'
+    );
+    expect(await git('ls-tree', '--name-only', 'HEAD')).toBe('');
     expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Pending direction draft.');
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
   });
