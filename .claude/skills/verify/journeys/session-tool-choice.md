@@ -14,11 +14,14 @@ a later slice.
 Pass requires four sessions created through the public RPC door:
 
 - Registry on plus wrapper off: no browser alias or browser tool.
-- Wrapper on: the wrapper alias, never the registry name, and `navigate`.
+- Wrapper on: its captured canonical alias and `navigate`; an earlier saved
+  registry alias remains authoritative even when the wrapper name differs.
 - Session skill veto: no browser alias or browser tool.
 - Session MCP override off: no browser alias or browser tool.
 
-Every selected projection alias must equal the SDK options and observed inventory.
+Legacy on/off projections must equal the saved selection's on/off decision.
+Every saved selection alias must equal the SDK options and observed inventory;
+recomputing an alias from today's wrapper name would violate its frozen lifetime.
 The helper asserts the outcomes, writes `evidence/session-tool-choice.json`, and
 closes its daemon, queries, socket and MCP resources in finally. Read the JSON:
 `pass` must be true and all four cases present. No GUI or canonical activation is
