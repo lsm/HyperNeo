@@ -106,7 +106,7 @@ export async function parseOperationInput(
 }
 
 const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
-  relay: new Set(['neo.snapshot', 'neo.publication.read', 'client.list']),
+  relay: new Set(['neo.snapshot', 'neo.ask.read', 'neo.publication.read', 'client.list']),
   daemon: new Set([
     'operations.list',
     'message.send',

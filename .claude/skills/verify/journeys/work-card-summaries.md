@@ -32,3 +32,9 @@ the expanded row displays full instructions and report; answering the question
 removes its buttons. Choice selectors use the rendered letter-prefixed labels
 (for example A Ship), matching the production option labels. Inspect summary/detail PNGs and browser.json. Native iOS
 is outside this journey; clients use summary counts and neo.ask.read on expand.
+The shared question stays open across both viewport checks and is answered only
+after the final one. Summary question reply quotes use the owning card's bounded
+title without sending question bodies; wake question links must load and focus
+the full question via its summary reference. Paired relays can read full cards
+through neo.ask.read but cannot mutate work; paired-device and snapshot tests
+cover that admission boundary.

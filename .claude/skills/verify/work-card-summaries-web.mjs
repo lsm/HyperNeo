@@ -29,9 +29,12 @@ try {
     await card.getByText('Full synthetic task instructions', { exact: true }).waitFor();
     assert.equal(reads.length, 1);
     await page.screenshot({ path: `${run}/evidence/detail-${width}.png` });
-    await card.getByRole('button', { name: 'A Ship', exact: true }).click();
-    await card.getByRole('button', { name: 'A Ship', exact: true }).waitFor({ state: 'hidden' });
-    observed.push({ width, detailReads: reads.length, questionAnswered: true });
+    await card.getByRole('button', { name: 'A Ship', exact: true }).waitFor();
+    if (width === 1280) {
+      await card.getByRole('button', { name: 'A Ship', exact: true }).click();
+      await card.getByRole('button', { name: 'A Ship', exact: true }).waitFor({ state: 'hidden' });
+    }
+    observed.push({ width, detailReads: reads.length, questionAnswered: width === 1280 });
     await page.close();
   }
 } finally {
