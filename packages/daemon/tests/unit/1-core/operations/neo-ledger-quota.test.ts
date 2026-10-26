@@ -8,24 +8,40 @@ import {
 } from '../../../../src/lib/neo/packs/coding/ledger-quota.ts';
 
 describe('credential quota acquisition', () => {
-  test('a rate-limited identity probe defers target reads across sweeps and reader recreation', async () => {
-    const clock = Date.now, start = clock(), calls: string[] = [];
-    const run: LedgerQuotaRun = async args => {
+  for (const error of ['API rate limit exceeded', 'HTTP 403 Forbidden'])
+    test(`a refused identity probe defers target reads across sweeps and recreation: ${error}`, async () => {
+    const clock = Date.now,
+      start = clock(),
+      calls: string[] = [];
+    const run: LedgerQuotaRun = async (args) => {
       calls.push(args[2]);
-      return { ok: false, error: 'API rate limit exceeded', retryAfterMs: 3600000,
-        quota: { status: 403, resource: 'core', remaining: 0, resetAt: start+3600000, retryAfterMs: null, requestId: 'probe-refused' } };
+      return {
+        ok: false,
+        error,
+        retryAfterMs: 3600000,
+        quota: {
+          status: 403,
+          resource: 'core',
+          remaining: 0,
+          resetAt: start + 3600000,
+          retryAfterMs: null,
+          requestId: 'probe-refused',
+        },
+      };
     };
     let previous: Awaited<ReturnType<LedgerQuotaRun>>['quota'];
     try {
       for (const offset of [0, 300000, 600000]) {
         Date.now = () => start + offset;
         const read = createCodingQuotaReader(run);
-        const result = await read(['gh','api','repos/synthetic/repo/pulls'],'core',previous);
+        const result = await read(['gh', 'api', 'repos/synthetic/repo/pulls'], 'core', previous);
         expect(result.quota?.deferred).toBe(true);
         previous = result.quota;
       }
       expect(calls).toEqual(['user']);
-    } finally { Date.now = clock; }
+    } finally {
+      Date.now = clock;
+    }
   });
   test('the quota reader loads as a direct Bun entry point', () => {
     const module = new URL('../../../../src/lib/neo/packs/coding/ledger-quota.ts', import.meta.url)
@@ -44,6 +60,57 @@ describe('credential quota acquisition', () => {
       }
     );
     expect(output).toBe('quota module loads\n');
+  });
+  test('a refused identity probe without headers uses a bounded unattributed delay', async () => {
+    const calls: string[] = [];
+    const read = createCodingQuotaReader(async (args) => {
+      calls.push(args[2]);
+      return { ok: false, error: 'API rate limit exceeded', retryAfterMs: 3600000 };
+    });
+    const held = await read(['gh', 'api', 'repos/synthetic/repo/pulls'], 'core');
+    expect(held.quota?.deferred).toBe(true);
+    expect(held.quota?.status).toBeNull();
+    expect(held.quota?.credentialBucket).toBeNull();
+    expect(held.ok).toBe(false);
+    if (held.ok) throw new Error('Expected deferred acquisition');
+    expect(held.retryAfterMs!).toBeLessThanOrEqual(60000);
+    expect(calls).toEqual(['user']);
+  });
+  test('identity is probed again after refusal expiry even within the normal identity cache window', async () => {
+    const clock = Date.now,
+      start = clock(),
+      calls: string[] = [];
+    let available = false;
+    const read = createCodingQuotaReader(async (args) => {
+      calls.push(args[2]);
+      if (args[2] === 'user')
+        return available
+          ? { ok: true, data: { id: 1, url: 'https://api.github.com/users/actor' } }
+          : {
+              ok: false,
+              error: 'API rate limit exceeded',
+              retryAfterMs: 60000,
+              quota: {
+                status: 403,
+                resource: 'core',
+                remaining: 0,
+                resetAt: start + 60000,
+                retryAfterMs: null,
+                requestId: null,
+              },
+            };
+      return { ok: true, data: [] };
+    });
+    try {
+      Date.now = () => start;
+      await read(['gh', 'api', 'repos/synthetic/repo/pulls'], 'core');
+      available = true;
+      Date.now = () => start + 60001;
+      expect((await read(['gh', 'api', 'repos/synthetic/repo/pulls'], 'core')).ok).toBe(true);
+      expect(calls).toEqual(['user', 'user', 'repos/synthetic/repo/pulls']);
+    } finally {
+      Date.now = clock;
+    }
   });
   for (const remaining of [null, 0, 1200])
     test(`uses the failing response headers with remaining ${remaining}, not the quota overview`, async () => {
