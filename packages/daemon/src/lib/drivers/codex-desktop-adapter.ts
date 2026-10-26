@@ -817,12 +817,38 @@ export async function queueCodexMessage(
     reason: 'native_queue',
   });
   const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
-    if (sandbox) {
-      await requireCodexWorkerProfile(server, detail.thread.folder!);
-      await server.call('thread/settings/update', {
-        threadId: detail.thread.id,
-        permissions: sandbox.permissions,
-      });
+    let step = 'thread/loaded/list';
+    try {
+      if (sandbox) {
+        step = 'permissionProfile/list';
+        await requireCodexWorkerProfile(server, detail.thread.folder!);
+        step = 'thread/loaded/list';
+      }
+      let cursor: string | null = null;
+      let loaded = false;
+      do {
+        const page = z
+          .object({ data: z.array(z.string()), nextCursor: z.string().nullish() })
+          .parse(await server.call(step, { cursor }));
+        loaded = page.data.includes(detail.thread.id);
+        cursor = page.nextCursor ?? null;
+      } while (!loaded && cursor);
+      if (!loaded) {
+        step = 'thread/resume';
+        await server.call(step, {
+          threadId: detail.thread.id,
+          ...(sandbox ? { permissions: sandbox.permissions } : {}),
+        });
+      }
+      if (sandbox) {
+        step = 'thread/settings/update';
+        await server.call(step, {
+          threadId: detail.thread.id,
+          permissions: sandbox.permissions,
+        });
+      }
+    } catch (error) {
+      return reject('not_delivered', `${step}: ${String(error)}`, true);
     }
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
@@ -852,13 +878,16 @@ export async function queueCodexMessage(
           .safeParse(error.rejection).success
       )
         return reject('not_delivered', error.message, true);
-      throw error;
+      return reject('not_delivered', `thread/queue/add: ${String(error)}`);
     }
-    const { queuedSubmission } = z
+    const parsed = z
       .object({
         queuedSubmission: z.object({ id: z.string().min(1) }),
       })
-      .parse(added);
+      .safeParse(added);
+    if (!parsed.success)
+      return reject('not_delivered', `thread/queue/add: ${parsed.error.message}`);
+    const { queuedSubmission } = parsed.data;
     const delivery = codexQueueDelivery(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => []),
       message,
