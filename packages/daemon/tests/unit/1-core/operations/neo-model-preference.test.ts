@@ -162,7 +162,12 @@ describe('neoCompactPercentFor', () => {
     provider: 'deepseek',
     thinkingLevel: 'off' as const,
     fallbacks: [
-      { model: 'opus', provider: 'anthropic', thinkingLevel: 'off', autoCompactPercent: 35 },
+      {
+        model: 'opus',
+        provider: 'anthropic',
+        thinkingLevel: 'off' as const,
+        autoCompactPercent: 35,
+      },
     ],
   };
 
