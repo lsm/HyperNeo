@@ -44,6 +44,7 @@ test('Codex selected profile denies synthetic credentials and permits repository
   const fs = launch.config.permissions[launch.permissions].filesystem;
   expect(fs[join(fixture, 'home/.ssh')]).toBe('deny');
   expect(fs[join(fixture, 'home/.codex/auth.json')]).toBe('deny');
+  expect(fs[join(fixture, 'home/.hyperneo/.provider-credential-key')]).toBe('deny');
   expect(fs[root]).toBe('write');
   expect(fs[join(root, '.codex')]).toBe('read');
   expect(fs[join(root, '.agents')]).toBe('read');
