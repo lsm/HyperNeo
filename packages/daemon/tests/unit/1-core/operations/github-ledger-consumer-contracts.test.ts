@@ -56,7 +56,6 @@ describe('GitHub reader acquisition contracts', () => {
       Object.values(result.initialRequests).reduce((sum: number, count) => sum + Number(count), 0)
     ).toBe(7);
     expect(result.repeatRequests).toEqual({
-      'work-detail': 1,
       'query-window': 1,
     });
     expect(result.ledgerGraphqlCost).toBe(0);

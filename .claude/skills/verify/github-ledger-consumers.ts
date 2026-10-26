@@ -43,6 +43,7 @@ try {
     ws!.send(JSON.stringify({ id, type: 'REQ', method: 'operation.invoke', data: { name: 'neo.github.read', input }, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const db = app.db.getDatabase(); createCodingPackTables(db);
+  const ageWorkFacts = () => db.prepare('UPDATE pack_coding_work_facts SET observed_at = observed_at - 46800000').run();
   db.prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'").run(JSON.stringify([repo]));
   const ledger = new CodingPrLedgerRepository(db);
   const reconcile = () => reconcileCodingPrLedger(ledger, [repo], readCodingLedgerRepo, Date.now());
@@ -61,12 +62,12 @@ try {
   } else if (scenario === 'head') {
     const first = await detail() as { review: string; blockers: string[] };
     assert.equal(first.review, 'approved'); assert.deepEqual(first.blockers, ['1 unresolved review thread']);
-    control('changed'); const changed = await detail() as { review: string; blockers: string[] };
+    control('changed'); ageWorkFacts(); const changed = await detail() as { review: string; blockers: string[] };
     assert.equal(changed.review, 'none'); assert.deepEqual(changed.blockers, first.blockers);
     evidence.first = first; evidence.changed = changed;
   } else {
     await reconcile(); const before = ledger.snapshot([repo], Date.now()); await detail();
-    control('failed'); const failedDetail = await detail() as { ok: boolean; reason: string }, failedList = await list() as { ok: boolean; reason: string };
+    control('failed'); ageWorkFacts(); const failedDetail = await detail() as { ok: boolean; reason: string }, failedList = await list() as { ok: boolean; reason: string };
     assert.equal(failedDetail.ok, false); assert.match(failedDetail.reason, /unreadable/);
     assert.equal(failedList.ok, false); assert.match(failedList.reason, /unreadable/);
     control('issue'); const issue = await rpc({ url: `https://github.com/${repo}/issues/3` });
@@ -82,7 +83,7 @@ try {
   evidence.otherGraphqlCost = 'unknown: gh pr view/list do not return cost; do not equate request count with points';
   if (scenario === 'merged') {
     assert.deepEqual(evidence.initialRequests, { 'ledger-discovery': 2, 'work-detail': 1, 'query-window': 1, 'branch-membership': 1, 'deploy-merge': 1, 'deploy-ancestry': 1 });
-    assert.deepEqual(evidence.repeatRequests, { 'work-detail': 1, 'query-window': 1 });
+    assert.deepEqual(evidence.repeatRequests, { 'query-window': 1 });
   }
   evidence.verified = true;
   console.log(JSON.stringify({ scenario, verified: true, initialRequests: evidence.initialRequests, repeatRequests: evidence.repeatRequests, ledgerGraphqlCost: evidence.ledgerGraphqlCost }));

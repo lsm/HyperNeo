@@ -9,6 +9,7 @@ import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;
+export const NEO_SETTLED_PR_READ_MS = 12 * 60 * 60_000;
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const GhPrSchema = z.object({
   url: z.string(),
