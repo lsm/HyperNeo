@@ -22,6 +22,8 @@ import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
+import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const receipt = { executionId: ref.id, inputId: 'input-1' };
@@ -506,6 +508,63 @@ describe('neo todo runner', () => {
       h.db.close();
     }
   });
+
+  test.each([
+    ['hyperneo', undefined, false],
+    ['codex-desktop', undefined, false],
+    ['claude-code', undefined, false],
+    ['hyperneo', 'attached-alias', false],
+    ['codex-desktop', 'attached-alias', false],
+    ['claude-code', 'attached-alias', false],
+    ['hyperneo', 'attached-alias', true],
+  ] as const)(
+    'matches a send from %s routed via %s using its recorded identity, other host: %s',
+    async (adapter, daemon, otherHost) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const source = { adapter, id: 'source-worker', ...(daemon ? { daemon } : {}) };
+        const startedAt = Date.now() + 10;
+        h.sessions.recordRef(todo.id, source, startedAt);
+        const dispatch = await h.sessions.inputs.accept(
+          todo.id,
+          'neo',
+          { verb: 'send', ref: source },
+          'Observe source',
+          startedAt
+        );
+        await h.sessions.inputs.recordOutcome(dispatch, { ref: source }, startedAt);
+        const localId = adapter === 'hyperneo' ? source.id : `${adapter}:${source.id}`;
+        const origin = renderAddress({ kind: 'session', sessionId: localId });
+        const sender = sessionSender(
+          daemon
+            ? qualifyRemoteOrigin(origin, otherHost ? 'another-host' : 'remote-self-name')
+            : origin
+        );
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+        (conversation_id,message_id,from_session,to_session,text,created_at)
+        VALUES ('conversation','source-send',?,'neo','PR opened',?)`)
+          .run(sender, new Date(startedAt + 10).toISOString());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            place: { machine: 'remote-self-name', name: 'Synthetic' },
+            turnEnds: [{ id: 'source-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(
+          otherHost ? 1 : 0
+        );
+      } finally {
+        h.db.close();
+      }
+    }
+  );
 
   test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
     'does not silence a new worker report for an unrelated send: %s',

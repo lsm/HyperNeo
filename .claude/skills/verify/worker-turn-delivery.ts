@@ -8,10 +8,12 @@ import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repos
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { sdkMessageBodyAt } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-read.ts';
 import { hyperneoInputText } from '../../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts';
+import { RemoteDaemonRegistry, remoteDaemons } from '../../../packages/daemon/src/lib/remote-daemons/registry.ts';
+import { createRemoteSendForwarder } from '../../../packages/daemon/src/lib/remote-daemons/forward-send.ts';
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
-assert(['before', 'status-before', 'verify'].includes(mode));
+assert(['before', 'status-before', 'sender-before', 'verify'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -24,6 +26,8 @@ const todos = new NeoAskTodoRepository(db);
 const sessions = new NeoTodoSessionRepository(db);
 const root = 'neo:10000000-0000-4000-8000-000000008835';
 const evidence: Record<string, unknown> = { mode };
+const outbound = new RemoteDaemonRegistry();
+let peer: ReturnType<typeof Bun.serve> | undefined;
 const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
 await new Promise<void>((done, fail) => { ws.onopen = () => done(); ws.onerror = () => fail(new Error('RPC unavailable')); });
 const rpc = (name: string, input: unknown) => new Promise<any>((done, fail) => {
@@ -107,10 +111,53 @@ try {
     assert.equal(delivered.length, mode === 'before' || (mode === 'status-before' && drifting) ? 2 : explicit ? 0 : 1);
     for (let index = 0; index < 2; index++) assert.equal(todos.getTodo(`${worker}-${index}`)?.report, 'Agent: PR opened: synthetic milestone');
   }
+  const machine = 'synthetic-origin';
+  let remoteWork: Record<string, unknown> = {};
+  peer = Bun.serve({ hostname: '127.0.0.1', port: 0,
+    fetch(request, server) { return server.upgrade(request) ? undefined : new Response('upgrade', { status: 400 }); },
+    websocket: { message(socket, bytes) {
+      const call = JSON.parse(String(bytes));
+      if (call.type !== 'REQ') return;
+      socket.send(JSON.stringify({ ...call, id: crypto.randomUUID(), requestId: call.id, type: 'RSP', data: { ok: true, value: remoteWork } }));
+    } },
+  });
+  await remoteDaemons.attach('attachment-alias', `ws://127.0.0.1:${peer.port}/ws`);
+  await outbound.attach('recipient', `ws://127.0.0.1:${app.server.port}/ws`);
+  const forward = createRemoteSendForwarder(outbound, machine);
+  for (const adapter of ['hyperneo', 'codex-desktop', 'claude-code']) {
+    const worker = `remote-${adapter}`;
+    const at = Date.now();
+    const ref = { adapter, id: worker, daemon: 'attachment-alias' };
+    todos.openAsk({ id: worker, title: worker, request: 'Remote sender identity', sessionId: root, projectId: null, originMessageId: null, createdAt: at });
+    const todo = todos.addTodo(worker, worker, { title: worker, doneWhen: 'Synthetic PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [] } }, instruction: 'Observe remote sender', named: null }, at);
+    sessions.create(worker, { verb: 'send', ref });
+    sessions.recordRef(worker, ref, at);
+    todos.updateTodo(todo, { state: 'doing', startedAt: at }, at);
+    const dispatch = await sessions.inputs.accept(worker, root, { verb: 'send', ref }, 'Observe remote sender', at);
+    await sessions.inputs.recordOutcome(dispatch, { ref }, at);
+    const localId = adapter === 'hyperneo' ? worker : `${adapter}:${worker}`;
+    const receipt = await forward({ kind: 'remote-session', daemonId: 'recipient', sessionId: root }, {
+      sessionId: root, kind: 'done', message: { type: 'user', message: { content: `Remote milestone ${adapter}` }, parent_tool_use_id: null },
+    }, `session:${encodeURIComponent(localId)}`);
+    assert.equal(receipt.kind, 'accepted');
+    remoteWork = { ref: { adapter, id: worker }, title: worker, place: { machine, name: 'Remote fixture' },
+      status: 'done', lastActivityAt: at, turnEnds: [{ id: `${worker}-turn`, startedAt: at, at: Date.now() + 1, message: `Remote milestone ${adapter}` }] };
+    evidence[`${worker}-status`] = await rpc('work.status', { ref, since: at });
+    await refresh();
+    await new Promise((done) => setTimeout(done, 500));
+    const reports = messages().filter((text) => text.startsWith('Worker turn report') && text.includes(`todo ${worker},`));
+    const recorded = db.prepare('SELECT from_session FROM neo_session_messages WHERE message_id=?').get(receipt.kind === 'accepted' ? receipt.messageId : '');
+    evidence[`${worker}-sender`] = { recorded, reports, receipt };
+    assert.equal(reports.length, mode === 'sender-before' ? 1 : 0);
+    todos.updateTodo(todos.getTodo(worker)!, { state: 'removed' }, Date.now());
+  }
   evidence.recipientInputs = messages();
   console.log(JSON.stringify(evidence, null, 2));
 } finally {
   ws.close();
+  await remoteDaemons.detach('attachment-alias');
+  await outbound.detach('recipient');
+  peer?.stop(true);
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }
