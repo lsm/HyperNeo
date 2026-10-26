@@ -80,7 +80,12 @@ test('the Codex worker sandbox exports the work locations as writable roots', ()
   expect(set.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
   expect(set.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(set.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
-  for (const path of [set.HYPERNEO_WORKTREES, set.HYPERNEO_EVIDENCE, set.HYPERNEO_BUILDS, set.TMPDIR]) {
+  for (const path of [
+    set.HYPERNEO_WORKTREES,
+    set.HYPERNEO_EVIDENCE,
+    set.HYPERNEO_BUILDS,
+    set.TMPDIR,
+  ]) {
     expect(policy.sandboxPolicy.writableRoots).toContain(path);
   }
 });

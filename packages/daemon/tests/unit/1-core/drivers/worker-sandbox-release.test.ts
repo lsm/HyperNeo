@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import {
   chmodSync,
   existsSync,
@@ -17,9 +17,17 @@ import {
   releaseWorkerSandbox,
 } from '../../../../src/lib/drivers/worker-sandbox';
 
-test('release removes only one worker scratch root and keeps evidence locations', async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+let dataDir: string;
+beforeEach(() => {
+  dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
   process.env.HYPERNEO_DATA_DIR = dataDir;
+});
+afterEach(() => {
+  rmSync(dataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
+test('release removes only one worker scratch root and keeps evidence locations', async () => {
   const first = mkdtempSync(join(tmpdir(), 'worker-sibling-a-'));
   const second = mkdtempSync(join(tmpdir(), 'worker-sibling-b-'));
   mkdirSync(join(first, '.git'));
@@ -40,8 +48,6 @@ test('release removes only one worker scratch root and keeps evidence locations'
     await releaseWorkerSandbox(second);
     rmSync(first, { recursive: true, force: true });
     rmSync(second, { recursive: true, force: true });
-    rmSync(dataDir, { recursive: true, force: true });
-    delete process.env.HYPERNEO_DATA_DIR;
   }
 });
 
@@ -108,7 +114,7 @@ test.skipIf(process.platform !== 'darwin')(
         spawnSync('/usr/bin/chflags', ['-h', 'nouchg,nouappnd', locked]);
         chmodSync(locked, 0o700);
       }
-      spawnSync('/usr/bin/chflags', ['-RP', 'nouchg,nouappnd', join(env.TMPDIR, '..')]);
+      spawnSync('/usr/bin/chflags', ['-RP', 'nouchg,nouappnd', env.TMPDIR]);
       spawnSync('/usr/bin/chflags', ['-h', 'nouchg,nouappnd', outside]);
       await releaseWorkerSandbox(root);
       rmSync(root, { recursive: true, force: true });

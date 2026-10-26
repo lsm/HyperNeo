@@ -40,9 +40,11 @@ function fixture(target: string, sharedModes = true) {
     configurable: true,
   });
   if (sharedModes)
-    vi
-      .mocked(lstat)
-      .mockResolvedValue({ mode: 0o40777, uid: 501, isDirectory: () => true } as Stats);
+    vi.mocked(lstat).mockResolvedValue({
+      mode: 0o40777,
+      uid: 501,
+      isDirectory: () => true,
+    } as Stats);
   else vi.mocked(lstat).mockImplementation((path) => realLstat!(path));
   return dataDir;
 }

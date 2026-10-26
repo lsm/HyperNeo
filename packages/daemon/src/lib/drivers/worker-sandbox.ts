@@ -1,11 +1,10 @@
 import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
-import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { workerWorkLocations } from '../work-locations.ts';
 
 let readWorkerSockets = (): string[] => [];
 
@@ -16,20 +15,22 @@ export function configureWorkerSockets(read: () => string[]) {
 export const workerUnixSockets = () => readWorkerSockets();
 
 export function workerSandboxPaths(root: string) {
-  const base = process.platform === 'darwin' ? '/tmp' : tmpdir();
-  const runtime = join(base, `hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`);
+  const locations = workerWorkLocations(root);
   return {
-    TMPDIR: join(runtime, 'tmp'),
-    TMP: join(runtime, 'tmp'),
-    TEMP: join(runtime, 'tmp'),
-    CLAUDE_CODE_TMPDIR: join(runtime, 'tmp'),
-    XDG_CACHE_HOME: join(runtime, 'cache'),
+    HYPERNEO_WORKTREES: locations.worktrees,
+    HYPERNEO_EVIDENCE: locations.evidence,
+    HYPERNEO_BUILDS: locations.builds,
+    TMPDIR: locations.scratch,
+    TMP: locations.scratch,
+    TEMP: locations.scratch,
+    CLAUDE_CODE_TMPDIR: locations.scratch,
+    XDG_CACHE_HOME: locations.cache,
   };
 }
 
 export async function releaseWorkerSandbox(root: string | null | undefined) {
   if (!root) return;
-  const runtime = join(workerSandboxPaths(root).TMPDIR, '..');
+  const runtime = workerWorkLocations(root).scratch;
   try {
     const entry = await lstat(runtime);
     if (!entry.isDirectory()) {
@@ -71,7 +72,7 @@ export async function releaseWorkerSandbox(root: string | null | undefined) {
 
 export async function prepareWorkerSandbox(root: string) {
   const env = workerSandboxPaths(root);
-  const runtime = join(env.TMPDIR, '..');
+  const runtime = workerWorkLocations(root).scratch;
   for (const path of new Set([runtime, ...Object.values(env)])) {
     await mkdir(path, { recursive: true, mode: 0o700 });
     const entry = await lstat(path);
