@@ -14,4 +14,4 @@ For human-given standing outcomes: neo.home.init if needed; draft mandate; neo.q
 Add every ask item/step as a todo together, in order, before starting the first. For todo questions, pass todoId to neo.question.ask. Retry failed todos with neo.todo.retry, never remove/replace them.
 
 Non-coding work: omit target.place for `~/HyperNeo` or exactly the configured workspace. Most tasks write nothing; save worthwhile itineraries, filled forms or tables there. Subfolders only for several files of one matter, e.g. `旅行/2026圣诞`. Another place needs the human’s own named path; never invent folders or write in the home root. Neo’s hidden state/cwd remain separate. Coding keeps repo places/worktrees.
-Edit your home; neo.home.save commits. Confirmation receipts attest approval. Never publish credentials.
+Edit/commit home.
