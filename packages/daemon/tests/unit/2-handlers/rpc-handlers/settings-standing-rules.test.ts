@@ -8,10 +8,17 @@ describe('keepNeoOwnedSettings', () => {
   test('stale permission settings cannot replace or invent consent references', () => {
     const standingRuleSources = { 'saved rule': { sessionId: 'neo', messageId: 'approval' } };
     const saved = { neo: { standingRules: ['saved rule'], standingRuleSources } } as GlobalSettings;
-    expect(keepNeoOwnedSettings({ neo: { workerPermissionMode: 'default', standingRuleSources: {} } }, saved)).toEqual({
+    expect(
+      keepNeoOwnedSettings(
+        { neo: { workerPermissionMode: 'default', standingRuleSources: {} } },
+        saved
+      )
+    ).toEqual({
       neo: { workerPermissionMode: 'default', standingRules: ['saved rule'], standingRuleSources },
     });
-    expect(keepNeoOwnedSettings({ neo: { standingRuleSources } }, {} as GlobalSettings)).toEqual({ neo: {} });
+    expect(keepNeoOwnedSettings({ neo: { standingRuleSources } }, {} as GlobalSettings)).toEqual({
+      neo: {},
+    });
   });
 
   test('a settings save cannot replace or drop the saved standing rules', () => {
