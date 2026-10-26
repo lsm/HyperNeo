@@ -808,10 +808,11 @@ export async function queueCodexMessage(
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
+  await resumeWorkerSandbox(detail.thread.folder);
   sendLog.warn('work.send route', {
     threadId: detail.thread.id,
     path: 'queue',
-    reason: 'explicit_queue_or_steering_unavailable',
+    reason: 'native_queue',
   });
   const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     const before = codexUserInputIds(

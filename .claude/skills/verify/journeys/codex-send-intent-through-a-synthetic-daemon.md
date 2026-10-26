@@ -20,6 +20,13 @@ then becomes idle and consumes that same queued input exactly once. work.status
 must show the matching input and reply; queue acceptance alone is not delivery.
 Explicit steer still returns its confirmed active turn ID; a known refusal must
 not also enqueue. New-thread creation retains its Desktop handoff.
+For marked prepared workers, queue dispatch must first recreate private runtime
+directories purged during idle time. Focused filesystem checks remove the actual
+worker runtime, invoke automatic send, and observe the directories at both native
+queue dispatch and CLI fallback. They also check that routine queue routing logs
+`native_queue`, without implying that a steering attempt failed. These checks do
+not start another writer or prove OS containment; use the worker-sandbox journey
+for that separate boundary.
 The queue fixture then explicitly rejects an input with the typed active-writer
 precondition response. work.send must return notSent true so callers can retry.
 A later queue request loses its acknowledgment after dispatch: that response
