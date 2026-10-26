@@ -1,9 +1,9 @@
 {
   "base": "626b3a7dfe14a108d884507b49e9b2dadab41e46",
   "redCommit": "4af9b9e0eba92e26ca0f62f297e881716cfa2ded",
-  "productionChangedLines": 33,
+  "productionChangedLines": 49,
   "productionBudget": 70,
-  "focusedTests": 63,
+  "focusedTests": 64,
   "finalProjectionTests": 4,
   "fullRepositoryCheck": "passed",
   "finalTestQualityCheck": "passed",
@@ -31,5 +31,26 @@
     "UI and served build",
     "production scale",
     "other state/config reads outside projected session data"
-  ]
+  ],
+  "broadcastRegressionCommit": "98fed3c41de544869cbfe2bf289152ce1ce2fd85",
+  "broadcastFailure": {
+    "baselineFatalExitRequests": [
+      1
+    ],
+    "fixedFatalExitRequests": [],
+    "fatalLogger": "production handler with supported observing exit hook, preserving fixture cleanup",
+    "actualAppCallback": "ProviderCredentialManager status callback registered by createDaemonApp",
+    "fixedBehavior": [
+      "logs one warning",
+      "no failed/stale emission",
+      "no automatic retry",
+      "health and projected RPCs remain usable",
+      "later explicit callback emits fresh state"
+    ],
+    "callersAudited": [
+      "two direct app fire-and-forget calls",
+      "api.connection/auth.changed event bridge calls",
+      "awaited full/system-only snapshot RPCs"
+    ]
+  }
 }

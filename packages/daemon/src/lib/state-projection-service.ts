@@ -420,11 +420,17 @@ export class StateProjectionService {
 
   async broadcastSystemChange(): Promise<void> {
     const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SYSTEM);
-    const state = { ...(await this.getSystemState()), version };
-
-    this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
-      channel: 'global',
-    });
+    try {
+      const state = { ...(await this.getSystemState()), version };
+      this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
+        channel: 'global',
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[StateProjectionService] Failed to broadcast system state:',
+        error instanceof Error ? error.message : error
+      );
+    }
   }
 
   async broadcastSettingsChange(): Promise<void> {

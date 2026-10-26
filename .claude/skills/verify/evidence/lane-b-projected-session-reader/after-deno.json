@@ -4,7 +4,7 @@
     "inside": 1
   },
   "systemOnlyContractMatched": true,
-  "coldMs": 3.765416999999843,
+  "coldMs": 3.845333999999866,
   "firstHealth": {
     "dataMigration": {
       "name": "sdk_message_columns_backfill_v2",
@@ -14,14 +14,14 @@
     },
     "status": "ok",
     "version": "0.48.0",
-    "uptime": 519,
+    "uptime": 525,
     "sessions": {
       "active": 0,
       "total": 3
     }
   },
   "fullContractMatched": true,
-  "concurrentWarmMs": 1.9845829999999296,
+  "concurrentWarmMs": 2.148666999999932,
   "writerCounterAfter": {
     "outside": 0,
     "inside": 1
@@ -45,7 +45,7 @@
     },
     "status": "ok",
     "version": "0.48.0",
-    "uptime": 681,
+    "uptime": 695,
     "sessions": {
       "active": 0,
       "total": 4
@@ -54,7 +54,7 @@
   "fullRecoveryRows": 4,
   "actorCacheStayedEmpty": true,
   "readLaneRequests": 28,
-  "maxLoopLagMs": 3.0577079999998205,
+  "maxLoopLagMs": 2.345083000000159,
   "rpcLatencyUnder250ms": true,
   "mainSqlAttempts": 0
 }

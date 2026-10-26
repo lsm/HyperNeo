@@ -631,4 +631,10 @@ env -i HOME="$PROJECTED_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED
 	HYPERNEO_DATA_DIR="$PROJECTED_SESSION_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-session-reader.ts" "$PROJECTED_SESSION_READER_RUN"
 
+PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN="$WORK_DIR/projected-system-broadcast-failure"
+mkdir -p "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp"
+env -i HOME="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-system-broadcast-failure.ts" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
