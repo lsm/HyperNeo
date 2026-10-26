@@ -1,4 +1,13 @@
-import { appendFile, lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { prepareWorkerSandbox, workerSandboxPaths, workerWritableRoots } from './worker-sandbox.ts';
@@ -61,10 +70,14 @@ function policy(root: string, roots: string[], siblings: string[]) {
   };
 }
 
-async function writePolicy(root: string, value: ReturnType<typeof policy>) {
-  const temporary = `${settingsPath(root)}.${crypto.randomUUID()}.tmp`;
+async function writeAtomic(path: string, value: unknown) {
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
-  await rename(temporary, settingsPath(root));
+  try {
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 async function install(root: string, roots: string[]) {
@@ -73,6 +86,7 @@ async function install(root: string, roots: string[]) {
     .map((entry) => join(dirname(root), entry.name));
   const workers: { root: string; roots: string[] }[] = [];
   for (const sibling of siblings) {
+    if (sibling === root) continue;
     try {
       workers.push({
         root: sibling,
@@ -86,12 +100,9 @@ async function install(root: string, roots: string[]) {
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');
-  await writeFile(settingsPath(root), JSON.stringify(policy(root, roots, siblings)), {
-    flag: 'wx',
-    mode: 0o600,
-  });
+  await writeAtomic(settingsPath(root), policy(root, roots, siblings));
   await appendFile(join(root, '.git/info/exclude'), '\n/.claude/settings.local.json\n');
-  await writeFile(markerPath(root), JSON.stringify({ roots }), { flag: 'wx', mode: 0o600 });
+  await writeAtomic(markerPath(root), { roots });
   for (const worker of workers) {
     if (!(await lstat(join(worker.root, '.claude'))).isDirectory())
       throw new Error('Native write policy requires an in-clone .claude directory');
@@ -99,7 +110,7 @@ async function install(root: string, roots: string[]) {
     const existing = await readFile(settingsPath(worker.root), 'utf8')
       .then(JSON.parse)
       .catch(() => computed);
-    await writePolicy(worker.root, {
+    await writeAtomic(settingsPath(worker.root), {
       ...computed,
       ...existing,
       permissions: computed.permissions,
@@ -131,16 +142,16 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     .catch(() => ({}));
   if (!existing?.env || !existing?.sandbox) {
     Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
-    await writePolicy(directory, { ...computed, ...existing });
+    await writeAtomic(settingsPath(directory), { ...computed, ...existing });
   }
   if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
-    await writePolicy(directory, { ...computed, ...existing });
+    await writeAtomic(settingsPath(directory), { ...computed, ...existing });
   }
   const updated = { ...computed, ...existing } as typeof computed;
   updated.env = { ...(existing.env ?? computed.env), ...managedEnv(computed.env) };
   updated.sandbox.filesystem = computed.sandbox.filesystem;
   updated.sandbox.network.allowAllUnixSockets = true;
-  await writePolicy(directory, updated);
+  await writeAtomic(settingsPath(directory), updated);
   return updated;
 }
