@@ -40,7 +40,8 @@ if [ -n "$DENO_SMOKE_BIN" ] && [ ! -x "$DENO_SMOKE_BIN" ]; then
 	exit 1
 fi
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/deno-smoke.XXXXXX")"
+SMOKE_TMP_ROOT=${TMPDIR:-/tmp}
+WORK_DIR="$(mktemp -d "${SMOKE_TMP_ROOT%/}/deno-smoke.XXXXXX")"
 DB_PATH="$WORK_DIR/deno-smoke.db"
 LOG_FILE="$WORK_DIR/daemon.log"
 mkdir -p "$WORK_DIR/home"
