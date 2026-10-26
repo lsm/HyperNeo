@@ -176,11 +176,16 @@ export class GitHubService {
 
   private async refreshPollJobs(enabled: boolean, reschedulePending = false) {
     if (!this.jobQueue) return null;
-    return gatewayFor(this.jobQueue.db).call(githubPollRefreshWrites, 'refresh', {
-      enabled,
-      reschedulePending,
-      runAt: Date.now(),
-    });
+    try {
+      return await gatewayFor(this.jobQueue.db).call(githubPollRefreshWrites, 'refresh', {
+        enabled,
+        reschedulePending,
+        runAt: Date.now(),
+      });
+    } catch (error) {
+      log.warn('GitHub polling refresh persistence failed', error);
+      throw error;
+    }
   }
 
   stop(): void {
