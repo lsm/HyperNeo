@@ -8,7 +8,7 @@ runner, work.start and HyperNeo adapter. Only session creation is synthetic:
 the helper records its workspace and direct/worktree mode in the isolated DB.
 The real local-user neo.open operation also aligns the stored coordinator prompt.
 The evidence must contain that actual prompt, its folder rules, and root/discussion
-word counts below the existing 260/250 limits. No model turn or actual worker
+word counts below the existing 300/250 limits. No model turn or actual worker
 file creation is claimed.
 
 Run on three fresh isolated directories, adding these arguments after the run
