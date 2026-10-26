@@ -130,7 +130,7 @@ try {
       call: async (method, params) => {
         if (method === 'thread/start') {
           writeFileSync(join(run, 'evidence/codex-launch.json'), JSON.stringify(params, null, 2));
-          return { thread: { id: 'synthetic-codex' } };
+          return { thread: { id: 'synthetic-codex' }, activePermissionProfile: { id: 'hyperneo-worker' } };
         }
         return {};
       }, close: () => {},

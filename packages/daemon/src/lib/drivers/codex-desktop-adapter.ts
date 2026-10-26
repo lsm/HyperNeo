@@ -4,6 +4,7 @@ import {
   prepareWorkerSandbox,
   releaseWorkerSandbox,
   resumeWorkerSandbox,
+  requireCodexWorkerProfile,
 } from './worker-sandbox.ts';
 import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
@@ -816,11 +817,13 @@ export async function queueCodexMessage(
     reason: 'native_queue',
   });
   const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
-    if (sandbox)
+    if (sandbox) {
+      await requireCodexWorkerProfile(server, detail.thread.folder!);
       await server.call('thread/settings/update', {
         threadId: detail.thread.id,
         permissions: sandbox.permissions,
       });
+    }
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
     );
@@ -1177,6 +1180,15 @@ export async function startCodexThread(
       });
       threadId = startedThreadId(started);
       if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
+      if (
+        sandbox &&
+        (started as { activePermissionProfile?: { id?: string } })?.activePermissionProfile?.id !==
+          sandbox.permissions
+      )
+        return reject(
+          'not_delivered',
+          'Codex did not confirm the prepared worker permission profile.'
+        );
       const model = startedThreadModel(started);
       const reportedEffort = (started as { reasoningEffort?: unknown } | null)?.reasoningEffort;
       const effort =

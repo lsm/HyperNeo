@@ -30,6 +30,11 @@ The Codex opening-turn receipt must select `hyperneo-worker`, without a legacy
 The clone's protected `.codex/config.toml` must also define it: restart/resume
 the prepared Codex worker through the daemon, repeat both reads, and retain the
 turn result. Bootstrap-only definitions are insufficient for Desktop handoff.
+Unsupported app-servers must refuse prepared startup without a confirmed active
+profile and refuse queue admission when their profile catalog is absent or
+disallows the worker profile. A repo tracking `.codex/config.toml` is refused
+without changing its bytes. Library toolchain paths remain readable; Keychains
+and 1Password are denied. The broader `.config` denial is intentional.
 
 Retain `evidence/*-stdout.jsonl`, `*-stderr.log`, `sdk-requests.json`,
 `sdk-secret-read.json`, `codex-launch.json`, `codex-turn.json`, and each worker's

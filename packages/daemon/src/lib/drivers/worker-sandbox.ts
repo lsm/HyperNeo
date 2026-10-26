@@ -2,6 +2,8 @@ import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { getDataDir } from '../data-dir.ts';
 import { secretHomePaths } from '../neo/secret-read-rules.ts';
 import { parse, stringify } from 'smol-toml';
+import { simpleGit } from 'simple-git';
+import type { CodexAppServer } from './codex-app-server.ts';
 import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { homedir, tmpdir } from 'node:os';
@@ -117,8 +119,14 @@ export function workerSecretPaths() {
   const home = homedir();
   return [
     ...new Set([
-      ...secretHomePaths(home),
-      ...['.zlogin', '.bash_login', '.codex/auth.json'].map((path) => join(home, path)),
+      ...secretHomePaths(home).filter((path) => path !== join(home, 'Library')),
+      ...[
+        '.zlogin',
+        '.bash_login',
+        '.codex/auth.json',
+        'Library/Keychains',
+        'Library/Application Support/1Password',
+      ].map((path) => join(home, path)),
       join(process.env.CODEX_HOME ?? join(home, '.codex'), 'auth.json'),
       join(getDataDir(), '.provider-credential-key'),
       ...['.credentials.json', 'settings.json', 'settings.local.json'].map((path) =>
@@ -129,6 +137,11 @@ export function workerSecretPaths() {
 }
 
 export async function persistCodexWorkerProfile(root: string) {
+  if (
+    existsSync(join(root, '.git/index')) &&
+    (await simpleGit(root).raw(['ls-files', '--', '.codex/config.toml'])).trim()
+  )
+    throw new Error('Prepared worker profile cannot replace a tracked .codex/config.toml');
   const directory = join(root, '.codex');
   await mkdir(directory, { recursive: true });
   if (!(await lstat(directory)).isDirectory()) throw new Error('Worker config must be in-clone');
@@ -167,4 +180,12 @@ export async function resumeWorkerSandbox(root: string) {
   await prepareWorkerSandbox(root);
   await persistCodexWorkerProfile(root);
   return codexWorkerSandbox(root);
+}
+
+export async function requireCodexWorkerProfile(server: Pick<CodexAppServer, 'call'>, cwd: string) {
+  const profiles = (await server.call('permissionProfile/list', { cwd })) as {
+    data?: { id: string; allowed: boolean }[];
+  };
+  if (!profiles?.data?.some((profile) => profile.id === 'hyperneo-worker' && profile.allowed))
+    throw new Error('Codex must support the prepared worker permission profile');
 }

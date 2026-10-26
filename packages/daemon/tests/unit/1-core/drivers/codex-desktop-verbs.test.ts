@@ -865,6 +865,8 @@ describe('codex-desktop adapter status and send', () => {
       const driver = adapter(0, '', async () => ({
         call: async (method, params) => {
           calls.push(method);
+          if (method === 'permissionProfile/list')
+            return { data: [{ id: 'hyperneo-worker', allowed: true }] };
           if (method === 'thread/settings/update') {
             expect(params).toMatchObject({
               threadId: 'idle',
@@ -886,7 +888,9 @@ describe('codex-desktop adapter status and send', () => {
             : { ok: true, value: { queuedSubmissionId: 'sandboxed-queue' } }
         );
         expect(calls).toEqual(
-          refused ? ['thread/settings/update'] : ['thread/settings/update', 'thread/queue/add']
+          refused
+            ? ['permissionProfile/list', 'thread/settings/update']
+            : ['permissionProfile/list', 'thread/settings/update', 'thread/queue/add']
         );
       } finally {
         await releaseWorkerSandbox(root);
@@ -941,6 +945,8 @@ describe('codex-desktop adapter status and send', () => {
           '',
           async () => ({
             call: async (method) => {
+              if (method === 'permissionProfile/list')
+                return { data: [{ id: 'hyperneo-worker', allowed: true }] };
               if (method === 'thread/settings/update') return {};
               expect(method).toBe('thread/queue/add');
               observe();

@@ -9,6 +9,7 @@ import { secretHomePaths } from '../../../../src/lib/neo/secret-read-rules.ts';
 import {
   codexWorkerSandbox,
   persistCodexWorkerProfile,
+  requireCodexWorkerProfile,
   workerSandboxPaths,
 } from '../../../../src/lib/drivers/worker-sandbox.ts';
 import {
@@ -105,6 +106,24 @@ test('a tracked project config is refused without changing repository bytes', as
   execFileSync('git', ['-C', root, 'add', '.codex/config.toml']);
   await expect(persistCodexWorkerProfile(root)).rejects.toThrow('tracked');
   expect(readFileSync(path, 'utf8')).toBe(original);
+});
+
+test.each([undefined, [], [{ id: 'hyperneo-worker', allowed: false }]])(
+  'Codex refuses missing or disallowed profiles (%j)',
+  async (data) => {
+    await expect(requireCodexWorkerProfile({ call: async () => ({ data }) }, root)).rejects.toThrow(
+      'must support'
+    );
+  }
+);
+
+test('Codex accepts the installed allowed worker profile', async () => {
+  await expect(
+    requireCodexWorkerProfile(
+      { call: async () => ({ data: [{ id: 'hyperneo-worker', allowed: true }] }) },
+      root
+    )
+  ).resolves.toBeUndefined();
 });
 
 test('Desktop reload can resolve the protected profile without bootstrap overrides', async () => {

@@ -116,6 +116,15 @@ threads may need recreation rather than a workspaceWrite fallback.
 The daemon also installs the profile in the clone's protected `.codex/config.toml`
 so Desktop can resolve it after the bootstrap process exits. Existing project
 settings and other profiles survive; generated config is locally Git-excluded.
+Clones tracking that config path are refused without modification. Codex's
+existing workspace protections for `.agents` and `.aws` stay read-only; `.codex`
+also protects the generated profile. This retains slice 3's Git/tooling limits.
+The shared home credential list supplies Azure/GCloud/GnuPG and histories, but
+workers narrow its broad Library entry to Keychains and 1Password so Library
+toolchains remain readable. Section 3 deliberately denies all of `.config`;
+tools needing those configurations must use explicit session grants later.
+Startup requires confirmed profile provenance; queue admission requires the
+profile catalog to recognize and allow it before changing settings or sending.
 Claude persists matching Bash `denyRead` and native `Read` denies, including on
 legacy resume and sibling refresh. Covered paths include section 3's tool-auth
 locations, engine auth files and shell profiles, with configured engine-home

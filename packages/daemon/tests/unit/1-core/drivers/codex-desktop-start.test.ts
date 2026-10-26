@@ -208,7 +208,12 @@ describe('codex-desktop start', () => {
     const prepared: unknown[] = [];
     let released = false;
     const { instance, calls, spawned } = adapter(
-      { call: async () => ({ thread: { id: 'fresh' } }) },
+      {
+        call: async () => ({
+          thread: { id: 'fresh' },
+          activePermissionProfile: { id: 'hyperneo-worker' },
+        }),
+      },
       undefined,
       {
         root: '/focus/dolmen',
