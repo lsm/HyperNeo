@@ -49,6 +49,65 @@ describe('ledger reconciliation health', () => {
         });
         expect(ledger.list()).toEqual([]);
       }));
+  test('stale approved-pending snapshots retain acquisition diagnostics and raise one notice through cooldown', () =>
+    using(async (db, ledger) => {
+      const start = 10_000_000,
+        stale = start + 15 * 60_000,
+        reset = stale + 60_000;
+      ledger.replace(
+        repos[0],
+        [
+          {
+            repo: repos[0],
+            number: 1,
+            title: 'Ready after CI',
+            branch: 'topic',
+            head: 'approved-head',
+            state: 'approved_pending',
+            closedAt: null,
+          },
+        ],
+        start
+      );
+      ledger.recordHealth(repos[0], { at: start, outcome: 'complete' });
+      await reconcileCodingPrLedger(
+        ledger,
+        repos,
+        async () => ({ error: 'HTTP 429 token=synthetic-do-not-persist', retryAt: reset }),
+        stale
+      );
+      const snapshot = ledger.snapshot(null, stale)[0];
+      expect(snapshot).toMatchObject({
+        readAt: start,
+        completeAt: start,
+        nextRetryAt: reset,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+      const notices = ledger.health.read(repos[0])?.notices ?? [];
+      expect(notices).toHaveLength(1);
+      expect(notices[0].text).toContain('approved_pending');
+      expect(notices[0].text).toContain('readAt=');
+      expect(JSON.stringify(ledger.health.read(repos[0]))).not.toContain(
+        'synthetic-do-not-persist'
+      );
+      await reconcileCodingPrLedger(
+        new CodingPrLedgerRepository(db),
+        repos,
+        async () => {
+          throw new Error('cooldown must not read');
+        },
+        stale + 1
+      );
+      expect(ledger.health.read(repos[0])?.notices).toEqual(notices);
+      expect(ledger.snapshot(null, stale + 1)[0]).toMatchObject({
+        readAt: start,
+        completeAt: start,
+        nextRetryAt: reset,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+    }));
   test('unreached misses survive reopening and duplicate cycles without changing fetch order', () =>
     using(async (db, ledger) => {
       const reads: string[] = [];

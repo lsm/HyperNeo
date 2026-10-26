@@ -117,6 +117,66 @@ describe('PR ledger events', () => {
     }
   });
 
+  test('a quota failure behind an empty repo resumes pending-owner delivery at reset', async () => {
+    const { db, ledger, events, deps, told, cycle, own } = setup();
+    try {
+      for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'bot' }))
+        db.prepare(`INSERT INTO neo_pack_preferences VALUES (?, ?, ?, ?, ?, 'human', 1)`).run(
+          'coding',
+          'repo',
+          'lsm/a',
+          key,
+          JSON.stringify(value)
+        );
+      const approved = {
+        reviews: {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'head1abc' }, author: { login: 'bot' } }],
+        },
+      };
+      await cycle(response([node(1, approved, 'PENDING')]), 100);
+      own(1);
+      const reads: string[] = [];
+      let limited = true;
+      const read = async (repo: string) => {
+        reads.push(repo);
+        return limited
+          ? { error: 'HTTP 429', retryAt: 1000 }
+          : {
+              data: {
+                ...response(repo === 'lsm/a' ? [node(1, approved)] : []).data,
+                repository: {
+                  ...response(repo === 'lsm/a' ? [node(1, approved)] : []).data.repository,
+                  nameWithOwner: repo,
+                },
+              },
+            };
+      };
+      const sweep = async (now: number) =>
+        deliverCodingPrEvents(
+          events,
+          await reconcileCodingPrLedger(ledger, ['synthetic/empty', 'lsm/a'], read, now),
+          deps
+        );
+      await sweep(200);
+      await sweep(999);
+      expect(reads).toEqual(['synthetic/empty']);
+      expect(ledger.stateOf('https://github.com/lsm/a/pull/1')).toBe('approved_pending');
+      expect(told).toEqual([]);
+      limited = false;
+      await sweep(1000);
+      await sweep(1001);
+      expect(told).toEqual([
+        expect.objectContaining({ key: 'neo-pr-event:lsm/a#1:head1abc:approved_green' }),
+      ]);
+      expect(db.prepare('SELECT state,told_at FROM pack_coding_pr_ledger').get()).toMatchObject({
+        state: 'approved_green',
+        told_at: expect.any(Number),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('CI recovery and a merge reach the owner once and never Neo', async () => {
     const { db, told, woken, cycle, own } = setup();
     await cycle(response([node(1)]), 100);
