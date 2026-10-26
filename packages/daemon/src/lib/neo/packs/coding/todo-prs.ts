@@ -513,8 +513,9 @@ const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
 
 export function createCodingTodoPolicy(
   repo: Pick<CodingTodoPrRepository, 'urls'>
-): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record'>> {
+): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'>> {
   return {
+    repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
     doneWhen: codingTodoDoneWhen,
     addUrls: (todo, urls) =>
       todo.check?.kind === 'pr_merged'
@@ -615,7 +616,6 @@ export function createCodingTodoPack(
       return result?.done ? { state: 'done', evidence: result.evidence } : { state: 'no_opinion' };
     },
     schema: createCodingPackTables,
-    repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
     openedPrs: async (todo, urls) => {
       await repo.write(
         'claim',

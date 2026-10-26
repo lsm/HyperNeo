@@ -75,7 +75,10 @@ const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
 
 export type NeoTodoPolicy = {
   id: string;
-  todos?: Pick<NonNullable<NeoPack['todos']>, 'doneWhen' | 'addUrls' | 'refuse' | 'record'>;
+  todos?: Pick<
+    NonNullable<NeoPack['todos']>,
+    'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'
+  >;
 };
 
 export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'>>(
