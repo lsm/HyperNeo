@@ -21,7 +21,7 @@ explicit 15-minute/nudgeEvery1-2 goal), but must not include the full scheduled
 goal-cycle instructions. The cycle now travels only in the goal wake content;
 run journey 27 for the real scheduled delivery. Focused contracts cover packs
 both enabled and disabled, reminders remaining unchanged and the exact run id.
-The root remains under 260 words; this change adds the setup entry point.
+The root remains under 300 words; this change adds the setup entry point.
 
 The scripted model proves prompt delivery and publication plumbing; it does not
 prove that an autonomous model follows the cycle, that it writes a correct

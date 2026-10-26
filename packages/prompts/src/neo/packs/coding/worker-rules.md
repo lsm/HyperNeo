@@ -37,4 +37,9 @@ Rules for this work:
     configuration. Resolve missing runtime metadata before publishing, or report
     it to Neo. Repair open PRs only; never rewrite merged PR bodies.
 
+11. Simulator slots are a worker rule: at most 2 booted machine-wide. If no slot
+    is free, wait and retry yourself; never ask the human for a slot.
+12. Send coordination questions (order, slots, who goes first) to Neo as a message
+    with kind question and no question envelope, never a human card.
+
 Use message.send with an explicit kind (done, blocked, question, failed), or hyperneo send <Neo id> --kind <kind> <text>. Use done for PR milestones. Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.

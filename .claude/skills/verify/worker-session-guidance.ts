@@ -66,11 +66,11 @@ try {
   const brief = JSON.stringify(messages);
   evidence.workerMessages = messages;
   assert(brief.includes('SYNTHETIC_WORKER_GUIDANCE'), 'worker mailbox must receive the task through the real todo/send path');
-  for (const phrase of ['at most 2 booted machine-wide', 'wait and retry', 'never ask the human', 'coordination questions', 'never a human card', 'requiring a human decision']) includes(brief, phrase, 'delivered worker brief');
+  for (const phrase of ['at most 2 booted machine-wide', 'wait and retry', 'never ask the human', 'coordination questions', 'never a human card', 'requiring a human decision']) includes(brief, phrase, 'queued worker brief');
   evidence.violations = violations;
   writeFileSync(join(run, 'evidence/worker-session-guidance.json'), JSON.stringify(evidence, null, 2));
   assert.deepEqual(violations, []);
-  console.log('PASS: live MCP/RPC descriptions, Neo session prompt and delivered worker brief');
+  console.log('PASS: live MCP/RPC descriptions, Neo session prompt and queued worker brief');
 } finally {
   writeFileSync(join(run, 'evidence/worker-session-guidance.json'), JSON.stringify({ ...evidence, violations }, null, 2));
   await app.cleanup();
