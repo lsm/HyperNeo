@@ -43,9 +43,10 @@ async function rpc(name: string, input: unknown) {
 }
 function pack() {
   const db = sql();
-  return createCodingPack({ database: () => db, readPrs: async () => [], readClaudeOwners: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db), prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) }, readLedgerRepo: async () => {
+  return createCodingPack({ database: () => db, readPrs: async () => [], readClaudeOwners: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db), prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) }, readLedgerRepo: async (_repo, previous) => {
+    if (phase === 'rate' && previous?.retryAt) return { error: 'GitHub acquisition cooldown', retryAt: reset, quota: { ...previous, deferred: true } };
     reads++;
-    if (phase === 'rate') return { error: 'HTTP 429 synthetic-private-diagnostic', retryAt: reset };
+    if (phase === 'rate') return { error: 'HTTP 429 synthetic-private-diagnostic', retryAt: reset, quota: { status: 429, resource: 'graphql', remaining: 0, resetAt: reset, requestId: 'synthetic', retryAfterMs: null, credentialBucket: 'synthetic:1', retryAt: reset } };
     const node = { number: 1, title: 'Synthetic approved work', headRefName: 'topic', headRefOid: 'approved-head', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', closedAt: null, reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'approved-head' }, author: { login: 'synthetic-reviewer' } }] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: phase === 'green' ? 'SUCCESS' : 'PENDING' } } }] } };
     return { data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [node] }, done: { nodes: [] } } } };
   } });
@@ -79,6 +80,7 @@ try {
   const health = new CodingPrLedgerRepository(sql()).health.read(repo)!;
   assert.equal(health.nextRetryAt, null); assert.equal(health.lastError, 'rate_limited'); assert.equal(health.lastErrorAt, stale);
   proof.afterRestart = { snapshot: await rpc('neo.snapshot', {}), health, jobs: accepted, reads };
+  assert.equal(sql().prepare('SELECT count(*) AS n FROM sdk_messages').get().n, 0);
   proof.verified = true; console.log('PASS: pending diagnostics and one stale notice survive reopen; reset resumes one approved-green owner event');
 } finally {
   await close(); globalThis.fetch = network; proof.resourcesStopped = true;

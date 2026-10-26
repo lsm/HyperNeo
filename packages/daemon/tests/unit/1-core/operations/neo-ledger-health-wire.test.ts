@@ -73,7 +73,20 @@ describe('ledger reconciliation health', () => {
       await reconcileCodingPrLedger(
         ledger,
         repos,
-        async () => ({ error: 'HTTP 429 token=synthetic-do-not-persist', retryAt: reset }),
+        async () => ({
+          error: 'HTTP 429 token=synthetic-do-not-persist',
+          retryAt: reset,
+          quota: {
+            status: 429,
+            resource: 'graphql',
+            remaining: 0,
+            resetAt: reset,
+            requestId: 'synthetic',
+            retryAfterMs: null,
+            credentialBucket: 'synthetic:1',
+            retryAt: reset,
+          },
+        }),
         stale
       );
       const snapshot = ledger.snapshot(null, stale)[0];
@@ -105,9 +118,11 @@ describe('ledger reconciliation health', () => {
       await reconcileCodingPrLedger(
         new CodingPrLedgerRepository(db),
         repos,
-        async () => {
-          throw new Error('cooldown must not read');
-        },
+        async (_repo, quota) => ({
+          error: 'GitHub acquisition cooldown',
+          retryAt: reset,
+          quota: { ...quota!, deferred: true },
+        }),
         stale + 1
       );
       expect(ledger.health.read(repos[0])?.notices).toEqual(notices);
@@ -128,7 +143,7 @@ describe('ledger reconciliation health', () => {
       });
       expect(ledger.health.read(repos[0])?.notices?.[0].pending).toEqual(notices[0].pending);
     }));
-  test('unreached misses survive reopening and duplicate cycles without changing fetch order', () =>
+  test('unattributed low-budget summaries do not starve targets across reopening', () =>
     using(async (db, ledger) => {
       const reads: string[] = [];
       for (const at of [100, 200, 300, 300]) {
@@ -142,16 +157,16 @@ describe('ledger reconciliation health', () => {
           at
         );
       }
-      expect(reads).toEqual(Array(4).fill(repos[0]));
+      expect(reads).toEqual(Array.from({ length: 4 }, () => repos).flat());
       expect(ledger.health.read(repos[1])).toMatchObject({
-        attemptedAt: null,
-        completeAt: null,
-        misses: 3,
-        reason: 'not_reached',
-        incident: { key: 'github-health:synthetic/tail:100', raisedAt: 300, resolvedAt: null },
+        attemptedAt: 300,
+        completeAt: 300,
+        misses: 0,
+        reason: 'complete',
+        incident: null,
       });
     }));
-  test('rate-limit retry evidence persists with the attempted failure and excludes cooldown misses', () =>
+  test('unscoped retry evidence records actual attempts without suppressing a fresh reader', () =>
     using(async (db, ledger) => {
       await reconcileCodingPrLedger(
         ledger,
@@ -166,10 +181,10 @@ describe('ledger reconciliation health', () => {
         reason: 'failed',
       });
       expect(ledger.health.read(repos[1])).toMatchObject({
-        attemptedAt: null,
-        misses: 0,
+        attemptedAt: 100,
+        misses: 1,
         nextRetryAt: 1000,
-        reason: 'cooldown',
+        reason: 'failed',
       });
       const reads: string[] = [];
       const read = async (repo: string) => {
@@ -177,17 +192,18 @@ describe('ledger reconciliation health', () => {
         return response(repo);
       };
       await reconcileCodingPrLedger(new CodingPrLedgerRepository(db), repos, read, 200);
-      expect(reads).toEqual([]);
+      expect(reads).toEqual(repos);
       expect(ledger.health.read(repos[0])).toMatchObject({
-        attemptedAt: 100,
-        misses: 1,
-        reason: 'cooldown',
+        attemptedAt: 200,
+        misses: 0,
+        reason: 'complete',
       });
+      reads.length = 0;
       await reconcileCodingPrLedger(ledger, repos, read, 1000);
       expect(reads).toEqual(repos);
       expect(repos.map((repo) => ledger.health.read(repo)?.completeAt)).toEqual([1000, 1000]);
     }));
-  test('low-budget complete coverage retains reset evidence; expired or invalid reset never invents cooldown', () =>
+  test('summary resets without response attribution never invent shared cooldowns', () =>
     using(async (_db, ledger) => {
       await reconcileCodingPrLedger(
         ledger,
@@ -198,12 +214,12 @@ describe('ledger reconciliation health', () => {
       expect(ledger.health.read(repos[0])).toMatchObject({
         completeAt: 100,
         misses: 0,
-        nextRetryAt: 1000,
+        nextRetryAt: null,
       });
       expect(ledger.health.read(repos[1])).toMatchObject({
         misses: 0,
-        reason: 'cooldown',
-        nextRetryAt: 1000,
+        reason: 'complete',
+        nextRetryAt: null,
       });
       for (const [i, reset] of ['invalid', new Date(1000).toISOString()].entries()) {
         await reconcileCodingPrLedger(
@@ -213,13 +229,13 @@ describe('ledger reconciliation health', () => {
           2000 + i
         );
         expect(ledger.health.read(repos[1])).toMatchObject({
-          reason: 'not_reached',
-          misses: 1 + i,
+          reason: 'complete',
+          misses: 0,
           nextRetryAt: null,
         });
       }
     }));
-  test('partial coverage still honors explicit exhausted-budget reset evidence', () =>
+  test('partial coverage without credential attribution cannot halt unrelated targets', () =>
     using(async (_db, ledger) => {
       const reads: string[] = [];
       await reconcileCodingPrLedger(
@@ -231,8 +247,8 @@ describe('ledger reconciliation health', () => {
         },
         100
       );
-      expect(reads).toEqual([repos[0]]);
-      expect(ledger.health.read(repos[0])).toMatchObject({ reason: 'partial', nextRetryAt: 1000 });
-      expect(ledger.health.read(repos[1])).toMatchObject({ reason: 'cooldown', misses: 0 });
+      expect(reads).toEqual(repos);
+      expect(ledger.health.read(repos[0])).toMatchObject({ reason: 'partial', nextRetryAt: null });
+      expect(ledger.health.read(repos[1])).toMatchObject({ reason: 'partial', misses: 1 });
     }));
 });

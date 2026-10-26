@@ -1,0 +1,16 @@
+{
+  "command": "focused job repository, processor, lifecycle, reclaim, FIFO and delivery suites",
+  "runtime": "Bun",
+  "exitCode": 0,
+  "passes": 261,
+  "failures": 0,
+  "oldTokenReschedule": false,
+  "newTokenReschedule": true,
+  "delayedJitterPreservesNewClaim": true,
+  "shutdownWaitsForReclaim": true,
+  "abortPrecedesJitterReceipt": true,
+  "unavailableWriterDoesNotReplay": true,
+  "temporaryHomeRemoved": true,
+  "ciRunnerFocusedPasses": 159,
+  "ciRunnerFocusedFailures": 0
+}

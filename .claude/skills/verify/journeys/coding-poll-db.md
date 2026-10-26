@@ -1,0 +1,106 @@
+# HTTP polling page commands through the DB gateway
+
+Use the existing checkout and installed dependencies. Run heavy jobs serially.
+The runner first invokes the shared `resource-check.sh`, records memory and disk
+space, and refuses to run under
+25% free memory or 25 GiB free disk:
+
+```sh
+python3 .claude/skills/verify/coding-poll-db-run.py bun before
+python3 .claude/skills/verify/coding-poll-db-run.py bun verify
+python3 .claude/skills/verify/coding-poll-db-run.py deno before --executable "$DENO"
+python3 .claude/skills/verify/coding-poll-db-run.py deno verify --executable "$DENO"
+```
+
+`DENO` names an existing Deno 2.9.4 executable; cached modules only are allowed.
+No install or simulator is used. Each run owns fresh HOME, TMPDIR and DB paths,
+an ephemeral non-8399 daemon, a refusing synthetic gh and tiny local Git fixtures.
+The Git fixture rewrites only synthetic repository URLs to its own local bare
+origin. No provider/model turn, real HTTP, existing database or credential is
+used. Save raw JSON and request records before the runner immediately removes
+the entire temporary daemon directory. `run.json` records guards and cleanup.
+
+Before mode temporarily restores only `poll-facts.ts` and `poll-http.ts` from
+the pinned origin/dev revision, then restores the draft in finally. Do not run
+before mode alongside checks, tests or another proof. Fixture writes and row
+assertions are outside the measurement window. Actual polling RPC processing
+must reproduce poll-page SQL on main before migration and record zero afterward.
+
+Two watched spaces share one synthetic repository. Drive the real
+`space.github.pollOnce` WebSocket RPC through initial, conditional repeat,
+failure, recovery and expiration cycles. The approval reaches each space once;
+repeat and failed cycles cannot duplicate it. Recovery adds one newer approval
+per space. Failure preserves cursors, prior JSON and successful timestamps.
+
+Seed old watcher validators without matching raw coverage: cold and expired
+pages must not send them upstream. A valid repeat must exercise 304. Expiration
+must bound retained raw pages while preserving an unrelated legacy row and its
+raw bytes. Stored HTTP metadata must omit the synthetic unsafe headers. Reopen
+the daemon, retain the rows, and poll again without duplicating approvals.
+
+In fixed mode, hold an old-cycle collector while a newer cycle commits through
+the writer. The older response must reject as superseded rather than borrow
+newer coverage; a stale writer receipt must return accepted=false with the
+winner's same authoritative snapshot and revision.
+
+A separate process holds the synthetic WAL writer for 1.2 seconds during an
+external-page collection. Cleanup must commit before HTTP acquisition. A real
+`system.health` RPC must finish below 250 ms and loop lag below one second.
+The supplementary collector also waits 300 ms for its synthetic response, so
+its affected duration exceeds 250 ms. This measures the collector under the
+lock, not the complete public polling RPC under contention: other watched-repo
+and event-family writes remain outside this slice. Keep that limitation and
+latency miss in evidence. Gateway timings and serialized sizes are recorded;
+worker queue, SQL and clone time are not separately attributed.
+
+The two failing regressions preceded the fix: a main-instance coverage read and
+cleanup against read-only main despite a bound writer. Focused tests preserve
+ETag binding, cycle/credential isolation, sanitized metadata, partial and failed
+coverage, late-response fencing, bounded retries, cleanup rollback and retention.
+
+The synchronous record primitive remains used by the production connector PR
+and review-thread adapters; those migrations are later lane-A slices. It is not
+an exhausted compatibility setter. `observed.json` summarizes the four retained
+runs; raw evidence is the source for each measurement.
+
+
+The review follow-up adds a failing evidence-contract test before refreshing the
+proofs. The latest runs listed in `observed.json.proofBinding.runs` both identify
+the committed `testedCodeCommit` in their `run.json.head`. Their complete
+application trees and proof-helper blobs are recorded in the same binding.
+The original `regressionCommit` continues to name the historical failing
+production test; the proof payload's `head` names the synthetic Git fixture.
+Neither is an application proof-head field.
+
+After the proof commit, change only this journey and the retained evidence folder.
+Run the explicit audit before pushing the candidate:
+
+```sh
+bun --no-install --no-env-file .claude/skills/verify/coding-poll-proof-binding.ts HEAD
+```
+
+It checks ancestry, the recorded trees and helper blobs, both runtime proof
+receipts and the complete post-proof change list. The evidence-contract unit
+test checks the retained historical pair without binding future PRs to this
+application tree. A later production/helper change requires a new committed
+proof head and fresh runs before this PR can claim that head is verified.
+
+
+Run the focused regression set with the CI runner as well as Bun:
+
+```sh
+cd packages/daemon
+bash ../../.claude/skills/verify/resource-check.sh && \
+  NODE_ENV=test node node_modules/vitest/vitest.mjs run \
+  tests/unit/1-core/operations/coding-poll-writer.test.ts \
+  tests/unit/1-core/operations/coding-poll-proof-evidence.test.ts \
+  tests/unit/1-core/operations/neo-ledger-poll-http.test.ts
+```
+
+The CI follow-up reproduces the retry fixture's fourth counted attempt under
+Node/Vitest before fixing it. Fault injection now tracks synchronous wrapper
+nesting, so only outer writes count and receive busy faults in both runners.
+The three-attempt bound, single acquisition, single observation and exhaustion
+assertions remain. No production code changed in this follow-up. Both runtime
+proofs were refreshed from the committed fixture fix; the previous binding is
+retained in `proofBindingHistory`.

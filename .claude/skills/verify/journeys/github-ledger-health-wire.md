@@ -14,7 +14,10 @@ The helper starts an isolated daemon and runs the existing reconciliation entry
 through its real default reader and DB gateway. Its local gh stub emits complete,
 invalid REST coverage, rate-limited (Retry-After) and empty responses. Three invalid cycles
 raise a persisted incident without altering PR facts. An attempted rate failure
-records its deadline; the unattempted tail records cooldown, with no added miss.
+records its deadline and account/resource scope; a tail using the same account
+and core resource records cooldown without an added miss. Unrelated accounts
+and resources continue. The fixture supplies the non-secret authenticated user
+and response resource header instead of assuming a shared credential.
 After restart, a cooldown cycle makes zero reads; expiration resumes the same
 order and complete empty coverage recovers. Protected polling history is unchanged.
 

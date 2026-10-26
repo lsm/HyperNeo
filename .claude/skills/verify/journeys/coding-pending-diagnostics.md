@@ -18,8 +18,9 @@ credentials, live daemon, real DB/copy, port 8399 or model turn is used.
 At 15 minutes without a successful PR observation, the existing health-notice
 path must accept exactly one keyed stale-pending wake for Neo. The pending row
 shows readAt, completeAt, nextRetryAt, lastError and lastErrorAt. Raw error text
-must not appear: lastError is a safe classification, including shared quota
-cooldown when an earlier repository stops the sweep. The notice saves the same
+must not appear: lastError is a safe classification, including credential-scoped quota
+deferral. Other repositories retain the independent acquisition introduced by
+the fairness fix; diagnostics do not impose a sweep-wide cooldown. The notice saves the same
 structured diagnostics keyed to the PR/head/read so recovery cannot overwrite
 the incident context. Normal fresh pending checks do not trigger this notice.
 

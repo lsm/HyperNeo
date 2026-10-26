@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { LedgerQuota } from './ledger-quota.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 
 const PENDING_STALE_MS = 15 * 60_000;
@@ -12,6 +13,7 @@ export type RepoHealthCycle = {
   retryAt?: number;
   error?: ReadError;
   pending?: readonly PendingRead[];
+  quota?: LedgerQuota;
 };
 type ReadDiagnostics = {
   readAt: number;
@@ -28,6 +30,7 @@ export type HealthNotice = {
 };
 type Health = {
   notices?: HealthNotice[];
+  quota?: LedgerQuota;
   lastError?: ReadError | null;
   lastErrorAt?: number | null;
   cycleAt: number;
@@ -93,6 +96,7 @@ function projectHealth(repo: string, before: Health | null, cycle: RepoHealthCyc
     reason: cycle.outcome,
     nextRetryAt: cycle.retryAt ?? null,
     incident,
+    ...(cycle.quota ? { quota: cycle.quota } : {}),
   };
 }
 

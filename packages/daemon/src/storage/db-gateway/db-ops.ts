@@ -1,4 +1,8 @@
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
+import {
+  codingPollPageReads,
+  codingPollPageWrites,
+} from '../../lib/neo/packs/coding/poll-http-db.ts';
 import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
   codingAncestryReads,
@@ -87,9 +91,12 @@ import { credentialStoreWrites } from '../repositories/credential-store-writes.t
 import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue-write.ts';
 import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
+import { jobStaleReclaimWrites } from '../repositories/job-stale-reclaim-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    codingPollPageReads,
+    codingPollPageWrites,
     codingMergeReads,
     codingMergeWrites,
     codingAncestryReads,
@@ -161,5 +168,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     providerRpcWrites,
     credentialStoreWrites,
     enqueueSessionDelivery,
+    jobStaleReclaimWrites,
   ].map((op) => [op.name, op])
 );

@@ -117,7 +117,7 @@ describe('PR ledger events', () => {
     }
   });
 
-  test('a quota failure behind an empty repo resumes pending-owner delivery at reset', async () => {
+  test('attributed quota deferral resumes pending-owner delivery at reset', async () => {
     const { db, ledger, events, deps, told, cycle, own } = setup();
     try {
       for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'bot' }))
@@ -137,10 +137,30 @@ describe('PR ledger events', () => {
       own(1);
       const reads: string[] = [];
       let limited = true;
-      const read = async (repo: string) => {
+      let cycleAt = 200;
+      const quota = {
+        status: 429,
+        resource: 'graphql' as const,
+        remaining: 0,
+        resetAt: 1000,
+        requestId: 'synthetic',
+        retryAfterMs: null,
+        credentialBucket: 'synthetic:1',
+        retryAt: 1000,
+      };
+      const read = async (
+        repo: string,
+        previous?: import('../../../../src/lib/neo/packs/coding/ledger-quota.ts').LedgerQuota
+      ) => {
+        if (previous?.retryAt && cycleAt < previous.retryAt)
+          return {
+            error: 'GitHub acquisition cooldown',
+            retryAt: 1000,
+            quota: { ...previous, deferred: true },
+          };
         reads.push(repo);
         return limited
-          ? { error: 'HTTP 429', retryAt: 1000 }
+          ? { error: 'HTTP 429', retryAt: 1000, quota }
           : {
               data: {
                 ...response(repo === 'lsm/a' ? [node(1, approved)] : []).data,
@@ -151,15 +171,17 @@ describe('PR ledger events', () => {
               },
             };
       };
-      const sweep = async (now: number) =>
-        deliverCodingPrEvents(
+      const sweep = async (now: number) => {
+        cycleAt = now;
+        await deliverCodingPrEvents(
           events,
           await reconcileCodingPrLedger(ledger, ['synthetic/empty', 'lsm/a'], read, now),
           deps
         );
+      };
       await sweep(200);
       await sweep(999);
-      expect(reads).toEqual(['synthetic/empty']);
+      expect(reads).toEqual(['synthetic/empty', 'lsm/a']);
       expect(ledger.stateOf('https://github.com/lsm/a/pull/1')).toBe('approved_pending');
       expect(told).toEqual([]);
       limited = false;

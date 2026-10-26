@@ -2,6 +2,18 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+
+const observingGateway = (db: Database, observed: (method: string) => void): DbGateway => {
+  const gateway = new DbGateway(':memory:', db);
+  const call = gateway.call.bind(gateway);
+  gateway.call = async (...args) => {
+    const result = await Reflect.apply(call, gateway, args);
+    observed(args[1]);
+    return result;
+  };
+  return gateway;
+};
 
 const DB_SCHEMA = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -45,21 +57,17 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
   });
 
   describe('eager stale reclamation on start()', () => {
-    it('reclaimStale() is called synchronously inside start(), before any interval tick fires', () => {
-      const reclaimTimestamps: number[] = [];
-      const original = repo.reclaimStale.bind(repo);
-      repo.reclaimStale = (staleBefore: number) => {
-        reclaimTimestamps.push(Date.now());
-        return original(staleBefore);
-      };
-
-      const before = Date.now();
+    it('writer reclaim completes before any interval tick fires', async () => {
+      let reclaimed = false;
+      processor = new JobQueueProcessor(repo, {
+        pollIntervalMs: 60_000,
+        db: observingGateway(db, (method) => {
+          if (method === 'reclaimStale') reclaimed = true;
+        }),
+      });
       processor.start();
-      const after = Date.now();
-
-      expect(reclaimTimestamps.length).toBeGreaterThanOrEqual(1);
-      expect(reclaimTimestamps[0]).toBeGreaterThanOrEqual(before);
-      expect(reclaimTimestamps[0]).toBeLessThanOrEqual(after + 5);
+      await processor.stop();
+      expect(reclaimed).toBe(true);
     });
   });
 
@@ -547,16 +555,14 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       );
 
       let statusAtReclaim: string | undefined;
-      const original = repo.reclaimStale.bind(repo);
-      repo.reclaimStale = (staleBefore: number) => {
-        const count = original(staleBefore);
-        statusAtReclaim = repo.getJob(job.id)?.status;
-        return count;
-      };
+      const gateway = observingGateway(db, (method) => {
+        if (method === 'reclaimStale') statusAtReclaim = repo.getJob(job.id)?.status;
+      });
 
       const staleProcessor = new JobQueueProcessor(repo, {
         staleThresholdMs: 1_000,
         pollIntervalMs: 5000,
+        db: gateway,
       });
       staleProcessor.register('reclaim-order-q', async () => {});
 
@@ -570,15 +576,16 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
 
     it('stale check is skipped on the second tick within the same 60 s window', async () => {
       let reclaimCallCount = 0;
-      const original = repo.reclaimStale.bind(repo);
-      repo.reclaimStale = (staleBefore: number) => {
-        reclaimCallCount++;
-        return original(staleBefore);
-      };
+      processor = new JobQueueProcessor(repo, {
+        db: observingGateway(db, (method) => {
+          if (method === 'reclaimStale') reclaimCallCount++;
+        }),
+      });
 
       processor.register('throttle-q', async () => {});
 
       processor.start();
+      await processor.stop();
       const countAfterStart = reclaimCallCount;
       expect(countAfterStart).toBeGreaterThanOrEqual(1);
 

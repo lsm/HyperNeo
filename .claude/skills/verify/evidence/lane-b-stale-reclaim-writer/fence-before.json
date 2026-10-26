@@ -1,0 +1,9 @@
+{
+  "command": "focused old-reclaim-token reschedule regression",
+  "exitCode": 1,
+  "passes": 0,
+  "failures": 1,
+  "expected": false,
+  "actual": true,
+  "observation": "An old reclaim token rescheduled a newer pending claim."
+}
