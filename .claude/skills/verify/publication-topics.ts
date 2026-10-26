@@ -19,16 +19,21 @@ const STEPS = [
   { requestId: 'bundled', shortText: 'environments can only be created by you in Desktop', fullText: `${DESKTOP}\n\n${QLARK}`, links: [] },
   { requestId: 'desktop', shortText: 'Claude Desktop 环境: only you can create environments', fullText: DESKTOP, links: [] },
   { requestId: 'qlark', shortText: 'qlark 长听写开关 is now off by default', fullText: QLARK, links: [] },
+  { requestId: 'references', shortText: 'Delivery survives unavailable references', fullText: 'The report is ready.',
+    links: [{ kind: 'project', id: 'garden', label: 'Garden' }, { kind: 'project', id: 'missing', label: 'Missing' }, { kind: 'work', id: 'old', label: 'Old' }],
+    replyTo: ['10000000-0000-4000-8000-000000000088'],
+    artifacts: [{ daemonId: '30000000-0000-4000-8000-000000000001', artifactId: 'missing', title: 'Missing', kind: 'html', byteLength: 100 }],
+  },
 ];
 
-const run = resolve(process.argv[2] ?? '');
-const port = Number(process.argv[3] ?? 9366);
+const run = resolve(process.argv[3] ?? '');
+const port = Number(process.argv[2] ?? 9366);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(port > 0 && port !== 8399);
 assert(!existsSync(join(run, 'data/daemon.db')));
-for (const dir of ['home', 'data', 'workspace']) mkdirSync(join(run, dir), { recursive: true });
+for (const dir of ['home', 'data', 'workspace', 'evidence']) mkdirSync(join(run, dir), { recursive: true });
 
 const db = new Database(join(run, 'data/daemon.db'));
 await db.initialize(createReactiveDatabase(db));
@@ -42,6 +47,7 @@ await db.createSession({
 });
 const neo = createNeoService(db, { getSessionAsync: async () => undefined } as never, { event: () => {} } as never, new InternalEventBus());
 neo.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+neo.repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
 const queue = new MessageQueue();
 queue.start();
 const runner = new QueryRunner({
@@ -92,7 +98,7 @@ const stream = query({
     env: { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, ANTHROPIC_API_KEY: 'sk-devproxy-test-key', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
     mcpServers: { 'hyperneo-operations': createOperationMcpServer(registry, () => ({ sessionId: root, role: 'neo' })) },
     stderr: (data) => writeFileSync(join(run, 'sdk-stderr.log'), data, { flag: 'a' }),
-    maxTurns: 8,
+    maxTurns: 10,
   },
 });
 const watchdog = setTimeout(() => {
@@ -102,12 +108,15 @@ try {
   for await (const event of stream) {
     if (event.type === 'result') break;
   }
-  const published = (neo.publications.list(conversation) ?? []).map(({ shortText, fullText }) => ({ shortText, fullText }));
-  writeFileSync(join(run, 'observed.json'), JSON.stringify({ receipts, published }, null, 2));
+  const published = neo.publications.list(conversation) ?? [];
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, published }, null, 2));
   assert.match(JSON.parse(receipts[0] ?? '[]')[0]?.text ?? '', /"accepted"\s*:\s*true/);
-  assert.deepEqual(published.map((p) => p.fullText), [`${DESKTOP}\n\n${QLARK}`, DESKTOP, QLARK]);
-  writeFileSync(join(run, 'evidence.json'), JSON.stringify({ actualSdkMcp: true, bundledAccepted: true, receipt: receipts[0], published }, null, 2));
-  console.log(join(run, 'evidence.json'));
+  assert.deepEqual(published.map((p) => p.fullText), [`${DESKTOP}\n\n${QLARK}`, DESKTOP, QLARK, 'The report is ready.']);
+  assert.deepEqual(published[3].links, [{ kind: 'project', id: 'garden', label: 'Garden' }]);
+  assert.deepEqual(published[3].replyTo, []);
+  assert.deepEqual(published[3].artifacts, []);
+  writeFileSync(join(run, 'evidence/evidence.json'), JSON.stringify({ actualSdkMcp: true, bundledAccepted: true, receipt: receipts[0], published }, null, 2));
+  console.log(join(run, 'evidence/evidence.json'));
 } finally {
   clearTimeout(watchdog);
   queue.clear();

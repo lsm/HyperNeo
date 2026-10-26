@@ -25,7 +25,7 @@ export const NeoPublicationSchema = z
     askOrigin: origin.optional(),
     producerInput: origin.optional(),
     shortText: text(2000).describe(
-      'What the human reads first; it must stand alone. One topic per publication: publish unrelated topics separately, and when fullText covers more than one topic, name each one here.'
+      'What the human reads first; it must stand alone and summarize the message.'
     ),
     fullText: text(16000).describe('The details of the topic(s) shortText names.'),
     links: z
