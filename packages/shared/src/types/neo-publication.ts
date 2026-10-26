@@ -31,6 +31,7 @@ export interface NeoPublicationInput extends ArtifactProjection {
   readonly publicationId: string;
   readonly askOrigin?: NeoInputOrigin;
   readonly producerInput?: NeoInputOrigin;
+  readonly verbatim?: true;
   readonly shortText: string;
   readonly fullText: string;
   readonly links: readonly NeoPublicationLink[];

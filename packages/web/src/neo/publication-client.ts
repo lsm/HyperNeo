@@ -1,6 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { NeoPublication, NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import { ARTIFACT_KINDS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+import type { NeoCardReply, NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 
@@ -103,6 +103,11 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
   };
 }
 
+function admitPublicationShortText(row: Record<string, unknown>): boolean {
+  if (row.verbatim === true) return row.shortText === undefined || !!text(row.shortText, 2000);
+  return !!text(row.shortText, 2000);
+}
+
 function publication(value: unknown, page: Cursor): NeoPublication | null {
   const row = object(value);
   if (!row) return null;
@@ -119,7 +124,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     !text(row.createdAt, 40) ||
     !/^\d{4}-\d{2}-\d{2}T.*Z$/.test(row.createdAt) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
-    !text(row.shortText, 2000) ||
+    !admitPublicationShortText(row) ||
     !text(row.fullText, 16000) ||
     ask === null ||
     producer === null ||
@@ -185,7 +190,11 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     publicationId: row.publicationId,
     sequence: row.sequence,
     createdAt: row.createdAt,
-    shortText: row.shortText,
+    verbatim: row.verbatim === true ? true : undefined,
+    shortText:
+      row.verbatim === true
+        ? ((row.shortText as string | undefined) ?? '')
+        : (row.shortText as string),
     fullText: row.fullText,
     ...(ask ? { askOrigin: ask } : {}),
     ...(producer ? { producerInput: producer } : {}),

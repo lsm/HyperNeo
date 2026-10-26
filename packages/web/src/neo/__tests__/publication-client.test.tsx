@@ -1,12 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import type { MessageHub } from '@hyperneo/shared';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   admitPublicationCursor,
   admitPublicationLifetime,
+  type PublicationPage,
   presentPublicationPage,
   readNeoPublications,
-  type PublicationPage,
 } from '../publication-client.ts';
 import { useNeo } from '../useNeo.ts';
 
@@ -208,6 +208,28 @@ describe('authored publication client', () => {
   ])('fails closed on invalid or refused page %o', async (value) => {
     const io = transport(value);
     expect(await readNeoPublications(page, io.getHub, current)).toEqual({ state: 'unavailable' });
+  });
+
+  it('parses a verbatim row without a short text', async () => {
+    const row = { ...item(), verbatim: true, shortText: undefined };
+    const io = transport(response([row]));
+    const result = await readNeoPublications(page, io.getHub, current);
+    expect(result).toMatchObject({
+      state: 'ready',
+      items: [{ verbatim: true, shortText: '', fullText: row.fullText }],
+      nextAfter: 1,
+    });
+  });
+
+  it('refuses a verbatim flag without full text or a missing flag without short text', async () => {
+    const bare = transport(response([{ ...item(), shortText: undefined }]));
+    expect(await readNeoPublications(page, bare.getHub, current)).toEqual({
+      state: 'unavailable',
+    });
+    const empty = transport(response([{ ...item(), verbatim: true, fullText: '' }]));
+    expect(await readNeoPublications(page, empty.getHub, current)).toEqual({
+      state: 'unavailable',
+    });
   });
 
   it.each([

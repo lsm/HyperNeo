@@ -24,6 +24,7 @@ export const NeoPublicationSchema = z
     publicationId: z.string().uuid(),
     askOrigin: origin.optional(),
     producerInput: origin.optional(),
+    verbatim: z.literal(true).optional(),
     shortText: text(2000).describe(
       'What the human reads first; it must stand alone and summarize the message.'
     ),
