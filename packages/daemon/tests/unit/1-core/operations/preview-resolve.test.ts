@@ -7,6 +7,44 @@ import { fileURLToPath } from 'node:url';
 import { createArtifactReferenceResolve } from '../../../../src/lib/artifacts/resolve-operation.ts';
 
 describe('human stored reference capture', () => {
+  test('resolves complete spaced inline-code paths from chat and todo sources', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-inline-spaces-')));
+    mkdirSync(join(root, 'home'));
+    try {
+      const output = execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL(
+              '../../../../../../.claude/skills/verify/preview-inline-spaces.ts',
+              import.meta.url
+            )
+          ),
+          root,
+        ],
+        {
+          cwd: root,
+          env: {
+            PATH: process.env.PATH,
+            HOME: join(root, 'home'),
+            HYPERNEO_DATA_DIR: join(root, 'data'),
+            TMPDIR: root,
+            NODE_ENV: 'test',
+          },
+          encoding: 'utf8',
+          timeout: 30000,
+        }
+      );
+      expect(JSON.parse(output)).toMatchObject({
+        passed: true,
+        chatSpaced: true,
+        todoSpaced: true,
+        safetyChecks: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test('opens unregistered home-relative publication HTML through the existing capture checks', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-home-reference-')));
     mkdirSync(join(root, 'home'));
