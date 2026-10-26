@@ -484,6 +484,19 @@ describe('sleepCommandVerdict / createSleepBoundHook', () => {
     expect(sleepCommandVerdict('[[ -f x ]] && echo ok')).toBe('none');
   });
 
+  test('sleeps inside repeatable function definitions are vetoed', () => {
+    expect(sleepCommandVerdict('f(){ sleep 200; [ "$1" -gt 0 ] && f 0; }; f 1')).toBe('denied');
+    expect(sleepCommandVerdict('f() (sleep 100)')).toBe('denied');
+    expect(sleepCommandVerdict('function f { sleep 30; }')).toBe('denied');
+    expect(sleepCommandVerdict('function f() { sleep 30; }')).toBe('denied');
+    expect(sleepCommandVerdict('f()\n{\n  sleep 1\n}')).toBe('denied');
+    expect(sleepCommandVerdict('f(){ g(){ sleep 1; }; }; f')).toBe('denied');
+    expect(sleepCommandVerdict('f(){ sleep 5; }; f; f; f')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 5; f(){ echo hi; }')).toBe('allowed');
+    expect(sleepCommandVerdict('f(){ echo hi; }; sleep 5')).toBe('allowed');
+    expect(sleepCommandVerdict('f(){ echo hi; }')).toBe('none');
+  });
+
   test('commands without sleeps are neutral', () => {
     expect(sleepCommandVerdict('echo done')).toBe('none');
     expect(sleepCommandVerdict('asleep 5')).toBe('none');

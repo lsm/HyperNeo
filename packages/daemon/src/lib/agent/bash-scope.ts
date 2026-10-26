@@ -515,6 +515,31 @@ function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
   return total;
 }
 
+const FUNCTION_DEFINITION_BODY =
+  /(?:^|[\s;&|()])(?:function\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*[({]|(?:^|[\s;&|()])function\s+[A-Za-z_][A-Za-z0-9_]*\s*\{/g;
+
+function sleepInsideFunctionBody(command: string): boolean {
+  const text = normalizeSleepText(command);
+  for (const match of text.matchAll(FUNCTION_DEFINITION_BODY)) {
+    const open = match[0].endsWith('(') ? '(' : '{';
+    const close = open === '(' ? ')' : '}';
+    const start = (match.index ?? 0) + match[0].length - 1;
+    let depth = 0;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === open) depth++;
+      else if (text[i] === close) {
+        depth--;
+        if (depth === 0) {
+          if (containsSleepWord(text.slice(start + 1, i))) return true;
+          break;
+        }
+      }
+    }
+    if (depth > 0 && containsSleepWord(text.slice(start + 1))) return true;
+  }
+  return false;
+}
+
 function splitCommandText(command: string): string[] {
   const segments: string[] = [];
   checkCommandText(command, (segment) => {
@@ -528,6 +553,7 @@ export function sleepCommandVerdict(
   command: string,
   maxSeconds: number = NEO_SLEEP_MAX_SECONDS
 ): SleepVerdict {
+  if (sleepInsideFunctionBody(command)) return 'denied';
   let seen = false;
   let total = 0;
   let clean = true;
