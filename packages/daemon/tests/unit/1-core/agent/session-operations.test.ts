@@ -314,6 +314,14 @@ describe('session operation MCP attachment', () => {
           .filter((name: string) => !name.startsWith('operations.'))
           .sort()
       ).toEqual(listed);
+      const full = (await invoke({ name: 'operations.list', input: { all: true } })).content[0];
+      if (full.type !== 'text') throw new Error('Expected catalog JSON');
+      expect(
+        JSON.parse(full.text)
+          .map((entry: { name: string }) => entry.name)
+          .filter((name: string) => !name.startsWith('operations.'))
+          .sort()
+      ).toEqual(listed);
       expect(JSON.stringify((await invoke({ name: 'work.start', input: {} })).content)).toContain(
         'ran'
       );
