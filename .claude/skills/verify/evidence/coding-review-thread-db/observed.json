@@ -25,8 +25,8 @@
         "temporaryDaemonDataRemoved": true
       },
       "verify": {
-        "folder": "bun-verify-1",
-        "applicationHead": "430c1ff50db9329d368a4de64a92a6579fa006cb",
+        "folder": "bun-verify-2",
+        "applicationHead": "ef4a2bf3d0840547ff84d443f32fb8af66e38760",
         "mainConnectionTargetSql": 0,
         "gatewayCommands": 54,
         "counts": {
@@ -41,14 +41,14 @@
           "late": 2,
           "held": 2
         },
-        "maxLoopLagMs": 4.313375000000178,
+        "maxLoopLagMs": 3.6834159999999656,
         "contention": {
-          "healthMs": 0.4147080000002461,
-          "affectedMs": 1210.9872500000001,
+          "healthMs": 0.5399589999997261,
+          "affectedMs": 1211.1547500000001,
           "affectedOperationUnder250ms": false
         },
-        "freeMemoryPercentBefore": 56,
-        "freeGiBBefore": 266.11545181274414,
+        "freeMemoryPercentBefore": 61,
+        "freeGiBBefore": 262.82128143310547,
         "temporaryDaemonDataRemoved": true
       }
     },
@@ -75,8 +75,8 @@
         "temporaryDaemonDataRemoved": true
       },
       "verify": {
-        "folder": "deno-verify-1",
-        "applicationHead": "430c1ff50db9329d368a4de64a92a6579fa006cb",
+        "folder": "deno-verify-2",
+        "applicationHead": "ef4a2bf3d0840547ff84d443f32fb8af66e38760",
         "mainConnectionTargetSql": 0,
         "gatewayCommands": 54,
         "counts": {
@@ -91,24 +91,24 @@
           "late": 2,
           "held": 2
         },
-        "maxLoopLagMs": 4.457374999999956,
+        "maxLoopLagMs": 4.557583999999906,
         "contention": {
-          "healthMs": 0.6649170000000595,
-          "affectedMs": 1285.4904999999999,
+          "healthMs": 1.4465420000005906,
+          "affectedMs": 1278.6222089999992,
           "affectedOperationUnder250ms": false
         },
-        "freeMemoryPercentBefore": 54,
-        "freeGiBBefore": 266.0794105529785,
+        "freeMemoryPercentBefore": 61,
+        "freeGiBBefore": 262.8034477233887,
         "temporaryDaemonDataRemoved": true
       }
     }
   },
   "proofBinding": {
-    "testedCodeCommit": "430c1ff50db9329d368a4de64a92a6579fa006cb",
-    "testedGitTree": "0bd84b069253c2cd64c53a9c34bcd07679f11bda",
+    "testedCodeCommit": "ef4a2bf3d0840547ff84d443f32fb8af66e38760",
+    "testedGitTree": "861e3fed65e5190670388871c31b1dcaa6409dfb",
     "applicationTrees": {
-      "packages": "86485de3274edc2ba020d5636d43073c8d803699",
-      "scripts": "bc1bad41109d685fd2a7a91ccba5ea51e91973c6"
+      "packages": "773fb6219e2f126998d407e010e3708391833749",
+      "scripts": "fb5ce598ebe39663f25cb1d5f5c4ca34a000e121"
     },
     "proofBlobs": {
       ".claude/skills/verify/coding-review-thread-db.ts": "c0c3845bc8691e7132438d5a5fca1332eeb5a8c1",
@@ -117,8 +117,8 @@
       ".claude/skills/verify/resource-check.sh": "98061f6451380da36ea306fc9052f11ea575a7f4"
     },
     "runs": {
-      "bun": "bun-verify-1",
-      "deno": "deno-verify-1"
+      "bun": "bun-verify-2",
+      "deno": "deno-verify-2"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
   },
@@ -161,6 +161,25 @@
       "runs": {
         "bun": "bun-verify",
         "deno": "deno-verify"
+      },
+      "postProofChangePolicy": "evidence-and-journey-only"
+    },
+    {
+      "testedCodeCommit": "430c1ff50db9329d368a4de64a92a6579fa006cb",
+      "testedGitTree": "0bd84b069253c2cd64c53a9c34bcd07679f11bda",
+      "applicationTrees": {
+        "packages": "86485de3274edc2ba020d5636d43073c8d803699",
+        "scripts": "bc1bad41109d685fd2a7a91ccba5ea51e91973c6"
+      },
+      "proofBlobs": {
+        ".claude/skills/verify/coding-review-thread-db.ts": "c0c3845bc8691e7132438d5a5fca1332eeb5a8c1",
+        ".claude/skills/verify/coding-review-thread-db-run.py": "a1737fb1559548cb4801d15f706addccffa234b0",
+        ".claude/skills/verify/coding-review-thread-proof-binding.ts": "2f4173797b4fdd76d122566817153e4e31a12652",
+        ".claude/skills/verify/resource-check.sh": "98061f6451380da36ea306fc9052f11ea575a7f4"
+      },
+      "runs": {
+        "bun": "bun-verify-1",
+        "deno": "deno-verify-1"
       },
       "postProofChangePolicy": "evidence-and-journey-only"
     }
@@ -221,12 +240,77 @@
         "freeGiBBefore": 222.78482055664062,
         "temporaryDaemonDataRemoved": true
       }
+    },
+    {
+      "bun": {
+        "folder": "bun-verify-1",
+        "applicationHead": "430c1ff50db9329d368a4de64a92a6579fa006cb",
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 54,
+        "counts": {
+          "cold": 2,
+          "repeat": 2,
+          "failed": 1,
+          "partial": 1,
+          "head-change": 2,
+          "recovered": 2,
+          "alias": 2,
+          "reopen": 2,
+          "late": 2,
+          "held": 2
+        },
+        "maxLoopLagMs": 4.313375000000178,
+        "contention": {
+          "healthMs": 0.4147080000002461,
+          "affectedMs": 1210.9872500000001,
+          "affectedOperationUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 56,
+        "freeGiBBefore": 266.11545181274414,
+        "temporaryDaemonDataRemoved": true
+      },
+      "deno": {
+        "folder": "deno-verify-1",
+        "applicationHead": "430c1ff50db9329d368a4de64a92a6579fa006cb",
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 54,
+        "counts": {
+          "cold": 2,
+          "repeat": 2,
+          "failed": 1,
+          "partial": 1,
+          "head-change": 2,
+          "recovered": 2,
+          "alias": 2,
+          "reopen": 2,
+          "late": 2,
+          "held": 2
+        },
+        "maxLoopLagMs": 4.457374999999956,
+        "contention": {
+          "healthMs": 0.6649170000000595,
+          "affectedMs": 1285.4904999999999,
+          "affectedOperationUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 54,
+        "freeGiBBefore": 266.0794105529785,
+        "temporaryDaemonDataRemoved": true
+      }
     }
   ],
   "baseMerge": {
-    "base": "48d74e332df20846dda47200dfa1f37bc1e1ce55",
-    "commit": "430c1ff50db9329d368a4de64a92a6579fa006cb",
-    "conflict": "db-ops.ts imports and entries only; mailbox and connector registrations both retained",
-    "productionChangedLines": 61
-  }
+    "base": "533142574ff811a85645343e3d21a13df73c4b2d",
+    "commit": "ef4a2bf3d0840547ff84d443f32fb8af66e38760",
+    "conflict": "db-ops.ts imports and entries only; GitHub poll successor and connector registrations both retained. Own additions grouped with existing coding entries to avoid repeated shared-tail collisions.",
+    "productionChangedLines": 61,
+    "sharedDiff": "one import and one map entry added; no base lines removed"
+  },
+  "baseMergeHistory": [
+    {
+      "base": "48d74e332df20846dda47200dfa1f37bc1e1ce55",
+      "commit": "430c1ff50db9329d368a4de64a92a6579fa006cb",
+      "conflict": "db-ops.ts imports and entries only; mailbox and connector registrations both retained",
+      "productionChangedLines": 61
+    }
+  ]
 }
