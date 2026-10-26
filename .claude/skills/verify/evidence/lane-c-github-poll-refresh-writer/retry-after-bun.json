@@ -10,7 +10,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 386,
+    "uptime": 344,
     "sessions": {
       "active": 0,
       "total": 0
@@ -122,33 +122,33 @@
       "toolSelectionDefaults": {
         "version": 1,
         "choices": {
-          "mcp:d10ac329-f095-4f57-aaab-aa470ff4c993": {
+          "mcp:6da466e8-6c34-41e6-967c-522bf3a3325d": {
             "selected": true,
             "aliases": [
               "fetch-mcp"
             ]
           },
-          "mcp:651e6de3-4592-461a-b737-cba5b04f18d2": {
+          "mcp:681f2d93-c271-4aeb-a655-2bef37cd1ff8": {
             "selected": false,
             "aliases": [
               "chrome-devtools-mcp"
             ]
           },
-          "mcp:f6751909-46e4-4c6c-b091-b733d36a7736": {
+          "mcp:e2f7ff9e-b6ca-4e92-a642-fb36380ac0b8": {
             "selected": false,
             "aliases": [
               "chrome-devtools-user-mcp"
             ]
           },
-          "skill:34aa86e4-d7cd-48be-ab2b-b0db72ff7213": {
+          "skill:1ecfa5ed-f364-4952-840b-ffe68cf86c0b": {
             "selected": true,
             "aliases": []
           },
-          "skill:111c56f1-c0ae-4735-a27e-7345f9b08f0b": {
+          "skill:8f444f0f-73e4-4b0e-aa40-0ddfb6fbccf9": {
             "selected": true,
             "aliases": []
           },
-          "skill:181f500f-b739-44bd-af98-833a449bcdea": {
+          "skill:2f67acff-27b9-4718-a559-b6f0abe21b28": {
             "selected": true,
             "aliases": []
           }
@@ -158,7 +158,7 @@
   },
   "afterFailure": [
     {
-      "id": "054c87ff-1236-4b9a-bf92-4f35d2d518b0",
+      "id": "61ac7df0-c531-43a0-9fb2-0e6b03ccb3ca",
       "queue": "github.poll",
       "status": "pending",
       "payload": {},
@@ -167,8 +167,8 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1793006891298,
-      "createdAt": 1793006831298,
+      "runAt": 1793009167219,
+      "createdAt": 1793009107219,
       "startedAt": null,
       "heartbeatAt": null,
       "completedAt": null,
@@ -282,33 +282,33 @@
       "toolSelectionDefaults": {
         "version": 1,
         "choices": {
-          "mcp:d10ac329-f095-4f57-aaab-aa470ff4c993": {
+          "mcp:6da466e8-6c34-41e6-967c-522bf3a3325d": {
             "selected": true,
             "aliases": [
               "fetch-mcp"
             ]
           },
-          "mcp:651e6de3-4592-461a-b737-cba5b04f18d2": {
+          "mcp:681f2d93-c271-4aeb-a655-2bef37cd1ff8": {
             "selected": false,
             "aliases": [
               "chrome-devtools-mcp"
             ]
           },
-          "mcp:f6751909-46e4-4c6c-b091-b733d36a7736": {
+          "mcp:e2f7ff9e-b6ca-4e92-a642-fb36380ac0b8": {
             "selected": false,
             "aliases": [
               "chrome-devtools-user-mcp"
             ]
           },
-          "skill:34aa86e4-d7cd-48be-ab2b-b0db72ff7213": {
+          "skill:1ecfa5ed-f364-4952-840b-ffe68cf86c0b": {
             "selected": true,
             "aliases": []
           },
-          "skill:111c56f1-c0ae-4735-a27e-7345f9b08f0b": {
+          "skill:8f444f0f-73e4-4b0e-aa40-0ddfb6fbccf9": {
             "selected": true,
             "aliases": []
           },
-          "skill:181f500f-b739-44bd-af98-833a449bcdea": {
+          "skill:2f67acff-27b9-4718-a559-b6f0abe21b28": {
             "selected": true,
             "aliases": []
           }
@@ -332,7 +332,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 426,
+    "uptime": 382,
     "sessions": {
       "active": 0,
       "total": 0

@@ -3,7 +3,7 @@
   "ciRunnerFailures": 0,
   "files": 4,
   "refreshWriterCases": 17,
-  "productionChangedLines": 93,
+  "productionChangedLines": 95,
   "authorizedCoreCompanionReplacements": 3,
   "transactionalDeleteAndAdmissionRollback": true,
   "legacyPendingDeletionLimit": 100,
@@ -26,5 +26,8 @@
   "startupUnknownReceiptRechecksJob": true,
   "generalStartupCleanupIssue": 8956,
   "queueIdentityCases": 1,
-  "registeredQueueIdentityShared": true
+  "registeredQueueIdentityShared": true,
+  "pollingCapabilitySyncIndependentOfJobAdmission": true,
+  "extensionIntervalRefreshedAfterJobFailure": true,
+  "authorizedCapabilityBlockMove": true
 }
