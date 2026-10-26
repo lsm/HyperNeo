@@ -114,6 +114,19 @@ describe('Neo publication ledger', () => {
     expect(repo.list(input.conversationId)).toEqual([]);
   });
 
+  test('a verbatim publication is admitted, stored and listed with its flag', () => {
+    const verbatim = { ...input, verbatim: true as const, shortText: input.fullText };
+    expect(admitNeoPublication(verbatim)).toEqual({ value: verbatim });
+    expect(repo.append(verbatim)).toMatchObject({ accepted: true });
+    expect(repo.list(input.conversationId)[0]).toMatchObject({
+      verbatim: true,
+      shortText: input.fullText,
+    });
+    expect(admitNeoPublication({ ...input, verbatim: 'yes' })).toEqual({
+      reason: 'invalid_publication',
+    });
+  });
+
   test('maximum bounds, Unicode, authored whitespace and link ordering are preserved', () => {
     const bounded = {
       ...input,

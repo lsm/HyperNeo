@@ -12,15 +12,18 @@ VERIFY_BROWSER=<chromium> bun .claude/skills/verify/verbatim-publication-web.mjs
   <run> <port> <fresh-evidence-dir>
 ```
 
-The helper publishes two publications through the real `neo.publication.publish`
-RPC on the root Neo conversation — one `verbatim: true` with a markdown table,
-quote and code block, one ordinary short/details pair — then opens `/neo` in a
+The helper seeds two publications straight into the isolated run's
+`neo_publications` table (the RPC door cannot publish: the avatar gate admits
+only the Neo MCP session) — one `verbatim: true` with a markdown table, quote and
+code block, one ordinary short/details pair — then opens `/neo` in a
 headless browser and asserts the verbatim bubble shows the table, quote and code
 with zero `more` controls and no details block, while the control bubble keeps
 its `more` button and hides the table until expanded. Evidence: a full-page
 screenshot plus `verbatim-publication.json`.
 
 Until the server slice (#9034) lets `neo.publication.publish` omit `shortText`,
-the helper sends a short text alongside the flag; the omitted-shortText parse
-path is covered by `publication-client.test.tsx`. Copy behavior is asserted in
+the seeded verbatim row carries a short text alongside the flag (rendering must
+ignore it); the omitted-shortText parse path is covered by
+`publication-client.test.tsx` and the flag's storage round-trip by
+`neo-publications.test.ts`. Copy behavior is asserted in
 `NeoPublicConversation.test.tsx`; the browser proof covers rendering only.
