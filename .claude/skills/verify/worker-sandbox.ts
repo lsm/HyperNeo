@@ -99,6 +99,7 @@ try {
     writeFileSync(join(run, 'verify-sockets'), 'synthetic-only');
     await rpc('rpc:settings.global.update', { updates: { workerUnixSockets: [join(run, 'allowed.sock')] } });
   }
+  await rpc('rpc:settings.global.update', { updates: { workerSandbox: 'always' } });
   const started = await rpc('work.start', request) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
   const worker = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
