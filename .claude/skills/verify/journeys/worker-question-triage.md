@@ -34,4 +34,5 @@ Keep receipts.json, observed.json, model request files, proof.log and cleanup.js
 The helper closes only its own daemon/model/SDK resources and deletes their data
 after saving evidence. The wrapper saves that evidence and removes the disposable
 run. Native external apps, GUI rendering and duplicate-card merging are outside
-this journey. Duplicate merging remains a separate follow-up to cited resolution.
+this journey. Duplicate merging is tracked separately in
+[#8955](https://github.com/lsm/HyperNeo/issues/8955).

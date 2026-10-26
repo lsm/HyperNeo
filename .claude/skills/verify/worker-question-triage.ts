@@ -118,7 +118,8 @@ try {
   assert.equal((await rpc('neo.question.resolve', { questionId: failedQuestion.id, answer: ['Staging'], source: { kind: 'rule', text: rule } })).ok, true);
   const failed = await rpc('neo.question.get', { questionId: failedQuestion.id });
   assert.equal(failed.answerDelivery[0].state, 'pending'); assert.equal(store.getTodo(todo.id)?.blockedBy, 'needs-human');
-  await rpc('neo.rule.save', { remove: [rule] });
+  assert.equal((await rpc('neo.rule.save', { remove: [rule] })).ok, true);
+  assert(!app.db.getGlobalSettings().neo?.standingRules?.includes(rule));
   await app.cleanup(); app = undefined; phase = 'restarted';
   app = await createDaemonApp({ config, verbose: false }); await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
   store = new NeoAskTodoRepository(app.db.getDatabase());
@@ -135,7 +136,7 @@ try {
   const counts = reads.map((read) => app!.db.getDatabase().prepare("SELECT COUNT(*) AS count FROM sdk_messages WHERE session_id = 'synthetic-worker' AND sdk_uuid = ? AND message_type = 'user'").get(read.answerDelivery[0].receipt));
   assert(counts.every((row) => row.count === 1), JSON.stringify(counts));
   assert.equal(recovered.answeredByHuman, false); assert.equal(recovered.resolvedByAgent, true); assert(recovered.question.retiredReason.includes(rule)); assert.equal(store.getTodo(todo.id)?.state, 'doing');
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ issuedByNeoSdk: issued, invalid, ruleRead, priorRead, failed, recovered, counts, todo: store.getTodo(todo.id), neoContextAfterRestart: true }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ issuedByNeoSdk: issued, invalid, ruleRead, priorRead, failed, recovered, counts, todo: store.getTodo(todo.id), ruleRemovedBeforeRestart: true, neoContextAfterRestart: true }, null, 2));
   console.log('PASS: cited Neo resolution retires cards, reaches the worker once, retains holds on failure, and preserves non-human provenance through restart');
 } finally {
   await app?.cleanup(); model.stop(true);

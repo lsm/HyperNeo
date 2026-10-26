@@ -17,10 +17,11 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 
 const owner = { source: 'mcp', sessionId: 'neo', role: 'neo' } as const;
 const rule = 'Use staging for previews.';
-async function fixture(path = ':memory:') {
+async function fixture(path = ':memory:', adapter = 'hyperneo') {
   const db = new Database(path);
   runMigrations(db, () => {});
   createTables(db);
@@ -42,7 +43,7 @@ async function fixture(path = ':memory:') {
     1
   );
   const source = {
-    adapter: 'hyperneo',
+    adapter,
     id: 'worker',
     name: 'Worker',
     label: 'Worker',
@@ -69,13 +70,36 @@ async function fixture(path = ':memory:') {
   const rules = [rule];
   const messages = new Map<string, string>();
   const notes = new Map<string, string>();
+  const native = createOperationRegistry(
+    createWorkVerbOperations({
+      daemonName: 'synthetic',
+      remote: {
+        list: () => [],
+        invoke: async () => {
+          throw new Error('No remote in this fixture');
+        },
+      },
+      adapters: () => [
+        {
+          id: 'codex-desktop',
+          capabilities: ['send'],
+          find: () => [],
+          send: async (_ref, message) => {
+            messages.set(message.split('\n')[0], message);
+            return { ok: true, value: { delivered: true } };
+          },
+        },
+      ],
+    })
+  );
   let unavailable = false;
   const flush = createNeoQuestionAnswerDelivery(
     store,
     sessions,
-    async (_caller, _name, input) => {
+    async (_caller, name, input) => {
       if (unavailable)
         return { kind: 'completed', value: { kind: 'rejected', reason: 'Unavailable' } };
+      if (adapter !== 'hyperneo') return invokeOperation(native, name, input, _caller);
       messages.set(String(input.idempotencyKey), String(input.text));
       return {
         kind: 'completed',
@@ -120,12 +144,12 @@ async function fixture(path = ':memory:') {
       { questionId: reported.question.id, answer: ['Staging'], source, ...extra },
       caller
     );
-  const prior = (askId = 'ask') => {
+  const prior = (askId = 'ask', text = 'Previous destination') => {
     const question = store.askQuestion(
       'prior',
       askId,
       {
-        text: 'Previous destination',
+        text,
         kind: 'choice',
         options: ['Staging', 'Production'],
         multiple: false,
@@ -219,6 +243,22 @@ test('an earlier human answer can be cited, while a retired agent resolution can
   }
 });
 
+test('a long prior card remains a citation without overflowing external worker input', async () => {
+  const f = await fixture(undefined, 'codex-desktop');
+  try {
+    const prior = f.prior('ask', `Earlier decision ${'x'.repeat(22000)}`);
+    expect(await f.resolve({ kind: 'answer', questionId: prior.id })).toMatchObject({ ok: true });
+    expect(await f.call('neo.question.get', { questionId: f.question.id })).toMatchObject({
+      answerDelivery: [{ state: 'accepted' }],
+    });
+    expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+    expect(f.messages.size).toBe(1);
+    expect([...f.messages.values()][0]).toContain(prior.id);
+  } finally {
+    f.db.close();
+  }
+});
+
 test.each([
   'missing-rule',
   'missing-answer',
@@ -226,13 +266,16 @@ test.each([
   'worker',
   'foreign-neo',
   'approval-card',
+  'start-card',
   'ordinary-card',
+  'invalid-answer',
 ])('invalid triage leaves the card open and worker held: %s', async (bad) => {
   const f = await fixture();
   try {
     let source: unknown = { kind: 'rule', text: rule };
     let caller: OperationCaller = owner;
     let questionId = f.question.id;
+    let answer: string | string[] = ['Staging'];
     if (bad === 'missing-rule') f.rules.length = 0;
     if (bad === 'missing-answer') source = { kind: 'answer', questionId: 'missing' };
     if (bad === 'foreign-answer') {
@@ -249,25 +292,29 @@ test.each([
     }
     if (bad === 'worker') caller = { source: 'mcp', sessionId: 'worker', role: 'worker' };
     if (bad === 'foreign-neo') caller = { ...owner, sessionId: 'another-neo' };
-    if (bad === 'approval-card' || bad === 'ordinary-card') {
+    if (bad === 'approval-card' || bad === 'ordinary-card' || bad === 'start-card') {
       questionId = f.store.askQuestion(
         'ordinary',
         'ask',
         {
           text: 'May I proceed?',
-          kind: bad === 'approval-card' ? 'yesno' : 'reply',
+          kind: bad === 'approval-card' ? 'yesno' : bad === 'start-card' ? 'start' : 'reply',
           options: null,
           multiple: false,
           noLabel: 'No',
           yesLabel: 'Yes',
-          startTodos: null,
+          startTodos: bad === 'start-card' ? ['todo'] : null,
           confirm:
             bad === 'approval-card' ? { path: 'direction.md', sha256: 'a'.repeat(64) } : null,
         },
         1
       ).id;
+      answer = bad === 'approval-card' ? 'yes' : bad === 'start-card' ? ['todo'] : 'Use staging.';
+      if (bad !== 'ordinary-card')
+        f.store.questionAnswers.bind(questionId, 'todo', f.question.sourceSession!);
     }
-    expect(await f.resolve(source, { questionId }, caller)).toMatchObject({ ok: false });
+    if (bad === 'invalid-answer') answer = ['Not an option'];
+    expect(await f.resolve(source, { questionId, answer }, caller)).toMatchObject({ ok: false });
     expect(f.store.getQuestion(questionId)?.state).toBe('open');
     expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
     expect(f.messages.size).toBe(0);
