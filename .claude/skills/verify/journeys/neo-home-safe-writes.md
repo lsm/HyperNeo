@@ -25,8 +25,9 @@ bun .claude/skills/verify/neo-home-save.ts <port> "$RUN" write-races
 The RPC fixture installs an owned Git wrapper after initialization. At `git add`,
 after the requested document is written, it swaps either the leaf or its parent
 for a symlink and forces add failure. Rollback must leave the outside sentinel
-unchanged and retain the original HEAD. The fixture restores the home entry using
-ordinary file tools and retries: save must succeed and commit the requested bytes.
+unchanged and retain the original HEAD. The fixture restores the home entry and
+original bytes using ordinary file tools and retries: save must succeed and commit
+the requested bytes, including on dev before the dirty-home refusal is removed.
 Inspect `evidence/neo-home-write-races.json`. No model, provider, real remote or
 credentials are used. Stop the owned daemon and preserve evidence before cleanup.
 

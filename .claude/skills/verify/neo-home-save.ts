@@ -72,6 +72,7 @@ exec /usr/bin/git "$@"
       await rm(`${root}/race-${state}`);
       await rename(backup, `${root}/race-${state}`);
     } else if ((await lstat(`${root}/${path}`)).isSymbolicLink()) throw new Error('Leaf rollback did not replace the symlink');
+    await writeFile(`${root}/${path}`, 'Original home bytes.');
     const recovered = await rpc({ ...input, path, content: 'Recovered home bytes.' });
     if (!recovered.ok || await git('show', `HEAD:${path}`) !== 'Recovered home bytes.' || await readFile(`${outside}/doc.md`, 'utf8') !== 'Outside sentinel.') throw new Error('Save did not recover after restoring the owned home entry');
     Object.assign(evidence[evidence.length - 1], { recovered });
