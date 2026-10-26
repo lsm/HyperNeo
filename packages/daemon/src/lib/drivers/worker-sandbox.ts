@@ -95,7 +95,7 @@ export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) 
           enabled: true,
           domains: { '*': 'allow' },
           unix_sockets: Object.fromEntries(sockets.map((path) => [path, 'allow'])),
-          dangerously_allow_all_unix_sockets: false,
+          dangerously_allow_all_unix_sockets: true,
           allow_local_binding: true,
         },
       },
