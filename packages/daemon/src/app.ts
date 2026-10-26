@@ -939,7 +939,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           })
           .catch(() => {});
         if (enqueueDelivery)
-          deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
+          await deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
         return true;
       },
       sendNote: async (sessionId, promptUuid) => {

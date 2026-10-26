@@ -132,5 +132,5 @@ export function loadRegistrationBinding(
   const binding = loadArtifactOwnershipBinding(db, daemonId, context);
   if (!binding?.workerRef) return binding;
   const workspacePath = nativeWorkspace[binding.workerRef.adapter]?.(binding.workerRef.id, home);
-  return workspacePath ? { ...binding, workspacePath } : null;
+  return { ...binding, workspacePath: workspacePath ?? null };
 }

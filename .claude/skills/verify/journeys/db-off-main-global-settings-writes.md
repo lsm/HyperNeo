@@ -41,6 +41,7 @@ while retaining shallow replacement of nested values. Full saves remain full
 replacement. No additional main-thread transaction is introduced.
 
 The rollback unit contracts also cover a same-field later edit, a writer-queue
-before-image race, omitted values and Neo field ownership. The old whole-Neo
-legacy-caller migration is tracked separately in #8829; this slice does not
-claim to fix those core-owned callers.
+before-image race, omitted values and Neo field ownership. The Neo preference,
+mute and direct-rule callers have their own
+[owner-writer journey](neo-settings-owner-writer.md) from #8829; this journey
+checks the general RPC writer and compensation boundary.

@@ -167,14 +167,16 @@ describe('Neo composer draft while voice is active', () => {
 });
 
 describe('Neo composer focus layout', () => {
-  it('starts with one line, expands on focus and collapses without losing the draft', () => {
-    render(composer());
+  it('expands an empty composer on focus and collapses again after blur', () => {
+    render(composer(''));
+    const textarea = () =>
+      screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
     expect(textarea().getAttribute('rows')).toBe('1');
     fireEvent.focus(textarea());
     expect(textarea().getAttribute('rows')).toBe('2');
     fireEvent.focusOut(textarea(), { relatedTarget: document.body });
     expect(textarea().getAttribute('rows')).toBe('1');
-    expect(textarea().value).toBe('Fictional draft about lunch');
+    expect(textarea().value).toBe('');
   });
 
   it('keeps the expanded layout while moving focus to a composer control', () => {
@@ -186,12 +188,26 @@ describe('Neo composer focus layout', () => {
     expect(textarea().getAttribute('rows')).toBe('2');
   });
 
-  it('collapses multiline drafts to one line without changing their content', () => {
-    render(composer('First line\nSecond line'));
-    const input = screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
-    expect(input.getAttribute('rows')).toBe('1');
-    expect(input.value).toBe('First line\nSecond line');
-    fireEvent.focus(input);
-    expect(input.getAttribute('rows')).toBe('2');
+  it.each(['First line\nSecond line', ' '])(
+    'keeps an unfocused nonempty draft expanded: %j',
+    (draft) => {
+      render(composer(draft));
+      const input = screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
+      expect(input.getAttribute('rows')).toBe('2');
+      expect(input.value).toBe(draft);
+      fireEvent.focus(input);
+      expect(input.getAttribute('rows')).toBe('2');
+      fireEvent.focusOut(input, { relatedTarget: document.body });
+      expect(input.getAttribute('rows')).toBe('2');
+      expect(input.value).toBe(draft);
+    }
+  );
+
+  it('keeps recording send controls available with no text', () => {
+    voice.phase = 'recording';
+    render(composer(''));
+    expect(
+      screen.getByRole('button', { name: 'Stop recording and send the message' })
+    ).toBeTruthy();
   });
 });

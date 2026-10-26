@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,27 +117,31 @@ describe('registered relative CSS and raster bundles', () => {
   test('registers and reopens an authorized immutable bundle through real native operations', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-bundle-')));
     mkdirSync(join(root, 'home'));
-    const output = execFileSync(
-      'bun',
-      [
-        fileURLToPath(
-          new URL('../../../../../../.claude/skills/verify/preview-bundle.ts', import.meta.url)
-        ),
-        root,
-      ],
-      {
-        env: { PATH: process.env.PATH, HOME: join(root, 'home'), NODE_ENV: 'test' },
-        encoding: 'utf8',
-        timeout: 30000,
-      }
-    );
-    expect(JSON.parse(output)).toMatchObject({
-      immutableAssets: true,
-      exactSource: true,
-      idempotent: true,
-      foreignRefused: true,
-      restarted: true,
-      revoked: true,
-    });
+    try {
+      const output = execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL('../../../../../../.claude/skills/verify/preview-bundle.ts', import.meta.url)
+          ),
+          root,
+        ],
+        {
+          env: { PATH: process.env.PATH, HOME: join(root, 'home'), NODE_ENV: 'test' },
+          encoding: 'utf8',
+          timeout: 30000,
+        }
+      );
+      expect(JSON.parse(output)).toMatchObject({
+        immutableAssets: true,
+        exactSource: true,
+        idempotent: true,
+        foreignRefused: true,
+        restarted: true,
+        revoked: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

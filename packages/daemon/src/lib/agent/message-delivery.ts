@@ -3,6 +3,11 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import {
+  DELIVERY_ENQUEUE_REJECTION,
+  enqueueSessionDelivery,
+} from '../../storage/repositories/session-delivery-enqueue-write.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 
 export async function drainDeliveryWaitersOnTerminalSDKMessage(
@@ -75,13 +80,20 @@ export interface DeliverMessageOptions {
   parentToolUseId?: string | null;
 }
 
-export function deliverMessage(
+export class DeliveryEnqueueRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DeliveryEnqueueRejectedError';
+  }
+}
+
+export async function deliverMessage(
   jobQueue: JobQueueRepository,
   sessionId: string,
   messageUuid: string,
   options: DeliverMessageOptions
-): void {
-  jobQueue.enqueue({
+): Promise<void> {
+  const receipt = gatewayFor(jobQueue.db).call(enqueueSessionDelivery, 'enqueue', {
     queue: MESSAGE_DELIVERY,
     payload: {
       sessionId,
@@ -91,6 +103,16 @@ export function deliverMessage(
     },
     maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
   });
+  try {
+    await receipt;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(DELIVERY_ENQUEUE_REJECTION)) {
+      throw new DeliveryEnqueueRejectedError(
+        error.message.slice(DELIVERY_ENQUEUE_REJECTION.length)
+      );
+    }
+    throw error;
+  }
 }
 
 export { MESSAGE_DELIVERY };

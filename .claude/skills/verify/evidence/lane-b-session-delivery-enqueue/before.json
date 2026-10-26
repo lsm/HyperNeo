@@ -1,0 +1,45 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 379,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "recoveryQueued": false,
+  "publication": {
+    "delivered": 1,
+    "failures": 1
+  },
+  "recoveryStatus": {
+    "status": "queued"
+  },
+  "chatStatus": {
+    "status": "failed"
+  },
+  "jobs": [],
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 389,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 2
+}

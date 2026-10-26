@@ -39,7 +39,7 @@ describe('provider auth rejection delivery policy', () => {
           },
           'enqueued'
         );
-        deliverMessage(db.getJobQueueRepo(), session.id, uuid, { origin: 'chat' });
+        await deliverMessage(db.getJobQueueRepo(), session.id, uuid, { origin: 'chat' });
       }
       await agent.onProviderAuthRejected('synthetic rejected key');
       const deadline = Date.now() + 1000;

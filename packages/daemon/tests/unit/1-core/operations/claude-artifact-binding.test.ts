@@ -87,7 +87,7 @@ describe('loadRegistrationBinding for Claude workers', () => {
       value: { context, root: worktree, relativePath: 'report.md' },
     });
     expect(resolveArtifactSource(binding, join(repo, 'report.md'), deps())).toEqual({
-      reason: { accepted: false, reason: 'outside_roots' },
+      value: { context, root: repo, relativePath: 'report.md' },
     });
     expect(
       authorizeArtifactCaller(binding, { source: 'mcp', role: 'neo', sessionId: 'neo' })
@@ -107,7 +107,7 @@ describe('loadRegistrationBinding for Claude workers', () => {
     });
   });
 
-  test('refuses remote, missing, mismatched and unsafe Claude refs', () => {
+  test('preserves ownership without accepting a missing or unsafe Claude cwd', () => {
     desktopRecord({ sessionId: 'local_other', cwd: worktree });
     transcript('');
     for (const ref of [
@@ -119,14 +119,14 @@ describe('loadRegistrationBinding for Claude workers', () => {
       { adapter: 'claude-code', id: '../-repo/cli-w' },
     ]) {
       sessions.recordRef('todo', ref);
-      expect(load()).toBeNull();
+      expect(load()?.workspacePath ?? null).toBeNull();
     }
     mkdirSync(join(home, '.claude/projects/-other/cli-dir.jsonl'), { recursive: true });
     sessions.recordRef('todo', { adapter: 'claude-code', id: 'cli-dir' });
-    expect(load()).toBeNull();
+    expect(load()?.workspacePath ?? null).toBeNull();
   });
 
-  test('accepts only a direct repo worktree under .claude, never home or deeper paths', () => {
+  test('denies home application folders while accepting repo worktree reports', () => {
     sessions.recordRef('todo', { adapter: 'claude-desktop', id: 'local_w' });
     for (const cwd of [
       join(home, '.claude', 'worktrees', 'w'),
@@ -136,9 +136,11 @@ describe('loadRegistrationBinding for Claude workers', () => {
       join(repo, '.claude', 'worktrees', 'w', '.codex', 'x'),
     ]) {
       desktopRecord({ cwd });
-      expect(resolveArtifactSource(load()!, 'report.md', deps())).toEqual({
-        reason: { accepted: false, reason: 'outside_roots' },
-      });
+      expect(resolveArtifactSource(load()!, 'report.md', deps())).toEqual(
+        cwd.startsWith(home + '/')
+          ? { reason: { accepted: false, reason: 'sensitive_path' } }
+          : { value: { context, root: cwd, relativePath: 'report.md' } }
+      );
     }
   });
 });

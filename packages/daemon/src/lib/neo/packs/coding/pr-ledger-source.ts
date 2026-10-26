@@ -1,12 +1,15 @@
-import { homedir } from 'node:os';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Node } from './pr-ledger.ts';
-import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
-import { spawnProcess } from '../../../runtime-spawn/index.ts';
+import {
+  createCodingQuotaReader,
+  runCodingGh,
+  type LedgerQuota,
+  type LedgerQuotaRun,
+} from './ledger-quota.ts';
 
-export type CodingLedgerRead = (repo: string) => Promise<unknown | null>;
+export type CodingLedgerRead = (repo: string, quota?: LedgerQuota) => Promise<unknown | null>;
 
 const log = new Logger('NeoCodingLedger');
 
@@ -83,12 +86,7 @@ const selectHeads = (superpipe({})('coding-ledger-hydration') as PipelineAPI)
     'selected'
   )
   .end('selected');
-export function createCodingLedgerReader(
-  run: (args: string[], resource: 'core' | 'graphql') => ReturnType<typeof runGhJson> = (
-    args,
-    resourceHint
-  ) => runGhJson(args, homedir(), spawnProcess, { resourceHint })
-): CodingLedgerRead {
+export function createCodingLedgerReader(run: LedgerQuotaRun = runCodingGh): CodingLedgerRead {
   const repos = new Map<
     string,
     {
@@ -98,7 +96,14 @@ export function createCodingLedgerReader(
       budget: z.infer<typeof Budget> | { cost: number; remaining: null; resetAt: null };
     }
   >();
-  return async (repo) => {
+  const scoped = createCodingQuotaReader(run);
+  return async (repo, previousQuota) => {
+    let quota: LedgerQuota | undefined;
+    const request: LedgerQuotaRun = async (args, resource) => {
+      const result = await scoped(args, resource, previousQuota);
+      quota = result.quota;
+      return result;
+    };
     const started = Date.now(),
       cached = repos.get(repo.toLowerCase());
     let budget = cached?.budget;
@@ -112,12 +117,21 @@ export function createCodingLedgerReader(
         ok = true;
         return cached.response;
       }
+      const available = await scoped.preflight('graphql', previousQuota);
+      if (!available.ok) {
+        quota = available.quota;
+        return {
+          error: available.error,
+          retryAt: Date.now() + (available.retryAfterMs ?? 0),
+          quota,
+        };
+      }
       const lists: z.infer<typeof Pull>[][] = [];
       for (const [state, limit] of [
         ['open', 100],
         ['closed', 50],
       ] as const) {
-        const result = await run(
+        const result = await request(
           [
             'gh',
             'api',
@@ -126,10 +140,10 @@ export function createCodingLedgerReader(
           'core'
         );
         if (!result.ok)
-          return { error: result.error, retryAt: Date.now() + (result.retryAfterMs ?? 0) };
+          return { error: result.error, retryAt: Date.now() + (result.retryAfterMs ?? 0), quota };
         const list = z.array(Pull).parse(result.data);
         if (state === 'open' && list.length === 100) {
-          const tail = await run(
+          const tail = await request(
             ['gh', 'api', `repos/${repo}/pulls?state=open&per_page=100&page=2`],
             'core'
           );
@@ -150,7 +164,7 @@ export function createCodingLedgerReader(
         resetAt: null,
       };
       if (selected.length) {
-        const result = await run(
+        const result = await request(
           codingLedgerArgs(
             repo,
             selected.map((pr) => pr.number)
@@ -158,7 +172,7 @@ export function createCodingLedgerReader(
           'graphql'
         );
         if (!result.ok)
-          return { error: result.error, retryAt: Date.now() + (result.retryAfterMs ?? 0) };
+          return { error: result.error, retryAt: Date.now() + (result.retryAfterMs ?? 0), quota };
         const hydrated = Hydration.parse(result.data);
         budget = hydrated.data.rateLimit;
         cost += budget.cost;
@@ -182,6 +196,7 @@ export function createCodingLedgerReader(
         if (!facts.has(key)) facts.set(key, cached!.facts.get(key)!);
       }
       const response = {
+        quota,
         data: {
           rateLimit: { ...budget, cost },
           repository: {
@@ -225,6 +240,7 @@ export function createCodingLedgerReader(
         cost,
         remaining,
         resetAt,
+        quota: quota ?? null,
       });
     }
   };
