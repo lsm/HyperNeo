@@ -42,3 +42,10 @@ The RPC proof also edits an already-settled ask and observes a successful
 `ask_settled` bookkeeping receipt with the full visible card unchanged. Unit
 regressions cover settlement before preparation and while a completion check
 is in flight; neither case writes state, prunes cards or starts another worker.
+
+A real `neo.changed` subscription must receive each committed edit after the
+worker transaction commits. The RPC proof compares the subscription counter
+around an edit, and unit regressions assert that rollback and settled-ask
+bookkeeping do not announce a write. Gateway change records are replayed on
+main only after a successful transaction; the existing Neo event refreshes
+the web surfaces that subscribe to it.

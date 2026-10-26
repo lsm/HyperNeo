@@ -16,6 +16,7 @@ import {
 } from '../../lib/neo/todo-operations.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-repository.ts';
 
 type Input =
@@ -31,8 +32,8 @@ type Outcome =
 class NeoTodoMutationWriter {
   private readonly todos: NeoAskTodoRepository;
   private readonly policies: readonly NeoTodoPolicy[];
-  constructor(db: Database) {
-    this.todos = new NeoAskTodoRepository(db);
+  constructor(db: Database, changes?: ReactiveDatabase) {
+    this.todos = new NeoAskTodoRepository(db, () => changes?.notifyChange('neo_todos'));
     this.policies = neoTodoWritePolicies(db);
   }
 

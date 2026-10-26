@@ -9,6 +9,10 @@
       "visibleTitle": "first"
     }
   },
+  "editAnnounced": {
+    "before": 0,
+    "after": 1
+  },
   "concurrent": [
     {
       "id": "first",
@@ -34,11 +38,27 @@
     "replyBytes": 1452003,
     "state": "closed_unverified"
   },
+  "changedCheck": {
+    "pack": "core",
+    "kind": "evidence",
+    "params": {
+      "path": "<synthetic-run>/kept.txt"
+    }
+  },
   "contention": {
-    "writeMs": 1215.2798750000002,
-    "healthMs": 0.45545800000002146,
-    "maxLagMs": 3.2998340000000326,
+    "writeMs": 1221.9430830000001,
+    "healthMs": 0.5463750000000118,
+    "maxLagMs": 4.141957999999931,
     "affectedWriteUnder250ms": false
+  },
+  "settledAsk": {
+    "ok": true,
+    "records": [
+      "ask_settled: this ask is dropped; no change was made."
+    ],
+    "title": "Held lock committed",
+    "unchanged": true,
+    "announcements": 0
   },
   "verified": true,
   "mainSql": 0

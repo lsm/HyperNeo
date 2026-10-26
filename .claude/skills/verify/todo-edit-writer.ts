@@ -114,12 +114,15 @@ try {
     assert.equal(mainSql, 0);
     todos.settleAsk(todos.getAsk('ask')!, 'dropped', 'Synthetic human stopped the ask', Date.now());
     const settledBefore = { ask: todos.getAsk('ask'), todos: todos.listTodos('ask'), questions: todos.listQuestions('ask') };
+    const eventsBeforeSettledEdit = changedEvents;
     const settledReply = await edit({ todoId: 'first', title: 'Must stay unchanged', done: 'met', evidence: 'PR merged' });
     assert(settledReply.ok);
     assert(settledReply.records?.some(record => record.startsWith('ask_settled:')));
     assert.deepEqual({ ask: todos.getAsk('ask'), todos: todos.listTodos('ask'), questions: todos.listQuestions('ask') }, settledBefore);
     assert.equal((await visible('first')).title, 'Held lock committed');
-    report.settledAsk = { receipt: settledReply, unchanged: true };
+    await hub.request('system.health', {});
+    assert.equal(changedEvents, eventsBeforeSettledEdit);
+    report.settledAsk = { ok: settledReply.ok, records: settledReply.records, title: settledReply.todo.title, unchanged: true, announcements: changedEvents - eventsBeforeSettledEdit };
     report.verified = true;
   }
 } finally {
@@ -132,6 +135,6 @@ try {
   await app.cleanup();
   globalThis.fetch = network;
   report.mainSql = mainSql;
-  writeFileSync(join(run, 'evidence/todo-edit-writer.json'), JSON.stringify(report, null, 2));
+  writeFileSync(join(run, 'evidence/todo-edit-writer.json'), JSON.stringify(report, null, 2).replaceAll(run, '<synthetic-run>'));
 }
-console.log(JSON.stringify(report));
+console.log(JSON.stringify(report).replaceAll(run, '<synthetic-run>'));

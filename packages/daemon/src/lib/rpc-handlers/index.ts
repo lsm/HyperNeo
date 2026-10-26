@@ -1551,6 +1551,7 @@ export async function setupRPCHandlers(
     (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
   );
   deps.reactiveDb.on('change:neo_session_messages', () => neoService.notifyChanged());
+  deps.reactiveDb.on('change:neo_todos', () => neoService.notifyChanged());
   neoService.filePacks = adoptNeoFilePacks(
     loadNeoFilePacks({
       root: join(getDataDir(), 'neo-packs'),
