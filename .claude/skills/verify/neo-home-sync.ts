@@ -70,6 +70,7 @@ const messageOnDisk = await git(root, 'log', '-1', '--format=%B');
 const remoteAfterMessage = await git(remote, 'rev-parse', 'main');
 Object.assign(evidence, { messagePublication, messageCommit, messageOnDisk, remoteAfterMessage }); await saveEvidence();
 if (messagePublication.ok || !messagePublication.reason?.includes('content_refused') || messageOnDisk !== message || remoteAfterMessage !== retainedCommit) throw new Error('Credential-like commit message was published');
+if (!messagePublication.reason.includes(messageCommit) || !messagePublication.reason.includes('local commit') || !messagePublication.reason.includes('rewrite')) throw new Error('Publication refusal hid the saved local commit or recovery');
 console.log('PASS: real RPC keeps the credential-like commit message local.');
 await git(root, 'reset', '--hard', retainedCommit);
 await commit(root, 'fixture.bin', '\0TOKEN=' + 'synthetic'.repeat(4));

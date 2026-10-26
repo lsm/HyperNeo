@@ -41,7 +41,7 @@ export async function applyHomeChoice(
     );
     if (fetched.code) return refuse(`sync_failed: ${fetched.error}`);
     const remote = (await git(['rev-parse', reference])).text;
-    const selected = input.resolution!.version === 'local' ? local.text : remote;
+    const selected = input.resolution!.revision;
     const mode = (await git(['ls-tree', selected, '--', input.path])).text.slice(0, 6);
     const content = await git(['show', `${selected}:${input.path}`], true);
     if (!['100644', '100755'].includes(mode) || content.code)

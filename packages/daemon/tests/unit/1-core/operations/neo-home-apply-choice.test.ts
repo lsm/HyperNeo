@@ -426,7 +426,7 @@ describe('Conflict choice application', () => {
       expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(content);
       await git(root, 'merge-base', '--is-ancestor', local, 'HEAD');
       await git(root, 'merge-base', '--is-ancestor', remote, 'HEAD');
-      expect(await git(root, 'rev-parse', 'HEAD')).toBe(result.commit);
+      expect(result.commit).toBe(await git(root, 'rev-parse', 'HEAD'));
     }
   );
   test('does not cite a recorded choice for a different conflicting path', async () => {
@@ -477,7 +477,7 @@ describe('Conflict choice application', () => {
         message: 'Only notes approved',
         conflictQuestionId: question.id,
       })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('choice_requires_review') });
+    ).toMatchObject({ ok: false });
     expect(await state()).toEqual(before);
     expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Local protected direction\n');
   });

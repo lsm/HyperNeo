@@ -29,8 +29,9 @@ channel stores scalar text, unlike the question button's array. Both forms must
 apply identically, and the protected-file choice still requires its separate yes.
 The retained `before ... chat` mode records the original scalar-answer refusal.
 
-A choice receipt must identify a generated home conflict question through its recorded full-version snapshots. It is not checked against current revisions; unrelated local or remote commits do not invalidate it.
+A choice receipt must identify a generated home conflict question and the recorded path through its full-version snapshots. It selects the bytes of that historical version, never unseen bytes from a newer branch tip. Chat mode changes both conflicting versions after the answer: unseen bytes refuse without moving either head, then the exact recorded version applies while preserving both newer histories. It is not checked against current revisions; unrelated local or remote commits do not invalidate it.
 Git still reports real merge failures; publication retains its remote revision lease.
+The credential-publication scan and lease cover the RPC operations. Neo can use Git directly; those shell commands follow the prompt's rule against publishing credentials rather than this RPC gate.
 
 Ignored mode creates an ignored human file before the conflict question while
 origin introduces the same path. The conflict read must preserve those bytes

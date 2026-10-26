@@ -18,7 +18,7 @@ export const HomeSaveResult = z.union([
 ]);
 export type HomeSaveInput = z.infer<typeof HomeSaveInput>;
 export type HomeSavePlan = HomeSaveInput & {
-  resolution?: { questionId: string; version: 'local' | 'remote' };
+  resolution?: { questionId: string; revision: string };
   confirmation?: { questionId: string; entry: string };
 };
 export type HomeSaveResult = z.infer<typeof HomeSaveResult> | HomeFailure;

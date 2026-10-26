@@ -50,6 +50,12 @@ export function reportHomeConflict<T extends { ok: boolean }>(
   return { ...receipt, questionId } as T & { questionId: string };
 }
 
+export function homeConflictQuestionId(root: string, local: string, remote: string): string {
+  return neoDerivedId(
+    `home-conflict-question:${neoDerivedId(JSON.stringify([root, local, remote]))}`
+  );
+}
+
 export function requireHomeChoice(
   input: HomeSavePlan,
   store: NeoAskTodoRepository,
@@ -82,13 +88,12 @@ export function requireHomeChoice(
   const revisions = [
     ...(question.document ?? '').matchAll(/^(?:Local|Remote) \(([a-f0-9]{40,64})\)$/gm),
   ].map((match) => match[1]);
-  const id = (local: string, remote: string) => neoDerivedId(JSON.stringify([root, local, remote]));
-  const bound = revisions.some((local) =>
-    revisions.some(
-      (remote) => neoDerivedId(`home-conflict-question:${id(local, remote)}`) === question.id
-    )
-  );
-  if (!bound)
+  const bound = revisions.flatMap((local) =>
+    revisions
+      .filter((remote) => homeConflictQuestionId(root, local, remote) === question.id)
+      .map((remote) => ({ local, remote }))
+  )[0];
+  if (!bound || !question.document?.includes(`File: ${JSON.stringify(input.path)}\n`))
     return {
       reason: {
         ok: false,
@@ -100,7 +105,7 @@ export function requireHomeChoice(
       ...input,
       resolution: {
         questionId: question.id,
-        version: choice[0] === 'Keep local' ? 'local' : 'remote',
+        revision: choice[0] === 'Keep local' ? bound.local : bound.remote,
       },
     },
   };

@@ -552,7 +552,11 @@ export class NeoHomeRepository {
           ])
         ).text,
       });
-      if (publication.reason) return publication.reason;
+      if (publication.reason)
+        return {
+          ...publication.reason,
+          reason: `${publication.reason.reason} local commit ${commit} is saved; rewrite credential-like outgoing history before retrying publication.`,
+        };
       const pushed = await this.git(['push', 'origin', `HEAD:${synced.value}`], true, true);
       if (pushed.code)
         return {
