@@ -81,7 +81,7 @@ try {
     while (!ready.includes('\n')) { const part = await reader.read(); assert(!part.done); ready += new TextDecoder().decode(part.value); }
     reader.releaseLock();
     const port = JSON.parse(ready.split('\n')[0]).port;
-    await rpc('daemon.attach', { daemonId: 'synthetic-owner', url: `ws://127.0.0.1:${port}` });
+    await rpc('daemon.attach', { daemonId: 'synthetic-owner', url: `ws://127.0.0.1:${port}/ws` });
     const remote = await lookup('remote-only', { daemon: 'synthetic-owner' });
     assert.equal(remote.value.turns[0].messageId, 'peer-input');
     assert.deepEqual(remote.value.matchedInput, { adapter: 'codex-desktop', marker: marker('remote-only') });

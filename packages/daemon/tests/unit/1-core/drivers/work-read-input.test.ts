@@ -90,7 +90,8 @@ describe('work.read exact input identity', () => {
   test('refuses mixed identity and window selectors', async () => {
     for (const selector of [{ around: 'input' }, { cursor: { sessionId: 'worker', before: 1 } }]) {
       expect(await invoke({ sessionId: 'worker', input: identity, ...selector })).toMatchObject({
-        kind: 'failed', code: 'invalid_input',
+        kind: 'failed',
+        code: 'invalid_input',
       });
     }
   });
