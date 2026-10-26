@@ -1061,8 +1061,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         if (event.namespaceId !== 'global') return;
         const nextGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
         if (nextGitHubPollingIntervalSeconds === lastGitHubPollingIntervalSeconds) return;
-        await gitHubService?.refreshPolling({ reschedulePending: true });
-        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
         void (async () => {
           await syncGitHubPollingCapability(
             extensionConfigStore,
@@ -1070,6 +1068,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           );
           await githubEventExtension?.refreshPollingInterval();
         })();
+        await gitHubService?.refreshPolling({ reschedulePending: true });
+        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
       },
       { subscriberName: 'github-polling-settings' }
     );
