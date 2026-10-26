@@ -74,6 +74,72 @@ afterEach(async () => {
 });
 
 describe('Neo home setup', () => {
+  test.each(['global', 'system', 'command'])(
+    'preserves exact inherited %s identity bytes in commits',
+    async (scope) => {
+      await git('config', '--unset', 'user.name');
+      const name =
+        scope === 'command' ? Buffer.from('Command 🦊 identity') : Buffer.from([0x4e, 0xe9, 0x6f]);
+      const profile = join(fixture, 'raw-profile');
+      await writeFile(
+        profile,
+        Buffer.concat([
+          Buffer.from('[user]\n name = '),
+          name,
+          Buffer.from('\n[i18n]\n commitEncoding = ISO-8859-1\n'),
+        ])
+      );
+      if (scope === 'system')
+        await git('config', '--file', process.env.GIT_CONFIG_GLOBAL!, '--unset', 'user.name');
+      const previous = new Map(
+        [
+          'GIT_CONFIG_GLOBAL',
+          'GIT_CONFIG_SYSTEM',
+          'GIT_CONFIG_NOSYSTEM',
+          'GIT_CONFIG_COUNT',
+          'GIT_CONFIG_KEY_0',
+          'GIT_CONFIG_VALUE_0',
+        ].map((key) => [key, process.env[key]])
+      );
+      if (scope === 'global') process.env.GIT_CONFIG_GLOBAL = profile;
+      if (scope === 'system') {
+        process.env.GIT_CONFIG_SYSTEM = profile;
+        process.env.GIT_CONFIG_NOSYSTEM = '0';
+      }
+      if (scope === 'command') {
+        process.env.GIT_CONFIG_COUNT = '1';
+        process.env.GIT_CONFIG_KEY_0 = 'user.name';
+        process.env.GIT_CONFIG_VALUE_0 = name.toString('utf8');
+      }
+      try {
+        expect(await init()).toMatchObject({ ok: true });
+        const child = spawnProcess(['git', 'cat-file', 'commit', 'HEAD'], {
+          cwd: root,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const [raw, error, code] = await Promise.all([
+          new Response(child.stdout).arrayBuffer(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        if (code) throw new Error(error);
+        const bytes = Buffer.from(raw);
+        const author = bytes.subarray(bytes.indexOf(Buffer.from('\nauthor ')) + 1);
+        const prefix = Buffer.concat([
+          Buffer.from('author '),
+          name,
+          Buffer.from(' <verify@example.invalid>'),
+        ]);
+        expect(author.subarray(0, prefix.length)).toEqual(prefix);
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  );
   test('preserves quoted inherited identity below repository settings', async () => {
     const name = 'Verify "Neo" \\ identity';
     await git('config', '--file', process.env.GIT_CONFIG_GLOBAL!, 'user.name', name);

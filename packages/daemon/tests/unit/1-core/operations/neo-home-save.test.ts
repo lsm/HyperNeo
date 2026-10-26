@@ -71,6 +71,29 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test('does not execute a filter whose configured name contains non-UTF-8 bytes', async () => {
+    const name = Buffer.from([0xe9]);
+    await writeFile(
+      join(root, '.gitattributes'),
+      Buffer.concat([Buffer.from('raw-name.md filter='), name, Buffer.from('\n')])
+    );
+    await git('add', '.gitattributes');
+    await git('commit', '-m', 'Synthetic raw attribute');
+    const marker = join(fixture, 'raw-filter-outside-home');
+    await writeFile(
+      join(root, '.git', 'config'),
+      Buffer.concat([
+        Buffer.from('\n[filter "'),
+        name,
+        Buffer.from(`"]\n clean = "printf executed > '${marker}'; cat"\n`),
+      ]),
+      { flag: 'a' }
+    );
+    const result = await save({ path: 'raw-name.md', content: 'Exact home bytes.\n' });
+    expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+    expect(result.ok).toBe(true);
+    expect(await git('show', 'HEAD:raw-name.md')).toBe('Exact home bytes.');
+  });
   test.each(['global', 'system'])(
     'does not execute an inherited %s filter selected by home attributes',
     async (source) => {
