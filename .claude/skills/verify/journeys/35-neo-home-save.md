@@ -33,7 +33,10 @@ edits to a pre-existing ignore file and configures a local bare origin. Save mus
 publish the requested document while leaving both the working and staged ignore
 bytes intact and the published ignore unchanged. It then replaces only its
 synthetic ignore with a symlink to another file in the owned run: save must still
-succeed without altering that target. Pre-existing ignore files are user-owned;
+succeed without altering that target. The same run then saves through an unreadable
+ignore file and a dangling ignore link, preserving the entry, staged bytes and
+published ignore policy while publishing each requested document. Evidence for
+these cases is `neo-home-ignore-opaque.json`. Pre-existing ignore entries are user-owned;
 initialization creates and commits defaults only when the file is absent, with
 an exclusive write. An unborn home containing only pre-existing documents gets
 an empty bootstrap commit, including after a failed identity attempt, without

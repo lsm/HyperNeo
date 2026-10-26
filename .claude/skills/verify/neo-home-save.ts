@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 const [port, run, mode = 'normal'] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home-save.ts <test-port> <run-dir>');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
@@ -74,7 +74,33 @@ if (mode === 'ignore-edits') {
   const outsideBytes = await readFile(outside, 'utf8');
   await writeFile(`${run}/evidence/neo-home-ignore-link.json`, JSON.stringify({ linked, outsideBytes }, null, 2));
   if (!linked.ok || outsideBytes !== 'Synthetic outside bytes.\n') throw new Error('Ignore symlink target was modified');
-  console.log('PASS: real RPC publishes only requested documents, preserving staged ignore bytes and an outside symlink target.');
+  const opaque = [];
+  for (const state of ['unreadable', 'dangling']) {
+    const ignore = `${root}/.gitignore`;
+    const missing = `${run}/missing-ignore`;
+    await rm(ignore);
+    if (state === 'dangling') await symlink(missing, ignore);
+    else {
+      await writeFile(ignore, pending);
+      await chmod(ignore, 0);
+    }
+    try {
+      const readError = await readFile(ignore, 'utf8').then(() => null, (error) => error.code);
+      if (readError !== (state === 'dangling' ? 'ENOENT' : 'EACCES')) throw new Error('Opaque ignore fixture is readable');
+      const path = `opaque-${state}.md`;
+      const saved = await rpc({ ...input, path });
+      const entry = state === 'dangling' ? await readlink(ignore) : (await lstat(ignore)).mode & 0o777;
+      const published = await git('--git-dir', remote, 'show', `${branch}:${path}`);
+      const publishedIgnore = await git('--git-dir', remote, 'show', `${branch}:.gitignore`);
+      const stagedIgnore = await git('show', ':.gitignore');
+      opaque.push({ state, readError, saved, entry, published, publishedIgnore, stagedIgnore });
+      await writeFile(`${run}/evidence/neo-home-ignore-opaque.json`, JSON.stringify(opaque, null, 2));
+      if (!saved.ok || published !== input.content.trim() || publishedIgnore !== '# Legacy home' || stagedIgnore !== pending.trim() || entry !== (state === 'dangling' ? missing : 0)) throw new Error('Opaque ignore entry prevented save or was changed');
+    } finally {
+      if (state === 'unreadable') await chmod(ignore, 0o644);
+    }
+  }
+  console.log('PASS: real RPC publishes only requested documents, preserving staged ignore bytes, outside targets and unreadable/dangling entries.');
   process.exit(0);
 }
 if (mode === 'ignore-repair') {

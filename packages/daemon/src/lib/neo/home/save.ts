@@ -51,7 +51,6 @@ export const publicationLog = [
   '--no-ext-diff',
   '--no-textconv',
 ];
-
 export function requireHomeSave(input: HomeSaveInput, publish = true) {
   const sensitive =
     /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/.test(input.content) ||
