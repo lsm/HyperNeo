@@ -27,6 +27,28 @@ if engine == 'sdk':
     with probe.open('a') as script: script.write('printf synthetic-report > "$HYPERNEO_HANDOFF_DIR/sandbox-report.txt"\n')
 with probe.open('a') as script:
     for path in protected: script.write(f"rm '{path}'\n")
+if os.environ.get('VERIFY_LOOPBACK') == '1':
+    (worker / 'loopback-probe.py').write_text('''import json, threading, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b'worker-loopback-ok')
+server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+server.timeout = 5
+thread = threading.Thread(target=server.handle_request)
+thread.start()
+try:
+    client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with client.open(f'http://127.0.0.1:{server.server_port}/probe', timeout=5) as response:
+        assert response.read() == b'worker-loopback-ok'
+    with open('loopback-observed.json', 'w') as output:
+        json.dump({'host': '127.0.0.1', 'port': server.server_port, 'connected': True}, output)
+finally:
+    thread.join(timeout=6); server.server_close()
+''')
+    with probe.open('a') as script:
+        script.write('/usr/bin/python3 ./loopback-probe.py\nprintf "loopback-status=%s\\n" "$?"\n')
 requests = []
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -109,6 +131,11 @@ try:
     observed['policyIntact'] = all(path.exists() and path.read_bytes() == contents for path, contents in policy_before.items())
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
+    if os.environ.get('VERIFY_LOOPBACK') == '1':
+        local = worker / 'loopback-observed.json'
+        observed['localServer'] = json.loads(local.read_text()) if local.exists() else None
+        (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
+        assert observed['localServer'] and observed['localServer']['connected'], 'Worker could not listen on loopback and connect to its server'
     print(json.dumps(observed))
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     assert observed['policyIntact'], 'BUG: worker removed its sandbox gate or settings'
