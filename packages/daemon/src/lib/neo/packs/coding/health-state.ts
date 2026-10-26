@@ -78,7 +78,10 @@ function projectHealth(repo: string, before: Health | null, cycle: RepoHealthCyc
   return {
     lastError: cycle.error ?? before?.lastError ?? null,
     lastErrorAt:
-      cycle.error && (cycle.outcome !== 'cooldown' || before?.lastErrorAt == null)
+      cycle.error &&
+      (cycle.outcome !== 'cooldown' ||
+        before?.lastError !== cycle.error ||
+        before?.lastErrorAt == null)
         ? cycle.at
         : (before?.lastErrorAt ?? null),
     cycleAt: cycle.at,
