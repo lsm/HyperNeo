@@ -62,7 +62,7 @@ try {
   const completed = seed('completed-entry', true);
   raw.prepare("UPDATE job_queue SET status = 'completed' WHERE id = ?").run(completed.id);
   for (const uuid of ['expired-pending', 'expired-second', 'fresh-entry']) {
-    await app.db.saveUserMessage(sessionId, { type: 'user', uuid, message: { role: 'user', content: uuid } }, 'enqueued');
+    await app.db.saveUserMessage(sessionId, { type: 'user', uuid, session_id: sessionId, parent_tool_use_id: null, inputKind: 'human', message: { role: 'user', content: uuid } }, 'enqueued');
   }
   const pending = repo.listJobs({ queue: 'mailbox.expire', status: 'pending', limit: 10 });
   assert.equal(pending.length, 1);
@@ -100,7 +100,7 @@ try {
     evidence.oldLeaseHeartbeat = repo.heartbeat(oldClaim.id, oldClaim.claimToken);
     evidence.healthAfter = await hub.request('system.health', {});
     assert.equal(mainSqlAttempts, 0, 'real registered expiry job must not run SQL on main');
-    assert.deepEqual(statuses, [{ status: 'failed' }, { status: 'failed' }]);
+    assert.deepEqual(statuses, [{ status: 'failed', reason: 'mailbox: entry expired (ttl)' }, { status: 'failed', reason: 'mailbox: entry expired (ttl)' }]);
     assert.deepEqual(evidence.freshPublicStatus, { status: 'queued' });
     assert.deepEqual(evidence.retained, ['pending', 'pending', 'pending', 'completed']);
     assert.equal(evidence.oldLeaseHeartbeat, false);

@@ -1,0 +1,175 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 564,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "claimed": 1,
+  "publicStatuses": [
+    {
+      "status": "failed",
+      "reason": "mailbox: entry expired (ttl)"
+    },
+    {
+      "status": "failed",
+      "reason": "mailbox: entry expired (ttl)"
+    }
+  ],
+  "freshPublicStatus": {
+    "status": "queued"
+  },
+  "sweep": {
+    "id": "4f1c58a5-0dcc-4424-9d2c-66f48e80339b",
+    "queue": "mailbox.expire",
+    "status": "completed",
+    "payload": {},
+    "result": {
+      "expired": 2,
+      "nextRunAt": 1792984652139
+    },
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 0,
+    "createdAt": 1792984591966,
+    "startedAt": 1792984592139,
+    "heartbeatAt": null,
+    "completedAt": 1792984592144,
+    "claimToken": "76064000-6e41-4601-bea8-df2e510f2415"
+  },
+  "expired": [
+    {
+      "id": "5e79e8a2-4e18-4366-91a3-76af13122c18",
+      "queue": "mailbox",
+      "status": "dead",
+      "payload": {
+        "id": "01M5V37PHSFCGQPC6Y6XS5EZJD",
+        "to": {
+          "kind": "session",
+          "sessionId": "synthetic-expiry-session"
+        },
+        "origin": "chat",
+        "messageUuid": "expired-pending",
+        "message": {
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "expired-pending"
+          },
+          "parent_tool_use_id": null
+        },
+        "status": "enqueued",
+        "deliveryMode": "immediate",
+        "policy": {
+          "ttlMs": 60000,
+          "maxAttempts": 5,
+          "priority": 0
+        }
+      },
+      "result": null,
+      "error": "mailbox: entry expired (ttl)",
+      "priority": 0,
+      "maxRetries": 4,
+      "retryCount": 0,
+      "runAt": 1792984592121,
+      "createdAt": 1792984592121,
+      "startedAt": 1792984592122,
+      "heartbeatAt": null,
+      "completedAt": 1792984592140,
+      "claimToken": "f09be35d-6c0d-4698-9b16-15ef0986c6af"
+    },
+    {
+      "id": "b4b22ff6-c087-489d-a480-8748c6471498",
+      "queue": "mailbox",
+      "status": "dead",
+      "payload": {
+        "id": "01M5V37PHTS1191RP8NC6FJET5",
+        "to": {
+          "kind": "session",
+          "sessionId": "synthetic-expiry-session"
+        },
+        "origin": "chat",
+        "messageUuid": "expired-second",
+        "message": {
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "expired-second"
+          },
+          "parent_tool_use_id": null
+        },
+        "status": "enqueued",
+        "deliveryMode": "immediate",
+        "policy": {
+          "ttlMs": 60000,
+          "maxAttempts": 5,
+          "priority": 0
+        }
+      },
+      "result": null,
+      "error": "mailbox: entry expired (ttl)",
+      "priority": 0,
+      "maxRetries": 4,
+      "retryCount": 0,
+      "runAt": 1792984592122,
+      "createdAt": 1792984592122,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": 1792984592142,
+      "claimToken": null
+    }
+  ],
+  "retained": [
+    "pending",
+    "pending",
+    "pending",
+    "completed"
+  ],
+  "followups": [
+    {
+      "id": "18ceca82-2e1d-48e0-9dbd-1779c1b88271",
+      "queue": "mailbox.expire",
+      "status": "pending",
+      "payload": {},
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1792984652139,
+      "createdAt": 1792984592139,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "oldLeaseHeartbeat": false,
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 585,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 0
+}

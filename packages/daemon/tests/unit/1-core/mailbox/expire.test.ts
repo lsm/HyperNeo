@@ -7,6 +7,8 @@ import type {
 } from '../../../../src/lib/mailbox/entry';
 import { expireMailboxEntries, MAILBOX_SCAN_PAGE_SIZE } from '../../../../src/lib/mailbox/expire';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import {
   createMailboxTestDb,
   type MailboxJobRow,
@@ -62,6 +64,163 @@ describe('expireMailboxEntries', () => {
   afterEach(() => {
     mailbox.close();
   });
+
+  test('waits for an expiry receipt and calls notifications outside the transaction', async () => {
+    const entry = makeEntry({ id: createUlid(NOW - 2 * TTL_MS) });
+    enqueueMailboxEntry(mailbox.jobQueue, entry);
+    const inline = new DbGateway(':memory:', mailbox.db);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    bindGateway(mailbox.db, {
+      call: async (op, method, ...args) => {
+        if (method === 'expire') {
+          entered();
+          await gate;
+        }
+        return Reflect.apply(inline.call, inline, [op, method, ...args]);
+      },
+    } as DbGateway);
+    let notified = 0;
+    const sweep = expireMailboxEntries({
+      jobQueue: mailbox.jobQueue,
+      now: NOW,
+      onExpired: (job) => {
+        expect(mailbox.jobQueue.getJob(job.id)?.status).toBe('dead');
+        mailbox.db.exec('BEGIN');
+        mailbox.db.exec('ROLLBACK');
+        notified++;
+      },
+    });
+    await requested;
+    try {
+      expect(notified).toBe(0);
+      expect(rowFor(mailbox, entry.id).status).toBe('pending');
+    } finally {
+      release();
+    }
+    expect(await sweep).toBe(1);
+    expect(notified).toBe(1);
+  });
+
+  test('a callback failure stops later candidates after only the first expiry commits', async () => {
+    const first = makeEntry({ id: createUlid(NOW - 2 * TTL_MS) });
+    const second = makeEntry({ id: createUlid(NOW - 2 * TTL_MS) });
+    mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: { ...first }, createdAt: 1 });
+    mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: { ...second }, createdAt: 2 });
+    let notified = 0;
+    await expect(
+      expireMailboxEntries({
+        jobQueue: mailbox.jobQueue,
+        now: NOW,
+        onExpired: () => {
+          notified++;
+          throw new Error('notification failed');
+        },
+      })
+    ).rejects.toThrow('notification failed');
+    expect(notified).toBe(1);
+    expect(rowFor(mailbox, first.id).status).toBe('dead');
+    expect(rowFor(mailbox, second.id).status).toBe('pending');
+  });
+
+  test('a rejected expiry rolls back without publishing failure', async () => {
+    const entry = makeEntry({ id: createUlid(NOW - 2 * TTL_MS) });
+    enqueueMailboxEntry(mailbox.jobQueue, entry);
+    mailbox.db.exec(
+      "CREATE TRIGGER reject_expiry BEFORE UPDATE OF status ON job_queue BEGIN SELECT RAISE(ABORT, 'fixture rejected expiry'); END"
+    );
+    let notified = 0;
+    await expect(
+      expireMailboxEntries({
+        jobQueue: mailbox.jobQueue,
+        now: NOW,
+        onExpired: () => {
+          notified++;
+        },
+      })
+    ).rejects.toThrow('fixture rejected expiry');
+    expect(notified).toBe(0);
+    expect(rowFor(mailbox, entry.id).status).toBe('pending');
+  });
+
+  test('receipt loading failure after the UPDATE rolls back the terminal transition', async () => {
+    const entry = makeEntry({ id: createUlid(NOW - 2 * TTL_MS) });
+    enqueueMailboxEntry(mailbox.jobQueue, entry);
+    const original = JobQueueRepository.prototype.getJob;
+    let reads = 0;
+    const getJob = spyOn(JobQueueRepository.prototype, 'getJob').mockImplementation(function (id) {
+      reads++;
+      if (reads === 2) throw new Error('receipt unavailable');
+      return original.call(this, id);
+    });
+    let notified = 0;
+    try {
+      await expect(
+        expireMailboxEntries({
+          jobQueue: mailbox.jobQueue,
+          now: NOW,
+          onExpired: () => {
+            notified++;
+          },
+        })
+      ).rejects.toThrow('receipt unavailable');
+      expect(reads).toBe(2);
+      expect(notified).toBe(0);
+      expect(rowFor(mailbox, entry.id).status).toBe('pending');
+      expect(rowFor(mailbox, entry.id).completed_at).toBeNull();
+    } finally {
+      getJob.mockRestore();
+    }
+  });
+
+  for (const change of ['extend TTL', 'complete input']) {
+    test(`revalidates a scanned candidate after another writer can ${change}`, async () => {
+      const entry = makeEntry({ id: createUlid(NOW - 2 * TTL_MS) });
+      enqueueMailboxEntry(mailbox.jobQueue, entry);
+      const inline = new DbGateway(':memory:', mailbox.db);
+      let writes = 0;
+      bindGateway(mailbox.db, {
+        call: async (op, method, ...args) => {
+          if (method === 'expire') {
+            writes++;
+            if (change === 'extend TTL') {
+              mailbox.db
+                .prepare(
+                  "UPDATE job_queue SET payload = json_set(payload, '$.policy.ttlMs', ?) WHERE id = ?"
+                )
+                .run(100 * TTL_MS, args[0] as string);
+            } else {
+              mailbox.db
+                .prepare("UPDATE job_queue SET status = 'completed' WHERE id = ?")
+                .run(args[0] as string);
+            }
+          }
+          return Reflect.apply(inline.call, inline, [op, method, ...args]);
+        },
+      } as DbGateway);
+      let notified = 0;
+      expect(
+        await expireMailboxEntries({
+          jobQueue: mailbox.jobQueue,
+          now: NOW,
+          onExpired: () => {
+            notified++;
+          },
+        })
+      ).toBe(0);
+      expect(writes).toBe(1);
+      expect(notified).toBe(0);
+      expect(rowFor(mailbox, entry.id).status).toBe(
+        change === 'extend TTL' ? 'pending' : 'completed'
+      );
+    });
+  }
 
   test('a fresh entry is untouched', async () => {
     const entry = makeEntry({ id: createUlid(NOW - TTL_MS / 2) });

@@ -1,0 +1,15 @@
+{
+  "bunPasses": 78,
+  "bunFailures": 0,
+  "candidateRevalidation": [
+    "TTL extension",
+    "completed input"
+  ],
+  "callbackAfterReceipt": true,
+  "callbackOutsideTransaction": true,
+  "callbackFailureStopsLaterCandidates": true,
+  "receiptFailureRollsBackUpdate": true,
+  "successorRetainedOnScanFailure": true,
+  "concurrentSuccessorCount": 1,
+  "temporaryHomeRemoved": true
+}
