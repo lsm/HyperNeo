@@ -6,16 +6,26 @@ import { parseGitHubRefUrl } from '../packages/daemon/src/lib/github/parse-pr-ur
 
 type Todo = Pick<NeoTodo, 'id' | 'askId' | 'title' | 'report' | 'repo' | 'state' | 'check'>;
 type Reference = { kind: 'pr' | 'issue'; owner: string; repo: string; number: number };
+type ReferenceKinds = Readonly<Record<string, Reference['kind']>>;
 type Edit = { todoId: string; check: NeoTodoCheck };
 type Unresolved = { todoId: string; title: string; reason: string };
 const TOKENS =
   /https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/[1-9]\d*\b|(?<![\w./#-])(?:[\w.-]+\/[\w.-]+)?#[1-9]\d*\b/gi;
 
-function reference(token: string, prefix: string, repository: string | null): Reference | null {
+function reference(
+  token: string,
+  prefix: string,
+  repository: string | null,
+  kinds: ReferenceKinds
+): Reference | null {
   if (/^https?:/i.test(token)) {
     const parsed = parseGitHubRefUrl(token.toLowerCase());
-    return parsed && Number.isSafeInteger(parsed.number)
-      ? { ...parsed, kind: token.toLowerCase().includes('/pull/') ? 'pr' : 'issue' }
+    const kind =
+      parsed &&
+      (kinds[`${parsed.owner}/${parsed.repo}#${parsed.number}`] ??
+        (token.toLowerCase().includes('/pull/') ? 'pr' : 'issue'));
+    return parsed && Number.isSafeInteger(parsed.number) && (kind === 'pr' || kind === 'issue')
+      ? { ...parsed, kind }
       : null;
   }
   const label = /\b(PRs?|pull requests?|issues?)\s*$/i.exec(prefix)?.[1];
@@ -24,25 +34,38 @@ function reference(token: string, prefix: string, repository: string | null): Re
   const owner = named?.[1] ?? context?.[1];
   const repo = named?.[2] ?? context?.[2];
   const number = Number(named?.[3]);
-  return label && owner && repo && Number.isSafeInteger(number)
+  const kind =
+    kinds[`${owner}/${repo}#${number}`.toLowerCase()] ??
+    (label ? (/^issue/i.test(label) ? 'issue' : 'pr') : null);
+  return (kind === 'pr' || kind === 'issue') && owner && repo && Number.isSafeInteger(number)
     ? {
         owner: owner.toLowerCase(),
         repo: repo.toLowerCase(),
         number,
-        kind: /^issue/i.test(label) ? 'issue' : 'pr',
+        kind,
       }
     : null;
 }
 
-export function planNeoTodoCheckBackfill(todos: readonly Todo[]) {
+export function planNeoTodoCheckBackfill(todos: readonly Todo[], kinds: ReferenceKinds = {}) {
   const edits: Edit[] = [];
   const unresolved: Unresolved[] = [];
   for (const todo of todos) {
     if (todo.check || !['todo', 'doing', 'blocked', 'failed'].includes(todo.state)) continue;
     const text = [todo.title, todo.report].filter(Boolean).join('\n');
     const tokens = [...text.matchAll(TOKENS)];
+    const repos = new Set(
+      tokens.flatMap(([token]) => {
+        const named =
+          /^(?:https?:\/\/(?:www\.)?github\.com\/)?([\w.-]+\/[\w.-]+)(?:#|\/(?:pull|issues)\/)/i.exec(
+            token
+          )?.[1];
+        return named ? [named.toLowerCase()] : [];
+      })
+    );
+    const repository = todo.repo ?? (repos.size === 1 ? [...repos][0] : null);
     const parsed = tokens.map((token) =>
-      reference(token[0], text.slice(Math.max(0, token.index - 20), token.index), todo.repo)
+      reference(token[0], text.slice(Math.max(0, token.index - 20), token.index), repository, kinds)
     );
     const refs = [
       ...new Map(
@@ -90,8 +113,13 @@ export function planNeoTodoCheckBackfill(todos: readonly Todo[]) {
 if (import.meta.main) {
   const path = process.argv[2];
   if (!path)
-    throw new Error('Usage: bun scripts/backfill-neo-todo-checks.ts <exported-todos.json>');
+    throw new Error(
+      'Usage: bun scripts/backfill-neo-todo-checks.ts <exported-todos.json> [ref-kinds.json]'
+    );
   const rows: unknown = JSON.parse(readFileSync(path, 'utf8'));
   if (!Array.isArray(rows)) throw new Error('Expected an exported todo array.');
-  console.log(JSON.stringify(planNeoTodoCheckBackfill(rows), null, 2));
+  const kinds: ReferenceKinds = process.argv[3]
+    ? JSON.parse(readFileSync(process.argv[3], 'utf8'))
+    : {};
+  console.log(JSON.stringify(planNeoTodoCheckBackfill(rows, kinds), null, 2));
 }

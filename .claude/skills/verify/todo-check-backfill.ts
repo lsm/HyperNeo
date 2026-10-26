@@ -132,6 +132,10 @@ try {
     plan.edits.map((edit) => edit.todoId),
     ['pr', 'issue', 'observed']
   );
+  assert.deepEqual(plan.edits.find((edit) => edit.todoId === 'observed')?.check?.params.urls, [
+    'https://github.com/example/project/pull/50',
+    'https://github.com/example/project/pull/51',
+  ]);
   assert.deepEqual(
     plan.unresolved.map((row) => row.todoId),
     ['unknown', 'decision']
