@@ -22,5 +22,6 @@ export function planNeoSessionMessage(
     toName: name(sent.toSession),
     text: sent.text,
     createdAt: new Date(sent.at).toISOString(),
+    kind: 'session',
   };
 }

@@ -1,4 +1,5 @@
 import { runMigration459 } from './m459-operation-accepted-records.ts';
+import { runMigration460 } from './m460-neo-session-message-kind.ts';
 import { runMigration458 } from './m458-neo-todo-closed-unverified.ts';
 import { runMigration457 } from './m457-neo-question-answers.ts';
 import { runMigration456 } from './m456-neo-todo-query-indexes.ts';
@@ -973,6 +974,7 @@ export function runMigrations(
   run(migrationMarkerKey(457), () => runMigration457(db));
   run(migrationMarkerKey(458), () => runMigration458(db));
   run(migrationMarkerKey(459), () => runMigration459(db));
+  run(migrationMarkerKey(460), () => runMigration460(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

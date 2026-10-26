@@ -93,9 +93,12 @@ describe('worker batches before human intake', () => {
     db.getSDKMessageRepo().markDeliveryConsumedByUuid(sessionId, requestId);
     queue.complete(humanJob.id, {}, humanJob.claimToken);
     expect(db.getSDKMessageRepo().getSDKMessages(sessionId, 100).messages).toHaveLength(2);
-    expect(new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10)).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('Worker note A') }),
-    ]);
+    expect(
+      new NeoSessionMessageRepository(db.getDatabase()).get(
+        conversationId,
+        String(batchJob.payload.messageUuid)
+      )
+    ).toEqual(expect.objectContaining({ text: expect.stringContaining('Worker note A') }));
     expect(
       ledger.acceptPromptSync(conversationId, prompt, 'immediate', db.getSDKMessageRepo(), queue)
     ).toMatchObject({ accepted: true, created: false });
@@ -119,7 +122,10 @@ describe('worker batches before human intake', () => {
       .getDeliveryContent(sessionId, String(job.payload.messageUuid))!;
     expect(delivered.content).toContainEqual(image);
     await boundDeliveryContent(db.getDatabase(), job, delivered);
-    const [row] = new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10);
+    const row = new NeoSessionMessageRepository(db.getDatabase()).get(
+      conversationId,
+      String(job.payload.messageUuid)
+    )!;
     expect(row.text).toContain('Worker image context');
     expect(row.text).not.toContain(image.source.data);
     expect(row.text).not.toContain('"type":"image"');
@@ -143,7 +149,7 @@ describe('worker batches before human intake', () => {
     expect(Buffer.byteLength(JSON.stringify(bounded.content))).toBeLessThan(65536);
     expect(JSON.stringify(bounded.content)).toContain('handoffFiles');
     const publicRows = new NeoSessionMessageRepository(db.getDatabase());
-    const [row] = publicRows.latest(conversationId, 10);
+    const row = publicRows.get(conversationId, String(batchJob.payload.messageUuid))!;
     expect(Buffer.byteLength(row.text)).toBeLessThan(65536);
     const publicText =
       typeof bounded.content === 'string'
@@ -158,7 +164,7 @@ describe('worker batches before human intake', () => {
       sdk.getDeliveryContent(sessionId, String(batchJob.payload.messageUuid))!
     );
     expect(retry.content).toEqual(bounded.content);
-    expect(publicRows.latest(conversationId, 10)).toEqual([row]);
+    expect(publicRows.get(conversationId, row.messageId)).toEqual(row);
     const inline = await boundDeliveryContent(
       db.getDatabase(),
       humanJob,

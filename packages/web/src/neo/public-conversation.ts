@@ -179,7 +179,7 @@ export function presentNeoPublicConversation({
         })
       ),
     ...sessionMessages
-      .filter((message) => Date.parse(message.createdAt) >= from)
+      .filter((message) => message.kind !== 'worker-batch' && Date.parse(message.createdAt) >= from)
       .map(
         (message): NeoPublicEntry => ({
           kind: 'session',
