@@ -12,7 +12,6 @@ import {
   lstat,
   mkdir,
   open,
-  readFile,
   rename,
   rm,
   rmdir,
@@ -92,6 +91,8 @@ export async function releaseWorkerSandbox(root: string | null | undefined) {
 }
 
 export async function prepareWorkerSandbox(root: string) {
+  if (!(await lstat(join(root, '.git'))).isDirectory())
+    throw new Error('Worker Git directory must be in-clone');
   const env = workerSandboxPaths(root);
   const runtime = join(env.TMPDIR, '..');
   for (const path of new Set([runtime, ...Object.values(env)])) {
@@ -172,15 +173,18 @@ export async function persistCodexWorkerProfile(root: string) {
   await mkdir(directory, { recursive: true });
   if (!(await lstat(directory)).isDirectory()) throw new Error('Worker config must be in-clone');
   const path = join(directory, 'config.toml');
-  const entry = await lstat(path).catch((error) => {
+  const entry = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch((error) => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
-  if (entry && !entry.isFile()) throw new Error('Worker config must be a regular file');
-  const previous = await readFile(path, 'utf8').catch((error) => {
-    if (error.code === 'ENOENT') return '';
-    throw error;
-  });
+  let previous = '';
+  try {
+    if (entry && !(await entry.stat()).isFile())
+      throw new Error('Worker config must be a regular file');
+    if (entry) previous = await entry.readFile('utf8');
+  } finally {
+    await entry?.close();
+  }
   const existing = parse(previous);
   const profiles = existing.permissions as
     | Record<string, { filesystem?: Record<string, unknown> }>
@@ -205,6 +209,8 @@ export async function persistCodexWorkerProfile(root: string) {
 }
 
 export async function excludeWorkerConfig(root: string, pattern: string) {
+  if (!(await lstat(join(root, '.git'))).isDirectory())
+    throw new Error('Worker Git directory must be in-clone');
   const directory = join(root, '.git/info');
   await mkdir(directory, { recursive: true });
   if (!(await lstat(directory)).isDirectory()) throw new Error('Git info must be in-clone');

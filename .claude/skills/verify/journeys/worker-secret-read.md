@@ -37,8 +37,10 @@ profile and refuse queue admission when their profile catalog is absent or
 disallows the worker profile. A repo tracking `.codex/config.toml` is refused
 without changing its bytes. Library toolchain paths remain readable; Keychains
 and 1Password are denied. The broader `.config` denial is intentional.
-Both policy writers must refuse symlinked `.git/info` or `exclude`, leaving
-synthetic host files unchanged during policy installation.
+Both policy writers must refuse symlinked `.git`, `.git/info` or `exclude`,
+leaving synthetic host files unchanged during policy installation. Swapping
+config files must not copy synthetic host TOML into the protected profile;
+file reads use the already-opened no-follow handle.
 
 Retain `evidence/*-stdout.jsonl`, `*-stderr.log`, `sdk-requests.json`,
 `sdk-secret-read.json`, `codex-launch.json`, `codex-turn.json`, and each worker's
