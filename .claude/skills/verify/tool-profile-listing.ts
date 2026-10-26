@@ -48,6 +48,14 @@ try {
   })) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
   const manual = (await rpc('session.create', { workspacePath: folder, title: 'Synthetic manual' })) as { sessionId: string };
+  const spoofed = await rpc('session.create', {
+    workspacePath: folder,
+    title: 'Synthetic spoof',
+    config: { toolProfile: 'worker' },
+  }).then(
+    () => 'accepted',
+    (error: Error) => error.message
+  );
   const listed = async (sessionId: string) => {
     const session = await app.sessionManager.getSessionAsync(sessionId);
     assert(session, `session ${sessionId} not found`);
@@ -67,6 +75,7 @@ try {
     workerOrchestration: orchestration(worker),
     manualOrchestration: orchestration(human),
     workerHasMessageSend: worker.includes('message.send'),
+    clientProfileRefused: /toolProfile/.test(spoofed),
   };
   writeFileSync(join(run, 'evidence/tool-profile-listing.json'), JSON.stringify({ observed, worker, manual: human }, null, 2));
   console.log(JSON.stringify(observed, null, 2));
@@ -75,6 +84,7 @@ try {
   assert.deepEqual(observed.workerOrchestration, []);
   assert(observed.manualOrchestration.includes('work.start'));
   assert(observed.workerHasMessageSend);
+  assert(observed.clientProfileRefused, spoofed);
 } finally {
   ws.close();
   await app.cleanup();

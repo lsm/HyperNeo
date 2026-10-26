@@ -342,7 +342,7 @@ describe('createDriverSession', () => {
         workspacePath: '/repo',
         title: 'font size',
         worktreeMode: 'worktree',
-        config: { toolProfile: 'worker' },
+        toolProfile: 'worker',
       },
     ]);
   });
@@ -360,7 +360,7 @@ describe('createDriverSession', () => {
           workspacePath: linked,
           title: 'font size',
           worktreeMode: 'direct',
-          config: { toolProfile: 'worker' },
+          toolProfile: 'worker',
         },
       ]);
     } finally {
@@ -372,12 +372,7 @@ describe('createDriverSession', () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(manager as never, '/notes', 'essay');
     expect(created).toEqual([
-      {
-        workspacePath: '/notes',
-        title: 'essay',
-        worktreeMode: 'direct',
-        config: { toolProfile: 'worker' },
-      },
+      { workspacePath: '/notes', title: 'essay', worktreeMode: 'direct', toolProfile: 'worker' },
     ]);
   });
 });
@@ -421,12 +416,8 @@ describe('createDriverSession model', () => {
         workspacePath: '/HyperNeo',
         title: 'task',
         worktreeMode: 'direct',
-        config: {
-          model: 'swe-2-high',
-          provider: 'custom:synthetic',
-          thinkingLevel: 'think32k',
-          toolProfile: 'worker',
-        },
+        toolProfile: 'worker',
+        config: { model: 'swe-2-high', provider: 'custom:synthetic', thinkingLevel: 'think32k' },
       },
     ]);
   });
@@ -436,11 +427,7 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'task', 'sWe-2 HIGH', async () =>
       offers()
     );
-    expect(created[0].config).toEqual({
-      toolProfile: 'worker',
-      model: 'swe-2-high',
-      provider: 'custom:synthetic',
-    });
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
   });
 
   test('refuses an ambiguous display name and lists both matching ids before creation', async () => {
@@ -458,11 +445,7 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', async () =>
       offers().map((entry) => ({ ...entry, name: 'swe-2-high' }))
     );
-    expect(created[0].config).toEqual({
-      toolProfile: 'worker',
-      model: 'swe-2-high',
-      provider: 'custom:synthetic',
-    });
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
   });
 
   test('opens the session on the model asked for', async () => {
@@ -470,11 +453,7 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'essay', 'glm-5.3', async () => [
       { ...model('glm-5.3[1m]', '2026-08-14'), alias: 'glm-5.3' },
     ]);
-    expect(created[0].config).toEqual({
-      toolProfile: 'worker',
-      model: 'glm-5.3[1m]',
-      provider: 'glm',
-    });
+    expect(created[0].config).toEqual({ model: 'glm-5.3[1m]', provider: 'glm' });
   });
 
   test('applies effort to session configuration while retaining its default model', async () => {
@@ -488,7 +467,7 @@ describe('createDriverSession model', () => {
       undefined,
       'high'
     );
-    expect(created[0].config).toEqual({ toolProfile: 'worker', thinkingLevel: 'think24k' });
+    expect(created[0].config).toEqual({ thinkingLevel: 'think24k' });
   });
 
   test('preserves the selected provider when another provider offers the same id', async () => {
@@ -497,15 +476,11 @@ describe('createDriverSession model', () => {
       offers()[0],
       { ...offers()[0], provider: 'custom:other', name: 'Other Model' },
     ]);
-    expect(created[0].config).toEqual({
-      toolProfile: 'worker',
-      model: 'swe-2-high',
-      provider: 'custom:other',
-    });
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:other' });
   });
 
   test('falls back to the newest available model when the default cannot run', async () => {
-    const { created, manager } = sessionManager(false, (params) => !!params.config?.model);
+    const { created, manager } = sessionManager(false, (params) => !!params.config);
     const id = await createDriverSession(
       manager as never,
       '/notes',
@@ -515,8 +490,8 @@ describe('createDriverSession model', () => {
     );
     expect(id).toBe('new');
     expect(created.map((params): unknown => params.config)).toEqual([
-      { toolProfile: 'worker' },
-      { model: 'gpt-6', provider: 'gpt', toolProfile: 'worker' },
+      undefined,
+      { model: 'gpt-6', provider: 'gpt' },
     ]);
   });
 
@@ -529,8 +504,8 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'essay', 'kimi-k3', models);
     await createDriverSession(manager as never, '/notes', 'essay', 'claude-sonnet-4-6', models);
     expect(created.map((params): unknown => params.config)).toEqual([
-      { model: 'kimi-k3-0901', provider: 'kimi', toolProfile: 'worker' },
-      { model: 'sonnet', provider: 'sonnet', toolProfile: 'worker' },
+      { model: 'kimi-k3-0901', provider: 'kimi' },
+      { model: 'sonnet', provider: 'sonnet' },
     ]);
   });
 
@@ -547,8 +522,8 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', models);
     await createDriverSession(manager as never, '/notes', 'task', 'Other SWE offer', models);
     expect(created.map((entry) => entry.config)).toEqual([
-      { model: 'swe-2-high', provider: 'custom:synthetic', toolProfile: 'worker' },
-      { model: 'swe-2-high', provider: 'custom:other', toolProfile: 'worker' },
+      { model: 'swe-2-high', provider: 'custom:synthetic' },
+      { model: 'swe-2-high', provider: 'custom:other' },
     ]);
   });
 

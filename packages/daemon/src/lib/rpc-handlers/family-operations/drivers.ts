@@ -143,7 +143,10 @@ export async function createDriverSession(
         ? { sessionId: prepared.sessionId, executionProjectPath: prepared.projectPath }
         : {}),
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
-      config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}), toolProfile: 'worker' },
+      toolProfile: 'worker',
+      ...(config || thinkingLevel
+        ? { config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
+        : {}),
     });
   const selected = model
     ? await resolveDriverModel(usableModels(await availableModels(), provider), model)

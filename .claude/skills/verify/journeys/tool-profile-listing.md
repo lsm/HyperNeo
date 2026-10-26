@@ -22,4 +22,6 @@ daemon's WebSocket RPC, then calls `operations.list` through each session's real
 
 End state, from `evidence/tool-profile-listing.json`: `workerProfile` is `worker`,
 `manualProfile` is null, `workerOrchestration` is empty, `manualOrchestration` includes
-`work.start`, and `workerHasMessageSend` is true.
+`work.start`, `workerHasMessageSend` is true, and `clientProfileRefused` is true: a
+`session.create` that supplies `config.toolProfile` is refused, since only the daemon
+assigns profiles.
