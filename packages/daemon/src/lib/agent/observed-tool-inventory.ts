@@ -92,9 +92,11 @@ export class ObservedToolInventory {
       tools: names([
         ...this.inventory.tools.filter((name) => !name.startsWith('mcp__')),
         ...mcpServers.flatMap((server) =>
-          server.status === 'connected'
-            ? (server.tools ?? []).map((tool) => `mcp__${server.name}__${tool}`)
-            : []
+          server.status === 'unverified' || server.tools === null
+            ? this.inventory.tools.filter((name) => name.startsWith(`mcp__${server.name}__`))
+            : server.status === 'connected'
+              ? server.tools.map((tool) => `mcp__${server.name}__${tool}`)
+              : []
         ),
       ]),
     };
