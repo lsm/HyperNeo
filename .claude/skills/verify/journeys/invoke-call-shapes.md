@@ -30,6 +30,14 @@ test-first commit 20af32b73 records the same failure through AgentSession.
 The integration test covers Neo, plain, and all worker roles on both cached
 and per-input servers, with identical names and models.
 
+The helper additionally restores a real AgentSession and reads its cached MCP
+server through `tools/list`. Replacing its resolver must add Neo shapes; returning
+to plain must remove them. Changing the role returned by the same resolver must
+also refresh the description in both directions. It saves all five observations
+as `role-transitions.json`. On test-first commit 61897c045 the proof fails
+`Cached plain server must refresh after resolver replacement`. The cache may be
+reused only while its description role still matches the resolved session role.
+
 Baseline: before the fix, MCP lists invoke without any call shapes and the
 helper fails `Missing work.send`. Commit 6ea05e192 also records the failing
 schema-mutation regression. The focused MCP/discovery tests change an advertised
