@@ -23,6 +23,16 @@ import {
   hyperneoSessionControl,
 } from '../../../../src/lib/rpc-handlers/family-operations/drivers.ts';
 
+let workerDataDir: string;
+beforeEach(() => {
+  workerDataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = workerDataDir;
+});
+afterEach(() => {
+  rmSync(workerDataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
 describe('hyperneoSessionControl withdraw', () => {
   let fixture: MailboxTestDb;
   beforeEach(() => {

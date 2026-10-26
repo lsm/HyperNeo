@@ -1,16 +1,29 @@
-import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { homedir } from 'node:os';
 import { secretNamePatterns } from '../neo/secret-read-rules.ts';
 import {
   excludeWorkerConfig,
   prepareWorkerSandbox,
   workerSandboxPaths,
   workerSecretPaths,
+  workerWritableRoots,
 } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
+const RUNTIME_MANAGED_ENV_KEYS = [
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'CLAUDE_CODE_TMPDIR',
+  'XDG_CACHE_HOME',
+  'HYPERNEO_WORKTREES',
+  'HYPERNEO_EVIDENCE',
+  'HYPERNEO_BUILDS',
+] as const;
+const managedEnv = (env: Record<string, string>) =>
+  Object.fromEntries(RUNTIME_MANAGED_ENV_KEYS.map((key) => [key, env[key]]));
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
 const settingsPath = (root: string) => join(root, '.claude/settings.local.json');
 const editRule = (path: string, tree = false) =>
@@ -28,7 +41,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       excludedCommands: [],
       filesystem: {
         denyRead: [...workerSecretPaths(), ...secretNamePatterns(homedir())],
-        allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
+        allowWrite: [root, join(root, '.git'), ...workerWritableRoots(root)],
         denyWrite: [
           ...roots,
           ...siblings.filter((sibling) => sibling !== root),
@@ -119,7 +132,7 @@ function withSecretDenials(
   return {
     ...computed,
     ...existing,
-    env: existing?.env || computed.env,
+    env: { ...(existing?.env ?? computed.env), ...managedEnv(computed.env) },
     permissions: {
       ...computed.permissions,
       ...existing?.permissions,
@@ -135,7 +148,6 @@ function withSecretDenials(
       },
       filesystem: {
         ...computed.sandbox.filesystem,
-        ...existing?.sandbox?.filesystem,
         denyRead: [
           ...new Set([
             ...computed.sandbox.filesystem.denyRead,
@@ -161,6 +173,12 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     .then(JSON.parse)
     .catch(() => ({}));
   const before = JSON.stringify(existing);
+  if (!existing?.env || !existing?.sandbox) {
+    Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
+  }
+  if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
+    existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
+  }
   const upgraded = withSecretDenials(computed, existing);
   if (before !== JSON.stringify(upgraded)) await writePolicy(directory, upgraded);
   return upgraded;

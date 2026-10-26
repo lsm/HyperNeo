@@ -1,39 +1,42 @@
+import { basename, join } from 'node:path';
+import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
+import {
+  OWN_THREADS,
+  readCodexSnapshot,
+  THREAD_COLUMNS,
+  withCodexState,
+} from '../../storage/codex-desktop-read.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
+import { Logger } from '../logger.ts';
+import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
+import { type WorkExecutionPreparer, workStartPreparation } from './start-preparation.ts';
 import {
   codexWorkerSandbox,
   persistCodexWorkerProfile,
   prepareWorkerSandbox,
   releaseWorkerSandbox,
-  resumeWorkerSandbox,
   requireCodexWorkerProfile,
+  resumeWorkerSandbox,
   workerSandboxOn,
 } from './worker-sandbox.ts';
-import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
-import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
-import { Logger } from '../logger.ts';
-import { runLagPhase } from '../event-loop-activity.ts';
-import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
-import { basename, join } from 'node:path';
-import { z } from 'zod';
-import superpipe, { type PipelineAPI } from 'superpipe';
-import {
-  OWN_THREADS,
-  THREAD_COLUMNS,
-  withCodexState,
-  readCodexSnapshot,
-} from '../../storage/codex-desktop-read.ts';
+
 export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-read.ts';
-import { gitWorktreeProject } from './acp-agent-adapter.ts';
+
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import { CodexRequestError, type CodexAppServer } from './codex-app-server.ts';
+import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { type CodexAppServer, CodexRequestError } from './codex-app-server.ts';
+import { type CodexSendGate, steerCodexDesktopTurn } from './codex-desktop-handoff.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
-import { workStartConfiguration } from './start-configuration.ts';
+import { workExecutionLocation } from './execution-location.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
-import { withChatEvidence } from './places.ts';
-import { selectLocalStartFolder } from './start-folder.ts';
-import { workExecutionLocation } from './execution-location.ts';
 import { codexOpenedPrs, createCodexPrReader } from './opened-prs.ts';
+import { withChatEvidence } from './places.ts';
+import { workStartConfiguration } from './start-configuration.ts';
+import { selectLocalStartFolder } from './start-folder.ts';
 import { readTailLines } from './transcript-tail.ts';
 import type {
   FindQuery,
@@ -54,19 +57,18 @@ import type {
 } from './types.ts';
 import {
   boundExchange,
-  WORK_AGENT_INPUT,
   exchangeEntry,
   recentWorkInputs,
   TURN_REPLIES,
   turnReplies,
   turnReply,
+  WORK_AGENT_INPUT,
   type WorkExchange,
   withExchange,
   workEntryTime,
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
-import { steerCodexDesktopTurn, type CodexSendGate } from './codex-desktop-handoff.ts';
 import { type GitCheckout, planWorkPlacement } from './work-placement.ts';
 
 const THREADS_PER_PLACE = 20;
@@ -1201,7 +1203,9 @@ export async function startCodexThread(
         workFolder = prepared.value;
       }
       const sandbox =
-        request.preparation && workerSandboxOn() ? codexWorkerSandbox(workFolder.cwd) : null;
+        request.preparation && workerSandboxOn(request.preparation.sandbox)
+          ? codexWorkerSandbox(workFolder.cwd)
+          : null;
       if (sandbox) {
         await prepareWorkerSandbox(workFolder.cwd);
         await persistCodexWorkerProfile(workFolder.cwd);
