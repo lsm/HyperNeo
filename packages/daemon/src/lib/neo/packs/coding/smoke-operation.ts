@@ -60,7 +60,7 @@ export function createCodingSmokeOperation(
   return defineOperation({
     name: 'neo.coding.smoke',
     description:
-      'Record the assigned independent QA actor’s post-deploy smoke or explicit inapplicability. Reads actual merged-head and running-build containment facts; a failure stays pending. Does not merge, deploy or restart anything.',
+      'Record the assigned independent QA actor’s post-deploy smoke or explicit inapplicability. Reads actual merged-head and running-build containment facts; a failure is recorded for follow-up without changing the todo’s declared completion check. Does not merge, deploy or restart anything.',
     inputSchema: Input,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true) }),
