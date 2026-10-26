@@ -132,3 +132,4 @@ finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/neo-settings-writer.json'), JSON.stringify(report, null, 2));
 }
+console.log(JSON.stringify({ verified: report.verified, mainWrites, contention: report.contention }));

@@ -474,6 +474,12 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
+NEO_SETTINGS_RUN="$WORK_DIR/neo-settings-writer"
+mkdir -p "$NEO_SETTINGS_RUN/home" "$NEO_SETTINGS_RUN/tmp"
+env -i HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$NEO_SETTINGS_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-settings-writer.ts" verify "$NEO_SETTINGS_RUN"
+
 CLEANUP_ENQUEUE_RUN="$WORK_DIR/cleanup-enqueue"
 mkdir -p "$CLEANUP_ENQUEUE_RUN/home"
 env -i HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \

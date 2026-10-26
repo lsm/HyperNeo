@@ -1,4 +1,6 @@
 import { readNeoReply } from './intake.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { readNeoMessageStatuses, type NeoMessageStatusPresenter } from './message-status.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
@@ -25,7 +27,7 @@ import type { PlaceGroup } from '../drivers/types.ts';
 import { existsSync } from 'node:fs';
 import { NEO_SNAPSHOT_UNCHANGED_GUIDANCE } from './snapshot-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { THINKING_LEVELS } from '@hyperneo/shared';
+import { THINKING_LEVELS, type GlobalSettings } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
@@ -38,7 +40,6 @@ import {
   NEO_STANDING_RULE_MAX_CHARS,
   NEO_STANDING_RULES_MAX,
   neoStandingRules,
-  type NeoSettings,
 } from '@hyperneo/shared/types/settings';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
@@ -66,7 +67,6 @@ import {
   NeoSessionNoticeSchema,
   latestNeoSessionNoticeGroups,
   neoSessionNoticeLine,
-  planNeoSessionMutes,
   type NeoSessionNotice,
 } from './session-watch.ts';
 import {
@@ -92,7 +92,6 @@ import {
   PackSettingSchema,
 } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
-import { planNeoRuleEdit } from './saved-rules.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -483,33 +482,29 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof SessionMute>) => ({
-        mutedSessions: planNeoSessionMutes(
-          service.db.getGlobalSettings().neo?.mutedSessions ?? [],
+      (input: z.infer<typeof SessionMute>) =>
+        gatewayFor(service.db.getDatabase()).call(
+          globalSettingsWrites,
+          'neoMute',
           input.key,
           input.muted
         ),
-      }),
       'input',
-      'planned'
+      'updated'
     )
     .pipe(
-      (planned: { mutedSessions: string[] }) => {
-        const neo = service.db.getGlobalSettings().neo;
-        const updated = service.db.updateGlobalSettings({
-          neo: { ...neo, mutedSessions: planned.mutedSessions },
-        });
+      (updated: GlobalSettings) => {
         service.publishSettings?.(updated);
         service.notifyChanged();
-        return { ok: true as const, mutedSessions: planned.mutedSessions };
+        return { ok: true as const, mutedSessions: updated.neo!.mutedSessions! };
       },
-      'planned',
+      'updated',
       'admission'
     )
-    .end('admission') as (
+    .endAsync('admission') as (
     input: z.infer<typeof SessionMute>,
     caller: OperationCaller
-  ) => z.infer<typeof SessionMuteResult>;
+  ) => Promise<z.infer<typeof SessionMuteResult>>;
   const trackSession = (superpipe({})('neo.session.track') as PipelineAPI)
     .input(['input', 'caller', 'now'])
     .pipe(
@@ -580,27 +575,24 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'save'],
       'result:save'
     )
-    .pipe(() => ({ neo: service.db.getGlobalSettings().neo }), 'input', 'current')
     .pipe(
-      (input: z.infer<typeof SaveRules>, current: { neo?: NeoSettings }) =>
-        planNeoRuleEdit(neoStandingRules(current.neo), input),
-      ['input', 'current'],
+      (input: z.infer<typeof SaveRules>) =>
+        gatewayFor(service.db.getDatabase()).call(globalSettingsWrites, 'neoRules', input),
+      'input',
       'result:save'
     )
     .pipe(
-      (rules: string[], current: { neo?: NeoSettings }) => {
-        const updated = service.db.updateGlobalSettings({
-          neo: { ...current.neo, standingRules: rules },
-        });
+      (updated: GlobalSettings) => {
         service.publishSettings?.(updated);
+        return { ok: true as const, standingRules: updated.neo!.standingRules! };
       },
-      ['save', 'current']
+      'save',
+      'save'
     )
-    .pipe((rules: string[]) => ({ ok: true as const, standingRules: rules }), 'save', 'save')
-    .end('save') as (
+    .endAsync('save') as (
     input: z.infer<typeof SaveRules>,
     caller: OperationCaller
-  ) => z.infer<typeof RulesResult>;
+  ) => Promise<z.infer<typeof RulesResult>>;
   const read = path('neo.snapshot', async (input: z.infer<typeof Scope>, caller) => {
     return neoSnapshotRevision(await snapshot(caller, input.projectId), input.sinceRev);
   });

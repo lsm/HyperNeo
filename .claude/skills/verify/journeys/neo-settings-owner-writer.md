@@ -25,3 +25,7 @@ Evidence is `neo-settings-writer.json`. The helper closes its owned socket,
 daemon, lock process and WAL connection in finally; the wrapper saves evidence
 before deleting disposable data. This proves RPC persistence and notification,
 not GUI rendering, real provider alignment, or queue/SQL/clone timing.
+The same helper runs under Deno 2.9.4 in `scripts/deno-smoke.sh`; run that smoke
+after the shared resource guard, as a separate heavy job. Its JSON summary in
+the smoke log is saved before temporary data is deleted. Paired baseline/Bun
+results and the Deno summary live in `evidence/neo-settings-owner-writer/`.
