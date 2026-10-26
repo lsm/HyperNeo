@@ -56,6 +56,8 @@ for (const phase of ['initial', 'reopen']) {
       assert.equal(workerQuestion.ok, true); assert.equal(store.getTodo(unfinished.id)?.blockedBy, 'needs-human');
       evidence.push({ beforeSettlement: store.getTodo(unfinished.id), workerQuestion });
       const closed = store.addTodo('closed', ask.id, { title: 'Closed work', doneWhen: 'Checked', instruction: null, check: null, named: null }, 1);
+      const failed = store.addTodo('failed', ask.id, { title: 'Failed work', doneWhen: 'Build observed', instruction: null, check: null, named: null }, 1);
+      store.writeTodo(failed, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
       store.updateTodo(closed, { state: 'closed_unverified', reason: 'Not observed' }, 2);
       const question = await call('neo.question.ask', { askId: ask.id, todoId: closed.id, text: 'What next?', kind: 'reply' });
       assert(question.records[0].startsWith('todo_closed:')); assert.equal(question.question.todoId ?? null, null);
@@ -64,13 +66,14 @@ for (const phase of ['initial', 'reopen']) {
       assert(settled.todos.every((todo: { state: string }) => todo.state === 'closed_unverified'));
       store.openAsk({ id: 'child', parentId: ask.id, repo: 'github.com/synthetic/child', projectId: null, sessionId: ask.sessionId, originMessageId: null, title: 'Child card', request: 'Filed work', createdAt: 1 });
       const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ title: 'New follow-up', doneWhen: 'Observed result' }] });
-      assert.equal(retry.ask.id, ask.id); assert.equal(retry.todos.length, 2);
+      assert.equal(retry.ask.id, ask.id); assert.equal(retry.todos.length, 3);
       assert(retry.records[0].includes('Open a new ask for it with a different title'));
 
     }
     const read = await call('neo.ask.read', { askId: 'ask' });
     assert(read.entry.todos.every((todo: { state: string }) => todo.state === 'closed_unverified'));
     assert.equal(read.entry.doneCount, 0);
+    assert(read.entry.todos.find((todo: { id: string }) => todo.id === 'failed').reason.includes('check_failed: build exited 7'));
     assert((await call('neo.ask.doneTodos', { askId: 'ask' })).todos.length === 0);
     assert(store.listQuestions('ask').every((question) => question.state === 'retired' && question.answer === null && question.answeredBy === null));
     const audits = db.prepare('SELECT operation,reason,accepted FROM operation_refusals ORDER BY id').all();

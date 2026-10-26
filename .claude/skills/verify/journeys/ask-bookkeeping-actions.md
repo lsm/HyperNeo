@@ -22,6 +22,8 @@ removed. Its question is retired without an answer or answerer.
 The production neo.ask.read payload retains that state, doneCount is zero and
 neo.ask.doneTodos returns none. Retired questions retain null answers and no
 answerer. All three accepted audit records and the unverified rows survive DB reopen.
+Include a failed todo with a diagnostic reason before settlement. Its public
+unverified row must retain that reason before and after database reopen.
 On the original baseline the first closed-todo question is refused. On the
 reviewed head 4e48b4aa, settlement instead fails the unverified-state assertion:
 the human-blocked row becomes removed. Retain observed.json
