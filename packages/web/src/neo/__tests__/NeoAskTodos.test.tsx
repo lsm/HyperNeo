@@ -989,15 +989,15 @@ describe('neoAskEntryGroup', () => {
     expect(neoAskEntryGroup({ state: 'dropped', todos: [] })).toBe('outcomes');
   });
 
-  it('moves a card holding a blocked todo to the very top', () => {
+  it('keeps waiting cards above blocked work', () => {
     const blocked = entry({ state: 'doing', todos: [todo('b', { state: 'blocked' })] });
     const waiting = entry({ state: 'waiting' });
     expect(neoAskEntryGroup(blocked)).toBe('attention');
     expect(neoAskEntryGroup({ ...blocked, state: 'done' })).toBe('outcomes');
     expect(neoAskEntryGroup({ ...blocked, state: 'dropped' })).toBe('outcomes');
     expect(neoAskEntriesInOrder([waiting, blocked, entry({ state: 'doing' })])).toEqual([
-      blocked,
       waiting,
+      blocked,
       expect.objectContaining({ state: 'doing' }),
     ]);
   });
