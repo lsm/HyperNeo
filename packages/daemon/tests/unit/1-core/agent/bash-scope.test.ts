@@ -470,6 +470,20 @@ describe('sleepCommandVerdict / createSleepBoundHook', () => {
     expect(sleepCommandVerdict('x=$(sleep 999)')).toBe('denied');
   });
 
+  test('heads carrying expansion metachars are unclassifiable and vetoed', () => {
+    expect(sleepCommandVerdict('x=; s${x}leep 301')).toBe('denied');
+    expect(sleepCommandVerdict('s${x}leep 301')).toBe('denied');
+    expect(sleepCommandVerdict('sl{,}eep 999')).toBe('denied');
+    expect(sleepCommandVerdict('slee* 999')).toBe('denied');
+    expect(sleepCommandVerdict('slee[p] 999')).toBe('denied');
+    expect(sleepCommandVerdict('s?eep 999')).toBe('denied');
+    expect(sleepCommandVerdict('a=sl; b=eep; $a$b 999')).toBe('denied');
+    expect(sleepCommandVerdict('`sleep 999`')).toBe('denied');
+    expect(sleepCommandVerdict('$(echo sleep) 999')).toBe('denied');
+    expect(sleepCommandVerdict('[ -f x ] && echo ok')).toBe('none');
+    expect(sleepCommandVerdict('[[ -f x ]] && echo ok')).toBe('none');
+  });
+
   test('commands without sleeps are neutral', () => {
     expect(sleepCommandVerdict('echo done')).toBe('none');
     expect(sleepCommandVerdict('asleep 5')).toBe('none');

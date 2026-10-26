@@ -501,8 +501,8 @@ function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
     return stripped === null && containsSleepWord(s) ? 'invalid' : 'none';
   const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
   if (!head) return 'none';
-  if (head.startsWith('$') || head.startsWith('`') || head === 'read' || head.endsWith('/read'))
-    return 'invalid';
+  if (head === 'read' || head.endsWith('/read')) return 'invalid';
+  if (head !== '[' && head !== '[[' && /[$`{}*?[\]]/.test(head)) return 'invalid';
   if (!isSleepToken(head)) return containsSleepWord(stripped) ? 'invalid' : 'none';
   if (args.length === 0) return 'invalid';
   let total = 0;
