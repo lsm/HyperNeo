@@ -258,4 +258,69 @@ describe('Neo todo mutation writer admission', () => {
     });
     expect(todos.getTodo('first')?.report).toBe(report);
   });
+
+  test('unsupported URL bookkeeping is accepted without replacing the check', async () => {
+    todos.addTodo(
+      'plain',
+      'ask',
+      { title: 'Plain', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      1
+    );
+    expect(
+      await commit({ kind: 'edit', todoId: 'plain', title: 'URL recorded', addUrls: [url(1)] })
+    ).toMatchObject({
+      ok: true,
+      todo: { title: 'URL recorded', check: null },
+      records: [expect.stringContaining('check_urls_unsupported:')],
+    });
+  });
+
+  test('malformed URLs refuse the whole edit without changing the title', async () => {
+    todo('first');
+    expect(
+      await commit({ kind: 'edit', todoId: 'first', title: 'Not committed', addUrls: ['not-a-pr'] })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('pr_merged_invalid_urls:') });
+    expect(todos.getTodo('first')).toMatchObject({
+      title: 'first',
+      check: { params: { urls: [] } },
+    });
+  });
+
+  test('the current check still owns a derived done-when label', async () => {
+    const first = todo('first', [url(1)]);
+    todos.updateTodo(first, { doneWhen: 'example/repo#1 merged' }, 2);
+    expect(await commit({ kind: 'edit', todoId: 'first', doneWhen: 'Override' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('done_when_from_check:'),
+    });
+    expect(todos.getTodo('first')?.doneWhen).toBe('example/repo#1 merged');
+  });
+
+  test('only an authorized artifact receipt can accompany reported evidence', async () => {
+    todo('first', [url(1)]);
+    const artifact = {
+      daemonId: 'synthetic',
+      artifactId: 'receipt',
+      title: 'Complete evidence',
+      kind: 'text' as const,
+      byteLength: 17,
+    };
+    const input = {
+      kind: 'edit' as const,
+      todoId: 'first',
+      done: 'reported' as const,
+      evidence: 'Full report',
+      artifacts: [artifact],
+    };
+    expect(await commit(input)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('invalid_artifact_reference:'),
+    });
+    const result = await gateway.call(neoTodoMutations, 'commit', input, undefined, 10, [artifact]);
+    expect(result).toMatchObject({
+      ok: true,
+      todo: { report: 'Full report', artifacts: [artifact], state: 'closed_unverified' },
+    });
+    expect(todos.getTodo('first')?.artifacts).toEqual([artifact]);
+  });
 });
