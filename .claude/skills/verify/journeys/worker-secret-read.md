@@ -27,6 +27,9 @@ CLI using the adapter launch configuration, and the HyperNeo SDK worker each run
 read returns exactly `synthetic-repo-readable`. A missing result is a failure.
 The Codex opening-turn receipt must select `hyperneo-worker`, without a legacy
 `sandboxPolicy` overriding it. Its launch config defines that named profile.
+The clone's protected `.codex/config.toml` must also define it: restart/resume
+the prepared Codex worker through the daemon, repeat both reads, and retain the
+turn result. Bootstrap-only definitions are insufficient for Desktop handoff.
 
 Retain `evidence/*-stdout.jsonl`, `*-stderr.log`, `sdk-requests.json`,
 `sdk-secret-read.json`, `codex-launch.json`, `codex-turn.json`, and each worker's

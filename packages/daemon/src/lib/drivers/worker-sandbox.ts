@@ -1,11 +1,22 @@
 import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { getDataDir } from '../data-dir.ts';
+import { parse, stringify } from 'smol-toml';
 import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function workerSandboxPaths(root: string) {
@@ -137,8 +148,43 @@ export function workerSecretPaths() {
   ];
 }
 
+export async function persistCodexWorkerProfile(root: string) {
+  const directory = join(root, '.codex');
+  await mkdir(directory, { recursive: true });
+  if (!(await lstat(directory)).isDirectory()) throw new Error('Worker config must be in-clone');
+  const path = join(directory, 'config.toml');
+  const entry = await lstat(path).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (entry && !entry.isFile()) throw new Error('Worker config must be a regular file');
+  const previous = await readFile(path, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
+  const existing = parse(previous);
+  const config = codexWorkerSandbox(root).config;
+  const profile = config.permissions['hyperneo-worker'];
+  const text = stringify({
+    ...existing,
+    permissions: { ...(existing.permissions as object), 'hyperneo-worker': profile },
+    shell_environment_policy: {
+      ...(existing.shell_environment_policy as object),
+      set: config.shell_environment_policy.set,
+    },
+  });
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+  await writeFile(temporary, text, { flag: 'wx', mode: 0o600 });
+  await rename(temporary, path);
+  const exclude = join(root, '.git/info/exclude');
+  await mkdir(join(root, '.git/info'), { recursive: true });
+  if (!(await readFile(exclude, 'utf8').catch(() => '')).includes('/.codex/config.toml'))
+    await appendFile(exclude, '\n/.codex/config.toml\n');
+}
+
 export async function resumeWorkerSandbox(root: string) {
   if (!existsSync(join(root, '.git/hyperneo-worker-sandbox'))) return null;
   await prepareWorkerSandbox(root);
+  await persistCodexWorkerProfile(root);
   return codexWorkerSandbox(root);
 }

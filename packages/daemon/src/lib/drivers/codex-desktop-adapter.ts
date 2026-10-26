@@ -1,5 +1,6 @@
 import {
   codexWorkerSandbox,
+  persistCodexWorkerProfile,
   prepareWorkerSandbox,
   releaseWorkerSandbox,
   resumeWorkerSandbox,
@@ -1152,7 +1153,10 @@ export async function startCodexThread(
         workFolder = prepared.value;
       }
       const sandbox = request.preparation ? codexWorkerSandbox(workFolder.cwd) : null;
-      if (sandbox) await prepareWorkerSandbox(workFolder.cwd);
+      if (sandbox) {
+        await prepareWorkerSandbox(workFolder.cwd);
+        await persistCodexWorkerProfile(workFolder.cwd);
+      }
       const projectFolder = request.inPlace
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);

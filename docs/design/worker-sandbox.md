@@ -113,6 +113,9 @@ and secret-path read denials; no legacy sandbox selector may override it. This
 uses the engine's OS enforcement instead of a second daemon Seatbelt wrapper or
 removing host paths. Unknown/unsupported profiles fail closed. Pre-profile Codex
 threads may need recreation rather than a workspaceWrite fallback.
+The daemon also installs the profile in the clone's protected `.codex/config.toml`
+so Desktop can resolve it after the bootstrap process exits. Existing project
+settings and other profiles survive; generated config is locally Git-excluded.
 Claude persists matching Bash `denyRead` and native `Read` denies, including on
 legacy resume and sibling refresh. Covered paths include section 3's tool-auth
 locations, engine auth files and shell profiles, with configured engine-home

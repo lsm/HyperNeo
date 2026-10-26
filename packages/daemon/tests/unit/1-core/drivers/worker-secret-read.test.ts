@@ -3,8 +3,10 @@ import { vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse } from 'smol-toml';
 import {
   codexWorkerSandbox,
+  persistCodexWorkerProfile,
   workerSandboxPaths,
 } from '../../../../src/lib/drivers/worker-sandbox.ts';
 import {
@@ -68,6 +70,20 @@ test('configured engine homes remain denied without denying the worker repo', as
   expect(settings().sandbox.filesystem.denyRead).toContain(
     join(fixture, 'claude-home/.credentials.json')
   );
+});
+
+test('Desktop reload can resolve the protected profile without bootstrap overrides', async () => {
+  mkdirSync(join(root, '.codex'));
+  const path = join(root, '.codex/config.toml');
+  writeFileSync(path, 'model = "synthetic"\n[permissions.other.filesystem]\n":root" = "read"\n');
+  await persistCodexWorkerProfile(root);
+  await persistCodexWorkerProfile(root);
+  const reloaded = parse(readFileSync(path, 'utf8'));
+  expect(reloaded.model).toBe('synthetic');
+  expect(reloaded.permissions).toEqual({
+    other: { filesystem: { ':root': 'read' } },
+    ...codexWorkerSandbox(root).config.permissions,
+  });
 });
 
 test.each([false, true])(
