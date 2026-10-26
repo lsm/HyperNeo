@@ -92,6 +92,25 @@ describe('authored publication reads', () => {
     }
   );
 
+  test('the bound Neo session reads its conversation publications; unbound workers stay out', async () => {
+    const stored = ledger.append(publication(1));
+    if (!stored.accepted) throw new Error('fixture append failed');
+    expect(
+      await invoke({ conversationId }, { source: 'mcp', role: 'neo', sessionId: root.sessionId })
+    ).toEqual({
+      kind: 'completed',
+      value: {
+        ok: true,
+        conversationId,
+        items: [stored.publication],
+        nextAfter: stored.publication.sequence,
+      },
+    });
+    expect(
+      await invoke({ conversationId }, { source: 'mcp', role: 'worker', sessionId: 'worker:1' })
+    ).toEqual({ kind: 'completed', value: { ok: false, reason: 'human_only' } });
+  });
+
   test('returns authored bytes, labels, original attribution and immutable retry receipt', async () => {
     const stored = ledger.append(publication());
     expect(stored.accepted).toBe(true);

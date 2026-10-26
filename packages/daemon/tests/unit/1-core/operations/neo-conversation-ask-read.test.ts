@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
+import {
+  createNeoConversationAskReadOperation,
+  createNeoConversationImageReadOperation,
+} from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -76,6 +79,44 @@ describe('durable public ask reads', () => {
       expect(reads).not.toHaveBeenCalled();
     }
   );
+
+  test('the bound Neo session reads asks and photos; unbound workers stay out', async () => {
+    const stored = ledger.append(
+      ask(1, conversationId, [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
+      ])
+    );
+    if (!stored.accepted) throw new Error('fixture ask rejected');
+    const neo: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root.sessionId };
+    expect(await invoke({ conversationId, imageRefs: true }, neo)).toEqual({
+      kind: 'completed',
+      value: {
+        ok: true,
+        conversationId,
+        items: [
+          expect.objectContaining({
+            requestId: stored.ask.requestId,
+            content: [expect.objectContaining({ type: 'image_ref', imageId: '1:0' })],
+          }),
+        ],
+        nextAfter: stored.ask.sequence,
+      },
+    });
+    expect(
+      await invokeOperation(
+        createOperationRegistry([createNeoConversationImageReadOperation(repo, ledger)]),
+        'neo.conversation.image.read',
+        { conversationId, imageId: '1:0' },
+        neo
+      )
+    ).toEqual({
+      kind: 'completed',
+      value: { ok: true, imageId: '1:0', mediaType: 'image/png', data: 'aGVsbG8=' },
+    });
+    expect(
+      await invoke({ conversationId }, { source: 'mcp', role: 'worker', sessionId: 'worker:1' })
+    ).toEqual({ kind: 'completed', value: { ok: false, reason: 'human_only' } });
+  });
 
   test.each(['foreign', 'missing'])(
     'refuses a %s conversation before ledger access',

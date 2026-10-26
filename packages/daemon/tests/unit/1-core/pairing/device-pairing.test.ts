@@ -360,6 +360,21 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('the local human reads both diagnostics without a paired device; agents still cannot', async () => {
+    const { db, call } = setup();
+    expect(await call('device.unpaired.list', {}, human)).toEqual({ ok: true, connections: [] });
+    expect(await call('device.would_refuse.list', {}, human)).toEqual({ ok: true, requests: [] });
+    expect(await call('device.unpaired.list', {}, agent)).toEqual({
+      ok: false,
+      reason: 'This action needs the user.',
+    });
+    expect(await call('device.would_refuse.list', {}, agent)).toEqual({
+      ok: false,
+      reason: 'This action needs the user.',
+    });
+    db.close();
+  });
+
   test('a paired human or the CLI reads the requests Origin/Host checks would refuse', async () => {
     const { db, call, pair, repo } = setup();
     recordWouldRefuse.run(db, {
