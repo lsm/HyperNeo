@@ -284,6 +284,14 @@ describe('readGithubPrs REST check rollup', () => {
     expect(read).toBe(null);
   });
 
+  test('fails the read when only one REST source answers, instead of half a verdict', async () => {
+    const { spawn } = rollupSpawn(ghPr(), (path) =>
+      path.includes('check-runs') ? null : [{ statuses: [{ state: 'success' }] }]
+    );
+    const read = await readGithubPrs([url], spawn as never);
+    expect(read).toBe(null);
+  });
+
   test('follows check-runs pagination to a failure past the first page', async () => {
     const fullPage = Array.from({ length: 100 }, () => ({
       status: 'completed',
@@ -438,7 +446,7 @@ describe('readGithubPrs blockers', () => {
         });
       const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
       if (path.includes('/check-runs')) return [{ check_runs: [] }];
-      if (path.endsWith('/status')) return [{ statuses: [] }];
+      if (path.includes('/status?')) return [{ statuses: [] }];
       if (args[2] === 'graphql')
         return {
           data: {

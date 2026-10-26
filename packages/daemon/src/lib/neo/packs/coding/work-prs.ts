@@ -247,7 +247,6 @@ async function readCheckRollup(
   if (!meta || typeof raw.headRefOid !== 'string' || !raw.headRefOid) return null;
   const base = `repos/${meta.owner}/${meta.repo}/commits/${raw.headRefOid}`;
   const rollup: GhCheck[] = [];
-  let sourced = false;
   const runs = await gh(
     [
       'gh',
@@ -263,7 +262,6 @@ async function readCheckRollup(
   );
   const parsedRuns = runs.ok ? CheckRunsSchema.safeParse(runs.data) : null;
   if (parsedRuns?.success) {
-    sourced = true;
     for (const page of parsedRuns.data)
       for (const run of page.check_runs)
         rollup.push({
@@ -285,12 +283,11 @@ async function readCheckRollup(
     'core'
   );
   const parsedStatuses = statuses.ok ? CombinedStatusSchema.safeParse(statuses.data) : null;
-  if (parsedStatuses?.success) {
-    sourced = true;
+  if (parsedStatuses?.success)
     for (const page of parsedStatuses.data)
       for (const status of page.statuses) rollup.push({ state: status.state.toUpperCase() });
-  }
-  return sourced ? rollup : null;
+  if (!parsedRuns?.success || !parsedStatuses?.success) return null;
+  return rollup;
 }
 
 async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
