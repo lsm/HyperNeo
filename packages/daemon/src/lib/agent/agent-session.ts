@@ -339,12 +339,10 @@ export class AgentSession
     if (!inputOrigin && this.operationMcpServer) return this.operationMcpServer;
     const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
-      () => {
-        return {
-          ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
-          consumedInputId: inputOrigin?.()?.messageId,
-        };
-      },
+      () => ({
+        ...this.operationCallerIdentity(),
+        consumedInputId: inputOrigin?.()?.messageId,
+      }),
       this.recordOperationRefusal
     );
     if (!inputOrigin) this.operationMcpServer = server;
@@ -362,8 +360,15 @@ export class AgentSession
     return operationsCapabilityContribution(
       this.getOperationMcpServer(),
       this.resolveOperationRegistry(),
-      { ...resolveCallerIdentity(this.callerScopeResolver, this.session.id), source: 'mcp' }
+      { ...this.operationCallerIdentity(), source: 'mcp' }
     );
+  }
+
+  private operationCallerIdentity() {
+    return {
+      ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+      profile: this.session.config.toolProfile,
+    };
   }
 
   readonly optionsBuilder: QueryOptionsBuilder;

@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { isAdvertisedToProfile } from '../tools/session-tool-profiles.ts';
 import { z } from 'zod';
 import { isOperationAdmitted } from './invoke.ts';
 import {
@@ -29,6 +30,7 @@ export function isOperationListed(
   caller: OperationCaller
 ): boolean {
   if (caller.source !== 'mcp') return true;
+  if (!isAdvertisedToProfile(operation.name, caller.profile)) return false;
   const policy = operation.policy;
   if (!policy) return true;
   if (policy.safetyClass === 'human_only') return false;
