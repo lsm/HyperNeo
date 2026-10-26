@@ -12,9 +12,15 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await page.goto(`http://127.0.0.1:${port}/neo`);
   await page.getByText('Release candidate Neo chat is working.', { exact: true }).first().waitFor();
-  await page.screenshot({ path: `${run}/evidence/neo-chat.png` });
+  await page.evaluate(async () => {
+    await Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
+  });
+  await page.screenshot({ animations: 'disabled', path: `${run}/evidence/neo-chat.png` });
   await page.goto(`http://127.0.0.1:${port}/session/${life.id}`);
   await page.getByText('Release candidate life-admin session is working.', { exact: false }).first().waitFor();
-  await page.screenshot({ path: `${run}/evidence/life-admin.png` });
+  await page.evaluate(async () => {
+    await Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
+  });
+  await page.screenshot({ animations: 'disabled', path: `${run}/evidence/life-admin.png` });
   writeFileSync(`${run}/evidence/browser.json`, JSON.stringify({ pass: true, neoVisibleReply: true, lifeAdminVisibleReply: true, width: 1280 }, null, 2));
 } finally { await browser.close(); }
