@@ -37,7 +37,7 @@ export async function spawnHomeCommand(args: string[], options: SpawnOptions, di
     new Response(probe.stderr).text(),
     probe.exited,
   ]);
-  if (code) throw new Error(`home Git configuration: ${error.trim()}`);
+  if (code) return { failure: { code, error: `Git configuration: ${error.trim()}` } };
   const entries = output.split('\0');
   const drivers = new Set<string>();
   const command: [string, string][] = [];

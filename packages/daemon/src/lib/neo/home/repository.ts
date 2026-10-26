@@ -54,7 +54,7 @@ export class NeoHomeRepository {
   }
 
   private async command(args: string[], allowFailure = false, network = false, cwd = this.root) {
-    const { child, dispose } = await spawnHomeCommand(
+    const command = await spawnHomeCommand(
       args,
       {
         cwd,
@@ -79,6 +79,12 @@ export class NeoHomeRepository {
       },
       dirname(this.root)
     );
+    if (command.failure) {
+      const { code, error } = command.failure;
+      if (!allowFailure) throw new Error(`home ${args.join(' ')}: ${error}`);
+      return { code, bytes: Buffer.alloc(0), text: '', error };
+    }
+    const { child, dispose } = command;
     let timedOut = false;
     const timer = network
       ? setTimeout(() => {
