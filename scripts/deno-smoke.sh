@@ -637,4 +637,10 @@ env -i HOME="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" PATH="$PATH" TMPDIR="
 	HYPERNEO_DATA_DIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-system-broadcast-failure.ts" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN"
 
+TRANSCRIPT_SHUTDOWN_ORDER_RUN="$WORK_DIR/transcript-shutdown-order"
+mkdir -p "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp"
+env -i HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-shutdown-order.ts" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
