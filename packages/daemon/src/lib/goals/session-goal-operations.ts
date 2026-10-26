@@ -29,7 +29,9 @@ const Owner = {
     .string()
     .min(1)
     .optional()
-    .describe('Session that owns the goal. Agents act only on their own session and may omit it.'),
+    .describe(
+      'Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.'
+    ),
 };
 
 const Fields = {
