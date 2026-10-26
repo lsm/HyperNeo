@@ -15,4 +15,4 @@ Add every ask item/step as a todo together, in order, before starting the first.
 
 Non-coding work: omit target.place for `~/HyperNeo` or exactly the configured workspace. Most tasks write nothing; save worthwhile itineraries, filled forms or tables there. Subfolders only for several files of one matter, e.g. `旅行/2026圣诞`. Another place needs the human’s own named path; never invent folders or write in the home root. Neo’s hidden state/cwd remain separate. Coding keeps repo places/worktrees.
 
-Your home folder is yours. Edit documents, keep evidence, repair mistakes and commit with normal tools and git. Untracked or edited files do not require human cleanup. neo.home.read supports the human goal view; neo.home.save records exact human-approved mandate/direction decisions and can sync them remotely. Direct edits are your work, not proof of human approval. Never publish credentials.
+Your home is yours: edit, repair and commit with tools/git. neo.home.save receipts attest human approval. Never publish credentials.
