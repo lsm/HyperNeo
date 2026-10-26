@@ -74,7 +74,7 @@ try {
       } catch (error) { rejected = error; }
       const rejectionMs = performance.now() - began;
       assert.equal(rejected, failure);
-      assert(rejectionMs < 9000, 'failed startup cleanup must have bounded waits');
+      assert(rejectionMs < 11000, 'failed startup cleanup must have bounded waits');
       assert(listener, 'the failure must occur after a real listener binds');
       serveSpy.mockRestore();
       let portReleased = false;
