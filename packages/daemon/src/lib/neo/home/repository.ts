@@ -22,13 +22,8 @@ import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
 import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
-import {
-  requireHomePath,
-  requireHomeSave,
-  publicationLog,
-  type HomeSavePlan,
-  type HomeSaveResult,
-} from './save.ts';
+import { requireHomePath, requireHomeSave, publicationLog } from './save.ts';
+import type { HomeSavePlan, HomeSaveResult } from './save.ts';
 
 export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
@@ -488,7 +483,8 @@ export class NeoHomeRepository {
             reason: 'ignored_path: this document or decision log is git-ignored.',
           };
     if (input.resolution) {
-      if (!metadata) return { ok: false, reason: 'not_found: the home repository is missing.' };
+      if (!metadata)
+        return { ok: false, reason: 'stale_conflict: the home repository is missing.' };
       return applyHomeChoice(this.root, input, (args, failure, network, cwd) =>
         this.git(args, failure, network, cwd)
       );
@@ -514,7 +510,8 @@ export class NeoHomeRepository {
       );
     }
     const content = Buffer.from(input.content, 'utf8');
-    if (!originals.get(input.path)?.equals(content)) {
+    const committed = await this.git(['show', `HEAD:${input.path}`], true);
+    if (committed.code || !committed.bytes.equals(content)) {
       const writes = new Map([[input.path, content]]);
       if (input.confirmation)
         writes.set(
@@ -598,25 +595,25 @@ export class NeoHomeRepository {
           return null;
         }
       );
-      const paths = ['.gitignore', ...created];
+      const paths = originalIgnore === null ? ['.gitignore', ...created] : created;
       const ignore = originalIgnore ?? '';
       const missing = HOME_RUNTIME_DIRS.filter((dir) => !ignore.split('\n').includes(`${dir}/`));
-      if (missing.length)
+      if (originalIgnore === null && missing.length)
         await writeFile(
           join(this.root, '.gitignore'),
-          `${ignore}${!ignore || ignore.endsWith('\n') ? '' : '\n'}${missing.map((dir) => `${dir}/`).join('\n')}\n`
+          `${ignore}${!ignore || ignore.endsWith('\n') ? '' : '\n'}${missing.map((dir) => `${dir}/`).join('\n')}\n`,
+          { flag: 'wx' }
         );
       try {
-        await this.git(['add', '--', ...paths]);
-        await this.git(['commit', '--only', '-m', 'Initialize Neo home', '--', ...paths]);
+        if (paths.length) await this.git(['add', '--', ...paths]);
+        if (paths.length || !hasHead)
+          await this.git(['commit', '--allow-empty', '-om', 'Initialize Neo home', '--', ...paths]);
       } catch (error) {
-        await this.git(['reset', '--', ...paths]).catch(() => {});
+        if (paths.length) await this.git(['reset', '--', ...paths]).catch(() => {});
         for (const path of created)
           await rm(join(this.root, path), { force: true }).catch(() => {});
-        await (originalIgnore === null
-          ? rm(join(this.root, '.gitignore'), { force: true })
-          : writeFile(join(this.root, '.gitignore'), originalIgnore)
-        ).catch(() => {});
+        if (originalIgnore === null)
+          await rm(join(this.root, '.gitignore'), { force: true }).catch(() => {});
         throw error;
       }
     }

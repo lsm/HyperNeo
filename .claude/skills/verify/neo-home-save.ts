@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 const [port, run, mode = 'normal'] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home-save.ts <test-port> <run-dir>');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
@@ -29,6 +29,8 @@ const input = { path: 'projects/verify/digest.md', content: '  Curated progress 
 if (mode === 'ownership-before' || mode === 'ownership') {
   await mkdir(`${root}/evidence`, { recursive: true });
   await writeFile(`${root}/evidence/run.json`, '{"observed":true}');
+  await mkdir(`${root}/projects/verify`, { recursive: true });
+  await writeFile(`${root}/${input.path}`, input.content);
   const saved = await rpc(input);
   await writeFile(`${run}/evidence/neo-home-ownership.json`, JSON.stringify({ mode, saved }, null, 2));
   if (mode === 'ownership-before') {
@@ -48,6 +50,33 @@ const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
 const head = await git('rev-parse', 'HEAD');
+if (mode === 'ignore-edits') {
+  await writeFile(`${root}/.gitignore`, '# Legacy home\n');
+  await git('commit', '-am', 'Legacy ignores');
+  const remote = `${run}/remote.git`;
+  await git('init', '--bare', remote);
+  await git('remote', 'add', 'origin', remote);
+  const branch = await git('symbolic-ref', '--short', 'HEAD');
+  await git('push', '-u', 'origin', branch);
+  const pending = '# Legacy home\nhuman-draft/\n';
+  await writeFile(`${root}/.gitignore`, pending);
+  await git('add', '.gitignore');
+  await writeFile(`${root}/${input.path}`, 'Progress without adopting ignore edits.');
+  const saved = await rpc({ ...input, content: 'Progress without adopting ignore edits.' });
+  const evidence = { saved, workingIgnore: await readFile(`${root}/.gitignore`, 'utf8'), stagedIgnore: await git('show', ':.gitignore'), publishedIgnore: await git('--git-dir', remote, 'show', `${branch}:.gitignore`), stagedPaths: await git('diff', '--cached', '--name-only'), publishedContent: await git('--git-dir', remote, 'show', `${branch}:${input.path}`) };
+  await writeFile(`${run}/evidence/neo-home-ignore-edits.json`, JSON.stringify(evidence, null, 2));
+  if (!saved.ok || evidence.workingIgnore !== pending || evidence.stagedIgnore !== pending.trim() || evidence.publishedIgnore !== '# Legacy home' || evidence.stagedPaths !== '.gitignore' || evidence.publishedContent !== 'Progress without adopting ignore edits.') throw new Error('Ignore edits were altered or published');
+  const outside = `${run}/human-ignore`;
+  await writeFile(outside, 'Synthetic outside bytes.\n');
+  await rm(`${root}/.gitignore`);
+  await symlink(outside, `${root}/.gitignore`);
+  const linked = await rpc({ ...input, path: 'linked-ignore-check.md' });
+  const outsideBytes = await readFile(outside, 'utf8');
+  await writeFile(`${run}/evidence/neo-home-ignore-link.json`, JSON.stringify({ linked, outsideBytes }, null, 2));
+  if (!linked.ok || outsideBytes !== 'Synthetic outside bytes.\n') throw new Error('Ignore symlink target was modified');
+  console.log('PASS: real RPC publishes only requested documents, preserving staged ignore bytes and an outside symlink target.');
+  process.exit(0);
+}
 if (mode === 'ignore-repair') {
   await rm(`${root}/.gitignore`);
   await git('commit', '-am', 'Existing home without coordinator ignore');

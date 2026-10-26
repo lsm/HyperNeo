@@ -203,12 +203,14 @@ describe('Neo home setup', () => {
       await git('add', '--', 'README.md', '.gitignore', 'direction.md');
       home = new NeoHomeRepository(root, repo);
       if (retry) {
+        await git('config', 'user.name', '');
         await git('config', 'user.email', '');
         await expect(init()).rejects.toThrow();
         expect(await git('diff', '--cached', '--name-only')).toBe(
           '.gitignore\nREADME.md\ndirection.md'
         );
         expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('.coordinators/\n');
+        await git('config', 'user.name', 'Verify Neo');
         await git('config', 'user.email', 'verify@example.invalid');
       }
       expect(await init()).toMatchObject({ ok: true });

@@ -27,6 +27,19 @@ Repeat journey 35 in another fresh run with final argument `ignore-repair`.
 The helper removes its fixture ignore in a local commit, then calls save with
 untracked coordinator transcripts present. Save must repair the ignore and commit
 the curated document while preserving and never tracking the transcripts. An unrelated pending direction draft must remain on disk, outside both the ignore-repair and document commits.
+
+Repeat in a fresh run with final argument `ignore-edits`. The helper stages human
+edits to a pre-existing ignore file and configures a local bare origin. Save must
+publish the requested document while leaving both the working and staged ignore
+bytes intact and the published ignore unchanged. It then replaces only its
+synthetic ignore with a symlink to another file in the owned run: save must still
+succeed without altering that target. Pre-existing ignore files are user-owned;
+initialization creates and commits defaults only when the file is absent, with
+an exclusive write. An unborn home containing only pre-existing documents gets
+an empty bootstrap commit, including after a failed identity attempt, without
+adopting staged files. Evidence: `neo-home-ignore-edits.json` and
+`neo-home-ignore-link.json`. Legacy user ignore policies are not rewritten just
+to hide runtime directories; those files must remain outside the save commit.
 Staged transcripts and unrelated drafts remain untouched while the document save succeeds.
 
 Repeat with final argument `runtime` to seed `.claude/` and `worktrees/` before

@@ -10,8 +10,11 @@ bash .claude/skills/verify/neo-home-ownership.sh "$RUN" ownership 9431
 
 Before the fix, run `ownership-before` against the tests-first commit. It must
 record the actual dirty refusal with an untracked `evidence/run.json` in home.
-After the fix, `ownership` must save through the public operation RPC, commit the
-exact document and preserve the untracked evidence without adding it to git.
+After the fix, `ownership` first writes the document through ordinary file I/O,
+then saves through the public operation RPC. The returned commit must contain
+those exact bytes even though the working copy already matches the input, while
+preserving the untracked evidence outside Git. Focused contracts cover new,
+empty and tracked documents written before save, plus unchanged retries.
 Inspect `evidence/neo-home-ownership.json` for the reply, commit and bytes.
 Save that evidence outside the run directory and immediately remove the run.
 

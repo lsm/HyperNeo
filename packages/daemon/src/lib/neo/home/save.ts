@@ -10,7 +10,9 @@ export const HomeSaveInput = z.object({
     .string()
     .min(1)
     .optional()
-    .describe('The answered conflict choice; separate from protected-file questionId.'),
+    .describe(
+      'The answered revision-bound conflict choice; separate from protected-file questionId.'
+    ),
 });
 export const HomeSaveResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string(), questionId: z.string().optional() }),

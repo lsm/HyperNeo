@@ -104,7 +104,7 @@ export async function applyHomeChoice(
       true
     );
     if (installed.code)
-      return refuse(`sync_failed: Git could not apply the resolution. ${installed.error}`);
+      return refuse(`stale_conflict: local changed before publication. ${installed.error}`);
     const pushed = await git(
       [
         'push',
