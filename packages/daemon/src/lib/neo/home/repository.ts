@@ -21,6 +21,7 @@ import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
+import { homeGitEnvironment } from './git-environment.ts';
 import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
 import { requireHomePath, type HomeSavePlan, type HomeSaveResult } from './save.ts';
 
@@ -59,21 +60,24 @@ export class NeoHomeRepository {
       stdout: 'pipe',
       stderr: 'pipe',
       detached: network,
-      env: network
-        ? {
-            ...Object.fromEntries(
-              Object.entries(process.env).filter(
-                (entry): entry is [string, string] => entry[1] !== undefined
-              )
-            ),
-            GIT_TERMINAL_PROMPT: '0',
-            GH_PROMPT_DISABLED: '1',
-            GIT_ASKPASS: '/usr/bin/false',
-            SSH_ASKPASS: '/usr/bin/false',
-            SSH_ASKPASS_REQUIRE: 'force',
-            GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
-          }
-        : undefined,
+      env: await homeGitEnvironment(
+        cwd,
+        network
+          ? {
+              ...Object.fromEntries(
+                Object.entries(process.env).filter(
+                  (entry): entry is [string, string] => entry[1] !== undefined
+                )
+              ),
+              GIT_TERMINAL_PROMPT: '0',
+              GH_PROMPT_DISABLED: '1',
+              GIT_ASKPASS: '/usr/bin/false',
+              SSH_ASKPASS: '/usr/bin/false',
+              SSH_ASKPASS_REQUIRE: 'force',
+              GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
+            }
+          : process.env
+      ),
     });
     let timedOut = false;
     const timer = network
