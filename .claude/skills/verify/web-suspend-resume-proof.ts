@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -6,6 +6,18 @@ const REPO = process.env.VERIFY_REPO ?? resolve(import.meta.dir, '../../..');
 const RUN = resolve(process.argv[2] ?? '.');
 const PORT = Number(process.argv[3] ?? 9311);
 const LABEL = process.argv[4] ?? 'run';
+
+if (!Number.isInteger(PORT) || PORT <= 1024 || PORT >= 65536 || PORT === 8399) {
+  throw new Error(`refusing port ${PORT}: pick a free port other than 8399`);
+}
+let portBusy = false;
+try {
+  execFileSync('lsof', ['-nP', `-iTCP:${PORT}`, '-sTCP:LISTEN'], { stdio: 'ignore' });
+  portBusy = true;
+} catch {
+  portBusy = false;
+}
+if (portBusy) throw new Error(`port ${PORT} is busy`);
 
 const wsEvents: {
   url: string;
@@ -73,6 +85,9 @@ const lifecycle = {
   stopAudio: () => {},
   startTranscripts: () => {},
   stopTranscripts: () => {},
+  setReconnectAttempts: () => {},
+  rejoinSpace: () => {},
+  redirectExpiredSession: () => {},
 };
 const application = {
   lifecycle,
@@ -180,9 +195,11 @@ try {
   exitCode = 1;
 } finally {
   daemon.kill('SIGTERM');
+  for (let i = 0; daemon.exitCode === null && i < 50; i++) await sleep(100);
+  if (daemon.exitCode === null) daemon.kill('SIGKILL');
   await new Promise((done) => {
     daemon.on('exit', done);
-    setTimeout(done, 5000);
+    setTimeout(done, 1000);
   });
   writeFileSync(join(RUN, 'evidence', `daemon-${LABEL}.log`), daemonLog);
   process.exit(exitCode);
