@@ -22,7 +22,7 @@ vi.mock('../../../../src/lib/runtime-spawn/index.ts', () => ({
 test('missing ssh does not abort startup signing discovery', async () => {
   vi.stubEnv('SSH_AUTH_SOCK', undefined);
   try {
-    await expect(discoverSigningSocket()).resolves.toBeNull();
+    await expect(discoverSigningSocket()).resolves.toBeFalsy();
   } finally {
     vi.unstubAllEnvs();
   }

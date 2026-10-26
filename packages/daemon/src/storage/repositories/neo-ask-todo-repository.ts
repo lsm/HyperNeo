@@ -187,7 +187,10 @@ export class NeoAskTodoRepository {
     if (new SettingsRepository(this.db).getGlobalSettings().workerUnixSockets?.includes(socket))
       return null;
     const askId = neoDerivedId(`worker-socket-ask:${socket}`);
-    const text = `Workers need ${socket} to sign commits. Allow all workers to use it?`;
+    const display = socket.replace(/\p{Bidi_Control}/gu, (char) =>
+      `\\u${char.codePointAt(0)!.toString(16).padStart(4, '0')}`
+    );
+    const text = `Workers need ${display} to sign commits. Allow all workers to use it?`;
     this.openAsk({
       id: askId,
       sessionId,

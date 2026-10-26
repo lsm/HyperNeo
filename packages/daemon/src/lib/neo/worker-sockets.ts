@@ -55,7 +55,7 @@ export const discoverSigningSocket = (superpipe({})('workerSocket.discover') as 
       if (format !== 'ssh') return null;
       const config = process.env.SSH_AUTH_SOCK
         ? ''
-        : await output(['ssh', '-F', join(homedir(), '.ssh/config'), '-G', '*']);
+        : await output(['ssh', '-F', join(homedir(), '.ssh/config'), '-G', '*']).catch(() => '');
       const agent = process.env.SSH_AUTH_SOCK ?? config.match(/^identityagent (.+)$/m)?.[1];
       const socket = agent?.startsWith('~/') ? join(homedir(), agent.slice(2)) : agent;
       return socket && isAbsolute(socket) ? socket : null;
