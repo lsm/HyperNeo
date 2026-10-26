@@ -436,8 +436,18 @@ export function NeoAskTodos({
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
   onLoadDetails?: (askId: string) => Promise<NeoAskEntry>;
 }) {
-  const [details, setDetails] = useState<{ source: NeoAskEntry; value: NeoAskEntry } | null>(null);
-  const entry = details?.source === received ? details.value : received;
+  const [details, setDetails] = useState<NeoAskEntry | null>(null);
+  const [readRevision, setReadRevision] = useState<number | null>(null);
+  const pendingDetail = useRef<{ revision: number } | null>(null);
+  const entry =
+    received.summary && details?.ask.id === received.ask.id
+      ? {
+          ...details,
+          state: received.state,
+          doneCount: received.doneCount,
+          ask: { ...details.ask, title: received.ask.title, status: received.ask.status },
+        }
+      : received;
   const [detailError, setDetailError] = useState('');
   const cardRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
@@ -482,23 +492,47 @@ export function NeoAskTodos({
   };
   const { ask, todos } = entry;
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
+  const readingDetails = open || expanded.length > 0;
   useEffect(() => {
-    if (!entry.summary || !onLoadDetails || (!open && expanded.length === 0)) return;
-    let disposed = false;
+    setReadRevision(null);
+    return () => {
+      pendingDetail.current = null;
+    };
+  }, [received.ask.id, readingDetails]);
+  useEffect(() => {
+    if (
+      !received.summary ||
+      !onLoadDetails ||
+      !readingDetails ||
+      pendingDetail.current ||
+      (readRevision !== null && readRevision >= received.ask.updatedAt)
+    )
+      return;
+    const ticket = { revision: received.ask.updatedAt };
+    pendingDetail.current = ticket;
     setDetailError('');
-    void onLoadDetails(ask.id).then(
+    void onLoadDetails(received.ask.id).then(
       (value) => {
-        if (!disposed) setDetails({ source: received, value });
+        if (pendingDetail.current !== ticket) return;
+        pendingDetail.current = null;
+        setDetails(value);
+        setReadRevision(Math.max(ticket.revision, value.ask.updatedAt));
       },
       (cause) => {
-        if (!disposed)
-          setDetailError(cause instanceof Error ? cause.message : t('ask.moreDoneFailed'));
+        if (pendingDetail.current !== ticket) return;
+        pendingDetail.current = null;
+        setDetailError(cause instanceof Error ? cause.message : t('ask.moreDoneFailed'));
+        setReadRevision(ticket.revision);
       }
     );
-    return () => {
-      disposed = true;
-    };
-  }, [received, !!entry.summary, open, expanded.length > 0, onLoadDetails]);
+  }, [
+    received.ask.id,
+    received.ask.updatedAt,
+    !!received.summary,
+    readingDetails,
+    onLoadDetails,
+    readRevision,
+  ]);
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
