@@ -84,7 +84,7 @@ test('lists ambiguous or non-coding outcomes instead of guessing or dropping ref
   expect(plan.unresolved.map((row) => row.todoId)).toEqual(rows.map((row) => row.id));
 });
 
-test('leaves checked and settled rows alone and plans blocked/doing rows', () => {
+test('leaves checked and settled rows alone and plans unfinished rows', () => {
   const named = todo('open', 'PR example/repo#1');
   const checked = {
     ...named,

@@ -88,20 +88,50 @@ try {
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
   });
   const rows = [
-    { id: 'pr', title: 'Land https://github.com/example/project/pull/42', report: 'Synthetic PR result' },
+    {
+      id: 'pr',
+      title: 'Land https://github.com/example/project/pull/42',
+      report: 'Synthetic PR result',
+    },
     { id: 'issue', title: 'Issue example/project#9', report: null },
     { id: 'decision', title: 'Choose the next destination', report: null },
-  ].map((row) => store.addTodo(row.id, 'ask', {
-    title: row.title, doneWhen: 'Remember to verify', check: null, instruction: null, named: null,
-  }, 1));
+  ].map((row) =>
+    store.addTodo(
+      row.id,
+      'ask',
+      {
+        title: row.title,
+        doneWhen: 'Remember to verify',
+        check: null,
+        instruction: null,
+        named: null,
+      },
+      1
+    )
+  );
   const snapshot = join(run, 'todos.json');
   writeFileSync(snapshot, JSON.stringify(rows));
-  const command = spawnSync(process.execPath, [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot], { encoding: 'utf8', env: process.env });
-  receipts.push({ cli: { status: command.status, stdout: command.stdout, stderr: command.stderr } });
+  const command = spawnSync(
+    process.execPath,
+    [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot],
+    { encoding: 'utf8', env: process.env }
+  );
+  receipts.push({
+    cli: { status: command.status, stdout: command.stdout, stderr: command.stderr },
+  });
   assert.equal(command.status, 0, 'offline backfill CLI must produce a repair plan');
-  const plan = JSON.parse(command.stdout) as { edits: { todoId: string; check: NeoTodo['check'] }[]; unresolved: { todoId: string }[] };
-  assert.deepEqual(plan.edits.map((edit) => edit.todoId), ['pr', 'issue']);
-  assert.deepEqual(plan.unresolved.map((row) => row.todoId), ['decision']);
+  const plan = JSON.parse(command.stdout) as {
+    edits: { todoId: string; check: NeoTodo['check'] }[];
+    unresolved: { todoId: string }[];
+  };
+  assert.deepEqual(
+    plan.edits.map((edit) => edit.todoId),
+    ['pr', 'issue']
+  );
+  assert.deepEqual(
+    plan.unresolved.map((row) => row.todoId),
+    ['decision']
+  );
   for (const edit of plan.edits) {
     const result = await rpc('neo.todo.edit', edit);
     assert(result.ok && result.todo, JSON.stringify(result));
@@ -110,13 +140,22 @@ try {
     assert.equal(result.todo.state, 'todo');
   }
   writeFileSync(snapshot, JSON.stringify(store.listTodos('ask')));
-  const repeated = spawnSync(process.execPath, [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot], { encoding: 'utf8', env: process.env });
+  const repeated = spawnSync(
+    process.execPath,
+    [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot],
+    { encoding: 'utf8', env: process.env }
+  );
   assert.equal(repeated.status, 0, repeated.stderr);
   const second = JSON.parse(repeated.stdout);
   assert.deepEqual(second.edits, []);
-  assert.deepEqual(second.unresolved.map((row: { todoId: string }) => row.todoId), ['decision']);
+  assert.deepEqual(
+    second.unresolved.map((row: { todoId: string }) => row.todoId),
+    ['decision']
+  );
   receipts.push({ final: store.listTodos('ask'), plan, repeated: second });
-  console.log('PASS: offline backfill produces PR/issue edits; real RPC stores derived checks and wording; unresolved work remains listed and repeat is idempotent.');
+  console.log(
+    'PASS: offline backfill produces PR/issue edits; real RPC stores derived checks and wording; unresolved work remains listed and repeat is idempotent.'
+  );
 } finally {
   ws?.close();
   await app?.cleanup();
