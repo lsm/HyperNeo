@@ -1,3 +1,5 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { planNudge } from '../../../../src/lib/neo/nudge.ts';
 import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
@@ -45,6 +47,7 @@ function setup(
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
+  createCodingPackTables(db);
   db.prepare(
     "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
   ).run();
@@ -87,6 +90,7 @@ function setup(
   } satisfies NeoPack;
   const packs: NeoPack[] = [pack];
   const runner = createNeoTodoRunner({
+    write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
     invoke: async (_caller, name, input) => {
@@ -864,6 +868,7 @@ describe('neo todo runner', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
     const ask = store.openAsk({
@@ -884,6 +889,7 @@ describe('neo todo runner', () => {
     sessions.create(todo.id, { verb: 'send', ref });
     const calls: string[] = [];
     const runner = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async (_caller, name) => {
@@ -980,6 +986,7 @@ describe('neo todo runner', () => {
     const { db, store, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'login expired' }),
@@ -1002,6 +1009,7 @@ describe('neo todo runner', () => {
     const todo = h.add();
     try {
       const runner = createNeoTodoRunner({
+        write: gatewayFor(h.db).run.bind(gatewayFor(h.db)),
         store: h.store,
         sessions: h.sessions,
         packs: () => [],
@@ -1026,6 +1034,7 @@ describe('neo todo runner', () => {
     const { db, store, add } = setup();
     const todo = add();
     const accepted = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () =>
@@ -1057,6 +1066,7 @@ describe('neo todo runner', () => {
     const hint =
       'Claude Desktop did not import the new session. The task was not started. Open Claude Desktop, then ask Neo to start it again.';
     const waiting = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () =>
@@ -1183,6 +1193,7 @@ describe('neo todo runner uncertainty', () => {
     const todo = add();
     const sessions = new NeoTodoSessionRepository(db);
     const flaky = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async (_caller, name, input) => {
@@ -1214,6 +1225,7 @@ describe('neo todo runner uncertainty', () => {
     await flaky.stop(store.updateTodo(resumed, { state: 'doing' }, 7));
     expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
     const unsupported = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async () =>
@@ -1224,6 +1236,7 @@ describe('neo todo runner uncertainty', () => {
     });
     expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
     const refusing = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'Offline.' }),
@@ -1399,6 +1412,7 @@ describe('a todo sent to an existing session', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
     store.openAsk({
@@ -1414,6 +1428,7 @@ describe('a todo sent to an existing session', () => {
     const lastActivity = Date.parse('2026-10-17T20:14:36Z');
     let confirmedAt = 0;
     const runner = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async (_caller, name) =>
@@ -1562,6 +1577,7 @@ describe('blocked todos', () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'login expired' }),
@@ -1985,6 +2001,7 @@ describe('current explicit removal behavior before recompute', () => {
           sessions = new NeoTodoSessionRepository(db);
         const effects: string[] = [];
         const runner = createNeoTodoRunner({
+          write: gatewayFor(db).run.bind(gatewayFor(db)),
           store,
           sessions,
           packs: () => [],

@@ -8,9 +8,9 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
-import type { DbOp } from '../../../packages/daemon/src/storage/db-gateway/db-op.ts';
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
-import type { NeoAsk, NeoTodo } from '../../../packages/shared/src/types/neo-ask.ts';
+import type { NeoTodo } from '../../../packages/shared/src/types/neo-ask.ts';
 
 const [mode,directory]=process.argv.slice(2),run=resolve(directory);
 assert.equal(mode,'verify'); assert.equal(process.env.NODE_ENV,'test');
@@ -25,44 +25,108 @@ const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketCl
 hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;
-let record=false,mainSql=0,held=false,neoEvents=0;
-const tables:string[]=[];
-db.prepare=((sql:string)=>{if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions|pack_coding_pr_claims/.test(sql)) mainSql++; return prepare(sql);}) as typeof db.prepare;
-app.db.gateway.onChanges=changes=>{if(record) tables.push(...changes.map(change=>change.table)); replay(changes);};
-const off=hub.onEvent('neo.changed',()=>{neoEvents++;});
-type State={todo:NeoTodo|null;startNext:string|null;changed:boolean;records?:string[]};
-type Claim={ok:false;reason:string;changed:boolean}|{ok:true;todo:NeoTodo;ask?:NeoAsk;target?:{ref?:{id:string}};changed:boolean;records?:string[]};
-const runCommand=<T>(method:string,args:unknown[])=>app.db.gateway.run({name:'neo.todoRunnerWrites',mode:'write',run:()=>{throw new Error('Runner command must run in the writer worker');}} as DbOp<object,T>,{method,args});
+const legacyRecompute=NeoAskTodoRepository.prototype.recompute,legacyClaim=NeoAskTodoRepository.prototype.claimStart;
+let record=false,mainSql=0,held=false;
+const tables:string[]=[],effects:{name:string;input?:Record<string,unknown>}[]=[];
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
-const effects:{name:string;input?:Record<string,unknown>}[]=[];
-const runner=createNeoTodoRunner({store,sessions,...{write:app.db.gateway.run.bind(app.db.gateway)},packs:()=>[],
-  changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},
-  invoke:async(_caller,name,input)=>{effects.push({name,input});return {kind:'completed',value:{ok:true,value:{delivered:true,ref:{adapter:'hyperneo',id:'synthetic-worker'}}}};}
-});
 const result:Record<string,unknown>={runtimeCallersMoved:true};
+const runner=createNeoTodoRunner({store,sessions,write:async(op,args)=>{
+  const receipt=await app.db.gateway.run(op,args);
+  if((args as {method?:string}).method==='claim') record=false;
+  return receipt;
+},packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},
+  invoke:async(_caller,name,input)=>{
+    record=false;
+    const view=await visible();
+    if(effects.every(effect=>effect.name!=='work.send')) assert(view.entry.todos.some(todo=>todo.id==='state' && todo.state==='done'));
+    effects.push({name,input});
+    return {kind:'completed',value:{ok:true,value:{delivered:true,ref:(input.ref ?? {adapter:'hyperneo',id:'synthetic-worker'})}}};
+  }
+});
+const startCard=(id:string,todoId:string,askId='ask')=>store.askQuestion(id,askId,{kind:'start',text:'Start?',startTodos:[todoId],options:null,multiple:false,yesLabel:null,noLabel:null},2);
+const seed=(id:string,askId='ask')=>{
+  store.addTodo(id,askId,{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
+  sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
+};
 try {
   await app.spaceRuntimeService.ready(); await app.jobProcessor.stop(); await transport.connect();
-  const root='neo:10000000-0000-4000-8000-000000009040';
-  await app.db.createSession({id:root,title:'Synthetic runner build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
+  const root='neo:10000000-0000-4000-8000-000000009041';
+  await app.db.createSession({id:root,title:'Synthetic runner activation',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
-  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1,repo:'github.com/synthetic/base'});
-  for(const id of ['state','claim']) {
-    store.addTodo(id,'ask',{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
-    sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
-  }
+  const ask=(id:string)=>store.openAsk({id,projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1});
+  ask('ask'); seed('state'); seed('claim');
   const text='Stored runner report 🦊\n'.repeat(20000).trim();
   prepare("UPDATE neo_todos SET state='doing',started_at=2,report=? WHERE id='state'").run(text);
-  store.askQuestion('start','ask',{kind:'start',text:'Start?',startTodos:['state'],options:null,multiple:false,yesLabel:null,noLabel:null},2);
-  const before=await visible();
-  const sessionCount=()=>prepare('SELECT COUNT(*) AS n FROM sessions').get() as {n:number};
-  const originalSessions=sessionCount();
+  startCard('start','state');
+  const checked=store.getTodo('state')!,before=await visible();
+  db.prepare=((sql:string)=>{if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions|pack_coding_pr_claims/.test(sql)) mainSql++; return prepare(sql);}) as typeof db.prepare;
+  app.db.gateway.onChanges=changes=>{if(record) tables.push(...changes.map(change=>change.table)); replay(changes);};
   db.exec("CREATE TRIGGER refuse_stamp BEFORE UPDATE ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic rollback'); END");
   record=true;
-  await assert.rejects(runner.recompute(store.getTodo('state')!,{},10,{state:'done',evidence:'Complete'}),/synthetic rollback/);
-  record=false; assert.equal(tables.length,0); assert.deepEqual(await visible(),before);
-  db.exec('DROP TRIGGER refuse_stamp'); result.verified=true;
+  await assert.rejects(runner.recompute(checked,{},10,{state:'done',evidence:'Complete'}),/synthetic rollback/);
+  record=false; assert.equal(tables.length,0); assert.deepEqual(await visible(),before); assert.deepEqual(effects,[]);
+  await assert.rejects(runner.start('claim'),/synthetic rollback/);
+  assert.deepEqual(await visible(),before); assert.deepEqual(effects,[]);
+  db.exec('DROP TRIGGER refuse_stamp'); result.rollbackPreservesCard=true;
+  prepare('UPDATE neo_todo_sessions SET target=? WHERE todo_id=?').run(JSON.stringify({verb:'send',ref:{adapter:'hyperneo',id:'current-worker'}}),'claim');
+  const queuedBefore=await visible();
+  db.exec('BEGIN IMMEDIATE'); held=true; record=true;
+  let replied=false,error:unknown;
+  const pending=runner.recompute(checked,{},10,{state:'done',evidence:'Complete'});
+  void pending.then(()=>{replied=true;},caught=>{error=caught;replied=true;});
+  await new Promise(resolve=>setTimeout(resolve,80)); if(error) throw error;
+  assert.equal(replied,false); assert.equal(tables.length,0); assert.deepEqual(effects,[]);
+  assert.deepEqual(await visible(),queuedBefore); await hub.request('system.health',{});
+  db.exec('ROLLBACK'); held=false;
+  const committed=await pending; record=false;
+  assert.equal(committed.state,'done'); assert.equal(committed.report,text);
+  assert.equal(store.getTodo('claim')!.state,'doing');
+  assert.equal(effects.filter(effect=>effect.name==='work.send').length,1);
+  assert.equal((effects.find(effect=>effect.name==='work.send')!.input!.ref as {id:string}).id,'current-worker');
+  assert(tables.includes('neo_todos')); assert((await visible()).entry.todos.find(todo=>todo.id==='state')?.report===text);
+  assert.equal(mainSql,0); result.admissionAndRecomputeMainSql=0;
+  result.commitBeforeReply=true; result.postCommitDispatch=true; result.currentTarget=true;
+  result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
+  ask('quiet'); seed('stable','quiet');
+  prepare("UPDATE neo_todos SET state='doing',started_at=4 WHERE id='stable'").run();
+  startCard('stale','stable','quiet');
+  const prior=effects.length;
+  await runner.recompute(store.getTodo('stable')!);
+  assert.deepEqual(effects.slice(prior),[{name:'changed'}]);
+  await runner.recompute(store.getTodo('stable')!); assert.equal(effects.length,prior+1);
+  result.pruneOnlyChange=true; result.quietNoops=true;
+  store.settleAsk(store.getAsk('quiet')!,'done','Settled',6);
+  const settled=await visible('quiet'),noop=await runner.start('stable');
+  assert(noop.ok && noop.records?.some(line=>line.startsWith('ask_settled:')));
+  assert.deepEqual(await visible('quiet'),settled); assert.equal(effects.length,prior+1);
+  result.settledReceipt=true;
+  ask('race'); seed('race','race');
+  const beforeRace=effects.filter(effect=>effect.name==='work.send').length;
+  const racing=await Promise.all([runner.start('race'),runner.start('race')]);
+  assert.equal(racing.filter(receipt=>receipt.ok).length,1);
+  assert.equal(effects.filter(effect=>effect.name==='work.send').length,beforeRace+1);
+  result.singleDispatchWinner=true;
+  ask('public'); seed('rpc','public');
+  store.updateTodo(store.getTodo('rpc')!,{state:'failed',reason:'Retry the synthetic worker'},2);
+  const original=app.sessionManager.getOperationRegistry();
+  let publicDispatches=0;
+  const scripted=createOperationRegistry(original.entries.map(entry=>['work.send','work.status'].includes(entry.name)?{
+    ...entry,execute:async(input)=>{
+      assert.equal(store.getTodo('rpc')?.state,'doing');
+      assert((await visible('public')).entry.todos.some(todo=>todo.id==='rpc' && todo.state==='doing'));
+      if(entry.name==='work.send') publicDispatches++;
+      return {ok:true,value:{delivered:true,ref:(input as {ref:unknown}).ref,status:'running',lastActivityAt:1}};
+    }
+  }:entry));
+  app.sessionManager.setOperationRegistryProvider(()=>scripted);
+  NeoAskTodoRepository.prototype.recompute=()=>{throw new Error('Runtime used main-thread recompute');};
+  NeoAskTodoRepository.prototype.claimStart=()=>{throw new Error('Runtime used main-thread claim');};
+  const receipt=await hub.request<{ok:boolean;todo:NeoTodo}>('operation.invoke',{name:'neo.todo.retry',input:{todoId:'rpc'}});
+  assert.equal(receipt.ok,true); assert.equal(receipt.todo.state,'doing'); assert.equal(publicDispatches,1);
+  result.publicRetryUsesWriter=true; result.verified=true;
 } finally {
-  if(held) db.exec('ROLLBACK'); off(); db.prepare=prepare; app.db.gateway.onChanges=replay;
+  if(held) db.exec('ROLLBACK'); db.prepare=prepare; app.db.gateway.onChanges=replay;
+  NeoAskTodoRepository.prototype.recompute=legacyRecompute; NeoAskTodoRepository.prototype.claimStart=legacyClaim;
   await transport.close(); await app.cleanup(); globalThis.fetch=network; result.resourcesStopped=true;
   writeFileSync(join(run,'evidence/todo-runner-activation.json'),JSON.stringify(result,null,2).replaceAll(run,'<synthetic-run>'));
 }

@@ -1,3 +1,4 @@
+import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -24,10 +25,10 @@ let removed = '';
 for (const phase of ['initial', 'reopen']) {
   const db = new Database(join(run, 'data/daemon.db'));
   try {
-    runMigrations(db, () => {}); createTables(db);
+    runMigrations(db, () => {}); createTables(db); createCodingPackTables(db);
     const store = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
     const unexpected = async (): Promise<never> => { throw new Error('No worker dispatch is permitted'); };
-    const runner = createNeoTodoRunner({ store, sessions, invoke: unexpected, packs: () => [], tell: unexpected, changed: () => {} });
+    const runner = createNeoTodoRunner({ write: gatewayFor(db).run.bind(gatewayFor(db)), store, sessions, invoke: unexpected, packs: () => [], tell: unexpected, changed: () => {} });
     const registry = createOperationRegistry(createNeoTodoOperations(store, sessions, runner, () => [], () => null));
     const handler = createOperationMcpHandler(registry, () => ({ sessionId: 'neo', role: 'neo' }), (refusal) => gatewayFor(db).run(recordOperationRefusal, { refusal, sessionId: 'neo', at: Date.now() }));
     const call = async (name: string, input: unknown, code: string) => {

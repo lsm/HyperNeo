@@ -167,6 +167,7 @@ export class NeoService {
     );
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoRunner = createNeoTodoRunner({
+      write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: this.todos,
       sessions: this.todoSessions,
       invoke: (caller, name, input) =>
