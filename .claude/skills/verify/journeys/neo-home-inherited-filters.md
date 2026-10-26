@@ -15,6 +15,11 @@ HOME's Git configuration. Each command would write a marker outside Neo's home;
 the process command also fails its protocol handshake. Required filters are set
 to true so disabling them must not jam a save or read.
 
+The smudge and process cases also repeat with a conditional global include that
+activates only in the temporary linked worktree. The daemon must snapshot the
+effective global/system settings without filter drivers or include directives;
+Git children must not reload a new conditional filter configuration.
+
 Save must publish exact unfiltered bytes. Read must fetch peer progress and
 return the exact file without running a filter during worktree creation, rebase
 or merge. Inspect `evidence/neo-home-inherited-filters.json`: every result must be

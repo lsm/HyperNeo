@@ -74,6 +74,21 @@ afterEach(async () => {
 });
 
 describe('Neo home setup', () => {
+  test('preserves quoted inherited identity below repository settings', async () => {
+    const name = 'Verify "Neo" \\ identity';
+    await git('config', '--file', process.env.GIT_CONFIG_GLOBAL!, 'user.name', name);
+    await git('config', '--unset', 'user.name');
+    expect(await init()).toMatchObject({ ok: true });
+    expect(await git('log', '-1', '--format=%an')).toBe(name);
+    await git('config', 'user.name', 'Local identity');
+    await writeFile(join(root, 'identity.md'), 'Identity precedence.');
+    await git('add', 'identity.md');
+    await git('commit', '-m', 'Local precedence control');
+    await rm(join(root, '.gitignore'));
+    await git('commit', '-am', 'Missing default ignore');
+    expect(await init()).toMatchObject({ ok: true });
+    expect(await git('log', '-1', '--format=%an')).toBe('Local identity');
+  });
   test('reserves project paths without running project SQL through the main repository', async () => {
     repo.saveProject({ id: 'synthetic-home', title: 'Synthetic', summary: '', context: '' }, 0);
     const list = spyOn(repo, 'listProjects').mockImplementation(() => {

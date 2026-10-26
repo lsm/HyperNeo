@@ -1,39 +1,89 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import type { SpawnOptions } from '../../runtime-spawn/types.ts';
 
-export async function homeGitEnvironment(
-  cwd: string,
-  inherited: NodeJS.ProcessEnv = process.env
-): Promise<Record<string, string>> {
+function quoted(value: string) {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
+    .replace(/\x08/g, '\\b');
+}
+
+function configurationEntry(key: string, value: string) {
+  const first = key.indexOf('.');
+  const last = key.lastIndexOf('.');
+  const section = key.slice(0, first);
+  const subsection = first === last ? '' : ` "${quoted(key.slice(first + 1, last))}"`;
+  return `[${section}${subsection}]\n${key.slice(last + 1)} = "${quoted(value)}"\n`;
+}
+
+export async function spawnHomeCommand(args: string[], options: SpawnOptions, directory: string) {
   const env = Object.fromEntries(
-    Object.entries(inherited).filter((entry): entry is [string, string] => entry[1] !== undefined)
+    Object.entries(options.env ?? process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
+    )
   );
-  const child = spawnProcess(
-    [
-      'git',
-      'config',
-      '--null',
-      '--name-only',
-      '--get-regexp',
-      '^filter\\..*\\.(clean|smudge|process|required)$',
-    ],
-    { cwd, env, stdout: 'pipe', stderr: 'pipe' }
-  );
-  const [keys, error, code] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
+  const probe = spawnProcess(['git', 'config', '--null', '--list', '--show-scope'], {
+    cwd: options.cwd,
+    env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [output, error, code] = await Promise.all([
+    new Response(probe.stdout).text(),
+    new Response(probe.stderr).text(),
+    probe.exited,
   ]);
-  if (code !== 0 && code !== 1) throw new Error(`home Git filter configuration: ${error.trim()}`);
-  const filters = [...new Set(keys.split('\0').filter(Boolean))];
-  const count = Number(env.GIT_CONFIG_COUNT ?? 0);
-  return {
-    ...env,
-    GIT_CONFIG_COUNT: String(count + filters.length),
-    ...Object.fromEntries(
-      filters.flatMap((key, index) => [
-        [`GIT_CONFIG_KEY_${count + index}`, key],
-        [`GIT_CONFIG_VALUE_${count + index}`, key.endsWith('.required') ? 'false' : ''],
-      ])
-    ),
-  };
+  if (code) throw new Error(`home Git configuration: ${error.trim()}`);
+  const entries = output.split('\0');
+  const drivers = new Set<string>();
+  const command: [string, string][] = [];
+  let configuration = '';
+  for (let index = 0; index + 1 < entries.length; index += 2) {
+    const scope = entries[index];
+    const entry = entries[index + 1];
+    const separator = entry.indexOf('\n');
+    const key = separator < 0 ? entry : entry.slice(0, separator);
+    const value = separator < 0 ? 'true' : entry.slice(separator + 1);
+    if (/^filter\..*\.(clean|smudge|process|required)$/.test(key)) {
+      drivers.add(key);
+      continue;
+    }
+    if (/^include(?:if)?\./i.test(key)) continue;
+    if (scope === 'global' || scope === 'system') configuration += configurationEntry(key, value);
+    if (scope === 'command') command.push([key, value]);
+  }
+  command.push(
+    ...[...drivers].map((key): [string, string] => [key, key.endsWith('.required') ? 'false' : ''])
+  );
+  const temporary = await mkdtemp(join(directory, '.neo-git-config-'));
+  const dispose = () => rm(temporary, { recursive: true, force: true });
+  try {
+    const path = join(temporary, 'config');
+    await writeFile(path, configuration, { mode: 0o600 });
+    const child = spawnProcess(args, {
+      ...options,
+      env: {
+        ...env,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_SYSTEM: '/dev/null',
+        GIT_CONFIG_GLOBAL: path,
+        GIT_CONFIG_PARAMETERS: '',
+        GIT_CONFIG_COUNT: String(command.length),
+        ...Object.fromEntries(
+          command.flatMap(([key, value], index) => [
+            [`GIT_CONFIG_KEY_${index}`, key],
+            [`GIT_CONFIG_VALUE_${index}`, value],
+          ])
+        ),
+      },
+    });
+    return { child, dispose };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
 }

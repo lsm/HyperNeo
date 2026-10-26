@@ -17,11 +17,10 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
-import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
-import { homeGitEnvironment } from './git-environment.ts';
+import { spawnHomeCommand } from './git-environment.ts';
 import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
 import { requireHomePath, type HomeSavePlan, type HomeSaveResult } from './save.ts';
 
@@ -55,14 +54,14 @@ export class NeoHomeRepository {
   }
 
   private async command(args: string[], allowFailure = false, network = false, cwd = this.root) {
-    const child = spawnProcess(args, {
-      cwd,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      detached: network,
-      env: await homeGitEnvironment(
+    const { child, dispose } = await spawnHomeCommand(
+      args,
+      {
         cwd,
-        network
+        stdout: 'pipe',
+        stderr: 'pipe',
+        detached: network,
+        env: network
           ? {
               ...Object.fromEntries(
                 Object.entries(process.env).filter(
@@ -76,9 +75,10 @@ export class NeoHomeRepository {
               SSH_ASKPASS_REQUIRE: 'force',
               GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
             }
-          : process.env
-      ),
-    });
+          : undefined,
+      },
+      dirname(this.root)
+    );
     let timedOut = false;
     const timer = network
       ? setTimeout(() => {
@@ -105,6 +105,7 @@ export class NeoHomeRepository {
       return { code, bytes, text: bytes.toString('utf8').trim(), error: diagnostic };
     } finally {
       clearTimeout(timer);
+      await dispose();
     }
   }
 

@@ -45,9 +45,9 @@ if (mode === 'inherited-filters') {
   await git('clone', remote, peer);
   const evidence = [];
   try {
-    for (const driver of ['clean', 'smudge', 'process']) {
+    for (const [driver, conditional] of [['clean', false], ['smudge', false], ['process', false], ['smudge', true], ['process', true]] as const) {
       await writeFile(config, original);
-      const path = `filter-${driver}.md`;
+      const path = `filter-${driver}${conditional ? '-conditional' : ''}.md`;
       const content = `Unfiltered ${driver} progress.`;
       if (driver !== 'clean') {
         await git('-C', peer, 'pull', '--ff-only');
@@ -56,12 +56,17 @@ if (mode === 'inherited-filters') {
         await git('-C', peer, 'commit', '-m', 'Synthetic peer progress');
         await git('-C', peer, 'push');
       }
-      await git('config', '--file', config, `filter.home-probe.${driver}`, `printf executed > '${marker}'; ${driver === 'process' ? 'exit 1' : 'cat'}`);
-      await git('config', '--file', config, 'filter.home-probe.required', 'true');
+      const driverConfig = conditional ? `${run}/filter-driver.cfg` : config;
+      if (conditional) {
+        await writeFile(driverConfig, '');
+        await git('config', '--file', config, `includeIf.gitdir:${root}/.git/worktrees/.path`, driverConfig);
+      }
+      await git('config', '--file', driverConfig, `filter.home-probe.${driver}`, `printf executed > '${marker}'; ${driver === 'process' ? 'exit 1' : 'cat'}`);
+      await git('config', '--file', driverConfig, 'filter.home-probe.required', 'true');
       const result = driver === 'clean' ? await rpc({ ...input, path, content }) : await rpc({ path }, 'neo.home.read');
       const executed = await readFile(marker, 'utf8').catch(() => null);
       const actual = await readFile(`${root}/${path}`, 'utf8').catch(() => null);
-      evidence.push({ driver, result, executed, actual, expected: content });
+      evidence.push({ driver, conditional, result, executed, actual, expected: content });
       await writeFile(`${run}/evidence/neo-home-inherited-filters.json`, JSON.stringify(evidence, null, 2));
       if (executed !== null || !result.ok || actual !== content) throw new Error('Home RPC executed a filter or failed to preserve unfiltered bytes');
     }
