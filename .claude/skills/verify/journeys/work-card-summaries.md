@@ -26,8 +26,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/web-evidence-directory \
   .claude/skills/verify/work-card-summaries-web.ts
 ```
 
-The browser checks the actual /neo Work surface at 402 and 1280 pixels: waiting state and counts remain visible; question text and choices load only
+The browser checks the actual /neo Work surface at 390 and 1280 pixels: waiting state and counts remain visible; question text and choices load only
 after opening the card; no detail RPC runs until a row is expanded;
 the expanded row displays full instructions and report; answering the question
-removes its buttons. Inspect summary/detail PNGs and browser.json. Native iOS
+removes its buttons. Choice selectors use the rendered letter-prefixed labels
+(for example A Ship), matching the production option labels. Inspect summary/detail PNGs and browser.json. Native iOS
 is outside this journey; clients use summary counts and neo.ask.read on expand.

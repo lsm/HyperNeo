@@ -8,7 +8,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const observed = [];
 try {
-  for (const width of [402, 1280]) {
+  for (const width of [390, 1280]) {
     const page = await browser.newPage({ viewport: { width, height: 874 } });
     await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
     const reads = [];
@@ -29,8 +29,8 @@ try {
     await card.getByText('Full synthetic task instructions', { exact: true }).waitFor();
     assert.equal(reads.length, 1);
     await page.screenshot({ path: `${run}/evidence/detail-${width}.png` });
-    await card.getByRole('button', { name: 'Ship', exact: true }).click();
-    await card.getByRole('button', { name: 'Ship', exact: true }).waitFor({ state: 'hidden' });
+    await card.getByRole('button', { name: 'A Ship', exact: true }).click();
+    await card.getByRole('button', { name: 'A Ship', exact: true }).waitFor({ state: 'hidden' });
     observed.push({ width, detailReads: reads.length, questionAnswered: true });
     await page.close();
   }
