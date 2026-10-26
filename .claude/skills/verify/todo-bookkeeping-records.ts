@@ -27,6 +27,13 @@ try {
       await app.jobProcessor.stop();
       const db = app.db.getDatabase();
       const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: sender, role: 'neo' }), refusal => gatewayFor(db).run(recordOperationRefusal, { refusal, sessionId: sender, at: Date.now() }));
+      const described = await handler({ name: 'operations.describe', input: { name: 'neo.todo.add' } });
+      const description = JSON.parse(described.content[0].text);
+      evidence.push({ phase, description });
+      assert.equal(described.isError ?? false, false);
+      assert.equal(description.found, true);
+      assert(description.description.includes('recorded without blocking'));
+      assert(!description.description.includes('on that ask is refused'));
       const invoke = async (name: string, input: unknown) => {
         const reply = await handler({ name, input });
         const result = JSON.parse(reply.content[0].text);

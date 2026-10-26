@@ -16,6 +16,8 @@ the title edit applies and the unsupported check remains unchanged. Accepted
 records persist in the operation audit, distinguished from refusals by accepted=1,
 and survive a daemon restart. Evidence is observed.json and proof.log; the
 wrapper saves evidence before removing all synthetic data.
+The agent-facing operations.describe response must also describe duplicate PRs
+as recorded without blocking, before and after restart.
 
 This proves agent receipts and durable audit records, not visual web layout.
 Malformed PR URLs still fail validation, and existing unanswered-card and

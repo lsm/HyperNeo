@@ -191,7 +191,7 @@ describe('issue todo PR owner delivery', () => {
       }
     }
   );
-  test('closing-issue discovery preserves reported PR owners and their duplicate refusal after settlement', async () => {
+  test('closing-issue discovery preserves reported PR owners and their duplicate record after settlement', async () => {
     const f = fixture();
     try {
       const other = 'https://github.com/synthetic/mixedcase/pull/21';
@@ -212,8 +212,8 @@ describe('issue todo PR owner delivery', () => {
         [{ id: 'coding', describe: 'Synthetic coding', todos }],
         [todo]
       );
-      expect(duplicate).toEqual({
-        reason: { ok: false, reason: expect.stringContaining('pr_already_tracked:') },
+      expect(duplicate).toMatchObject({
+        value: { records: [expect.stringContaining('pr_already_tracked:')] },
       });
       await f.cycle('Closes synthetic/MixedCase#7', 'SUCCESS', 200, [21]);
       f.store.updateTodo(todo, { state: 'done' }, 300);
@@ -232,7 +232,7 @@ describe('issue todo PR owner delivery', () => {
     }
   });
   test.each(['issue_closed', 'pr_merged'])(
-    'a duplicate of a %s todo gets a usable refusal remedy',
+    'a duplicate of a %s todo is accepted with a usable bookkeeping record',
     async (kind) => {
       const f = fixture();
       try {
@@ -248,16 +248,17 @@ describe('issue todo PR owner delivery', () => {
           [{ id: 'coding', describe: 'Synthetic coding', todos }],
           [todo]
         );
-        expect(result).toEqual({
-          reason: { ok: false, reason: expect.stringContaining('pr_already_tracked:') },
+        expect(result).toMatchObject({
+          value: { records: [expect.stringContaining('pr_already_tracked:')] },
         });
-        if (!('reason' in result)) throw new Error('Duplicate todo was accepted');
+        if (!('value' in result)) throw new Error('Duplicate todo was refused');
+        const record = result.value.records![0];
         if (kind === 'issue_closed') {
-          expect(result.reason.reason).not.toContain('addUrls');
-          expect(result.reason.reason).toContain('Continue that todo');
+          expect(record).not.toContain('addUrls');
+          expect(record).toContain('Continue that todo');
           expect(todos.addUrls!(todo, [url])).toBeNull();
         } else {
-          expect(result.reason.reason).toContain('neo.todo.edit addUrls');
+          expect(record).toContain('neo.todo.edit addUrls');
           expect(todos.addUrls!(todo, [url])).not.toBeNull();
         }
         expect(f.store.listTodos('ask')).toHaveLength(1);

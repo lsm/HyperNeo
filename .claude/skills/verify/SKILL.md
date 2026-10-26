@@ -105,6 +105,11 @@ The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
 `journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
 competing writer when fixtures overlap the booted daemon.
 
+If the isolated daemon cannot bind its ephemeral listener, preserve the startup
+error and mark the daemon proof blocked. An EADDRINUSE report for port 0 is
+inconclusive too; do not count unit results as a successful daemon run or weaken
+host protections to make the listener start.
+
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
 
