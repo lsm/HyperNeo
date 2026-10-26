@@ -1,0 +1,533 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 494,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "initial": [
+    {
+      "id": "f962500a-d022-4580-b41c-1f88b6c23967",
+      "queue": "github.poll",
+      "status": "pending",
+      "payload": {},
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1793009154561,
+      "createdAt": 1793009154561,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "claimed": 1,
+  "completed": {
+    "id": "f962500a-d022-4580-b41c-1f88b6c23967",
+    "queue": "github.poll",
+    "status": "completed",
+    "payload": {},
+    "result": {
+      "polled": true,
+      "nextRunAt": 1793009274565
+    },
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1793009154561,
+    "createdAt": 1793009154561,
+    "startedAt": 1793009154564,
+    "heartbeatAt": null,
+    "completedAt": 1793009154565,
+    "claimToken": "749dab12-5c7a-4d67-808a-0ca42771fd7b"
+  },
+  "reschedule": {
+    "success": true,
+    "settings": {
+      "settingSources": [
+        "user",
+        "project",
+        "local"
+      ],
+      "permissionMode": "default",
+      "model": "sonnet",
+      "showArchived": false,
+      "autoScroll": true,
+      "chatDisplayMode": "compact",
+      "githubPollingInterval": 30,
+      "voice": {
+        "enabled": false,
+        "endpoint": "",
+        "model": "",
+        "allowInsecureTls": false,
+        "allowPrivateNetwork": false,
+        "mode": "auto",
+        "hasApiKey": false
+      },
+      "exa": {
+        "enabled": false,
+        "hasApiKey": false
+      },
+      "coordinatorMode": false,
+      "maxConcurrentWorkers": 3,
+      "sandbox": {
+        "enabled": false,
+        "autoAllowBashIfSandboxed": true,
+        "excludedCommands": [
+          "git"
+        ],
+        "network": {
+          "allowedDomains": [
+            "github.com",
+            "*.github.com",
+            "gist.github.com",
+            "*.npmjs.org",
+            "registry.npmjs.org",
+            "*.yarnpkg.com",
+            "registry.yarnpkg.com",
+            "packages.gitlab.com",
+            "*.pkg.dev",
+            "go.dev",
+            "crates.io",
+            "pypi.org",
+            "*.pypi.org",
+            "rubygems.org",
+            "*.rubygems.org",
+            "*.maven.org",
+            "*.gradle.org",
+            "cdn.jsdelivr.net",
+            "*.cloudflare.com",
+            "openai.com",
+            "*.openai.com",
+            "anthropic.com",
+            "*.anthropic.com",
+            "openrouter.ai",
+            "*.openrouter.ai",
+            "*.google.dev",
+            "*.google.com",
+            "*.googleapis.com",
+            "*.googleusercontent.com",
+            "*.gcp.goog",
+            "*.run.app",
+            "*.appspot.com",
+            "*.cloudfunctions.net",
+            "cohere.com",
+            "*.cohere.com",
+            "mistral.ai",
+            "*.mistral.ai",
+            "huggingface.co",
+            "*.huggingface.co",
+            "replicate.com",
+            "*.replicate.com",
+            "together.ai",
+            "*.together.ai",
+            "api.together.xyz",
+            "groq.com",
+            "*.groq.com"
+          ],
+          "allowLocalBinding": true,
+          "allowAllUnixSockets": true
+        }
+      },
+      "outputLimiter": {
+        "enabled": true,
+        "bash": {
+          "headLines": 100,
+          "tailLines": 200,
+          "excludedCommandPrefixes": []
+        },
+        "read": {
+          "maxLines": 1000
+        },
+        "grep": {
+          "maxMatches": 250
+        },
+        "excludeTools": []
+      },
+      "toolSelectionDefaults": {
+        "version": 1,
+        "choices": {
+          "mcp:c9eacb76-75f5-4bed-a0ac-46ee77a51c1b": {
+            "selected": true,
+            "aliases": [
+              "fetch-mcp"
+            ]
+          },
+          "mcp:5bfee983-7997-4699-b426-1101e5628229": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-mcp"
+            ]
+          },
+          "mcp:5356f87d-9d15-4c62-983b-47297193bf8f": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-user-mcp"
+            ]
+          },
+          "skill:3c7035f6-b09b-427b-a724-020a2f40ef09": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:c8b7c943-1de9-489f-8874-769affa9e032": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:2b44f1fd-dbda-4678-b795-119b63149446": {
+            "selected": true,
+            "aliases": []
+          }
+        }
+      }
+    }
+  },
+  "disable": {
+    "success": true,
+    "settings": {
+      "settingSources": [
+        "user",
+        "project",
+        "local"
+      ],
+      "permissionMode": "default",
+      "model": "sonnet",
+      "showArchived": false,
+      "autoScroll": true,
+      "chatDisplayMode": "compact",
+      "githubPollingInterval": 0,
+      "voice": {
+        "enabled": false,
+        "endpoint": "",
+        "model": "",
+        "allowInsecureTls": false,
+        "allowPrivateNetwork": false,
+        "mode": "auto",
+        "hasApiKey": false
+      },
+      "exa": {
+        "enabled": false,
+        "hasApiKey": false
+      },
+      "coordinatorMode": false,
+      "maxConcurrentWorkers": 3,
+      "sandbox": {
+        "enabled": false,
+        "autoAllowBashIfSandboxed": true,
+        "excludedCommands": [
+          "git"
+        ],
+        "network": {
+          "allowedDomains": [
+            "github.com",
+            "*.github.com",
+            "gist.github.com",
+            "*.npmjs.org",
+            "registry.npmjs.org",
+            "*.yarnpkg.com",
+            "registry.yarnpkg.com",
+            "packages.gitlab.com",
+            "*.pkg.dev",
+            "go.dev",
+            "crates.io",
+            "pypi.org",
+            "*.pypi.org",
+            "rubygems.org",
+            "*.rubygems.org",
+            "*.maven.org",
+            "*.gradle.org",
+            "cdn.jsdelivr.net",
+            "*.cloudflare.com",
+            "openai.com",
+            "*.openai.com",
+            "anthropic.com",
+            "*.anthropic.com",
+            "openrouter.ai",
+            "*.openrouter.ai",
+            "*.google.dev",
+            "*.google.com",
+            "*.googleapis.com",
+            "*.googleusercontent.com",
+            "*.gcp.goog",
+            "*.run.app",
+            "*.appspot.com",
+            "*.cloudfunctions.net",
+            "cohere.com",
+            "*.cohere.com",
+            "mistral.ai",
+            "*.mistral.ai",
+            "huggingface.co",
+            "*.huggingface.co",
+            "replicate.com",
+            "*.replicate.com",
+            "together.ai",
+            "*.together.ai",
+            "api.together.xyz",
+            "groq.com",
+            "*.groq.com"
+          ],
+          "allowLocalBinding": true,
+          "allowAllUnixSockets": true
+        }
+      },
+      "outputLimiter": {
+        "enabled": true,
+        "bash": {
+          "headLines": 100,
+          "tailLines": 200,
+          "excludedCommandPrefixes": []
+        },
+        "read": {
+          "maxLines": 1000
+        },
+        "grep": {
+          "maxMatches": 250
+        },
+        "excludeTools": []
+      },
+      "toolSelectionDefaults": {
+        "version": 1,
+        "choices": {
+          "mcp:c9eacb76-75f5-4bed-a0ac-46ee77a51c1b": {
+            "selected": true,
+            "aliases": [
+              "fetch-mcp"
+            ]
+          },
+          "mcp:5bfee983-7997-4699-b426-1101e5628229": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-mcp"
+            ]
+          },
+          "mcp:5356f87d-9d15-4c62-983b-47297193bf8f": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-user-mcp"
+            ]
+          },
+          "skill:3c7035f6-b09b-427b-a724-020a2f40ef09": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:c8b7c943-1de9-489f-8874-769affa9e032": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:2b44f1fd-dbda-4678-b795-119b63149446": {
+            "selected": true,
+            "aliases": []
+          }
+        }
+      }
+    }
+  },
+  "enable": {
+    "success": true,
+    "settings": {
+      "settingSources": [
+        "user",
+        "project",
+        "local"
+      ],
+      "permissionMode": "default",
+      "model": "sonnet",
+      "showArchived": false,
+      "autoScroll": true,
+      "chatDisplayMode": "compact",
+      "githubPollingInterval": 45,
+      "voice": {
+        "enabled": false,
+        "endpoint": "",
+        "model": "",
+        "allowInsecureTls": false,
+        "allowPrivateNetwork": false,
+        "mode": "auto",
+        "hasApiKey": false
+      },
+      "exa": {
+        "enabled": false,
+        "hasApiKey": false
+      },
+      "coordinatorMode": false,
+      "maxConcurrentWorkers": 3,
+      "sandbox": {
+        "enabled": false,
+        "autoAllowBashIfSandboxed": true,
+        "excludedCommands": [
+          "git"
+        ],
+        "network": {
+          "allowedDomains": [
+            "github.com",
+            "*.github.com",
+            "gist.github.com",
+            "*.npmjs.org",
+            "registry.npmjs.org",
+            "*.yarnpkg.com",
+            "registry.yarnpkg.com",
+            "packages.gitlab.com",
+            "*.pkg.dev",
+            "go.dev",
+            "crates.io",
+            "pypi.org",
+            "*.pypi.org",
+            "rubygems.org",
+            "*.rubygems.org",
+            "*.maven.org",
+            "*.gradle.org",
+            "cdn.jsdelivr.net",
+            "*.cloudflare.com",
+            "openai.com",
+            "*.openai.com",
+            "anthropic.com",
+            "*.anthropic.com",
+            "openrouter.ai",
+            "*.openrouter.ai",
+            "*.google.dev",
+            "*.google.com",
+            "*.googleapis.com",
+            "*.googleusercontent.com",
+            "*.gcp.goog",
+            "*.run.app",
+            "*.appspot.com",
+            "*.cloudfunctions.net",
+            "cohere.com",
+            "*.cohere.com",
+            "mistral.ai",
+            "*.mistral.ai",
+            "huggingface.co",
+            "*.huggingface.co",
+            "replicate.com",
+            "*.replicate.com",
+            "together.ai",
+            "*.together.ai",
+            "api.together.xyz",
+            "groq.com",
+            "*.groq.com"
+          ],
+          "allowLocalBinding": true,
+          "allowAllUnixSockets": true
+        }
+      },
+      "outputLimiter": {
+        "enabled": true,
+        "bash": {
+          "headLines": 100,
+          "tailLines": 200,
+          "excludedCommandPrefixes": []
+        },
+        "read": {
+          "maxLines": 1000
+        },
+        "grep": {
+          "maxMatches": 250
+        },
+        "excludeTools": []
+      },
+      "toolSelectionDefaults": {
+        "version": 1,
+        "choices": {
+          "mcp:c9eacb76-75f5-4bed-a0ac-46ee77a51c1b": {
+            "selected": true,
+            "aliases": [
+              "fetch-mcp"
+            ]
+          },
+          "mcp:5bfee983-7997-4699-b426-1101e5628229": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-mcp"
+            ]
+          },
+          "mcp:5356f87d-9d15-4c62-983b-47297193bf8f": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-user-mcp"
+            ]
+          },
+          "skill:3c7035f6-b09b-427b-a724-020a2f40ef09": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:c8b7c943-1de9-489f-8874-769affa9e032": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:2b44f1fd-dbda-4678-b795-119b63149446": {
+            "selected": true,
+            "aliases": []
+          }
+        }
+      }
+    }
+  },
+  "processingLeaseRetained": true,
+  "jobs": [
+    {
+      "id": "49785c65-1ab0-45d1-a426-3d67a4efffb9",
+      "queue": "github.poll",
+      "status": "processing",
+      "payload": {},
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1793009154579,
+      "createdAt": 1793009154580,
+      "startedAt": 1793009154594,
+      "heartbeatAt": 1793009154594,
+      "completedAt": null,
+      "claimToken": "0603aaac-49ff-42f2-9e64-f3a0a049fcf6"
+    },
+    {
+      "id": "f962500a-d022-4580-b41c-1f88b6c23967",
+      "queue": "github.poll",
+      "status": "completed",
+      "payload": {},
+      "result": {
+        "polled": true,
+        "nextRunAt": 1793009274565
+      },
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1793009154561,
+      "createdAt": 1793009154561,
+      "startedAt": 1793009154564,
+      "heartbeatAt": null,
+      "completedAt": 1793009154565,
+      "claimToken": "749dab12-5c7a-4d67-808a-0ca42771fd7b"
+    }
+  ],
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 540,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 0
+}

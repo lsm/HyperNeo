@@ -1057,12 +1057,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let lastGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
     internalEventBus.subscribe(
       'settings.updated',
-      (event) => {
+      async (event) => {
         if (event.namespaceId !== 'global') return;
         const nextGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
         if (nextGitHubPollingIntervalSeconds === lastGitHubPollingIntervalSeconds) return;
-        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
-        gitHubService?.refreshPolling({ reschedulePending: true });
         void (async () => {
           await syncGitHubPollingCapability(
             extensionConfigStore,
@@ -1070,6 +1068,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           );
           await githubEventExtension?.refreshPollingInterval();
         })();
+        await gitHubService?.refreshPolling({ reschedulePending: true });
+        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
       },
       { subscriberName: 'github-polling-settings' }
     );
@@ -1303,7 +1303,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo('[Daemon] Space runtime startup provisioning complete');
     });
     if (gitHubService && shouldEnableGitHub) {
-      gitHubService.start();
+      await gitHubService.start();
       logInfo('[Daemon] GitHub service started');
     }
 

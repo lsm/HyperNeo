@@ -1,0 +1,5 @@
+{
+  "ciRunnerPasses": 13,
+  "ciRunnerFailures": 1,
+  "failure": "start rejects on writer admission error instead of resolving degraded before a later poll tick retries"
+}
