@@ -93,19 +93,6 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
   };
 }
 
-export function requireNeoDoneWhenEditable(
-  todo: NeoTodo,
-  input: { doneWhen?: string },
-  packs: readonly NeoPack[]
-): Gate<NeoTodo> {
-  const pack = todo.check && packs.find((item) => item.id === todo.check?.pack)?.todos;
-  return input.doneWhen && todo.check && pack?.doneWhen?.(todo.check) === todo.doneWhen
-    ? fail(
-        "done_when_from_check: this todo's done-when comes from its check; change the check instead."
-      )
-    : { value: todo };
-}
-
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -471,12 +458,6 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
-    .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Edit>) =>
-        requireNeoDoneWhenEditable(todo, input, packs()),
-      ['outcome', 'input'],
-      'result:outcome'
-    )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
     .pipe(
       (plan: { patch: NeoTodoPatch }, caller: OperationCaller) =>
