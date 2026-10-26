@@ -74,6 +74,49 @@ function setup(activatedAt = 0) {
 }
 
 describe('PR ledger events', () => {
+  test('approval pending CI advances to green and tells a live desktop owner exactly once', async () => {
+    const { db, told, cycle } = setup();
+    try {
+      for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'bot' }))
+        db.prepare(`INSERT INTO neo_pack_preferences VALUES (?, ?, ?, ?, ?, 'human', 1)`).run(
+          'coding',
+          'repo',
+          'lsm/a',
+          key,
+          JSON.stringify(value)
+        );
+      const approved = {
+        reviews: {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'head1abc' }, author: { login: 'bot' } }],
+        },
+      };
+      await cycle(response([node(1, approved, 'PENDING')]), 100);
+      const desktop = { adapter: 'codex-desktop', id: 'synthetic-desktop-owner' };
+      db.prepare('UPDATE pack_coding_pr_ledger SET owner = ? WHERE number = 1').run(
+        JSON.stringify(desktop)
+      );
+      expect(db.prepare('SELECT state, told_at FROM pack_coding_pr_ledger').get()).toMatchObject({
+        state: 'approved_pending',
+        told_at: null,
+      });
+      expect(told).toEqual([]);
+      await cycle(response([node(1, approved, 'SUCCESS')]), 200);
+      await cycle(response([node(1, approved, 'SUCCESS')]), 300);
+      expect(told).toEqual([
+        expect.objectContaining({
+          ref: desktop,
+          key: 'neo-pr-event:lsm/a#1:head1abc:approved_green',
+        }),
+      ]);
+      expect(db.prepare('SELECT state, told_at FROM pack_coding_pr_ledger').get()).toMatchObject({
+        state: 'approved_green',
+        told_at: expect.any(Number),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('CI recovery and a merge reach the owner once and never Neo', async () => {
     const { db, told, woken, cycle, own } = setup();
     await cycle(response([node(1)]), 100);
