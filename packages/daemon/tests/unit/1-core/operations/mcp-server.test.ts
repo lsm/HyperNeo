@@ -91,7 +91,10 @@ describe('operation MCP server', () => {
         }),
       ]);
       const advertised = operationInvokeTool(
-        createOperationMcpServer(() => registry, () => ({ role: 'neo' }))
+        createOperationMcpServer(
+          () => registry,
+          () => ({ role: 'neo' })
+        )
       ).description;
       expect(advertised).toContain('neo.todo.add');
       expect(advertised).toContain('askId');
