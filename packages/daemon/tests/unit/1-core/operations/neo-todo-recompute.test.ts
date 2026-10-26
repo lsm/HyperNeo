@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack, NeoTodoJudgement } from '../../../../src/lib/neo/pack-contract.ts';
+import type {
+  NeoPack,
+  NeoTodoCheckResult,
+  NeoTodoJudgement,
+} from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -15,7 +19,7 @@ afterEach(() => {
   for (const close of closing.splice(0).reverse()) close();
 });
 
-function fixture(legacyCheck = false) {
+function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
   const directory = mkdtempSync(join(tmpdir(), 'neo-todo-plan-'));
   closing.push(() => rmSync(directory, { recursive: true, force: true }));
   let db: Database;
@@ -33,6 +37,7 @@ function fixture(legacyCheck = false) {
     todos: {
       schema: () => {},
       check: async (todo: NeoTodo) => {
+        if (legacyResult) return legacyResult;
         const read = facts.get(todo.id);
         return {
           done: read?.state === 'done',
@@ -159,6 +164,19 @@ function fixture(legacyCheck = false) {
 }
 
 describe('ordered ask progression from facts', () => {
+  test('failure wins when a legacy check also reports done', async () => {
+    const f = fixture(true, {
+      done: true,
+      failed: 'Observed failure',
+      evidence: 'Conflicting success',
+    });
+    f.add('first', 'doing');
+    await f.runner.checkNow(['first'], (_message, error) => {
+      throw error;
+    });
+    expect(f.store.getTodo('first')).toMatchObject({ state: 'failed', reason: 'Observed failure' });
+    expect(f.starts).toHaveLength(0);
+  });
   test('a legacy pack check also supersedes a stale human hold', async () => {
     const f = fixture(true);
     f.add('first');

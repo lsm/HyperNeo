@@ -7,6 +7,8 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
+import type { NeoPack } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -43,11 +45,19 @@ const cases = [
   { id: 'merged-worker', kind: 'pr_merged', state: 'blocked', blocker: 'worker', done: true },
   { id: 'open-human', kind: 'pr_merged', state: 'blocked', blocker: 'needs-human', done: false },
   { id: 'removed', kind: 'pr_merged', state: 'removed', done: false },
+  { id: 'legacy-conflict', kind: 'conflicting', state: 'doing', expected: 'failed', done: false },
 ];
 const evidence: unknown[] = [];
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 const network = globalThis.fetch;
+const installedPacks = NeoService.prototype.installedPacks;
+const legacyPack: NeoPack = {
+  id: 'synthetic-legacy', describe: 'Synthetic conflicting legacy check', instructions: () => null,
+  todos: { schema: () => {}, statusLine: () => null,
+    check: async () => ({ done: true, failed: 'Observed failure', evidence: 'Conflicting success' }) },
+};
+NeoService.prototype.installedPacks = function () { return [...installedPacks.call(this), legacyPack]; };
 globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
@@ -62,7 +72,7 @@ try {
     store.openAsk({ id: item.id, title: item.id, request: 'Observe completion', sessionId: root, projectId: null, originMessageId: null, createdAt: 1 });
     const url = `https://github.com/synthetic/facts/pull/${index + 1}`;
     const todo = store.addTodo(item.id, item.id, { title: item.id, doneWhen: 'Declared check passes', instruction: null, named: null,
-      check: { pack: 'coding', kind: item.kind, params: item.kind === 'pr_merged' ? { urls: [url] } : { issue: 'synthetic/facts#219' } } }, 1);
+      check: { pack: item.kind === 'conflicting' ? 'synthetic-legacy' : 'coding', kind: item.kind, params: item.kind === 'pr_merged' ? { urls: [url] } : { issue: 'synthetic/facts#219' } } }, 1);
     db.prepare('UPDATE neo_todos SET state=?, blocked_by=?, blocked_reason=?, next_action=?, report=? WHERE id=?')
       .run(item.state, item.blocker ?? null, item.blocker ? 'Old blocker' : null, item.blocker ? 'Answer' : null, 'Preserve the complete worker report', todo.id);
     if (item.blocker === 'needs-human') store.askQuestion(`question-${item.id}`, item.id, {
@@ -101,11 +111,12 @@ try {
   for (const item of cases) {
     const response = await rpc('neo.ask.read', { askId: item.id });
     const entry = response.entry as { todos: { id: string; state: string }[] };
-    assert.equal(entry.todos.find(todo => todo.id === item.id)?.state, item.done ? 'done' : item.state, item.id);
+    assert.equal(entry.todos.find(todo => todo.id === item.id)?.state, item.expected ?? (item.done ? 'done' : item.state), item.id);
   }
   for (const item of cases) {
     const todo = store.getTodo(item.id)!;
-    assert.equal(todo.state, item.done ? 'done' : item.state, item.id);
+    assert.equal(todo.state, item.expected ?? (item.done ? 'done' : item.state), item.id);
+    if (item.expected === 'failed') assert.equal(todo.reason, 'Observed failure');
     assert.equal(todo.report, 'Preserve the complete worker report');
     if (item.done) assert.equal(todo.blockedBy, null, item.id);
     if (item.blocker === 'needs-human') {
@@ -116,6 +127,6 @@ try {
   }
   await refresh();
   assert.deepEqual(cases.filter(item => item.done).map(item => store.getTodo(item.id)), observed.filter(item => cases.find(entry => entry.id === item.id)!.done).map(item => item.todo));
-  console.log('PASS: the real scheduled driver refresh completes merged/closed checks despite old human, worker or delivery gates; RPC reads show the resulting done state.');
+  console.log('PASS: scheduled refresh and real RPC show passed checks as done despite old gates, while a legacy done+failed result remains failed.');
 } catch (error) { evidence.push({ error: String(error) }); throw error; }
-finally { ws?.close(); await app?.cleanup(); globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
+finally { ws?.close(); await app?.cleanup(); NeoService.prototype.installedPacks = installedPacks; globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
