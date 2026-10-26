@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { vi, type MockInstance } from 'vitest';
+import * as dataDirectory from '../../../../src/lib/data-dir';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { applyStoredProviderCredentials } from '../../../../src/app';
 import {
@@ -36,6 +38,13 @@ interface ScenarioOptions {
 }
 
 const openDatabases: SqliteDatabase[] = [];
+let defaultCredentialPath: MockInstance<() => string>;
+
+beforeEach(() => {
+  defaultCredentialPath = vi.spyOn(dataDirectory, 'getDataDir').mockImplementation(() => {
+    throw new Error('Reconciliation fixture must not resolve the default credential key path');
+  });
+});
 
 async function runScenario(options: ScenarioOptions) {
   const db = new SqliteDatabase(':memory:');
@@ -87,6 +96,9 @@ async function runScenario(options: ScenarioOptions) {
 
 afterEach(() => {
   for (const db of openDatabases.splice(0)) db.close();
+  const defaultPathCalls = defaultCredentialPath.mock.calls.length;
+  defaultCredentialPath.mockRestore();
+  expect(defaultPathCalls).toBe(0);
 });
 
 describe('startup persisted-discovery reconciliation', () => {
