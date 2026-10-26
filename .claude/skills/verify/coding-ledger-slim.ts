@@ -21,7 +21,7 @@ const query=args.find(x=>x.startsWith('query='))??'', idle=args.some(x=>x==='n=i
 const repo='synthetic/'+(idle?'idle':'active');
 const rest=args[1]!=='graphql', phase=tick>=6?'changed':'initial';
 const numbers=idle?[]:Array.from({length:20},(_,i)=>i+1);
-const node=n=>({number:n,title:'PR '+n,headRefName:'b'+n,headRefOid:n===1&&tick>=9?'new-head':'h'+n,state:n===2&&tick>=10?'MERGED':'OPEN',isDraft:false,mergeable:'MERGEABLE',reviewDecision:null,closedAt:n===2&&tick>=10?new Date().toISOString():null,createdAt:new Date().toISOString(),author:{login:'human',__typename:'User'},reviews:{nodes:n===1&&tick>=6?[{state:'APPROVED',commit:{oid:tick>=9?'new-head':'h1'},author:{login:'bot'}}]:[]},comments:{nodes:[]},replies:{nodes:[]},files:{nodes:[],pageInfo:{hasNextPage:false}},commits:{nodes:[{commit:{statusCheckRollup:{state:n===3&&tick<3?'PENDING':'SUCCESS'},checkSuites:{totalCount:1}}}]}});
+const node=n=>({number:n,title:'PR '+n,headRefName:'b'+n,headRefOid:n===1&&tick>=9?'new-head':'h'+n,state:n===2&&tick>=10?'MERGED':'OPEN',isDraft:false,mergeable:n===4&&tick===5?'CONFLICTING':'MERGEABLE',reviewDecision:n===5&&tick>=7?'CHANGES_REQUESTED':null,closedAt:n===2&&tick>=10?new Date().toISOString():null,createdAt:new Date().toISOString(),author:{login:'human',__typename:'User'},reviews:{nodes:n===1&&tick>=6?[{state:'APPROVED',commit:{oid:tick>=9?'new-head':'h1'},author:{login:'bot'}}]:[]},comments:{nodes:[]},replies:{nodes:[]},files:{nodes:[],pageInfo:{hasNextPage:false}},commits:{nodes:[{commit:{statusCheckRollup:{state:n===3&&tick<3?'PENDING':n===3&&tick===4?'FAILURE':'SUCCESS'},checkSuites:{totalCount:1}}}]}});
 let result,cost=0;
 if(rest){
  if(!args[1].startsWith('repos/'+repo+'/pulls?'))process.exit(2);
@@ -29,7 +29,7 @@ if(rest){
  result=numbers.map(node).filter(n=>closed?n.state!=='OPEN':n.state==='OPEN').map(n=>({number:n.number,title:n.title,head:{ref:n.headRefName,sha:n.headRefOid},state:n.state==='OPEN'?'open':'closed',draft:n.isDraft,merged_at:n.state==='MERGED'?n.closedAt:null,closed_at:n.closedAt,created_at:n.createdAt,updated_at:n.number===1?phase:'initial',base:{repo:{full_name:repo}}}));
 }else{
  const selected=[...query.matchAll(/pullRequest\(number:\s*(\d+)\)/g)].map(m=>Number(m[1]));
- cost=selected.length||(!idle?20:1);
+ cost=selected.length?1:6;
  const repository=selected.length?Object.fromEntries([['nameWithOwner',repo],...selected.map(n=>['p'+n,node(n)])]):{nameWithOwner:repo,open:{pageInfo:{hasNextPage:false},nodes:numbers.map(node).filter(n=>n.state==='OPEN')},done:{nodes:numbers.map(node).filter(n=>n.state!=='OPEN')}};
  result={data:{rateLimit:{cost,remaining:4500-cost,resetAt:'2099-01-01T00:00:00Z'},repository}};
 }
@@ -39,7 +39,7 @@ console.log(JSON.stringify(result));
 const network = globalThis.fetch;
 globalThis.fetch = (async () => { throw new Error('Real network forbidden'); }) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
-const evidence: Record<string, unknown> = { mode, verified: false, quota: 'synthetic one point per hydrated PR; not real GitHub cost' };
+const evidence: Record<string, unknown> = { mode, verified: false, quota: 'synthetic six points per full query, one per selective query; not real GitHub cost' };
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop();
@@ -60,6 +60,7 @@ try {
   await ledger.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: String(root.sessionId) }, status: { state: 'running' }, lastActivityAt: Date.now(), remotes: ['git@github.com:synthetic/active.git'], branches: ['b1'], openedPrs: ['https://github.com/synthetic/active/pull/1'] }], Date.now());
   const base = Date.now(), clock = Date.now;
   configureLogger({ level: LogLevel.INFO });
+  app.db.updateGlobalSettings({ neo: { packs: ['coding'] } });
   const snapshots: unknown[] = [];
   for (let tick = 0; tick < 12; tick++) {
     writeFileSync(join(run, 'tick'), String(tick));
@@ -71,6 +72,11 @@ try {
     assert.equal(rows.find(row => row.pr === 'synthetic/active#1')?.state, tick >= 6 ? 'approved_green' : 'waiting_review');
     assert.equal(rows.find(row => row.pr === 'synthetic/active#1')?.ownerId, root.sessionId);
     assert.equal(rows.find(row => row.pr === 'synthetic/active#2')?.state, tick >= 10 ? 'merged' : 'waiting_review');
+    const visible = await rpc('neo.snapshot');
+    const visibleRows = (visible.packRows as { pack: string; rows: { pr: string; state: string }[] }[]).find(row => row.pack === 'coding')!.rows;
+    assert.equal(visibleRows.find(row => row.pr === 'synthetic/active#3')?.state, tick === 4 ? 'failing' : 'waiting_review');
+    assert.equal(visibleRows.find(row => row.pr === 'synthetic/active#4')?.state, tick === 5 ? 'dirty' : 'waiting_review');
+    assert.equal(visibleRows.find(row => row.pr === 'synthetic/active#5')?.state, tick >= 7 ? 'changes_requested' : 'waiting_review');
     snapshots.push(rows);
   }
   const requests = readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -84,7 +90,7 @@ try {
   evidence.snapshot = snapshot;
   evidence.result = { graphqlReads: graphql.length, costPerHour: cost, restReads: requests.length - graphql.length, snapshots };
   if (mode !== 'baseline') {
-    assert(cost < 60, `unchanged PRs still hydrated: ${cost} points`);
+    assert(cost <= 12, `GraphQL query cost regressed: ${cost} synthetic points`);
     assert(requests.filter(row => row.repo === 'synthetic/idle').length <= 4, 'idle repos still read every sweep');
   }
   evidence.verified = true;
