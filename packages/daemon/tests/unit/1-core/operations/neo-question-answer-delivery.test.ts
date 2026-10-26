@@ -496,6 +496,66 @@ test.each(
   }
 );
 
+test.each(['session', 'adapter', 'marker', 'agent', 'partial', 'missing-echo'])(
+  'uncertain delivery retains its hold until exact owned user evidence replaces %s',
+  async (bad) => {
+    const f = await externalFixture();
+    let sends = 0;
+    let message = '';
+    let valid = false;
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        message = String(input.message);
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Acknowledgement lost' },
+        };
+      }
+      const marker = message.split('\n')[0];
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            sessionId: !valid && bad === 'session' ? 'another-worker' : 'worker',
+            matchedInput:
+              !valid && bad === 'missing-echo'
+                ? undefined
+                : {
+                    adapter: !valid && bad === 'adapter' ? 'claude-code' : 'codex-desktop',
+                    marker: !valid && bad === 'marker' ? '[worker-answer:other]' : marker,
+                  },
+            turns: [
+              {
+                messageId: 'accepted',
+                role: !valid && bad === 'agent' ? 'assistant' : 'user',
+                at: 1,
+                text: !valid && bad === 'partial' ? `${marker}suffix\nOther input` : message,
+              },
+            ],
+          },
+        },
+      };
+    });
+    try {
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      expect(sends).toBe(1);
+      valid = true;
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+      expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+      expect(sends).toBe(1);
+    } finally {
+      f.db.close();
+    }
+  }
+);
+
 test('a button answer never waits for an unrelated unavailable HyperNeo session', async () => {
   const f = await fixture();
   const peer = { ...f.source, id: 'unavailable-peer', daemon: 'synthetic-remote' };
