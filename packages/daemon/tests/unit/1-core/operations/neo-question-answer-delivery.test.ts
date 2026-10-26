@@ -23,8 +23,9 @@ import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/questio
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import type { NeoTodoRunnerDeps } from '../../../../src/lib/neo/todo-runner.ts';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
+import { workInput } from '../../../../src/lib/drivers/work-messages.ts';
 
-async function fixture(path = ':memory:') {
+async function fixture(path = ':memory:', title = 'Choose a destination') {
   const db = new Database(path);
   runMigrations(db, () => {});
   createTables(db);
@@ -64,7 +65,7 @@ async function fixture(path = ':memory:') {
   const report = {
     todoId: todo.id,
     kind: 'blocked',
-    title: 'Choose a destination',
+    title,
     options: ['Staging', 'Production'],
     language: 'en',
     report: 'Need a destination',
@@ -127,6 +128,9 @@ test('a HyperNeo answer reaches the bound session and releases its hold once', a
     await f.flush();
     expect(f.inputs.size).toBe(1);
     expect([...f.inputs.values()].join()).toContain('Staging');
+    expect([...f.inputs.values()][0]).toMatch(
+      /^The human answered[\s\S]*\n\[worker-answer:[a-f0-9-]+\]$/
+    );
     expect([...f.notes.values()].join()).toContain('Staging');
     expect(await f.read()).toMatchObject({
       answerDelivery: [{ state: 'accepted' }],
@@ -277,8 +281,8 @@ test('an old accepted answer cannot release a newer unanswered worker card', asy
   }
 });
 
-async function externalFixture(path = ':memory:') {
-  const f = await fixture(path);
+async function externalFixture(path = ':memory:', title = 'Choose a destination') {
+  const f = await fixture(path, title);
   const peer = { ...f.source, adapter: 'codex-desktop' };
   new NeoTodoSessionRepository(f.db).bind('todo', peer, 3);
   await f.write(peer, f.report);
@@ -364,7 +368,13 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
   async (mode) => {
     const run = mkdtempSync(join(tmpdir(), 'external-answer-restart-'));
     const path = join(run, 'daemon.db');
-    const f = await externalFixture(path);
+    const f = await externalFixture(
+      path,
+      'Choose the destination for this worker after the pending dependency is resolved'.padEnd(
+        80,
+        '?'
+      )
+    );
     let sends = 0;
     let message = '';
     let visible = false;
@@ -398,7 +408,7 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
             status: 'running',
             lastActivityAt: 9,
             recentInputs: [
-              { at: 9, text: visible ? message : 'unrelated answer [worker-answer:other]' },
+              workInput(9, visible ? message : 'unrelated answer [worker-answer:other]')!,
             ],
           },
         },
