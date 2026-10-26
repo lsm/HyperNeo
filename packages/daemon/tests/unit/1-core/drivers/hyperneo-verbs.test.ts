@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -318,6 +326,47 @@ describe('hyperneo adapter send and status', () => {
         expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(enabled);
       } finally {
         rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  test.each([false, true])(
+    'starts repeatedly in the same prepared directory with existing settings: %s',
+    async (existingSettings) => {
+      const dataDir = mkdtempSync(join(tmpdir(), 'hyperneo-worker-data-'));
+      process.env.HYPERNEO_DATA_DIR = dataDir;
+      const directory = join(source, 'prepared');
+      mkdirSync(join(directory, '.git/info'), { recursive: true });
+      mkdirSync(join(directory, '.claude'));
+      const settings = join(directory, '.claude/settings.local.json');
+      if (existingSettings) writeFileSync(settings, '{"permissions":{"allow":["Bash(*)"]}}');
+      const driver = adapter(async () => ({
+        ok: true,
+        value: { directory, release: async () => {} },
+      }));
+      try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          db.prepare("DELETE FROM sessions WHERE id = 'new'").run();
+          expect(
+            await driver.start!(
+              {
+                place: { machine: 'imac', folder: source, name: 'repo' },
+                title: 'Existing worktree',
+                message: 'Continue work',
+                preparation: { pack: 'coding', parameters: {} },
+              },
+              { from: 'user', caller: { source: 'rpc' } }
+            )
+          ).toMatchObject({ ok: true });
+          const policy = JSON.parse(readFileSync(settings, 'utf8'));
+          expect(policy.sandbox.enabled).toBe(true);
+          expect(policy.permissions.allow).toEqual([`Edit(/${directory}/**)`]);
+          expect(policy.permissions.deny).toContain(`Edit(/${source}/**)`);
+        }
+        expect(handed).toHaveLength(2);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+        delete process.env.HYPERNEO_DATA_DIR;
       }
     }
   );
