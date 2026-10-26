@@ -23,6 +23,14 @@ the actual Work surface at 390/1280px: 80 initial cards, three explicit Show old
 clicks reaching all 134, no further paging at the end, and exact full instructions
 when an older card is expanded. Inspect browser.json and the screenshots.
 
+If a new browser process cannot launch, use an already running browser with
+`verify --manual /absolute/ready.json` instead of --web. Read its ephemeral port
+and disposable run path, open /neo, and inspect Needs your attention/In progress
+and Recent outcomes while clicking Show older. Record actual viewport and counts
+in the run's evidence/browser.json (passed only after observing the real UI), save
+screenshots, close the test tab, then create the run's release file. The helper
+requires that evidence and cleans up; untested viewport sizes remain unverified.
+
 For live counts, work-history-measure.ts reads the explicitly authorized SQLite
 database read-only and reports only aggregated card counts and byte totals.
 Those projections exclude worker/pack enrichment; observed.json instead measures

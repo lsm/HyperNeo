@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -93,7 +93,7 @@ try {
     assert.equal(full.entry.todos[0].instruction, 'Full synthetic instruction');
     observed[`${project}Pages`] = pages;
   }
-  if (process.argv.includes('--web')) {
+  if (process.argv.includes('--web') || process.argv.includes('--manual')) {
     const dist = resolve('packages/web/dist');
     front = Bun.serve({ hostname: '127.0.0.1', port: 0,
       async fetch(request, server) {
@@ -107,8 +107,16 @@ try {
       }, websocket: createWebSocketHandlers(app.transport, app.sessionManager),
     });
     assert(![8399, 8499].includes(front.port));
-    const child = Bun.spawn(['node', '.claude/skills/verify/work-history-web.mjs', String(front.port), run], { stdout: 'inherit', stderr: 'inherit' });
-    assert.equal(await child.exited, 0);
+    if (process.argv.includes('--manual')) {
+      writeFileSync(process.argv[process.argv.indexOf('--manual') + 1], JSON.stringify({ port: front.port, run }));
+      const deadline = Date.now() + 300000;
+      while (!existsSync(join(run, 'release')) && Date.now() < deadline) await Bun.sleep(250);
+      assert(existsSync(join(run, 'release')), 'manual proof must be released');
+      assert.equal(JSON.parse(readFileSync(join(run, 'evidence/browser.json'), 'utf8')).passed, true);
+    } else {
+      const child = Bun.spawn(['node', '.claude/skills/verify/work-history-web.mjs', String(front.port), run], { stdout: 'inherit', stderr: 'inherit' });
+      assert.equal(await child.exited, 0);
+    }
     observed.browser = true;
   }
   observed.passed = true;

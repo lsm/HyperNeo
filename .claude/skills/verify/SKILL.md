@@ -58,6 +58,10 @@ An installed browser that aborts with `SIGABRT` or `EPERM` is blocked too. Keep
 its launch log and use component evidence as a fallback, explicitly leaving
 screenshots and visual layout unverified.
 
+The shared proof-run.sh wrapper forwards only these explicitly selected browser
+dependency paths, alongside VERIFY_CLAUDE. Other parent environment values stay
+scrubbed; set the browser paths on the wrapper invocation when using --web.
+
 Give it a model, once per run (stored in the run's DB only):
 
 ```bash
