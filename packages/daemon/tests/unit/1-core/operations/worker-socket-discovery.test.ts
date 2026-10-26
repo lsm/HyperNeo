@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverSigningSocket } from '../../../../src/lib/neo/worker-sockets.ts';
+import { discoverSigningSockets } from '../../../../src/lib/neo/worker-sockets.ts';
 const state = vi.hoisted(() => ({ missing: 'ssh', sshConfig: '' }));
 
 vi.mock('node:child_process', () => ({
@@ -27,7 +27,7 @@ test.each(['git', 'ssh'])(
     state.sshConfig = '';
     vi.stubEnv('SSH_AUTH_SOCK', undefined);
     try {
-      await expect(discoverSigningSocket()).resolves.toEqual([]);
+      await expect(discoverSigningSockets()).resolves.toEqual([]);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -39,7 +39,7 @@ test('proposes the ssh-config IdentityAgent socket alongside SSH_AUTH_SOCK', asy
   state.sshConfig = `host *\nidentityagent ~/Library/Group Containers/synthetic/agent.sock\n`;
   vi.stubEnv('SSH_AUTH_SOCK', join(tmpdir(), 'launchd-agent.sock'));
   try {
-    await expect(discoverSigningSocket()).resolves.toEqual([
+    await expect(discoverSigningSockets()).resolves.toEqual([
       join(tmpdir(), 'launchd-agent.sock'),
       join(homedir(), 'Library/Group Containers/synthetic/agent.sock'),
     ]);

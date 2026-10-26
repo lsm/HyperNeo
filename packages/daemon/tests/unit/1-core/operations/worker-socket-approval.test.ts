@@ -20,6 +20,7 @@ const request = () => store.requestWorkerSocket(session, socket)!;
 test('a socket request raises exactly one card across repository re-creation', () => {
   const question = request();
   expect(question.text).toContain(socket);
+  expect(question.text).toContain('restart a worker that is already running');
   store = new NeoAskTodoRepository(db.getDatabase());
   expect(request().id).toBe(question.id);
 });

@@ -55,6 +55,7 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 let sdkModel: ReturnType<typeof spawn> | undefined;
 const socketServers: Server[] = [];
+let sshAgentPid = 0;
 const buildOptions = QueryOptionsBuilder.prototype.build;
 let sdkBaseUrl = '';
 QueryOptionsBuilder.prototype.build = async function (...args) {
@@ -96,8 +97,18 @@ try {
       socketServers.push(server);
       await new Promise<void>((done, fail) => { server.once('error', fail); server.listen(join(run, name), done); });
     }
-    writeFileSync(join(run, 'verify-sockets'), 'synthetic-only');
-    await rpc('rpc:settings.global.update', { updates: { workerUnixSockets: [join(run, 'allowed.sock')] } });
+    const agentSocket = join(run, 'agent.sock');
+    const agent = spawnSync('ssh-agent', ['-a', agentSocket], { encoding: 'utf8' });
+    assert.equal(agent.status, 0, agent.stderr);
+    sshAgentPid = Number(agent.stdout.match(/SSH_AGENT_PID=(\d+)/)?.[1]);
+    const key = join(run, 'signkey');
+    const generated = spawnSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'verify@example.invalid', '-f', key], { encoding: 'utf8' });
+    assert.equal(generated.status, 0, generated.stderr);
+    const added = spawnSync('ssh-add', [key], { encoding: 'utf8', env: { ...process.env, SSH_AUTH_SOCK: agentSocket } });
+    assert.equal(added.status, 0, added.stderr);
+    writeFileSync(join(run, 'allowed_signers'), `verify@example.invalid ${readFileSync(`${key}.pub`, 'utf8').trim()}\n`);
+    writeFileSync(join(run, 'verify-signing'), 'synthetic-only');
+    await rpc('rpc:settings.global.update', { updates: { workerUnixSockets: [join(run, 'allowed.sock'), agentSocket] } });
   }
   const started = await rpc('work.start', request) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
@@ -196,6 +207,12 @@ try {
     const sockets = JSON.parse(readFileSync(join(sdkWorker, 'socket-observed.json'), 'utf8'));
     writeFileSync(join(run, 'evidence/sdk-sockets.json'), JSON.stringify(sockets));
     assert.deepEqual(sockets, { allowed: true, denied: false });
+    const signing = {
+      commit: readFileSync(join(sdkWorker, 'sign-commit-status'), 'utf8') === '0',
+      verify: readFileSync(join(sdkWorker, 'sign-verify-status'), 'utf8') === '0',
+    };
+    writeFileSync(join(run, 'evidence/sdk-signing.json'), JSON.stringify(signing));
+    assert.deepEqual(signing, { commit: true, verify: true });
   }
   let published: unknown;
   await wait(() => {
@@ -247,6 +264,7 @@ try {
 } finally {
   QueryOptionsBuilder.prototype.build = buildOptions;
   sdkModel?.kill();
+  if (sshAgentPid) { try { process.kill(sshAgentPid, 'SIGTERM'); } catch {} }
   await Promise.all(socketServers.map((server) => new Promise<void>((done) => server.close(() => done()))));
   ws?.close();
   await app?.cleanup();

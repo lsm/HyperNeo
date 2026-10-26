@@ -68,6 +68,16 @@ assert observed == {'allowed': True, 'denied': False}, observed
 ''')
     with probe.open('a') as script:
         script.write(f"/usr/bin/python3 ./socket-probe.py '{run}' '{engine}'\nprintf 'socket-status=%s\\n' \"$?\"\n")
+if (run / 'verify-signing').exists():
+    with probe.open('a') as script:
+        script.write(f'''export SSH_AUTH_SOCK='{run / 'agent.sock'}'
+mkdir -p sign-scratch
+git -C sign-scratch init -q
+git -C sign-scratch -c user.name=Verify -c user.email=verify@example.invalid -c gpg.format=ssh -c user.signingkey='{run / 'signkey.pub'}' -c gpg.ssh.allowedSignersFile='{run / 'allowed_signers'}' commit --allow-empty -S -m probe >sign-commit-out 2>&1
+printf '%s' "$?" > sign-commit-status
+git -C sign-scratch -c gpg.format=ssh -c gpg.ssh.allowedSignersFile='{run / 'allowed_signers'}' verify-commit HEAD >sign-verify-out 2>&1
+printf '%s' "$?" > sign-verify-status
+''')
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -157,6 +167,10 @@ try:
         sockets = json.loads((worker / 'socket-observed.json').read_text())
         (run / f'evidence/{engine}-sockets.json').write_text(json.dumps(sockets))
         assert sockets == {'allowed': True, 'denied': False}, sockets
+    if (run / 'verify-signing').exists():
+        signing = {'commit': (worker / 'sign-commit-status').read_text() == '0', 'verify': (worker / 'sign-verify-status').read_text() == '0'}
+        (run / f'evidence/{engine}-signing.json').write_text(json.dumps(signing))
+        assert signing == {'commit': True, 'verify': True}, (worker / 'sign-commit-out').read_text() + (worker / 'sign-verify-out').read_text()
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     assert observed['policyIntact'], 'BUG: worker removed its sandbox gate or settings'
     assert observed['networkAllowed'], 'Sandbox network probe failed'

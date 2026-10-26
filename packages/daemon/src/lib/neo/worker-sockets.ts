@@ -42,20 +42,23 @@ export function workerSocketOperation(
   });
 }
 
-export const discoverSigningSocket = (superpipe({})('workerSocket.discover') as PipelineAPI)
+export const discoverSigningSockets = (superpipe({})('workerSocket.discover') as PipelineAPI)
   .pipe(
     async () => {
       const format = await output(['git', 'config', '--get', 'gpg.format']);
       await output(['git', 'config', '--get', 'gpg.ssh.program']);
-      if (format !== 'ssh') return null;
-      const config = process.env.SSH_AUTH_SOCK
-        ? ''
-        : await output(['ssh', '-F', join(homedir(), '.ssh/config'), '-G', '*']);
-      const agent = process.env.SSH_AUTH_SOCK ?? config.match(/^identityagent (.+)$/m)?.[1];
-      const socket = agent?.startsWith('~/') ? join(homedir(), agent.slice(2)) : agent;
-      return socket && isAbsolute(socket) ? socket : null;
+      if (format !== 'ssh') return [];
+      const config = await output(['ssh', '-F', join(homedir(), '.ssh/config'), '-G', '*']);
+      const agents = [process.env.SSH_AUTH_SOCK, config.match(/^identityagent (.+)$/m)?.[1]];
+      return [
+        ...new Set(
+          agents
+            .map((agent) => (agent?.startsWith('~/') ? join(homedir(), agent.slice(2)) : agent))
+            .filter((socket): socket is string => !!socket && isAbsolute(socket))
+        ),
+      ];
     },
     undefined,
-    'socket'
+    'sockets'
   )
-  .endAsync('socket') as () => Promise<string | null>;
+  .endAsync('sockets') as () => Promise<string[]>;

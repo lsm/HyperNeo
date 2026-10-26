@@ -9,7 +9,8 @@ TMPDIR="$PWD/node_modules/.cache" bash .claude/skills/verify/proof-run.sh \
 ```
 
 `worker-unix-sockets.json` must report `pass`: a fresh test HOME's git signing
-configuration and SSH IdentityAgent produce one startup card; repeated requests
+configuration and SSH IdentityAgent produce one startup card for the IdentityAgent
+socket and one for `SSH_AUTH_SOCK` (the script sets both); repeated requests
 reuse their card; human Allow and Decline persist across a real isolated daemon
 restart; removing an allowed entry over the settings RPC changes the next Codex
 policy. A later request reopens that path's card for human approval; Decline remains
@@ -46,10 +47,14 @@ The helper owns two synthetic Unix echo sockets outside all worker roots and
 approves exactly one through the isolated settings RPC before starting workers.
 Real Claude, Codex and SDK Bash probes must each record
 `{"allowed":true,"denied":false}` in `evidence/{claude,codex,sdk}-sockets.json`.
+The helper also starts a real `ssh-agent` on an approved socket with a generated
+test key, and every worker must create a scratch repo, run `git commit -S`
+through that agent and pass `git verify-commit`, recording
+`{"commit":true,"verify":true}` in `evidence/{claude,codex,sdk}-signing.json`.
 The Codex CLI must accept the generated network-proxy configuration; a config
 parse error or two successful connections fails this journey. The helper closes
-its sockets, daemon and model in finally. Retain evidence, then delete only the
-owned synthetic run. This proves socket connections, not real commit signing.
+its sockets and agent, daemon and model in finally. Retain evidence, then delete
+only the owned synthetic run.
 
 In the isolated web UI, Settings > Neo model must show Worker Unix sockets,
 each exact path and Remove. Removing one must update the next worker's generated

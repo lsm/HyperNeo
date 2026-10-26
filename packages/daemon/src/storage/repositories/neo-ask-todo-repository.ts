@@ -202,7 +202,7 @@ export class NeoAskTodoRepository {
       /\p{Bidi_Control}/gu,
       (char) => `\\u${char.codePointAt(0)!.toString(16).padStart(4, '0')}`
     );
-    const text = `Workers need ${display} to sign commits. Allow all workers to use it?`;
+    const text = `Workers need ${display} to sign commits. Allow all workers to use it? Allowed sockets apply to workers started or resumed later; restart a worker that is already running.`;
     this.openAsk({
       id: askId,
       sessionId,
