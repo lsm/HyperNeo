@@ -49,6 +49,13 @@ export function codingRepoWatched(db: Database, repo: string): boolean {
   );
 }
 
+export function codingCanonicalRepo(db: Database, repo: string): string {
+  const row = db
+    .prepare('SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?')
+    .get(repo.toLowerCase()) as { canonical: string } | undefined;
+  return (row?.canonical ?? repo).toLowerCase();
+}
+
 export function unwatchCodingRepos(
   db: Database,
   repos: readonly string[],
@@ -56,12 +63,7 @@ export function unwatchCodingRepos(
 ): void {
   const watched = codingWatchedRepos(db);
   if (watched === null) return;
-  const canonical = (repo: string) =>
-    (
-      db
-        .prepare('SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?')
-        .get(repo.toLowerCase()) as { canonical: string } | undefined
-    )?.canonical ?? repo.toLowerCase();
+  const canonical = (repo: string) => codingCanonicalRepo(db, repo);
   const kept = new Set(remaining.map(canonical));
   const removed = new Set(repos.map(canonical).filter((repo) => !kept.has(repo)));
   const next = watched.filter((repo) => !removed.has(canonical(repo)));

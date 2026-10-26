@@ -1,5 +1,5 @@
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
-import { codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
+import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
 import { posix } from 'node:path';
 import {
   CodingStageFactsRepository,
@@ -636,6 +636,10 @@ export class CodingPrLedgerRepository {
     );
   }
 
+  canonicalRepo(repo: string): string {
+    return codingCanonicalRepo(this.db, repo);
+  }
+
   watches(repo: string): boolean {
     return codingRepoWatched(this.db, repo);
   }
@@ -805,10 +809,15 @@ export async function reconcileCodingPrLedger(
   const transitions: CodingPrTransition[] = [];
   const last = ledger.lastReads();
   const pending = ledger.list().filter((row) => row.state === 'approved_pending');
-  const pendingFor = (repo: string) => pending.filter((row) => row.repo === repo.toLowerCase());
+  const pendingFor = (repo: string) => {
+    const canonical = ledger.canonicalRepo(repo);
+    return pending.filter((row) => row.repo === canonical);
+  };
   const order = repos
     .filter((repo) => ledger.watches(repo))
-    .sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
+    .sort(
+      (a, b) => (last.get(ledger.canonicalRepo(a)) ?? 0) - (last.get(ledger.canonicalRepo(b)) ?? 0)
+    );
   for (const repo of order) {
     if (!ledger.watches(repo)) continue;
     const before = ledger.health.read(repo);
@@ -817,13 +826,13 @@ export async function reconcileCodingPrLedger(
     if (!ledger.watches(repo)) continue;
     const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
     const cycle = planLedgerHealth(raw, planned !== null, now);
+    if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
     const health = await ledger.write('recordHealth', repo, {
       ...cycle,
       pending: pendingFor(repo),
     });
     if (health.misses === CODING_LEDGER_WARN_SKIPS && before?.misses !== health.misses)
       log.warn('PR ledger coverage missed three eligible cycles', { repo, reason: health.reason });
-    if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
     if (planned && planned.repo !== repo.toLowerCase())
       await ledger.write('dropRepo', repo.toLowerCase());
     if (planned && !seen.has(planned.repo))

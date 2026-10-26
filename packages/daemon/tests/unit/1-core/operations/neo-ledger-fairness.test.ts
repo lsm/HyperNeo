@@ -51,6 +51,26 @@ describe('ledger target fairness', () => {
       expect(order).toEqual(['synthetic/old', 'synthetic/empty']);
       expect(ledger.list()).toEqual([]);
     }));
+  test('aliased targets use their canonical health timestamp in the scan order', () =>
+    using(async (ledger) => {
+      const alias = 'synthetic/old',
+        canonical = 'synthetic/renamed',
+        other = 'synthetic/other';
+      ledger.recordAlias(alias, canonical);
+      ledger.recordHealth(alias, { at: 200, outcome: 'complete' });
+      ledger.recordHealth(other, { at: 100, outcome: 'complete' });
+      const order: string[] = [];
+      await reconcileCodingPrLedger(
+        ledger,
+        [alias, other],
+        async (repo) => {
+          order.push(repo);
+          return response(repo === alias ? canonical : repo);
+        },
+        300
+      );
+      expect(order).toEqual([other, alias]);
+    }));
   test('an unattributed failure does not put another credential in cooldown', () =>
     using(async (ledger) => {
       const order: string[] = [];

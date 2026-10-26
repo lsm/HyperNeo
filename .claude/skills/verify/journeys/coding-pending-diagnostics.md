@@ -10,7 +10,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 
 The helper owns an ephemeral daemon, live synthetic Neo/worker sessions, refusing
 GitHub/Claude executables and a fresh DB. A scripted ledger reader observes an
-exact-head approval with CI pending, then a quota failure with a known reset.
+exact-head approval with CI pending. It then switches the watched request to an
+old repository alias, retains the canonical PR identity, and returns a quota
+failure with a known reset.
 It invokes the actual coding-pack sweep and captures public `neo.snapshot`, the
 ledger, persisted health and real mailbox payloads. No direct external HTTP,
 credentials, live daemon, real DB/copy, port 8399 or model turn is used.
@@ -20,7 +22,10 @@ path must accept exactly one keyed stale-pending wake for Neo. The pending row
 shows readAt, completeAt, nextRetryAt, lastError and lastErrorAt. Raw error text
 must not appear: lastError is a safe classification, including credential-scoped quota
 deferral. Other repositories retain the independent acquisition introduced by
-the fairness fix; diagnostics do not impose a sweep-wide cooldown. The notice saves the same
+the fairness fix; diagnostics do not impose a sweep-wide cooldown. Repository
+aliases use canonical pending rows and health keys. Existing alias-keyed health
+remains readable, and accepting an old notice promotes its receipt to the
+canonical key without deleting historical rows. The notice saves the same
 structured diagnostics keyed to the PR/head/read so recovery cannot overwrite
 the incident context. Normal fresh pending checks do not trigger this notice.
 

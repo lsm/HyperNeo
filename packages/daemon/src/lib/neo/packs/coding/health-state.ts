@@ -1,3 +1,4 @@
+import { codingCanonicalRepo } from './watched-repos.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { LedgerQuota } from './ledger-quota.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -155,25 +156,30 @@ export class CodingRepoHealthRepository {
 
   read(repo: string): Health | null {
     const row = this.db
-      .prepare('SELECT health_json FROM pack_coding_repo_health WHERE repo=?')
-      .get(repo.toLowerCase()) as { health_json: string } | undefined;
+      .prepare(`SELECT health_json FROM pack_coding_repo_health
+        WHERE repo = ?1 OR repo IN
+          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)
+        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1`)
+      .get(codingCanonicalRepo(this.db, repo)) as { health_json: string } | undefined;
     return row ? (JSON.parse(row.health_json) as Health) : null;
   }
 
   accept(repo: string, key: string, at: number): void {
     this.db.transaction(() => {
-      const health = this.read(repo);
+      const canonical = codingCanonicalRepo(this.db, repo);
+      const health = this.read(canonical);
       const notice = health?.notices?.find((item) => item.key === key);
       if (!notice || notice.acceptedAt !== null) return;
       notice.acceptedAt = at;
       this.db
-        .prepare('UPDATE pack_coding_repo_health SET health_json=? WHERE repo=?')
-        .run(JSON.stringify(health), repo.toLowerCase());
+        .prepare(`INSERT INTO pack_coding_repo_health (repo,health_json) VALUES (?,?)
+          ON CONFLICT(repo) DO UPDATE SET health_json=excluded.health_json`)
+        .run(canonical, JSON.stringify(health));
     }, 'immediate')();
   }
 
   record(repo: string, cycle: RepoHealthCycle): Health {
-    const canonical = repo.toLowerCase();
+    const canonical = codingCanonicalRepo(this.db, repo);
     return this.db.transaction(() => {
       const before = this.read(canonical);
       const health = reduceHealth(canonical, before, cycle);
