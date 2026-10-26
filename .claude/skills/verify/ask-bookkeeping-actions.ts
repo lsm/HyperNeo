@@ -8,7 +8,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 import { recordOperationRefusal } from '../../../packages/daemon/src/storage/repositories/operation-refusal-repository.ts';
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { createNeoAskRecordOperations } from '../../../packages/daemon/src/lib/neo/ask-record-operations.ts';
-import { createNeoQuestionOperations } from '../../../packages/daemon/src/lib/neo/question-operations.ts';
+import { createNeoWorkerQuestionWriter, createNeoQuestionOperations } from '../../../packages/daemon/src/lib/neo/question-operations.ts';
 import { createNeoAskReadOperation, createNeoDoneTodosOperation } from '../../../packages/daemon/src/lib/neo/ask-entries.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
@@ -41,7 +41,14 @@ for (const phase of ['initial', 'reopen']) {
     };
     if (phase === 'initial') {
       const ask = store.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: null, title: 'Synthetic ask', request: 'Close unverified work visibly', createdAt: 1 });
-      store.addTodo('unfinished', ask.id, { title: 'Unverified delivery', doneWhen: 'Build served and observed', instruction: null, check: null, named: null }, 1);
+      const unfinished = store.addTodo('unfinished', ask.id, { title: 'Unverified delivery', doneWhen: 'Build served and observed', instruction: null, check: null, named: null }, 1);
+      const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
+      sessions.create(unfinished.id, { verb: 'send', ref }); sessions.recordRef(unfinished.id, ref, 2);
+      store.updateTodo(unfinished, { state: 'doing', startedAt: 2 }, 2);
+      const writer = createNeoWorkerQuestionWriter(store, sessions, () => 'en', async () => ({ ...ref, name: 'Worker', label: 'HyperNeo · Worker', provider: 'HyperNeo', link: null }));
+      const workerQuestion = await writer(ref, { todoId: unfinished.id, kind: 'question', title: 'Which target?', options: ['First', 'Second'], language: 'en', report: 'Synthetic human decision required.' });
+      assert.equal(workerQuestion.ok, true); assert.equal(store.getTodo(unfinished.id)?.blockedBy, 'needs-human');
+      evidence.push({ beforeSettlement: store.getTodo(unfinished.id), workerQuestion });
       const closed = store.addTodo('closed', ask.id, { title: 'Closed work', doneWhen: 'Checked', instruction: null, check: null, named: null }, 1);
       store.updateTodo(closed, { state: 'closed_unverified', reason: 'Not observed' }, 2);
       const question = await call('neo.question.ask', { askId: ask.id, todoId: closed.id, text: 'What next?', kind: 'reply' });
