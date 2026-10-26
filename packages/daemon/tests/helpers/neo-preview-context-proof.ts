@@ -333,11 +333,21 @@ try {
   assert(!('kind' in decodedIntake));
   assert.equal(decodedIntake.entries[0].quote!.replyTo!.id, requestId);
   assert.deepEqual(decodedIntake.entries[0].previewContext, reference);
+  const intakeScope = 'synthetic-intake-proof';
+  const snapshotStorage = intake.snapshots.storage(intakeScope, () => captureStorage);
+  const storedIntake = snapshotStorage.save(null, pendingAsks);
+  assert(!('kind' in storedIntake));
+  const loadedIntake = intake.snapshots.storage(intakeScope, () => captureStorage).read();
+  assert(!('kind' in loadedIntake));
+  assert.equal(loadedIntake.revision, storedIntake.revision);
+  assert.deepEqual(loadedIntake.snapshot, decodedIntake);
+  const staleIntake = snapshotStorage.save(null, []);
+  assert('kind' in staleIntake && staleIntake.kind === 'snapshot_conflict');
   pendingAsks[0].quote!.replyTo!.id = 'changed-display-target';
   Object.assign(pendingAsks[0].previewContext!, { snapshot: 'b'.repeat(64) });
   const quotedRetry = await intake.retry(quotedId);
   assert(quotedRetry?.ok && !quotedRetry.created);
-  const snapshotReplay = await submitNeoDraft(decodedIntake.entries[0], async () => hub);
+  const snapshotReplay = await submitNeoDraft(loadedIntake.snapshot.entries[0], async () => hub);
   assert(snapshotReplay.ok && !snapshotReplay.created);
   assert.deepEqual(snapshotReplay.previewContext, reference);
   const quotedRows = database()
@@ -393,6 +403,22 @@ try {
   count();
   await stop();
   await start();
+  const reopenedIntake = createNeoIntakeClient(async () => hub)
+    .snapshots.storage(intakeScope, () => captureStorage)
+    .read();
+  assert(!('kind' in reopenedIntake));
+  const storedReplay = await submitNeoDraft(reopenedIntake.snapshot.entries[0], async () => hub);
+  assert(storedReplay.ok && !storedReplay.created);
+  const storedMessages = database()
+    .getDatabase()
+    .prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE sdk_uuid = ?')
+    .get(quotedId) as { n: number };
+  const storedJobs = database()
+    .getDatabase()
+    .prepare("SELECT COUNT(*) AS n FROM job_queue WHERE json_extract(payload,'$.messageUuid') = ?")
+    .get(quotedId) as { n: number };
+  assert.equal(storedMessages.n, 1);
+  assert.equal(storedJobs.n, 1);
   assert.deepEqual(await readContext(), { ...reference, state: 'unavailable' });
   const replay = await submitNeoDraft(
     { sessionId, requestId, text: input.content, previewContext: reference },
@@ -508,6 +534,8 @@ try {
     intakeSnapshotManualReplay: true,
     intakeSnapshotInlineTextAttachments: true,
     intakeSnapshotLongQuote: true,
+    intakeSnapshotStorage: true,
+    intakeSnapshotStorageRestartReplay: true,
   });
 } finally {
   try {

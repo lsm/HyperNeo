@@ -9,6 +9,7 @@ type Snapshot = { version: 1; entries: Entry[] };
 type Refusal = { kind: 'invalid_snapshot' };
 const refusal: Refusal = Object.freeze({ kind: 'invalid_snapshot' });
 const MAX_JSON = 16 * 1024 * 1024;
+const MAX_ENTRIES = 20;
 const MAX_IMAGES = 8 * 1024 * 1024;
 
 function shape(value: unknown, keys: string): value is Record<string, unknown> {
@@ -120,7 +121,7 @@ function snapshot(value: unknown): value is Snapshot {
     shape(value, 'version,entries') &&
     value.version === 1 &&
     Array.isArray(value.entries) &&
-    value.entries.length <= 20 &&
+    value.entries.length <= MAX_ENTRIES &&
     value.entries.every(entry) &&
     new Set(value.entries.map((item) => item.requestId)).size === value.entries.length
   );
@@ -160,4 +161,8 @@ const encode = (superpipe({})('neo-intake-snapshot-encode') as PipelineAPI)
   )
   .end('encoded') as (entries: unknown) => string | Refusal;
 
-export const neoIntakeSnapshots = { encode, decode };
+export const neoIntakeSnapshots = {
+  encode,
+  decode,
+  limits: Object.freeze({ entries: MAX_ENTRIES, serializedCharacters: MAX_JSON }),
+};

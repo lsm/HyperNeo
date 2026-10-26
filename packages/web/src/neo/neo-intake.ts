@@ -8,6 +8,7 @@ import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 import { neoIntakeSnapshots } from './neo-intake-snapshot.ts';
+import { createNeoIntakeStorage } from './neo-intake-storage.ts';
 export const NEO_SEND_TIMEOUT_MS = 90_000;
 
 export type NeoQuote = {
@@ -399,5 +400,12 @@ export function createNeoIntakeClient(
         .requestId ?? null
     );
   }
-  return { send, retry, discard, settle, requestIdFor, snapshots: neoIntakeSnapshots };
+  return {
+    send,
+    retry,
+    discard,
+    settle,
+    requestIdFor,
+    snapshots: { ...neoIntakeSnapshots, storage: createNeoIntakeStorage },
+  };
 }
