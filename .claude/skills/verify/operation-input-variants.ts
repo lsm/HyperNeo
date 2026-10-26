@@ -11,7 +11,7 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
-const app = await createDaemonApp({ config: getConfig({ port: 9376, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 const evidence: unknown[] = [];
 try {
   await app.spaceRuntimeService.ready();

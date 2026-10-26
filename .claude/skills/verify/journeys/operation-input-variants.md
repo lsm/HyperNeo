@@ -6,7 +6,7 @@ Run the metadata-only proof using the shared setup in SKILL.md:
 TMPDIR=/absolute/writable/temp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/verify/operation-input-variants.ts
 ```
 
-The helper owns an isolated daemon on port 9376, with a synthetic database and
+The helper owns an isolated daemon on an ephemeral port, with a synthetic database and
 no provider or model. Its real MCP invoke adapter replays sanitized refused
 inputs: question lookup with id instead of questionId, and coding write planning
 with targets instead of candidates. Both must match the canonical input reply.
