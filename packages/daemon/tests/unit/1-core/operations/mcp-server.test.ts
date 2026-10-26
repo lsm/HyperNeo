@@ -75,6 +75,33 @@ describe('operation MCP server', () => {
     expect(calls).toEqual([]);
   });
 
+  test('derives advertised core call shapes from the current operation schemas', () => {
+    for (const verbs of [['start', 'send', 'bind'], ['future']] as const) {
+      const registry = createOperationRegistry([
+        defineOperation({
+          name: 'neo.todo.add',
+          description: 'Add a todo',
+          inputSchema: z.object({
+            askId: z.string(),
+            target: z.object({ verb: z.enum(verbs) }),
+            start: z.boolean().default(false),
+          }),
+          resultSchema: z.unknown(),
+          execute: async () => null,
+        }),
+      ]);
+      const advertised = operationInvokeTool(
+        createOperationMcpServer(() => registry, () => ({ role: 'neo' }))
+      ).description;
+      expect(advertised).toContain('neo.todo.add');
+      expect(advertised).toContain('askId');
+      expect(advertised).toContain('target');
+      expect(advertised).toContain(verbs.map((verb) => JSON.stringify(verb)).join('|'));
+      expect(advertised).toContain('start?');
+      expect(advertised).not.toContain('neo.todo.close');
+    }
+  });
+
   test('invokes the canonical implementation with a server-bound caller', async () => {
     const result = await call({
       name: 'example.echo',
