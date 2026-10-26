@@ -54,3 +54,9 @@ error. Inspect model-discovery-browser.json (timed WebSocket replies) and the PN
 Component tests also use the real MessageHub timer for a 15s load and a 60s forced
 reply, instead of mocking hub.request. Browser and temporary daemon data are
 closed and cleaned by the owned helpers; this never touches a live instance.
+
+The browser also opens Settings > Neo model and clicks Refresh models. Its
+forced list must return the cold model without an error or a Neo/global
+preference write. Retain model-discovery-neo-browser.png and the JSON's
+neoRefreshWithoutPreferenceWrite result. The focused NeoModelsSettings suite
+asserts the model-list request's third timeout argument as well as no save.

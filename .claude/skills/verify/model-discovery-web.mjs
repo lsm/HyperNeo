@@ -5,7 +5,7 @@ const [port, run] = process.argv.slice(2);
 assert(Number(port) > 0 && port !== '8399');
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
-const evidence = { calls: [], errors: [] };
+const evidence = { calls: [], errors: [], preferenceWrites: [] };
 const sent = new Map();
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
@@ -14,6 +14,7 @@ try {
     socket.on('framesent', event => {
       try {
         const message = JSON.parse(String(event.payload));
+        if (message.type === 'REQ' && (message.method === 'settings.global.update' || (message.method === 'operation.invoke' && message.data?.name === 'neo.preferences.set'))) evidence.preferenceWrites.push(message.method);
         if (message.type === 'REQ' && message.method === 'models.list') sent.set(message.id, { start: Date.now(), forceRefresh: message.data?.forceRefresh === true });
       } catch {}
     });
@@ -41,6 +42,17 @@ try {
   await page.screenshot({ path: `${run}/evidence/model-discovery-browser.png`, animations: 'disabled' });
   assert(evidence.calls.some(call => !call.forceRefresh && call.elapsedMs > 10000 && call.modelIds?.includes('cold-model')), 'cold browser load exceeded old 10s budget and returned its model');
   assert(evidence.calls.some(call => call.forceRefresh && call.elapsedMs > 30000 && call.modelIds?.includes('cold-model')), 'forced browser refresh survived joining the prior discovery pass');
+  await page.goto(`http://127.0.0.1:${port}/settings?tab=neo-model`);
+  await page.getByRole('region', { name: 'Neo models', exact: true }).waitFor();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Refresh models' && !button.disabled));
+  const priorCalls = evidence.calls.length;
+  await refresh.click();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Refresh models' && !button.disabled));
+  assert.equal(await page.getByRole('alert').count(), 0);
+  assert(evidence.calls.slice(priorCalls).some(call => call.forceRefresh && call.modelIds?.includes('cold-model')), 'Neo Settings refresh returned the discovered model');
+  assert.deepEqual(evidence.preferenceWrites, []);
+  evidence.neoRefreshWithoutPreferenceWrite = true;
+  await page.screenshot({ path: `${run}/evidence/model-discovery-neo-browser.png`, animations: 'disabled' });
   assert(evidence.calls.every(call => !call.error));
   assert.deepEqual(evidence.errors, []);
   evidence.passed = true;
