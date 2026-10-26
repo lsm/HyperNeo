@@ -8,5 +8,7 @@
   "unavailableWriterDoesNotReplay": true,
   "coreOwnedCompanionAwaitAuthorized": true,
   "temporaryHomesRemoved": true,
-  "productionModeStartupVerified": false
+  "productionModeStartupVerified": false,
+  "fullRepositoryChecks": "pass",
+  "refreshedAfterBaseMerge": true
 }

@@ -8,7 +8,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 389,
+    "uptime": 395,
     "sessions": {
       "active": 0,
       "total": 0
@@ -17,7 +17,7 @@
   "claimed": 2,
   "jobs": [
     {
-      "id": "b8ba2ef9-b647-45e9-af22-4c5e89cf5229",
+      "id": "00916a7c-ac48-4c23-baec-d70ff0592e75",
       "queue": "work.feed.claude",
       "status": "completed",
       "payload": {
@@ -31,15 +31,15 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792987975632,
-      "createdAt": 1792987975632,
-      "startedAt": 1792987975635,
+      "runAt": 1792988241012,
+      "createdAt": 1792988241012,
+      "startedAt": 1792988241016,
       "heartbeatAt": null,
-      "completedAt": 1792987975636,
-      "claimToken": "7ae8ccbc-0801-4b8f-abb3-10bfcc8a7f00"
+      "completedAt": 1792988241017,
+      "claimToken": "a7dbae1a-f350-4878-9de1-e381fe9243b3"
     },
     {
-      "id": "e6e0339e-dcad-4100-ab60-6d37cfedc8de",
+      "id": "58937f24-8ffe-45cf-9e22-e0e8bacefcad",
       "queue": "work.feed.codex",
       "status": "completed",
       "payload": {
@@ -53,18 +53,18 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792987975632,
-      "createdAt": 1792987975632,
-      "startedAt": 1792987975636,
+      "runAt": 1792988241012,
+      "createdAt": 1792988241012,
+      "startedAt": 1792988241016,
       "heartbeatAt": null,
-      "completedAt": 1792987975637,
-      "claimToken": "54149138-7910-4a69-8a27-be793134180a"
+      "completedAt": 1792988241017,
+      "claimToken": "598a53ba-36b3-4512-a338-006dba06ba83"
     }
   ],
   "successors": [
     [
       {
-        "id": "1851a764-fd46-482d-856c-f43e52120558",
+        "id": "3f3b6bd6-8330-4f46-b386-442f0c8683dd",
         "queue": "work.feed.claude",
         "status": "pending",
         "payload": {
@@ -75,8 +75,8 @@
         "priority": 0,
         "maxRetries": 3,
         "retryCount": 0,
-        "runAt": 1792988035635,
-        "createdAt": 1792987975635,
+        "runAt": 1792988301016,
+        "createdAt": 1792988241016,
         "startedAt": null,
         "heartbeatAt": null,
         "completedAt": null,
@@ -85,7 +85,7 @@
     ],
     [
       {
-        "id": "665c65e3-9e83-41c0-8997-df4668a973b2",
+        "id": "1743a155-a5a8-456e-b5cf-a84dfd8b7d2c",
         "queue": "work.feed.codex",
         "status": "pending",
         "payload": {
@@ -96,8 +96,8 @@
         "priority": 0,
         "maxRetries": 3,
         "retryCount": 0,
-        "runAt": 1792988035636,
-        "createdAt": 1792987975636,
+        "runAt": 1792988301017,
+        "createdAt": 1792988241017,
         "startedAt": null,
         "heartbeatAt": null,
         "completedAt": null,
@@ -114,7 +114,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 392,
+    "uptime": 398,
     "sessions": {
       "active": 0,
       "total": 0
