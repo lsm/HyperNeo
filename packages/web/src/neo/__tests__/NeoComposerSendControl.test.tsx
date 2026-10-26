@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
@@ -20,13 +20,13 @@ function mount(working: boolean, draft: string, onStop?: () => void) {
     agentState: signal({ status: working ? 'processing' : 'idle' }),
     sessionInfo: signal({ metadata: {} }),
     hasMoreMessages: signal(false),
-    error: signal(null),
+    error: signal<string | null>(null),
     isWorking: signal(working),
     refresh: vi.fn(),
-  } as unknown as SessionStore;
-  return render(
+  };
+  const view = render(
     <NeoComposer
-      store={store}
+      store={store as unknown as SessionStore}
       sessionId="neo-1"
       draft={draft}
       onDraft={vi.fn()}
@@ -36,6 +36,7 @@ function mount(working: boolean, draft: string, onStop?: () => void) {
       onStop={onStop}
     />
   );
+  return { ...view, store };
 }
 const stop = () => screen.queryByRole('button', { name: 'Stop Neo' });
 const send = () => screen.queryByRole('button', { name: 'Send message' });
@@ -82,15 +83,39 @@ describe('Neo composer send slot', () => {
     expect(interrupt).not.toHaveBeenCalled();
   });
 
+  it.each(['error', 'waiting'] as const)('expands for %s status without focusing', (attention) => {
+    const { store } = mount(false, '');
+    const input = screen.getByRole('textbox', { name: 'Message Neo' });
+    expect(input.getAttribute('rows')).toBe('1');
+    act(() => {
+      if (attention === 'error') store.error.value = 'Synthetic error';
+      else store.agentState.value = { status: 'waiting_for_input' };
+    });
+    expect(input.getAttribute('rows')).toBe('2');
+    expect(screen.getByRole('status').textContent).toContain(
+      attention === 'error' ? 'needs you' : 'A quick question'
+    );
+    act(() => {
+      store.error.value = null;
+      store.agentState.value = { status: 'idle' };
+    });
+    expect(input.getAttribute('rows')).toBe('1');
+  });
+
   it('offers Stop for a session’s running turn when the pane can stop it', () => {
     const onStop = vi.fn();
     mount(false, '', onStop);
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     cleanup();
     mount(true, '', onStop);
-    fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
+    expect(screen.getByRole('textbox', { name: 'Message Neo' }).getAttribute('rows')).toBe('1');
     screen.getByRole('button', { name: 'Stop' }).click();
     expect(onStop).toHaveBeenCalledTimes(1);
-    expect(send()).toBeTruthy();
+    expect(send()).toBeNull();
+    fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
+    fireEvent.focusOut(screen.getByRole('textbox', { name: 'Message Neo' }), {
+      relatedTarget: document.body,
+    });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
   });
 });
