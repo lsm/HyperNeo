@@ -7,7 +7,7 @@ import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-h
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { Database } from '../../../../src/storage/database';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
+import { createTables } from '../../../../src/storage/schema';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -912,12 +912,20 @@ describe('Message RPC Handlers', () => {
   describe('message.sdkMessage', () => {
     test('returns one message in full for "show full output"', async () => {
       const sqlite = new BunDatabase(':memory:');
-      sqlite.exec('CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, sdk_message TEXT)');
-      runMigration418(sqlite);
+      createTables(sqlite);
+      sqlite
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+           VALUES ('session-123', 'Synthetic message', ?, ?, 'active', '{}', '{}')`
+        )
+        .run(new Date().toISOString(), new Date().toISOString());
       const full = { type: 'user', uuid: 'u1', message: { content: 'z'.repeat(20_000) } };
       sqlite
-        .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
-        .run('session-123', 'u1', JSON.stringify(full));
+        .prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, sdk_uuid, sdk_message, timestamp)
+           VALUES ('full-body', 'session-123', 'user', ?, ?, ?)`
+        )
+        .run('u1', JSON.stringify(full), new Date().toISOString());
       const db = {
         waitForSdkMessageColumns: async () => {},
         getDbPath: () => ':memory:',
@@ -945,8 +953,11 @@ describe('Message RPC Handlers', () => {
           },
         };
         sqlite
-          .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
-          .run('session-123', 'u2', JSON.stringify(result));
+          .prepare(
+            `INSERT INTO sdk_messages (id, session_id, message_type, sdk_uuid, sdk_message, timestamp)
+             VALUES ('capped-body', 'session-123', 'user', ?, ?, ?)`
+          )
+          .run('u2', JSON.stringify(result), new Date().toISOString());
         const capped = (await handler!(
           { sessionId: 'session-123', messageUuid: 'u2', capped: true },
           {}
