@@ -21,6 +21,8 @@ describe('neo wait admission', () => {
     expect(sleepCommandVerdict('sleep 0.5 && ls')).toBe('allowed');
     expect(sleepCommandVerdict('sleep 301')).toBe('denied');
     expect(sleepCommandVerdict('sleep 10 && sleep 290')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 200 && sleep 200')).toBe('denied');
+    expect(sleepCommandVerdict('/usr/bin/sleep 301')).toBe('denied');
     expect(sleepCommandVerdict('sleep $(cat seconds.txt)')).toBe('denied');
     expect(sleepCommandVerdict('echo done')).toBe('none');
   });

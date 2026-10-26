@@ -414,14 +414,24 @@ describe('sleepCommandVerdict / createSleepBoundHook', () => {
 
   test('over-limit, unit-shifted, and computed waits stay vetoed', () => {
     expect(sleepCommandVerdict('sleep 301')).toBe('denied');
-    expect(sleepCommandVerdict('sleep 10 && sleep 291')).toBe('allowed');
-    expect(sleepCommandVerdict('sleep 10 && sleep 301')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 10 && sleep 291')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 300 && sleep 300')).toBe('denied');
     expect(sleepCommandVerdict('sleep 6m')).toBe('denied');
     expect(sleepCommandVerdict('sleep 1h')).toBe('denied');
     expect(sleepCommandVerdict('sleep $(cat s)')).toBe('denied');
     expect(sleepCommandVerdict('sleep $N')).toBe('denied');
     expect(sleepCommandVerdict('sleep')).toBe('denied');
     expect(sleepCommandVerdict('sleep 1d')).toBe('denied');
+  });
+
+  test('hostile and path-qualified sleeps cannot bypass the bound', () => {
+    expect(sleepCommandVerdict('/usr/bin/sleep 301')).toBe('denied');
+    expect(sleepCommandVerdict('BASH_ENV=x sleep 9999')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 1 && BASH_ENV=x sleep 9999')).toBe('denied');
+    expect(sleepCommandVerdict('(sleep 999)')).toBe('denied');
+    expect(sleepCommandVerdict('BASH_ENV=x ls')).toBe('none');
+    expect(sleepCommandVerdict('FOO=bar /usr/bin/sleep 30')).toBe('allowed');
+    expect(sleepCommandVerdict('X=1 sleep 30 && sleep 40')).toBe('allowed');
   });
 
   test('commands without sleeps are neutral', () => {

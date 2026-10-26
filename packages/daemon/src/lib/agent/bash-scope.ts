@@ -1,4 +1,5 @@
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
+import { basename } from 'node:path';
 import { SCOPED_BASH_TOOL_PATTERN } from '@hyperneo/shared';
 
 export function parseScopedBashPrefix(entry: string): string | null {
@@ -461,7 +462,7 @@ export const NEO_SLEEP_MAX_SECONDS = 300;
 
 type SleepVerdict = 'none' | 'allowed' | 'denied';
 
-function sleepSegmentVerdict(segment: string, maxSeconds: number): SleepVerdict {
+function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
   let s = segment.trim();
   if (!s) return 'none';
   s = s
@@ -470,18 +471,28 @@ function sleepSegmentVerdict(segment: string, maxSeconds: number): SleepVerdict 
     .trim();
   if (!s) return 'none';
   const stripped = stripLeadingAssignments(s);
-  if (stripped === null || !stripped) return 'none';
+  if (stripped === null) return /(?:^|[ \t])(?:\S*\/)?sleep[ \t]/.test(s) ? 'invalid' : 'none';
+  if (!stripped) return 'none';
   const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
-  if (head !== 'sleep') return 'none';
-  if (args.length === 0) return 'denied';
+  if (!head || basename(head) !== 'sleep') return 'none';
+  if (args.length === 0) return 'invalid';
   let total = 0;
   for (const arg of args) {
     const match = arg.match(/^(\d+(?:\.\d+)?)([smhd]?)$/);
-    if (!match) return 'denied';
+    if (!match) return 'invalid';
     const unit = match[2] === 'm' ? 60 : match[2] === 'h' ? 3600 : match[2] === 'd' ? 86400 : 1;
     total += Number.parseFloat(match[1]) * unit;
   }
-  return total > maxSeconds ? 'denied' : 'allowed';
+  return total;
+}
+
+function splitCommandText(command: string): string[] {
+  const segments: string[] = [];
+  checkCommandText(command, (segment) => {
+    segments.push(segment);
+    return true;
+  });
+  return segments;
 }
 
 export function sleepCommandVerdict(
@@ -489,13 +500,17 @@ export function sleepCommandVerdict(
   maxSeconds: number = NEO_SLEEP_MAX_SECONDS
 ): SleepVerdict {
   let seen = false;
-  const clean = checkCommandText(command, (segment) => {
-    const verdict = sleepSegmentVerdict(segment, maxSeconds);
-    if (verdict !== 'none') seen = true;
-    return verdict !== 'denied';
-  });
+  let total = 0;
+  let clean = true;
+  for (const segment of splitCommandText(command)) {
+    const seconds = sleepSegmentSeconds(segment);
+    if (seconds === 'none') continue;
+    seen = true;
+    if (seconds === 'invalid') clean = false;
+    else total += seconds;
+  }
   if (!seen) return 'none';
-  return clean ? 'allowed' : 'denied';
+  return clean && total <= maxSeconds ? 'allowed' : 'denied';
 }
 
 export function createSleepBoundHook(maxSeconds: number = NEO_SLEEP_MAX_SECONDS): HookCallback {
