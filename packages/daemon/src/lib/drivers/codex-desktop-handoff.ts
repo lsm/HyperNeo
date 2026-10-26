@@ -133,8 +133,10 @@ export async function steerCodexDesktopTurn(
     return { reason: reject('not_delivered', String(error), true) };
   }
   if (mode === 'queue') {
-    const owned = socketPath
-      ? await withCodexDesktopIpc(
+    let owned = false;
+    if (socketPath) {
+      try {
+        owned = await withCodexDesktopIpc(
           socketPath,
           async ({ call }) => {
             const discovered = await discoverCodexDesktopOwner({ call }, threadId);
@@ -148,8 +150,18 @@ export async function steerCodexDesktopTurn(
             return false;
           },
           deadline
-        )
-      : false;
+        );
+      } catch (error) {
+        log.warn('work.send route', {
+          threadId,
+          messageId,
+          path: 'app-server',
+          reason: 'desktop_owner_unknown',
+          detail: String(error),
+        });
+        owned = false;
+      }
+    }
     if (!owned) {
       log.warn('work.send route', {
         threadId,

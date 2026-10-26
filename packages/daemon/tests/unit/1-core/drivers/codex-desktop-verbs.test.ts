@@ -693,6 +693,30 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
+  test('a queue send falls back to the app-server when Desktop ownership cannot be reached', async () => {
+    const calls: string[] = [];
+    const driver = adapter(
+      0,
+      '',
+      async () => ({
+        call: async (method) => {
+          calls.push(method);
+          if (method === 'thread/queue/add') return { queuedSubmission: { id: 'queue-1' } };
+          throw new Error(`Unexpected app-server call ${method}`);
+        },
+        close: () => {},
+      }),
+      undefined,
+      '',
+      { desktopRunning: async () => true, desktopSocketPath: join(dir, 'missing-ipc.sock') }
+    );
+    await expect(driver.queue!(ref('idle'), 'next task after this turn', user)).resolves.toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'queue-1' },
+    });
+    expect(calls).toEqual(['thread/queue/add']);
+  });
+
   test.each(['', '  Final Codex message 🔬\n'.repeat(400)])(
     'exposes explicit turn-end payloads without borrowing earlier prose: %s',
     async (message) => {
