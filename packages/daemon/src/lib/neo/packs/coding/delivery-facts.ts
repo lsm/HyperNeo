@@ -5,7 +5,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
-import { CodingActor, CodingStageFactsRepository, type CodingStageFact } from './stage-facts.ts';
+import { CodingActor } from './stage-facts.ts';
 import type { NeoDeployRead } from './deploy-checks.ts';
 const Text = z.string().trim().min(1);
 const Evidence = z.array(Text).min(1);
@@ -32,29 +32,8 @@ export type CodingSmoke = z.infer<typeof CodingSmoke>;
 export const sameCodingWorkRef = (a: WorkRef, b: WorkRef) =>
   a.adapter === b.adapter && a.id === b.id && a.daemon === b.daemon;
 export type CodingDelivery = { gate: CodingMergeGate; smoke: CodingSmoke | null };
-export type CodingDeliverySnapshot = {
-  required: boolean;
-  deliveries: (CodingDelivery & { stages: CodingStageFact[] })[];
-};
 export class CodingDeliveryFactsRepository {
   constructor(private readonly db: Database) {}
-  snapshot(todoId: string, prs: readonly { url: string; head?: string }[]): CodingDeliverySnapshot {
-    const required = !!this.db
-      .prepare(`SELECT 1 FROM pack_facts WHERE todo_id = ? AND pack = 'coding'
-      AND key LIKE 'assignment:%' AND json_extract(value_json, '$.newDispatch') = 1 LIMIT 1`)
-      .get(todoId);
-    return {
-      required,
-      deliveries: required
-        ? prs.flatMap((pr) => {
-            const delivery = pr.head ? this.read(todoId, pr.url, pr.head) : null;
-            return delivery
-              ? [{ ...delivery, stages: new CodingStageFactsRepository(this.db).read(pr.url) }]
-              : [];
-          })
-        : [],
-    };
-  }
   read(todoId: string, url: string, head: string): CodingDelivery | null {
     const row = this.db
       .prepare(`SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts

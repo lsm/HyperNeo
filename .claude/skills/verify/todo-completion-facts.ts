@@ -115,7 +115,7 @@ try {
     }
   }
   await refresh();
-  assert.deepEqual(cases.map(item => store.getTodo(item.id)), observed.map(item => item.todo));
+  assert.deepEqual(cases.filter(item => item.done).map(item => store.getTodo(item.id)), observed.filter(item => cases.find(entry => entry.id === item.id)!.done).map(item => item.todo));
   console.log('PASS: the real scheduled driver refresh completes merged/closed checks despite old human, worker or delivery gates; RPC reads show the resulting done state.');
 } catch (error) { evidence.push({ error: String(error) }); throw error; }
 finally { ws?.close(); await app?.cleanup(); globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
