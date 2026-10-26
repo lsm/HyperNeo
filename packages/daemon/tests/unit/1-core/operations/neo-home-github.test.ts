@@ -123,6 +123,15 @@ afterEach(async () => {
 });
 
 describe('Neo private GitHub home proposal', () => {
+  test('does not publish credential-like bytes in an existing commit message', async () => {
+    await git('commit', '--allow-empty', '-m', 'Rotate ghp_' + 'synthetic'.repeat(5));
+    const proposed = await call({ askId: 'ask' });
+    await answer(proposed.questionId);
+    const result = await call({ questionId: proposed.questionId });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await log()).not.toContain('repo create');
+  });
   test('does not publish credentials added only in a merge resolution', async () => {
     const branch = await git('symbolic-ref', '--short', 'HEAD');
     await git('switch', '-c', 'side');

@@ -96,6 +96,15 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test('does not publish credential-like bytes in a commit message', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    const message = 'Rotate ghp_' + 'synthetic'.repeat(5);
+    const result = await call('neo.home.save', { ...input, message });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await git(root, 'log', '-1', '--format=%B')).toBe(message);
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
+  });
   test('does not publish credential-like bytes introduced in binary history', async () => {
     const remoteHead = await git(remote, 'rev-parse', 'main');
     await commit(root, 'fixture.bin', '\0TOKEN=' + 'synthetic'.repeat(4));
