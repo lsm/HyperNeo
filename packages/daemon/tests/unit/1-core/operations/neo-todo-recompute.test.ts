@@ -15,7 +15,7 @@ afterEach(() => {
   for (const close of closing.splice(0).reverse()) close();
 });
 
-function fixture() {
+function fixture(legacyCheck = false) {
   const directory = mkdtempSync(join(tmpdir(), 'neo-todo-plan-'));
   closing.push(() => rmSync(directory, { recursive: true, force: true }));
   let db: Database;
@@ -65,7 +65,7 @@ function fixture() {
     return createNeoTodoRunner({
       store,
       sessions,
-      packs: () => [pack],
+      packs: () => [legacyCheck ? { ...pack, readFacts: undefined, judge: undefined } : pack],
       invoke: async (_caller, name, input) => {
         if (name === 'work.start') {
           starts.push(String(input.message));
@@ -159,6 +159,29 @@ function fixture() {
 }
 
 describe('ordered ask progression from facts', () => {
+  test('a legacy pack check also supersedes a stale human hold', async () => {
+    const f = fixture(true);
+    f.add('first');
+    f.store.updateTodo(
+      f.store.getTodo('first')!,
+      {
+        state: 'blocked',
+        blockedBy: 'needs-human',
+        blockedReason: 'Old question',
+        nextAction: 'Answer',
+      },
+      2
+    );
+    f.facts.set('first', { state: 'done', evidence: 'Observed completion' });
+    await f.runner.checkNow(['first'], (_message, error) => {
+      throw error;
+    });
+    expect(f.store.getTodo('first')).toMatchObject({
+      state: 'done',
+      blockedBy: null,
+      evidence: 'Observed completion',
+    });
+  });
   test('done starts the next recorded todo through the existing dispatch path', async () => {
     const f = fixture();
     f.add('first');
