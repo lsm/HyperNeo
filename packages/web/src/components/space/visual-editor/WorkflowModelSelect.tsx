@@ -1,3 +1,4 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ModelInfo } from '@hyperneo/shared';
 import { connectionManager } from '../../../lib/connection-manager';
@@ -100,9 +101,11 @@ export function WorkflowModelSelect({
       try {
         const hub = await connectionManager.getHub();
         if (cancelled) return;
-        const response = (await hub.request('models.list', {
-          useCache: true,
-        })) as { models: RawModelEntry[] };
+        const response = (await hub.request(
+          'models.list',
+          { useCache: true },
+          { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+        )) as { models: RawModelEntry[] };
         if (cancelled) return;
         const loaded = dedupeModelsByProviderAndId(mapRawModelsToModelInfos(response.models ?? []));
         setModels(loaded);
