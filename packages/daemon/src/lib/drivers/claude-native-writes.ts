@@ -8,7 +8,6 @@ import {
   prepareWorkerSandbox,
   workerSandboxPaths,
   workerSecretPaths,
-  workerUnixSockets,
 } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
@@ -40,7 +39,6 @@ function policy(root: string, roots: string[], siblings: string[]) {
       },
       network: {
         allowedDomains: ['*'],
-        allowUnixSockets: workerUnixSockets(),
         allowAllUnixSockets: true,
         allowLocalBinding: true,
       },
@@ -133,7 +131,6 @@ function withSecretDenials(
       network: {
         ...computed.sandbox.network,
         ...existing?.sandbox?.network,
-        allowUnixSockets: computed.sandbox.network.allowUnixSockets,
         allowAllUnixSockets: computed.sandbox.network.allowAllUnixSockets,
       },
       filesystem: {

@@ -107,7 +107,25 @@ try {
     const result = await hub.request<{ ok: boolean; application: string; reason?: string }>('operation.invoke', { name: 'session.tools.setChoice', input: { sessionId: id, key, selected } });
     assert(result.ok, `authorized tool activation must persist a choice: ${JSON.stringify(result)}`); return result;
   };
-  if (process.argv.includes('--show-panel') || process.argv.includes('--show-panel-before')) {
+  const taskPanel = process.argv.includes('--show-task-panel') || process.argv.includes('--show-task-panel-before');
+  const baselinePanel = process.argv.includes('--show-panel-before') || process.argv.includes('--show-task-panel-before');
+  if (process.argv.includes('--show-panel') || baselinePanel || taskPanel) {
+    let panelPath = `/session/${sessionId}`;
+    if (taskPanel) {
+      await app.jobProcessor.stop();
+      const { SpaceRepository } = await import('../../../packages/daemon/src/storage/repositories/space-repository.ts');
+      const { SpaceTaskRepository } = await import('../../../packages/daemon/src/storage/repositories/space-task-repository.ts');
+      const db = app.db.getDatabase();
+      const space = new SpaceRepository(db).createSpace({name:'Synthetic activation Space',slug:'synthetic-activation',workspacePath:join(run,'workspace')});
+      const task = new SpaceTaskRepository(db).createTask({spaceId:space.id,title:'Synthetic tool activation task',status:'in_progress'});
+      db.prepare('UPDATE space_tasks SET post_approval_session_id=? WHERE id=?').run(sessionId,task.id);
+      const data = app.sessionManager.getSession(sessionId)!.getSessionData();
+      data.type = 'worker'; data.context = {spaceId:space.id,taskId:task.id};
+      data.metadata = {...data.metadata,promptProvenance:{nodeId:'synthetic-node',agentName:'Coder'}};
+      await app.db.updateSession(sessionId,{type:data.type,context:data.context,metadata:data.metadata});
+      panelPath = `/space/${space.id}/task/${task.id}`;
+      evidence.taskFixture = {spaceId:space.id,taskId:task.id,sessionId,dispatchStopped:true};
+    }
     const { Hono } = await import(Bun.resolveSync('hono', resolve(import.meta.dir, '../../../packages/cli')));
     const { serveStatic } = await import(Bun.resolveSync('hono/bun', resolve(import.meta.dir, '../../../packages/cli')));
     const { createWebSocketHandlers } = await import('../../../packages/daemon/src/routes/setup-websocket.ts');
@@ -126,16 +144,17 @@ try {
       }
       return web.fetch(request);
     }, websocket: createWebSocketHandlers(owned.transport, owned.sessionManager) });
-    console.log(`PANEL: http://127.0.0.1:${preview.port}/session/${sessionId} PID=${process.pid}`);
+    console.log(`PANEL: http://127.0.0.1:${preview.port}${panelPath} PID=${process.pid}`);
     await new Promise<void>(done => process.once('SIGUSR1', done));
     evidence.panel = { applications, interrupts, discoveryProbes, interruptOrigins, queryOrigins, workerQueryCount: queries.length, session: (await hub.request<{session: Session}>('session.get', {sessionId})).session.config.toolSelection, inventory: await hub.request('session.getToolInventory', {sessionId}) };
     assert.equal(interrupts, 0); assert.equal(queries.length, 1);
-    if (process.argv.includes('--show-panel')) {
+    if (!baselinePanel) {
       assert(applications.some(names => names.includes(aliases[0])));
       assert(applications.some(names => names.length === 0));
       assert.equal((evidence.panel as {session: SessionToolSelection}).session.choices[`skill:${guide.id}`]?.selected, true);
     }
-    evidence.panelVerified = process.argv.includes('--show-panel');
+    evidence.panelVerified = !baselinePanel;
+    evidence.panelSurface = taskPanel ? 'space-task' : 'session';
     evidence.pass = true;
   } else {
   const enabled = await choose(sessionId, `mcp:${server.id}`, true);

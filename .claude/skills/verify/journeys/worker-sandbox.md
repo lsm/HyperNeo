@@ -37,8 +37,8 @@ to its own loopback model. No policy/env injection occurs in the SDK transport
 wrapper. The daemon and model process close in finally; no fixed mock port is used.
 All three routes also curl the synthetic server through the sandbox's configured
 HTTP proxy. This proves HTTP network access, not real GitHub push/authentication.
-Claude allows HTTP(S) hosts explicitly. Unix sockets default to denied; the
-human-approved exceptions journey is `worker-unix-sockets.md`. SSH push is not verified.
+Claude allows HTTP(S) hosts explicitly, and sandboxed workers may reach any Unix socket
+(`worker-loopback.md` signs a commit through an agent socket). SSH push is not verified.
 
 Focused tests remove runtime roots before resuming a Claude worker or building SDK options; those paths must recreate
 their own private dirs. Creating a sibling must preserve existing env/sandbox
