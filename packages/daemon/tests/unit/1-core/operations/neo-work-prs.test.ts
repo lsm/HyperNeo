@@ -159,12 +159,18 @@ describe('readGithubPrs', () => {
     const asked: string[][] = [];
     const spawn = (args: string[]) => {
       asked.push(args);
-      const ok = args[3].endsWith('/42');
+      const ok = args[2] === 'view' && args[3].endsWith('/42');
+      const api =
+        args[1] === 'api'
+          ? String(args.find((arg) => arg.startsWith('repos/')) ?? '').includes('check-runs')
+            ? { check_runs: [] }
+            : { statuses: [] }
+          : null;
       return {
-        stdout: new Response(ok ? JSON.stringify(ghPr()) : '').body,
+        stdout: new Response(ok ? JSON.stringify(ghPr()) : api ? JSON.stringify(api) : '').body,
         stderr: new Response(ok ? '' : 'not found').body,
-        exited: Promise.resolve(ok ? 0 : 1),
-        exitCode: ok ? 0 : 1,
+        exited: Promise.resolve(ok || api ? 0 : 1),
+        exitCode: ok || api ? 0 : 1,
         kill: () => {},
       };
     };
@@ -193,10 +199,314 @@ describe('readGithubPrs', () => {
       };
     };
     await readGithubPrs(['https://ghe.example.com/lsm/HyperNeo/pull/42'], spawn as never);
-    expect(asked.map((args) => args[1])).toEqual(['pr']);
+    expect(asked.map((args) => args[1])).toEqual(['pr', 'api']);
     asked.length = 0;
     await readGithubPrs(['https://github.com/lsm/Rules/pull/42'], spawn as never);
-    expect(asked.map((args) => args[1])).toEqual(['pr', 'api', 'api']);
+    expect(asked.map((args) => args[1])).toEqual(['pr', 'api']);
+  });
+});
+
+describe('readGithubPrs REST check rollup', () => {
+  const url = 'https://github.com/lsm/HyperNeo/pull/42';
+  const rollupSpawn = (
+    viewBody: Record<string, unknown>,
+    api: (path: string) => unknown = () => null
+  ) => {
+    const asked: string[][] = [];
+    const spawn = (args: string[]) => {
+      asked.push(args);
+      const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
+      const body = args[2] === 'view' ? viewBody : args[1] === 'api' ? api(path) : [];
+      return {
+        stdout: new Response(JSON.stringify(body)).body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
+    };
+    return { spawn, asked };
+  };
+
+  test('asks for CI on REST check-runs and combined status, not GraphQL statusCheckRollup', async () => {
+    const { spawn, asked } = rollupSpawn(ghPr(), (path) =>
+      path.includes('check-runs')
+        ? {
+            check_runs: [
+              { status: 'completed', conclusion: 'success' },
+              { status: 'completed', conclusion: 'skipped' },
+            ],
+          }
+        : { statuses: [{ state: 'success' }] }
+    );
+    const read = await readGithubPrs([url], spawn as never);
+    expect(read?.[0]?.checks).toBe('passing');
+    expect(asked[0].join(' ')).not.toContain('statusCheckRollup');
+    expect(
+      asked
+        .map((args) => String(args.find((arg) => arg.startsWith('repos/')) ?? ''))
+        .some((path) => path.startsWith('repos/lsm/HyperNeo/commits/abc123/check-runs'))
+    ).toBe(true);
+    expect(
+      asked
+        .map((args) => String(args.find((arg) => arg.startsWith('repos/')) ?? ''))
+        .some((path) => path.startsWith('repos/lsm/HyperNeo/commits/abc123/status'))
+    ).toBe(true);
+  });
+
+  test('maps a failed check run and an errored status to failing', async () => {
+    const { spawn } = rollupSpawn(ghPr(), (path) =>
+      path.includes('check-runs')
+        ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
+        : { statuses: [{ state: 'error' }] }
+    );
+    expect((await readGithubPrs([url], spawn as never))?.[0]?.checks).toBe('failing');
+  });
+
+  test('skips the REST rollup for a settled pull request', async () => {
+    const { spawn, asked } = rollupSpawn(
+      ghPr({ state: 'MERGED', mergedAt: '2026-10-25T00:00:00Z' }),
+      () => [{ statuses: [] }]
+    );
+    const read = await readGithubPrs([url], spawn as never);
+    expect(read?.[0]?.state).toBe('MERGED');
+    expect(read?.[0]?.checks).toBe('none');
+    expect(
+      asked.some((args) => args.some((arg) => typeof arg === 'string' && arg.includes('/commits/')))
+    ).toBe(false);
+  });
+
+  test('fails the read when the REST rollup is unavailable, keeping the stored value', async () => {
+    const { spawn } = rollupSpawn(ghPr(), () => null);
+    const read = await readGithubPrs([url], spawn as never);
+    expect(read).toBe(null);
+  });
+
+  test('fails the read when only one REST source answers, instead of half a verdict', async () => {
+    const { spawn } = rollupSpawn(ghPr(), (path) =>
+      path.includes('check-runs') ? null : { statuses: [{ state: 'success' }] }
+    );
+    const read = await readGithubPrs([url], spawn as never);
+    expect(read).toBe(null);
+  });
+
+  test('keeps a not-yet-started required check pending instead of ready', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredA/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? { check_runs: [] }
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: { required_status_checks: [{ context: 'All Tests Pass' }] },
+                },
+              ]
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredA/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('pending');
+  });
+
+  test('fails the read when branch rules are unreadable for an open PR', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredC/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? { check_runs: [] }
+          : path.includes('/rules/branches/')
+            ? null
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredC/pull/9'], spawn as never);
+    expect(read).toBe(null);
+  });
+
+  test('keeps a started required check out of the expected set', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredB/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? {
+              check_runs: [{ name: 'All Tests Pass', status: 'completed', conclusion: 'success' }],
+            }
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: { contexts: ['All Tests Pass'] },
+                },
+              ]
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredB/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('passing');
+  });
+
+  test('targets the pull request host for the branch rules lookup', async () => {
+    const ghe = 'https://ghe.example.com/lsm/RequiredF/pull/9';
+    const { spawn, asked } = rollupSpawn(ghPr({ url: ghe, baseRefName: 'dev' }), (path) =>
+      path.includes('check-runs')
+        ? { check_runs: [] }
+        : path.includes('/rules/branches/')
+          ? [{ type: 'pull_request', parameters: {} }]
+          : { statuses: [] }
+    );
+    const read = await readGithubPrs([ghe], spawn as never);
+    expect(read?.[0]?.state).toBe('OPEN');
+    const rules = asked.find((args) =>
+      args.some((arg) => typeof arg === 'string' && arg.includes('/rules/branches/'))
+    );
+    expect(rules?.[rules!.indexOf('--hostname') + 1]).toBe('ghe.example.com');
+  });
+
+  test('a same-named run from another provider does not satisfy a pinned required check', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredD/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? {
+              check_runs: [
+                { name: 'gate', status: 'completed', conclusion: 'success', app_id: 999 },
+              ],
+            }
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: {
+                    required_status_checks: [{ context: 'gate', integration_id: 123 }],
+                  },
+                },
+              ]
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredD/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('pending');
+  });
+
+  test('the any-app sentinel satisfies a required check from any provider', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredG/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? {
+              check_runs: [
+                { name: 'gate', status: 'completed', conclusion: 'success', app_id: 123 },
+              ],
+            }
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: {
+                    required_status_checks: [{ context: 'gate', integration_id: -1 }],
+                  },
+                },
+              ]
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredG/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('passing');
+  });
+
+  test('a matching provider satisfies a pinned required check', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredE/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? {
+              check_runs: [
+                { name: 'gate', status: 'completed', conclusion: 'success', app_id: 123 },
+              ],
+            }
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: {
+                    required_status_checks: [{ context: 'gate', integration_id: 123 }],
+                  },
+                },
+              ]
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredE/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('passing');
+  });
+
+  test('skips expected synthesis, but keeps the read, when the rules endpoint is absent', async () => {
+    const spawn = (args: string[]) => {
+      const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
+      let body: unknown = { statuses: [] };
+      if (args[2] === 'view')
+        body = ghPr({ url: 'https://github.com/lsm/RequiredH/pull/9', baseRefName: 'dev' });
+      else if (path.includes('check-runs')) body = { check_runs: [] };
+      const absent = path.includes('/rules/branches/');
+      return {
+        stdout: new Response(absent ? '' : JSON.stringify(body)).body,
+        stderr: new Response(absent ? 'gh: HTTP 404: Not Found' : '').body,
+        exited: Promise.resolve(absent ? 1 : 0),
+        exitCode: absent ? 1 : 0,
+        kill: () => {},
+      };
+    };
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredH/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('none');
+  });
+
+  test('an unstarted required check does not mask failing CI as pending', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredI/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? { check_runs: [{ name: 'red', status: 'completed', conclusion: 'failure' }] }
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: {
+                    required_status_checks: [{ context: 'red' }, { context: 'late' }],
+                  },
+                },
+              ]
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredI/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('failing');
+  });
+
+  test('follows check-runs pagination to a failure past the first page', async () => {
+    const fullPage = Array.from({ length: 100 }, () => ({
+      status: 'completed',
+      conclusion: 'success',
+    }));
+    const { spawn, asked } = rollupSpawn(ghPr(), (path) => {
+      if (path.includes('check-runs'))
+        return path.includes('page=2')
+          ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
+          : { check_runs: fullPage };
+      return { statuses: [] };
+    });
+    const read = await readGithubPrs([url], spawn as never);
+    expect(read?.[0]?.checks).toBe('failing');
+    expect(
+      asked
+        .filter((args) => args.some((arg) => typeof arg === 'string' && arg.includes('check-runs')))
+        .every((args) => args.includes('--jq'))
+    ).toBe(true);
+  });
+
+  test('targets the pull request host for REST lookups', async () => {
+    const ghe = 'https://ghe.example.com/lsm/HyperNeo/pull/42';
+    const { spawn, asked } = rollupSpawn(ghPr({ url: ghe }), () => [{ statuses: [] }]);
+    await readGithubPrs([ghe], spawn as never);
+    const hostnames = asked
+      .filter((args) => args.includes('--hostname'))
+      .map((args) => args[args.indexOf('--hostname') + 1]);
+    expect(hostnames.length).toBeGreaterThan(0);
+    expect(new Set(hostnames)).toEqual(new Set(['ghe.example.com']));
   });
 });
 
@@ -322,6 +632,9 @@ describe('readGithubPrs blockers', () => {
           mergeStateStatus: 'BLOCKED',
           headRefOid: '1bad987',
         });
+      const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
+      if (path.includes('/check-runs')) return { check_runs: [] };
+      if (path.includes('/status?')) return { statuses: [] };
       if (args[2] === 'graphql')
         return {
           data: {
@@ -357,7 +670,9 @@ describe('readGithubPrs blockers', () => {
       },
     ]);
     await readGithubPrs([url], spawn as never);
-    expect(asked.filter((args) => args[2]?.startsWith('repos/'))).toHaveLength(1);
+    expect(
+      asked.filter((args) => args.some((arg) => typeof arg === 'string' && arg.includes('/rules/')))
+    ).toHaveLength(1);
 
     const release = 'https://github.com/lsm/blockers-release/pull/1';
     const view = reply;
@@ -374,8 +689,10 @@ describe('readGithubPrs blockers', () => {
         kill: () => {},
       };
     }) as never);
-    expect(asked.find((args) => args[2]?.startsWith('repos/'))?.[2]).toBe(
-      'repos/lsm/blockers-release/rules/branches/release%2F1.x'
-    );
+    expect(
+      asked
+        .flatMap((args) => args.filter((arg) => typeof arg === 'string' && arg.includes('/rules/')))
+        .find(Boolean)
+    ).toBe('repos/lsm/blockers-release/rules/branches/release%2F1.x');
   });
 });

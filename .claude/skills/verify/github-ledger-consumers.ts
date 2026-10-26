@@ -52,7 +52,7 @@ try {
   const deploy = () => readGithubDeploys([url], async () => [{ daemon: 'synthetic-laptop', commit: 'd'.repeat(40) }]);
   if (scenario === 'merged') {
     await reconcile(); const first = { detail: await detail(), list: await list(), branch: await branch(), deploy: await deploy(), ledger: ledger.snapshot([repo], Date.now()) };
-    assert.deepEqual(first.detail, { ok: true, kind: 'pr', url, state: 'MERGED', checks: 'passing', review: 'approved', blockers: [], title: 'Synthetic shared fact' });
+    assert.deepEqual(first.detail, { ok: true, kind: 'pr', url, state: 'MERGED', checks: 'none', review: 'approved', blockers: [], title: 'Synthetic shared fact' });
     assert.deepEqual(first.branch, [url]); assert.equal(first.ledger[0].state, 'merged');
     assert.equal(first.deploy.prs[0].mergeCommit, 'c'.repeat(40)); assert.deepEqual(first.deploy.daemons[0].contains, ['c'.repeat(40)]);
     assert.equal((first.list as { items: { url: string }[] }).items[0].url, url);
