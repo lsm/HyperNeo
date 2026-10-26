@@ -3,22 +3,19 @@ import { vi } from 'vitest';
 import { discoverSigningSocket } from '../../../../src/lib/neo/worker-sockets.ts';
 const state = vi.hoisted(() => ({ missing: 'ssh' }));
 
-vi.mock('../../../../src/lib/runtime-spawn/index.ts', () => ({
-  spawnProcess: (command: string[]) => {
-    if (command[0] === state.missing)
-      throw Object.assign(new Error(`${state.missing} unavailable`), { code: 'ENOENT' });
-    return {
-      exited: Promise.resolve(0),
-      stdout: new ReadableStream({
-        start(controller) {
-          controller.enqueue(
-            new TextEncoder().encode(command.includes('gpg.format') ? 'ssh' : 'synthetic-sign')
-          );
-          controller.close();
-        },
-      }),
-    };
-  },
+vi.mock('node:child_process', () => ({
+  execFile: (
+    program: string,
+    args: string[],
+    _options: unknown,
+    done: (error: Error | null, stdout: string) => void
+  ) =>
+    done(
+      program === state.missing
+        ? Object.assign(new Error(`${program} unavailable`), { code: 'ENOENT' })
+        : null,
+      args.includes('gpg.format') ? 'ssh' : 'synthetic-sign'
+    ),
 }));
 
 test.each(['git', 'ssh'])(

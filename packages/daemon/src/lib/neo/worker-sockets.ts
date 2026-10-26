@@ -2,24 +2,16 @@ import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { spawnProcess } from '../runtime-spawn/index.ts';
-import { collectWithMaxBuffer } from '../utils/script-utils.ts';
-import { defineOperation } from '../operations/registry.ts';
-import type { OperationCaller } from '../operations/registry.ts';
+import { execFile } from 'node:child_process';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
 
-async function output(command: string[]) {
-  try {
-    const child = spawnProcess(command, { stdout: 'pipe', stderr: 'ignore' });
-    const [code, data] = await Promise.all([
-      child.exited,
-      collectWithMaxBuffer(child.stdout, 16384),
-    ]);
-    return code === 0 ? data.text.trim() : '';
-  } catch {
-    return '';
-  }
-}
+const output = (command: string[]) =>
+  new Promise<string>((resolve) => {
+    execFile(command[0], command.slice(1), { maxBuffer: 16384 }, (error, stdout) =>
+      resolve(error ? '' : stdout.trim())
+    );
+  });
 
 export function workerSocketOperation(
   service: NeoService,
@@ -33,10 +25,7 @@ export function workerSocketOperation(
       'When a worker reports a blocked Unix socket, request human approval for that exact absolute socket path. Workers cannot change the allowlist. Repeated requests return the original card, including a recorded Decline.',
     inputSchema: z
       .object({
-        socket: z
-          .string()
-          .refine(isAbsolute)
-          .refine((path) => !/[\0\r\n]/.test(path)),
+        socket: z.string().refine((path) => isAbsolute(path) && !/[\0\r\n]/.test(path)),
       })
       .strict(),
     resultSchema: z.unknown(),
@@ -45,8 +34,7 @@ export function workerSocketOperation(
       .input(['input', 'caller'])
       .pipe(admit, 'caller', 'result:outcome')
       .pipe(
-        (input: { socket: string }) =>
-          service.todos.write('requestWorkerSocket', service.defaultSessionId()!, input.socket),
+        (input: { socket: string }) => service.requestWorkerSocket(input.socket),
         ['input', 'outcome'],
         'outcome'
       )

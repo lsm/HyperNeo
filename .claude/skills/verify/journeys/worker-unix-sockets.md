@@ -12,7 +12,9 @@ TMPDIR="$PWD/node_modules/.cache" bash .claude/skills/verify/proof-run.sh \
 configuration and SSH IdentityAgent produce one startup card; repeated requests
 reuse their card; human Allow and Decline persist across a real isolated daemon
 restart; removing an allowed entry over the settings RPC changes the next Codex
-policy. The settings component test opens the actual settings component and clicks
+policy. A later request reopens that path's card for human approval; Decline remains
+permanent. Connected clients receive `neo.changed` when a socket card is requested.
+The settings component test opens the actual settings component and clicks
 Remove. This is component interaction evidence, not a browser screenshot.
 Discovery is optional: missing Git or SSH must not interrupt daemon startup. The
 Windows compiled startup smoke exercises the real missing-Git environment.

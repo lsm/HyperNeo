@@ -16,12 +16,12 @@ export function NeoWorkerPermissionSettings() {
   const effective = neoWorkerPermissionMode(neo);
   if (!settings) return null;
 
-  const save = async (workerPermissionMode: NeoWorkerPermissionMode) => {
+  const save = async (updates: Parameters<typeof updateGlobalSettings>[0]) => {
     setSaving(true);
     try {
-      await updateGlobalSettings({ neo: { ...neo, workerPermissionMode } });
+      await updateGlobalSettings(updates);
     } catch {
-      toast.error('Failed to update Claude worker permission');
+      toast.error('Failed to update worker settings');
     } finally {
       setSaving(false);
     }
@@ -39,8 +39,13 @@ export function NeoWorkerPermissionSettings() {
             class="st-select"
             value={effective}
             disabled={saving}
-            onChange={(event) =>
-              save((event.target as HTMLSelectElement).value as NeoWorkerPermissionMode)
+            onChange={({ currentTarget }) =>
+              save({
+                neo: {
+                  ...neo,
+                  workerPermissionMode: currentTarget.value as NeoWorkerPermissionMode,
+                },
+              })
             }
           >
             {NEO_WORKER_PERMISSION_MODES.map((mode) => (
@@ -50,8 +55,6 @@ export function NeoWorkerPermissionSettings() {
             ))}
           </select>
         </SettingsRow>
-      </SettingsGroup>
-      <SettingsGroup>
         <SettingsRow
           label="Worker Unix sockets"
           description="New worker sessions may connect to these human-approved sockets."
@@ -62,20 +65,13 @@ export function NeoWorkerPermissionSettings() {
               <button
                 type="button"
                 disabled={saving}
-                onClick={async () => {
-                  setSaving(true);
-                  try {
-                    await updateGlobalSettings({
-                      workerUnixSockets: settings.workerUnixSockets!.filter(
-                        (socket) => socket !== path
-                      ),
-                    });
-                  } catch {
-                    toast.error('Failed to remove worker socket');
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
+                onClick={() =>
+                  save({
+                    workerUnixSockets: settings.workerUnixSockets!.filter(
+                      (socket) => socket !== path
+                    ),
+                  })
+                }
               >
                 Remove
               </button>

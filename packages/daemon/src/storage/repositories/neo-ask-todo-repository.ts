@@ -183,9 +183,20 @@ export class NeoAskTodoRepository {
   requestWorkerSocket(sessionId: string, socket: string) {
     const id = neoDerivedId(`worker-socket:${socket}`);
     const prior = this.getQuestion(id);
-    if (prior) return prior;
-    if (new SettingsRepository(this.db).getGlobalSettings().workerUnixSockets?.includes(socket))
-      return null;
+    const allowed = new SettingsRepository(this.db).getGlobalSettings().workerUnixSockets ?? [];
+    if (prior) {
+      if (prior.state === 'answered' && prior.answer === 'yes' && !allowed.includes(socket)) {
+        this.changeQuestion(id, {
+          state: 'open',
+          answer: null,
+          answered_by: null,
+          answered_at: null,
+        });
+        this.touchAsk(prior.askId, Date.now());
+      }
+      return this.getQuestion(id);
+    }
+    if (allowed.includes(socket)) return null;
     const askId = neoDerivedId(`worker-socket-ask:${socket}`);
     const display = socket.replace(
       /\p{Bidi_Control}/gu,
