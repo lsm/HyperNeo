@@ -188,12 +188,10 @@ describe('Neo todo edit commits through its writer', () => {
     const results = await Promise.all(
       ['first', 'second'].map((todoId) => edit({ todoId, check: required, addUrls: [url(2)] }))
     );
-    expect(
-      results.every(
-        (result) =>
-          result.ok && result.todo.check?.params.urls.join(',') === [url(1), url(2)].join(',')
-      )
-    ).toBe(true);
+    expect(results.map((result) => (result.ok ? result.todo.check?.params.urls : null))).toEqual([
+      [url(1), url(2)],
+      [url(1), url(2)],
+    ]);
     expect(
       results.filter(
         (result) =>

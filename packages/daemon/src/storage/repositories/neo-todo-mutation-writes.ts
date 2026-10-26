@@ -36,16 +36,18 @@ class NeoTodoMutationWriter {
     this.policies = neoTodoWritePolicies(db);
   }
 
-  private withUrls(plan: Plan, input: Input) {
-    if (input.kind !== 'edit' || !input.addUrls) return { value: plan };
-    const policy = this.policies.find((pack) => pack.id === plan.todo.check?.pack)?.todos;
-    const check = policy?.addUrls?.(plan.todo, input.addUrls);
+  private withCheck(plan: Plan, input: Input) {
+    if (input.kind !== 'edit' || (!input.addUrls && !input.check)) return { value: plan };
+    const requested = { ...plan.todo, check: input.check ?? plan.todo.check };
+    const policy = this.policies.find((pack) => pack.id === requested.check?.pack)?.todos;
+    const appended = input.addUrls ? policy?.addUrls?.(requested, input.addUrls) : null;
+    const check = appended ?? input.check;
     if (!check)
       return {
         value: {
           ...plan,
           records: [
-            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
+            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls?.join(', ')}`,
           ],
         },
       };
@@ -55,6 +57,14 @@ class NeoTodoMutationWriter {
       this.todos.listTodos(plan.todo.askId)
     );
     if ('reason' in accepted) return accepted;
+    const records = [
+      ...(accepted.value.records ?? []),
+      ...(input.addUrls && !appended
+        ? [
+            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
+          ]
+        : []),
+    ];
     return {
       value: {
         todo: accepted.value,
@@ -72,7 +82,7 @@ class NeoTodoMutationWriter {
               }
             : {}),
         },
-        ...(accepted.value.records ? { records: accepted.value.records } : {}),
+        ...(records.length ? { records } : {}),
       },
     };
   }
@@ -103,7 +113,7 @@ class NeoTodoMutationWriter {
       )
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
       .pipe(
-        (plan: Plan, input: Input) => this.withUrls(plan, input),
+        (plan: Plan, input: Input) => this.withCheck(plan, input),
         ['outcome', 'input'],
         'result:outcome'
       )
@@ -142,8 +152,7 @@ class NeoTodoMutationWriter {
             : {
                 reason: {
                   ok: false as const,
-                  reason:
-                    'todo_changed: PR URLs changed during completion; retry with the current check.',
+                  reason: 'todo_changed: completion check changed; retry with the current check.',
                 },
               },
         ['outcome', 'checked'],

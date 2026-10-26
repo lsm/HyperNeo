@@ -203,12 +203,23 @@ describe('Neo todo mutation writer admission', () => {
     });
   });
 
-  test('replacement must still be another todo on the same ask at commit time', async () => {
-    todo('first');
-    for (const replacedBy of ['first', 'missing'])
+  test('invalid replacement links are recorded without retaining the invalid link', async () => {
+    for (const id of ['self', 'missing']) {
+      todo(id);
       expect(
-        await commit({ kind: 'remove', todoId: 'first', reason: 'Replaced', replacedBy })
-      ).toMatchObject({ ok: false, reason: expect.stringContaining('replacement_missing') });
+        await commit({
+          kind: 'remove',
+          todoId: id,
+          reason: 'Replaced',
+          replacedBy: id === 'self' ? id : 'absent',
+        })
+      ).toMatchObject({
+        ok: true,
+        todo: { state: 'removed', replacedBy: null },
+        records: [expect.stringContaining('replacement_missing:')],
+      });
+    }
+    todo('first');
     todo('second');
     expect(
       await commit({ kind: 'remove', todoId: 'first', reason: 'Replaced', replacedBy: 'second' })
@@ -286,14 +297,13 @@ describe('Neo todo mutation writer admission', () => {
     });
   });
 
-  test('the current check still owns a derived done-when label', async () => {
-    const first = todo('first', [url(1)]);
-    todos.updateTodo(first, { doneWhen: 'example/repo#1 merged' }, 2);
-    expect(await commit({ kind: 'edit', todoId: 'first', doneWhen: 'Override' })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('done_when_from_check:'),
+  test('replacing a check derives the completion label from the new requirement', async () => {
+    todo('first', [url(1)]);
+    const check = { pack: 'coding', kind: 'pr_merged', params: { urls: [url(2)] } };
+    expect(await commit({ kind: 'edit', todoId: 'first', check })).toMatchObject({
+      ok: true,
+      todo: { check, doneWhen: 'example/repo#2 merged' },
     });
-    expect(todos.getTodo('first')?.doneWhen).toBe('example/repo#1 merged');
   });
 
   test('only an authorized artifact receipt can accompany reported evidence', async () => {

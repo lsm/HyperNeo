@@ -33,7 +33,7 @@ let lock: ReturnType<typeof spawn> | undefined;
 let lockExit: Promise<void> | undefined;
 const timer = setInterval(() => { const now = performance.now(); if (measureLag) maxLagMs = Math.max(maxLagMs, now - previous - 10); previous = now; }, 10);
 db.prepare = ((sql: string) => { if (recording && /neo_todos|neo_asks|neo_questions|pack_coding_pr_claims/.test(sql)) mainSql++; return prepare(sql); }) as typeof db.prepare;
-const report: Record<string, unknown> = { mode, runtimeCallersMoved: false };
+const report: Record<string, unknown> = { mode, editRpcWired: true, closeRemoveRpcWired: false };
 type Commit = InstanceType<typeof neoTodoMutations.Repository>['commit'];
 const apply = async (input: Parameters<Commit>[0], checked?: Parameters<Commit>[1]) => {
   recording = true;

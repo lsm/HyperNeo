@@ -1,8 +1,8 @@
 # Build atomic todo mutation commands
 
 This is row 5b of #8712. The command is registered with the real DB writer;
-existing edit/close/remove RPC callers remain on their current paths until
-rows 5c and 5d. The command receives cloned data, returns next-work candidates,
+Edit RPC callers now use the writer after row 5c; close/remove callers remain
+on their current paths until row 5d. The command receives cloned data, returns next-work candidates,
 and performs no external check, worker stop, notification or dispatch.
 
 Use the guarded metadata-only wrapper from SKILL.md, with fresh absolute
@@ -14,9 +14,10 @@ bash .claude/skills/verify/proof-run.sh "$BEFORE_EVIDENCE" .claude/skills/verify
 bash .claude/skills/verify/proof-run.sh "$AFTER_EVIDENCE" .claude/skills/verify/todo-mutation-command.ts verify
 ```
 
-The baseline drives the real legacy edit RPC and refuses its ask timestamp.
+The before mode belongs to the pre-writer baseline, not the combined fixed
+head. That baseline drives the real legacy edit RPC and refuses its ask timestamp.
 It must reproduce a partial mutation visible in the stored todo/question and
-the real WebSocket snapshot. The fixed build drives the new worker command
+the real WebSocket full-card read. The fixed build drives the new worker command
 directly: the same refusal rolls back the whole mutation, and the snapshot
 must retain its original title and open question. A successful title edit is
 then visible in the snapshot.
@@ -40,3 +41,9 @@ runtime RPC migration are not proved by this build slice.
 The Deno 2.9.4 smoke runs the same worker/snapshot proof and saves its JSON
 summary in the smoke log before deleting temporary data. Run that smoke as
 one separate guarded heavy job.
+
+After #8894, RPC snapshots are summaries. These helpers use `neo.ask.read`
+for visible full card bodies, including the unabridged report. The edit proof
+also changes a completion check to core evidence and verifies its derived label.
+The writer uses the current pure core/coding policies; final peer admission and
+check/card revalidation remain in the same writer transaction.

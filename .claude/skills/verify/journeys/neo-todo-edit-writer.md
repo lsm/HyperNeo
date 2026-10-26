@@ -10,10 +10,10 @@ bash .claude/skills/verify/proof-run.sh "$AFTER_EVIDENCE" .claude/skills/verify/
 
 Both runs invoke the real `neo.todo.edit` WebSocket operation. A synthetic
 refused ask timestamp first reproduces a partial title/card mutation, then
-must roll back completely through the writer, as seen by `neo.snapshot`.
+must roll back completely through the writer, as seen by `neo.ask.read`.
 Successful title edits and concurrent URL edits must retain both current
 claims and exactly one duplicate bookkeeping record. A complete large report
-must survive the RPC reply and snapshot as `closed_unverified`.
+must survive the RPC reply and full-card read as `closed_unverified`.
 A new PR requirement reopens a previously done todo for checking; URL bookkeeping
 must preserve an existing `closed_unverified` state. Unit cases retain both
 close/sweep overlap orders when URL editing yields to the DB worker.
@@ -31,3 +31,9 @@ or successor dispatch; artifact authorization reads and the remaining runner
 paths are outside this slice. Close/remove callers remain on their old paths.
 The Deno smoke runs the same RPC helper and prints its JSON evidence before
 the smoke's shared cleanup removes temporary daemon data.
+
+After #8894, RPC snapshots are summaries. These helpers use `neo.ask.read`
+for visible full card bodies, including the unabridged report. The edit proof
+also changes a completion check to core evidence and verifies its derived label.
+The writer uses the current pure core/coding policies; final peer admission and
+check/card revalidation remain in the same writer transaction.
