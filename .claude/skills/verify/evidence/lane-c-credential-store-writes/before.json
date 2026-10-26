@@ -1,0 +1,45 @@
+{
+  "keyLocationIsSynthetic": true,
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 352,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "replaceVoice": {
+    "error": "credential mutation SQL reached main connection"
+  },
+  "removeExa": {
+    "error": "credential mutation SQL reached main connection"
+  },
+  "voiceRoundTrip": false,
+  "exaRemoved": false,
+  "encryptedAtRest": true,
+  "ivBytes": 12,
+  "tagBytes": 16,
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 354,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 6
+}
