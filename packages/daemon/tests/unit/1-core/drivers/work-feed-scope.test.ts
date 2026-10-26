@@ -1,3 +1,4 @@
+import { attachNativeFeedWriter } from '../../../helpers/native-feed-enqueue-writer';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -95,7 +96,7 @@ const feedSessions = (kind: string) =>
       .all(kind) as Array<{ id: string }>
   ).map((row) => row.id);
 
-const queue = { enqueueUniquePending: () => {} } as never;
+const queue = attachNativeFeedWriter({ enqueueUniquePending: () => {} }) as never;
 
 describe('work feed scope', () => {
   function writeCodexRollout(threadId: string) {

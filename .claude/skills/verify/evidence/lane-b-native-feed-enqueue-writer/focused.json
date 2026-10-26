@@ -1,0 +1,12 @@
+{
+  "ciRunnerPasses": 39,
+  "ciRunnerFailures": 0,
+  "feedAdmissionCases": 14,
+  "rpcSetupCallerAwaited": true,
+  "concurrentSuccessorCountPerScope": 1,
+  "receiptLoadingFailureRollsBackInsertion": true,
+  "unavailableWriterDoesNotReplay": true,
+  "coreOwnedCompanionAwaitAuthorized": true,
+  "temporaryHomesRemoved": true,
+  "productionModeStartupVerified": false
+}

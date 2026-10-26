@@ -1,3 +1,4 @@
+import { attachNativeFeedWriter } from '../../../helpers/native-feed-enqueue-writer';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -213,7 +214,7 @@ describe('Claude transcript feed', () => {
     );
     const earlier = new Date(Date.now() - 60_000);
     utimesSync(original, earlier, earlier);
-    const queue = { enqueueUniquePending: () => {} } as never;
+    const queue = attachNativeFeedWriter({ enqueueUniquePending: () => {} }) as never;
     await runClaudeFeed(queue, db, root, Date.now());
     const owners = () =>
       db
@@ -237,7 +238,7 @@ describe('Claude transcript feed', () => {
     db.prepare(`INSERT INTO message_search_content
       (kind,source_id,session_id,body) VALUES ('claude','kept','sdk-hyperneo','full body')`).run();
     const calls: string[][] = [];
-    const queue = { enqueueUniquePending: () => {} } as never;
+    const queue = attachNativeFeedWriter({ enqueueUniquePending: () => {} }) as never;
     await expect(
       runClaudeFeed(queue, db, root, Date.now(), async (ids) => {
         calls.push(ids);
@@ -257,7 +258,7 @@ describe('Claude transcript feed', () => {
       join(project, 'late-sdk.jsonl'),
       `${line({ type: 'user', uuid: 'l1', message: { content: 'internal' } })}\n`
     );
-    const queue = { enqueueUniquePending: () => {} } as never;
+    const queue = attachNativeFeedWriter({ enqueueUniquePending: () => {} }) as never;
     await runClaudeFeed(queue, db, root, Date.now());
     expect(db.prepare('SELECT COUNT(*) AS n FROM message_search_content').get()).toEqual({ n: 1 });
     db.exec("INSERT INTO sessions VALUES ('hn-2', 'late-sdk')");
@@ -275,7 +276,7 @@ describe('Claude transcript feed', () => {
     writeFileSync(resumed, `${said}\n`);
     const earlier = new Date(Date.now() - 60_000);
     utimesSync(original, earlier, earlier);
-    const queue = { enqueueUniquePending: () => {} } as never;
+    const queue = attachNativeFeedWriter({ enqueueUniquePending: () => {} }) as never;
     await runClaudeFeed(queue, db, root, Date.now());
     unlinkSync(resumed);
     await pruneVanishedFeeds(db, root, claudeFeedSource(new Set()));
@@ -300,7 +301,7 @@ describe('Claude transcript feed', () => {
       probe,
       `${line({ type: 'user', uuid: 'p1', cwd: '/private/tmp/x', message: { content: 'probe' } })}\n`
     );
-    const queue = { enqueueUniquePending: () => {} } as never;
+    const queue = attachNativeFeedWriter({ enqueueUniquePending: () => {} }) as never;
     await runClaudeFeed(queue, db, root, Date.now());
     unlinkSync(probe);
     expect(await pruneVanishedFeeds(db, root, claudeFeedSource(new Set()))).toEqual([]);
