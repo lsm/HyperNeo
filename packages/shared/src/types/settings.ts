@@ -152,7 +152,11 @@ export type ChatDisplayMode = 'full' | 'compact' | 'minimal';
 
 export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
 
+export const WORKER_SANDBOX_MODES = ['off', 'always'] as const;
+export type WorkerSandboxMode = (typeof WORKER_SANDBOX_MODES)[number];
+
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
+  workerSandbox?: WorkerSandboxMode;
   toolSelectionDefaults?: SessionToolSelection;
 
   settingSources: SettingSource[];
@@ -198,6 +202,7 @@ export interface SessionSettings extends GlobalSettings {
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
+  workerSandbox: 'off',
   settingSources: ['user', 'project', 'local'],
   permissionMode: 'default',
   model: 'sonnet',

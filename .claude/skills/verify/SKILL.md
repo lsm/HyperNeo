@@ -70,6 +70,10 @@ if its reader assertions passed. Retain the log; ask-bookkeeping-actions provide
 a listener-free MCP/public-reader/audit proof, without claiming daemon startup
 or shutdown verification.
 
+The shared proof-run.sh wrapper forwards only these explicitly selected browser
+dependency paths, alongside VERIFY_CLAUDE. Other parent environment values stay
+scrubbed; set the browser paths on the wrapper invocation when using --web.
+
 Give it a model, once per run (stored in the run's DB only):
 
 ```bash

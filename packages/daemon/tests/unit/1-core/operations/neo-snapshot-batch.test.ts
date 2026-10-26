@@ -111,7 +111,7 @@ function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
 test('a 231-todo snapshot retains its rows using three child/link reads', async () => {
   const value = read(await snapshot());
   const todos = value.todoAsks.flatMap((entry) => entry.todos);
-  expect(value.todoAsks).toHaveLength(50);
+  expect(value.todoAsks).toHaveLength(60);
   expect(todos).toHaveLength(231);
   expect(value.todoAsks.flatMap((entry) => entry.questions)).toHaveLength(0);
   expect(todos.find((todo) => todo.id === 'todo-230')).toMatchObject({
@@ -152,12 +152,12 @@ test('different scopes stay distinct and revision responses remain per request',
   ).map(read);
   expect(a.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-18']);
   expect(b.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-17']);
-  expect(all.todoAsks).toHaveLength(50);
+  expect(all.todoAsks).toHaveLength(60);
   expect(observer.queries.filter((query) => query.child)).toHaveLength(9);
   observer.reset();
   const [same, full] = await Promise.all([snapshot({ sinceRev: all.rev }), snapshot()]);
   expect(same).toMatchObject({ kind: 'completed', value: { unchanged: true, rev: all.rev } });
-  expect(read(full).todoAsks).toHaveLength(50);
+  expect(read(full).todoAsks).toHaveLength(60);
   expect(observer.queries.filter((query) => query.build)).toHaveLength(1);
 });
 
@@ -184,7 +184,7 @@ test('a failed shared build reports failure and a later request can recover', as
   } finally {
     sql.prepare = original;
   }
-  expect(read(await snapshot()).todoAsks).toHaveLength(50);
+  expect(read(await snapshot()).todoAsks).toHaveLength(60);
 });
 
 test('RPC sharing does not mix the MCP view or bypass caller admission', async () => {

@@ -6,6 +6,15 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { WorkerSandboxMode } from '@hyperneo/shared';
+
+let readWorkerSandbox = (): WorkerSandboxMode => 'off';
+
+export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
+  readWorkerSandbox = read;
+}
+
+export const workerSandboxOn = () => readWorkerSandbox() === 'always';
 
 export function workerSandboxPaths(root: string) {
   const base = process.platform === 'darwin' ? '/tmp' : tmpdir();

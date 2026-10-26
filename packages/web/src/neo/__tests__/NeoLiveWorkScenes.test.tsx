@@ -1,6 +1,7 @@
 import { locale } from '../../lib/i18n/index.ts';
 import type { NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
 import type { NeoPublicEntry } from '../public-conversation.ts';
 vi.mock('../NeoGoals.tsx', () => ({ NeoGoals: () => null }));
@@ -65,6 +66,7 @@ afterEach(() => {
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 function mount(publicMode = true, empty = false) {
   const snapshot = {
+    historyCursor: undefined as NeoSnapshot['historyCursor'],
     sessionId: root,
     projects: ['a', 'b'].map((id) => ({
       id,
@@ -122,6 +124,48 @@ function mount(publicMode = true, empty = false) {
 }
 
 describe('Neo public work scenes', () => {
+  it('loads older outcomes only on request and allows retry without dropping current work', async () => {
+    const old = testAskEntry('older', 'Older completed work', { state: 'done' });
+    old.ask.status = 'done';
+    const history = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('History unavailable'))
+      .mockResolvedValue({ ok: true, entries: [old], nextCursor: null });
+    const request = vi.fn((_method: string, input: { name: string }) =>
+      input.name === 'neo.ask.history' ? history() : Promise.resolve({ schedules: [] })
+    );
+    const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      const { model, container } = mount();
+      const current = model.value.snapshot.todoAsks;
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            historyCursor: { updatedAt: 100, id: 'last-recent' },
+          },
+        };
+      });
+      expect(history).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Show older outcomes' }));
+      await waitFor(() => expect(model.value.setError).toHaveBeenCalledWith('History unavailable'));
+      fireEvent.click(screen.getByRole('button', { name: 'Show older outcomes' }));
+      await waitFor(() => expect(container.querySelector('[data-ask="older"]')).toBeTruthy());
+      expect(container.querySelector(`[data-ask="${current[0].ask.id}"]`)).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Show older outcomes' })).toBeNull();
+      expect(history).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledWith(
+        'operation.invoke',
+        expect.objectContaining({
+          name: 'neo.ask.history',
+          input: { before: { updatedAt: 100, id: 'last-recent' } },
+        })
+      );
+    } finally {
+      hub.mockRestore();
+    }
+  });
   it.each([true, false])('keeps an empty Work surface accessible on desktop=%s', (desktop) => {
     vi.stubGlobal('matchMedia', () => ({ matches: desktop }));
     const { container } = mount(true, true);

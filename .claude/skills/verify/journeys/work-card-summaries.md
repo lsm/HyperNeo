@@ -9,8 +9,10 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 ```
 
 Before the fix, run the same helper with `reproduce`. Compare observed.json:
-50 cards and 231 todo rows remain, but instruction/report bodies and answered
-questions no longer travel with each snapshot. neo.ask.read must still return
+The original reproduction has 50 cards and 231 todo rows. Current retention
+includes 60 cards (every attention-needed ask plus ten recent outcomes), keeping
+all 231 todo rows; instruction/report bodies and answered questions no longer
+travel with each snapshot. neo.ask.read must still return
 the exact full instruction. Neither mode reads the live database.
 
 For the read-only live tally, pass the explicitly authorized DB and an evidence

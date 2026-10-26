@@ -100,3 +100,13 @@ test('worker settings no longer list allowed Unix sockets', () => {
   expect(screen.queryByText('Worker Unix sockets')).toBeNull();
   expect(updateGlobalSettings).not.toHaveBeenCalled();
 });
+
+test('the worker sandbox shows off when unset and saves the chosen mode', async () => {
+  settle();
+  render(<NeoModelSettings />);
+  const select = screen.getByRole('combobox', { name: 'Worker sandbox' }) as HTMLSelectElement;
+  expect(select.value).toBe('off');
+  expect([...select.options].map((option) => option.value)).toEqual(['off', 'always']);
+  fireEvent.change(select, { target: { value: 'always' } });
+  expect(updateGlobalSettings).toHaveBeenCalledWith({ workerSandbox: 'always' });
+});

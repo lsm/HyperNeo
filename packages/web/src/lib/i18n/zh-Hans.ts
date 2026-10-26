@@ -123,6 +123,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'live.group.attention': '等你处理',
   'live.group.running': '在做',
   'live.group.outcomes': '最近结果',
+  'live.showOlder': '显示更早的结果',
+  'live.loadingOlder': '正在加载更早的结果…',
   'live.drop.title': '把照片或文件拖到这里',
   'live.drop.hint': '会加到这次对话里，发送前可以检查。',
   'live.menu': '设置和连接',

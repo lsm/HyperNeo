@@ -118,6 +118,7 @@ const Project = z.object({
 } satisfies ZodShape<NeoProject>);
 const NEO_SESSION_MESSAGES_SHOWN = 30;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
+const HistoryCursor = z.object({ updatedAt: z.number().finite(), id: z.string().min(1) });
 const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
@@ -148,6 +149,7 @@ const SnapshotOk = z.object({
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   wakes: z.array(NeoConversationWakeSchema).optional(),
   todoAsks: z.array(NeoAskEntrySchema).optional(),
+  historyCursor: HistoryCursor.nullable().optional(),
   packRows: z
     .array(
       z.object({
@@ -383,10 +385,11 @@ export function createNeoOperations(service: NeoService) {
     const all = service.repo.listProjects();
     const projects = all.filter((item) => !scope || item.id === scope);
     const repositories = service.repo.repositories();
-    const { asks, unlisted, facts } = await service.todos.read(
+    const { asks, unlisted, facts, historyCursor } = await service.todos.read(
       'snapshot',
       scope,
-      caller.source === 'rpc' ? 50 : 10
+      10,
+      detailed
     );
     const { todoAsks, pinned } = neoSnapshotAskEntries(
       projectNeoAskEntries(asks, facts, service.installedPacks()),
@@ -464,6 +467,7 @@ export function createNeoOperations(service: NeoService) {
       preferences: service.modelPreference(),
       packPreferences: listPackPreferences(service.db.getDatabase()),
       todoAsks: detailed ? entries.map(summarizeNeoAskEntry) : entries,
+      ...(detailed ? { historyCursor } : {}),
       ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
       packRows: service.packs().flatMap((pack) => {
         const rows = pack.snapshotRows?.(
@@ -870,9 +874,44 @@ export function createNeoOperations(service: NeoService) {
       execute: readPack,
     }),
     defineOperation({
+      name: 'neo.ask.history',
+      description:
+        'Page older finished/dropped Work summaries, twenty at a time. Pass the snapshot historyCursor as before, then nextCursor until null. Attention-needed asks stay in neo.snapshot. Open full bodies with neo.ask.read.',
+      inputSchema: z.object({ projectId: z.string().optional(), before: HistoryCursor }),
+      resultSchema: z.union([
+        Failure,
+        z.object({
+          ok: z.literal(true),
+          entries: z.array(NeoAskEntrySchema),
+          nextCursor: HistoryCursor.nullable(),
+        }),
+      ]),
+      policy: { safetyClass: 'read', roles: ['neo'] },
+      execute: path(
+        'neo.ask.history',
+        async (input: { projectId?: string; before: z.infer<typeof HistoryCursor> }) => {
+          const scope = input.projectId
+            ? (service.repo.projectMerges.resolve(input.projectId) ?? input.projectId)
+            : undefined;
+          const page = await service.todos.read('snapshot', scope, 21, true, input.before);
+          const asks = page.asks.slice(0, 20);
+          const last = asks.at(-1);
+          return {
+            ok: true as const,
+            entries: neoSnapshotAskEntries(
+              projectNeoAskEntries(asks, page.facts, service.installedPacks()),
+              20
+            ).todoAsks.map(summarizeNeoAskEntry),
+            nextCursor:
+              page.asks.length > 20 && last ? { updatedAt: last.updatedAt, id: last.id } : null,
+          };
+        }
+      ),
+    }),
+    defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. RPC todoAsks are summaries with counts, todo states and one-line statuses; instructions, reports and question text load through neo.ask.read when the card is opened. MCP todoAsks retain full todo details, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. RPC includes every open/attention-needed ask plus the ten most recently updated finished/dropped asks; historyCursor pages older outcomes through neo.ask.history. RPC todoAsks are summaries with counts, todo states and one-line statuses; instructions, reports and question text load through neo.ask.read when the card is opened. MCP todoAsks retain full todo details, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. MCP snapshots over 40 KB are trimmed and carry a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
