@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 const SECRET_DIRS = [
   '.ssh',
   '.aws',
@@ -28,6 +30,10 @@ const SECRET_FILES = [
   '.profile',
 ];
 const SECRET_NAMES = ['.env', '.env.*', '*.pem', '*.key'];
+
+export function secretHomePaths(home: string): string[] {
+  return [...SECRET_DIRS, ...SECRET_FILES].map((path) => join(home, path));
+}
 
 export function neoSecretReadRules(): string[] {
   return [

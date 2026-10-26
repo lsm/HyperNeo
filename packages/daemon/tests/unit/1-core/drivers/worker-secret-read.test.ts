@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
+import { secretHomePaths } from '../../../../src/lib/neo/secret-read-rules.ts';
 import {
   codexWorkerSandbox,
   persistCodexWorkerProfile,
@@ -70,6 +71,19 @@ test('configured engine homes remain denied without denying the worker repo', as
   expect(settings().sandbox.filesystem.denyRead).toContain(
     join(fixture, 'claude-home/.credentials.json')
   );
+});
+
+test('workers deny every established home credential path in both engines', async () => {
+  const home = join(fixture, 'home');
+  const fs = codexWorkerSandbox(root).config.permissions['hyperneo-worker'].filesystem as Record<
+    string,
+    string
+  >;
+  await installClaudeNativeWrites(root, [join(fixture, 'source')]);
+  for (const path of secretHomePaths(home)) {
+    expect(fs[path], path).toBe('deny');
+    expect(settings().sandbox.filesystem.denyRead, path).toContain(path);
+  }
 });
 
 test('Desktop reload can resolve the protected profile without bootstrap overrides', async () => {
