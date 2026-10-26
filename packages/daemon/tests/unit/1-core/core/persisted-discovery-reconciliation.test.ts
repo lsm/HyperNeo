@@ -4,6 +4,7 @@ import * as dataDirectory from '../../../../src/lib/data-dir';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { applyStoredProviderCredentials } from '../../../../src/app';
 import {
+  DatabaseCredentialStore,
   KeychainUnavailableError,
   type CredentialStore,
 } from '../../../../src/lib/credentials/credential-store';
@@ -64,9 +65,11 @@ async function runScenario(options: ScenarioOptions) {
       configJson: options.configJson,
     });
   }
-  const credentialManager = options.store
-    ? new ProviderCredentialManager(options.store(providers), db, options.env ?? {})
-    : ProviderCredentialManager.create(db, options.env ?? {});
+  const credentialManager = new ProviderCredentialManager(
+    options.store?.(providers) ?? new DatabaseCredentialStore(db, 'reconciliation-fixture-key'),
+    db,
+    options.env ?? {}
+  );
   if (options.stored) {
     await (options.stored.type === 'api_key'
       ? credentialManager.storeApiKey(providerId, options.stored.apiKey)
