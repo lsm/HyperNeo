@@ -426,6 +426,7 @@ describe('withCodexDesktopIpc', () => {
           appServer: async () => ({
             call: async (method, params) => {
               calls.push(method);
+              if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
               if (method === 'thread/queue/add') {
                 const text = (params.input as { text: string }[])[0].text;
                 appendFileSync(
@@ -501,7 +502,7 @@ describe('withCodexDesktopIpc', () => {
               },
             },
           });
-          expect(calls).toEqual(['thread/queue/add']);
+          expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
           expect(f.seen).toEqual([]);
           expect(launches).toEqual([]);
         } finally {
