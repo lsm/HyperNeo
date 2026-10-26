@@ -3,7 +3,7 @@
   "redCommit": "4d9e52af7aded02ddc32345d361ce0f452c03665",
   "productionChangedLines": 34,
   "productionBudget": 80,
-  "smokeRegistrationLines": 6,
+  "smokeRegistrationLines": 1,
   "testChangedLines": 141,
   "helperJourneyLines": 162,
   "testHelperBudget": 350,
@@ -31,5 +31,6 @@
     "worker round-trip combines queue, SQL, assembly and clone scheduling",
     "reply encoding is measured on main; no separate worker-SQL or clone-only timing",
     "synthetic source proof does not establish production-scale or served-build UI/deployment behavior"
-  ]
+  ],
+  "exactSmokeLineVerified": true
 }
