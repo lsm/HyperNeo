@@ -214,7 +214,7 @@ const Retire = z.object({ questionId: Text, reason: Text });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
 
-const Get = z.object({ questionId: Text });
+const Get = z.object({ questionId: Text.meta({ aliases: ['id'] }) });
 
 const AnswerDelivery = z.object({
   id: z.string(),

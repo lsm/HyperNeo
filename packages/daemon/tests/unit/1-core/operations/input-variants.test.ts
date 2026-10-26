@@ -30,6 +30,62 @@ const invoke = async (schema: z.ZodType, input: unknown) => {
 };
 
 describe('operation input variants through the MCP door', () => {
+  test('converts scalar literals and enums only to declared values', async () => {
+    const schema = z.object({
+      version: z.literal(2),
+      mode: z.enum(['1', '2']),
+      kind: z.literal('3'),
+    });
+    expect((await invoke(schema, { version: '2', mode: 1, kind: 3 })).value).toEqual({
+      version: 2,
+      mode: '1',
+      kind: '3',
+    });
+    expect((await invoke(schema, { version: '3', mode: 1, kind: 3 })).error).toBe(true);
+  });
+  test('preserves input objects and rejects ambiguous union conversions', async () => {
+    const input = { total: '2' };
+    expect(
+      await invoke(z.object({ count: z.number().meta({ aliases: ['total'] }) }), input)
+    ).toEqual({
+      error: false,
+      value: { count: 2 },
+    });
+    expect(input).toEqual({ total: '2' });
+    expect(
+      (await invoke(z.object({ value: z.union([z.number(), z.string().max(1)]) }), { value: 123 }))
+        .error
+    ).toBe(false);
+    expect(
+      (
+        await invoke(
+          z.object({
+            value: z.union([
+              z.object({ count: z.number(), a: z.string().default('a') }),
+              z.object({ count: z.number(), b: z.string().default('b') }),
+            ]),
+          }),
+          { value: { count: '2' } }
+        )
+      ).error
+    ).toBe(true);
+  });
+  test('retains defaults, tuple bounds, transformations and null checks', async () => {
+    const schema = z.object({
+      rows: z.tuple([z.number(), z.string().transform((value) => value.toUpperCase())]),
+      count: z.number().default(2),
+      id: z.string().nullable(),
+      label: z.string().readonly(),
+    });
+    expect((await invoke(schema, { rows: ['3', 4], id: null, label: 5 })).value).toEqual({
+      rows: [3, '4'],
+      count: 2,
+      id: null,
+      label: '5',
+    });
+    expect((await invoke(z.object({ id: z.string() }), { id: null })).error).toBe(true);
+    expect((await invoke(z.object({ id: z.string() }), { id: Infinity })).error).toBe(true);
+  });
   test('replays sanitized historical aliases against the real operation schemas', async () => {
     const db = new Database(':memory:');
     try {

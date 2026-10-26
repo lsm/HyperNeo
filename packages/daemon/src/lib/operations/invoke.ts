@@ -1,4 +1,5 @@
 import { isLocalUser } from './caller.ts';
+import { normalizeOperationInput } from './normalize-input.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller, OperationDefinition, OperationRegistry } from './registry.ts';
 
@@ -80,7 +81,8 @@ export async function parseOperationInput(
   input: unknown
 ): Promise<Gate<PreparedOperation>> {
   try {
-    const parsed = await operation.inputSchema.safeParseAsync(input);
+    const normalized = await normalizeOperationInput(operation.inputSchema, input);
+    const parsed = await operation.inputSchema.safeParseAsync(normalized);
     return parsed.success
       ? { value: { operation, input: parsed.data } }
       : {

@@ -23,6 +23,16 @@ try {
     assert.notEqual(canonical.isError, true, JSON.stringify(canonical));
     assert.deepEqual(variant, canonical);
   }
+  for (const [name, canonicalInput, variantInput] of [
+    ['neo.question.get', { questionId: '123' }, { questionId: 123 }],
+    ['work.find', { limit: 2 }, { limit: '2' }],
+  ] as const) {
+    const canonical = await handler({ name, input: canonicalInput });
+    const variant = await handler({ name, input: variantInput });
+    evidence.push({ name, canonical, variant });
+    assert.notEqual(canonical.isError, true, JSON.stringify(canonical));
+    assert.deepEqual(variant, canonical);
+  }
   const conflict = await handler({ name: 'neo.question.get', input: { id: 'a', questionId: 'b' } });
   evidence.push({ conflict });
   assert.equal(conflict.isError, true);
