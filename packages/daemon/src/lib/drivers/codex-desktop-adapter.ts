@@ -644,7 +644,7 @@ export function codexQueueDelivery(
     .map((line) => codexUserInput(parseLine(line)))
     .findLast((input) => !!input && !before.has(input.id) && input.text.includes(opening));
   return {
-    delivered: rolloutHasUserMessage(lines, message),
+    delivered: !!fresh,
     ...(fresh ? { receipt: { executionId: threadId, inputId: fresh.id } } : {}),
   };
 }
@@ -753,15 +753,6 @@ export function withCodexInputEvidence(
   return outcome.ok && evidence
     ? { ok: true, value: { ...outcome.value, inputEvidence: evidence } }
     : outcome;
-}
-
-export function rolloutHasUserMessage(lines: readonly string[], message: string): boolean {
-  const opening = message.trim().split('\n')[0].slice(0, 200);
-  return lines.some((line) => {
-    const entry = parseLine(line);
-    if (entry?.type !== 'response_item') return false;
-    return messageText(entry.payload ?? {}, 'user')?.includes(opening) ?? false;
-  });
 }
 
 async function queueCodexCliMessage(
@@ -900,7 +891,7 @@ async function tryDesktopCodexSend(
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps,
-  mode: 'auto' | 'steer'
+  mode: 'steer'
 ): Promise<CodexSendGate<'app-server'>> {
   await resumeWorkerSandbox(detail.thread.folder);
   return steerCodexDesktopTurn(
@@ -919,7 +910,7 @@ async function tryServerCodexSend(
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps,
-  mode: 'auto' | 'steer'
+  mode: 'steer'
 ): Promise<CodexSendGate<never>> {
   sendLog.warn('work.send route', { threadId: detail.thread.id, path: route, mode });
   let attempted = false;
@@ -927,46 +918,9 @@ async function tryServerCodexSend(
     const turn = admitCodexSteerTurn(
       await server.call('thread/turns/list', { threadId: detail.thread.id, limit: 1 })
     );
-    if ('value' in turn) {
-      try {
-        attempted = true;
-        return await callCodexSteer(server, detail.thread.id, turn.value, message);
-      } catch (error) {
-        if (mode === 'steer' || !/NoActiveTurn|no active turn/.test(String(error))) throw error;
-      }
-    } else if (mode === 'steer') return turn.reason;
-    try {
-      await server.call('thread/resume', { threadId: detail.thread.id, excludeTurns: true });
-    } catch (error) {
-      if (String(error).includes(`thread ${detail.thread.id} already has an active writer`)) {
-        attempted = true;
-        return queueCodexMessage(detail, message, deps);
-      }
-      throw error;
-    }
-    const beforeStart = attempted;
+    if ('reason' in turn) return turn.reason;
     attempted = true;
-    let reply: unknown;
-    try {
-      reply = await server.call('turn/start', {
-        threadId: detail.thread.id,
-        input: [{ type: 'text', text: message, text_elements: [] }],
-      });
-    } catch (error) {
-      if (
-        error instanceof CodexRequestError &&
-        z
-          .object({
-            code: z.literal(-32600),
-            message: z.string().includes(`thread ${detail.thread.id} already has an active writer`),
-          })
-          .safeParse(error.rejection).success
-      )
-        attempted = beforeStart;
-      throw error;
-    }
-    const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(reply);
-    return { ok: true, value: { delivered: true, startedTurnId: started.turn.id } };
+    return callCodexSteer(server, detail.thread.id, turn.value, message);
   });
   sendLog.warn('work.send app-server result', { threadId: detail.thread.id, mode, result });
   return {
@@ -1030,7 +984,7 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   ref: WorkRef,
   message: string,
   deps: CodexDesktopAdapterDeps,
-  mode: 'auto' | 'steer'
+  mode: 'steer'
 ) => Promise<Result<WorkDelivery>>;
 
 const runCodexRename = (superpipe({})('codex-rename-work') as PipelineAPI)
@@ -1332,11 +1286,10 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     start: (request) => runCodexStart(request, deps),
     rename: (ref, title) => runCodexRename(ref, title, deps),
     send: (ref, message, context) =>
-      runCodexSend(
+      runCodexQueue(
         ref,
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'auto'
+        deps
       ),
     steer: (ref, message, context) =>
       runCodexSend(

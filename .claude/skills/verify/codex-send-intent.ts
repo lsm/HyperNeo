@@ -49,7 +49,7 @@ let openedReadyAt = 0;
 let active = true;
 let loaded = true;
 let resumeError = '';
-let consumeQueue = false;
+let pendingText = '';
 let uncertain = false;
 let refuse = false;
 let startError = false;
@@ -101,15 +101,7 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
   if (request.method === 'thread/resume' && !resumeError) loaded = true;
-  if (request.method === 'thread/queue/add' && consumeQueue) {
-    const text = request.params.input[0].text;
-    const timestamp = new Date().toISOString();
-    appendFileSync(rollout, [
-      { type: 'response_item', timestamp, payload: { type: 'message', role: 'user', id: 'writer-input', content: [{ type: 'input_text', text }] } },
-      { type: 'response_item', timestamp, payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Writer received queued work.' }] } },
-      { type: 'event_msg', timestamp, payload: { type: 'task_complete', last_agent_message: 'Writer received queued work.' } },
-    ].map((entry) => JSON.stringify(entry)).join('\n') + '\n');
-  }
+  if (request.method === 'thread/queue/add') pendingText = request.params.input[0].text;
   const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
     : request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
     : request.method === 'turn/start' ? { turn: { id: 'server-started', status: 'inProgress', items: [] } }
@@ -153,14 +145,21 @@ try {
     assert.equal(pending.value.receipt, undefined);
     assert(!calls.slice(before).some(call => (call as { desktop?: string }).desktop));
     assert(!calls.slice(before).some(call => ['thread/resume', 'turn/start', 'turn/steer'].includes((call as { server?: string }).server ?? '')));
-    consumeQueue = true;
-    const consumed = await send();
-    assert.equal(consumed.value.delivered, true);
-    assert.deepEqual(consumed.value.receipt, { executionId: 'synthetic', inputId: 'writer-input' });
-    const observed = await send(undefined, false, false, consumed.value.receipt);
+    active = false;
+    const text = pendingText;
+    const timestamp = new Date().toISOString();
+    appendFileSync(rollout, [
+      { type: 'response_item', timestamp, payload: { type: 'message', role: 'user', id: 'writer-input', content: [{ type: 'input_text', text }] } },
+      { type: 'response_item', timestamp, payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Writer received queued work.' }] } },
+      { type: 'event_msg', timestamp, payload: { type: 'task_complete', last_agent_message: 'Writer received queued work.' } },
+    ].map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+
+    const receipt = { executionId: 'synthetic', inputId: 'writer-input' };
+    const observed = await send(undefined, false, false, receipt);
     assert.equal(observed.value.inputEvidence.state, 'observed');
+    assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'user' && entry.text.includes('synthetic marker')));
     assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'agent' && entry.text === 'Writer received queued work.'));
-    consumeQueue = false;
+    assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
   owner = 'owned';

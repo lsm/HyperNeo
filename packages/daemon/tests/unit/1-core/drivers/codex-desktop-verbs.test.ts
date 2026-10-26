@@ -888,7 +888,6 @@ describe('codex-desktop adapter status and send', () => {
         reason: 'not_delivered',
         detail: expect.stringContaining(error),
       });
-
     }
   );
 
@@ -1006,7 +1005,7 @@ describe('codex-desktop adapter status and send', () => {
       reason: 'not_delivered',
       detail: expect.stringContaining('active turn is t2'),
     });
-    expect(calls).toEqual(['thread/queue/add']);
+    expect(calls).toEqual(['thread/turns/list', 'turn/steer']);
     expect(closed).toBe(true);
     expect(spawned).toEqual([]);
   });
@@ -1213,6 +1212,26 @@ describe('codex-desktop adapter status and send', () => {
     });
   });
 
+  test('CLI queue acceptance does not reuse an earlier identical input as delivery evidence', async () => {
+    appendFileSync(join(dir, 'finished.jsonl'), '\n' + heardAs('old-input', 'next task'));
+    const driver = adapter(
+      0,
+      '',
+      async () => ({
+        call: async () => {
+          throw new Error('method not found (-32601)');
+        },
+        close: () => {},
+      }),
+      undefined,
+      'queued-cli-input'
+    );
+    expect(await driver.send!(ref('idle'), 'next task', user)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'queued-cli-input' },
+    });
+  });
+
   test('CLI compatibility preserves its queue id for withdrawal', async () => {
     expect(
       await adapter(0, '', undefined, undefined, 'queue-cli-1\n').queue!(ref('busy'), 'hi', user)
@@ -1338,7 +1357,10 @@ describe('codex-desktop adapter status and send', () => {
       },
       close: () => {},
     }));
-    const agent = { from: 'session:neo', caller: { source: 'internal' as const, role: 'neo' as const } };
+    const agent = {
+      from: 'session:neo',
+      caller: { source: 'internal' as const, role: 'neo' as const },
+    };
     expect(await driver.send!(ref('idle'), 'new request', agent)).toEqual({
       ok: true,
       value: { delivered: false, queuedSubmissionId: 'agent-queue' },
@@ -1436,7 +1458,14 @@ describe('codex-desktop adapter status and send', () => {
       ok: false,
       reason: 'not_open',
     });
-    expect(await adapter(1, 'no such thread\n', async () => ({ call: async () => { throw new Error('no such thread'); }, close: () => {} })).send?.(ref('idle'), 'hi', user)).toMatchObject({
+    expect(
+      await adapter(1, 'no such thread\n', async () => ({
+        call: async () => {
+          throw new Error('no such thread');
+        },
+        close: () => {},
+      })).send?.(ref('idle'), 'hi', user)
+    ).toMatchObject({
       ok: false,
       reason: 'not_delivered',
     });

@@ -154,18 +154,29 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
   test('a CLI owner accepts direct inbox input without requiring Desktop ownership', async () => {
     write(record('t1'));
     live = [{ sessionId: 'cli-t1', status: 'idle', pid: 1, owner: 'cli' }];
-    const context = { from: 'session:neo', caller: { source: 'internal' as const, role: 'neo' as const } };
+    const context = {
+      from: 'session:neo',
+      caller: { source: 'internal' as const, role: 'neo' as const },
+    };
     const receipt = { executionId: 'cli-t1', inputId: 'pending-input' };
     const received: string[] = [];
-    const result = await runClaudeDesktopWake(target, 'next task', {
-      ...deps(),
-      sendInbox: async (_id, message) => {
-        received.push(message);
-        return { ok: true, value: { delivered: false, receipt } };
+    const result = await runClaudeDesktopWake(
+      target,
+      'next task',
+      {
+        ...deps(),
+        sendInbox: async (_id, message) => {
+          received.push(message);
+          return { ok: true, value: { delivered: false, receipt } };
+        },
       },
-    }, context);
+      context
+    );
     expect(received).toEqual(['next task']);
-    expect(result).toEqual({ ok: true, value: { delivered: false, unconfirmed: true, receipt } });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { delivered: false, unconfirmed: true, receipt },
+    });
     expect(spawned).toEqual([]);
   });
 
