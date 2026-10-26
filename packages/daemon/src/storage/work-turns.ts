@@ -50,21 +50,41 @@ export function readWorkTurns(
   return null;
 }
 
+export function readWorkInputTurn(
+  db: BunDatabase,
+  sessionId: string,
+  kind: 'codex' | 'claude',
+  marker: string
+): WorkTurn | null {
+  return (
+    readScopedTurns(
+      db,
+      `kind IN ('codex', 'claude') AND kind = ? AND session_id = ? AND message_type = 'user'
+      AND (body = ? OR substr(body, 1, length(?) + 1) = ? || char(10))`,
+      [kind, sessionId, marker, marker, marker],
+      undefined,
+      0,
+      0
+    )?.[0] ?? null
+  );
+}
+
 function readScopedTurns(
   db: BunDatabase,
   scope: string,
-  sessionId: string,
+  session: string | readonly string[],
   around: string | undefined,
   before: number,
   after: number
 ): WorkTurn[] | null {
+  const parameters = typeof session === 'string' ? [session] : session;
   if (!around) {
     const rows = db
       .prepare(
         `SELECT ${TURN_COLUMNS} FROM message_search_content WHERE ${scope}
           ORDER BY timestamp DESC, id DESC LIMIT ?`
       )
-      .all(sessionId, before + after + 1) as WorkTurnRow[];
+      .all(...parameters, before + after + 1) as WorkTurnRow[];
     return rows.length === 0 ? null : rows.reverse().map(toTurn);
   }
   const anchor = db
@@ -72,19 +92,19 @@ function readScopedTurns(
       `SELECT id, timestamp AS at FROM message_search_content
         WHERE ${scope} AND (message_id = ? OR source_id = ?) LIMIT 1`
     )
-    .get(sessionId, around, around) as { id: number; at: number | null } | undefined;
+    .get(...parameters, around, around) as { id: number; at: number | null } | undefined;
   if (!anchor) return null;
   const earlier = db
     .prepare(
       `SELECT ${TURN_COLUMNS} FROM message_search_content
         WHERE ${scope} AND (timestamp, id) < (?, ?) ORDER BY timestamp DESC, id DESC LIMIT ?`
     )
-    .all(sessionId, anchor.at, anchor.id, before) as WorkTurnRow[];
+    .all(...parameters, anchor.at, anchor.id, before) as WorkTurnRow[];
   const later = db
     .prepare(
       `SELECT ${TURN_COLUMNS} FROM message_search_content
         WHERE ${scope} AND (timestamp, id) >= (?, ?) ORDER BY timestamp, id LIMIT ?`
     )
-    .all(sessionId, anchor.at, anchor.id, after + 1) as WorkTurnRow[];
+    .all(...parameters, anchor.at, anchor.id, after + 1) as WorkTurnRow[];
   return [...earlier.reverse(), ...later].map(toTurn);
 }

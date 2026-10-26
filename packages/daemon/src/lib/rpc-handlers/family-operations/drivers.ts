@@ -8,6 +8,7 @@ import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.t
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
 import { withdrawOwnedInput } from '../../drivers/owned-input-withdrawal.ts';
+import { readWorkInput } from '../../../storage/work-input.ts';
 import {
   workStartPreparation,
   type WorkExecutionPreparer,
@@ -685,6 +686,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     createFindWorkOperation(deps),
     ...createWorkVerbOperations(deps),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
-    createReadWorkOperation({ readTurns, remote: remoteDaemons, daemonName: machine }),
+    createReadWorkOperation({
+      readTurns,
+      readInput: (sessionId, input) =>
+        context.deps.db.gateway.call(readWorkInput, 'find', sessionId, input),
+      remote: remoteDaemons,
+      daemonName: machine,
+    }),
   ];
 }
