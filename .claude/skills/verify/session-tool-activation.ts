@@ -77,7 +77,7 @@ try {
   const plugin = await createSkill({ name: 'fixture-plugin', displayName: 'Plugin', description: 'Synthetic', sourceType: 'plugin', config: { type: 'plugin', pluginPath: join(run, 'fixture-plugin') }, enabled: false, validationStatus: 'valid' });
   mkdirSync(join(run, 'data/skills/fixture-guide'), { recursive: true });
   writeFileSync(join(run, 'data/skills/fixture-guide/SKILL.md'), '---\nname: fixture-guide\ndescription: Synthetic instructions\n---\nUse the synthetic fixture.\n');
-  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), config: { model: 'haiku', provider: 'anthropic', sdkToolsPreset: ['Read'] } });
+  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { title: 'Synthetic tools', workspacePath: join(run, 'workspace'), config: { model: 'haiku', provider: 'anthropic', sdkToolsPreset: ['Read'] } });
   const session = (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
   const aliases = session.config.toolSelection!.choices[`mcp:${server.id}`]!.aliases!;
   await hub.request('message.send', { sessionId, content: 'Use my tools' });
@@ -100,7 +100,7 @@ try {
   const instructions = await choose(sessionId, `skill:${guide.id}`, true);
   assert.equal(instructions.application, 'restart_required');
   assert.deepEqual(queries[0].plugins, []);
-  const { sessionId: coldId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), config: { model: 'haiku', provider: 'anthropic' } });
+  const { sessionId: coldId } = await hub.request<{ sessionId: string }>('session.create', { title: 'Synthetic tools', workspacePath: join(run, 'workspace'), config: { model: 'haiku', provider: 'anthropic' } });
   const cold = await choose(coldId, `mcp:${server.id}`, true);
   assert.equal(cold.application, 'next_query'); assert.equal(queries.length, 1); assert.equal(interrupts, 0);
   evidence.results = { enabled, disabled, instructions, cold, observed, applications, interrupts, queryCount: queries.length };

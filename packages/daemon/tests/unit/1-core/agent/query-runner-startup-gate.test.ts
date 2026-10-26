@@ -326,7 +326,9 @@ describe('QueryRunner startup gate', () => {
   });
 
   it('applies MCP choices to the owning query and refreshes observed status without interruption', async () => {
-    const { runner, controlled } = await startObservedRunner('activate-tools');
+    const { runner, controlled, ctx } = await startObservedRunner('activate-tools');
+    const servers = { selected: { command: 'synthetic-not-executed' } };
+    ctx.optionsBuilder.getEffectiveMcpServers = () => servers;
     controlled.queryObject.setMcpServers = mock(async () => ({
       added: ['selected'],
       removed: [],
@@ -336,7 +338,7 @@ describe('QueryRunner startup gate', () => {
       { name: 'selected', status: 'connected', tools: [{ name: 'navigate' }] },
     ];
     expect(await runner.applyToolChoice()).toEqual({ application: 'live' });
-    expect(controlled.queryObject.setMcpServers).toHaveBeenCalled();
+    expect(controlled.queryObject.setMcpServers).toHaveBeenCalledWith(servers);
     expect(controlled.queryObject.interrupt).not.toHaveBeenCalled();
     expect(controlled.closeCount).toBe(0);
     expect((await runner.getToolInventory()).mcpServers).toEqual([
