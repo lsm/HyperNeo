@@ -96,6 +96,39 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test.each(['smudge', 'process'])(
+    'reads peer progress without executing an inherited %s filter',
+    async (driver) => {
+      await commit(peer, '.gitattributes', 'peer.md filter=home-probe\n');
+      await commit(peer, 'peer.md', 'Unfiltered peer progress.\n');
+      await git(peer, 'push');
+      const config = join(fixture, 'gitconfig');
+      const marker = join(fixture, 'filter-ran-outside-home');
+      await git(
+        root,
+        'config',
+        '--file',
+        config,
+        `filter.home-probe.${driver}`,
+        `printf executed > '${marker}'; ${driver === 'process' ? 'exit 1' : 'cat'}`
+      );
+      await git(root, 'config', '--file', config, 'filter.home-probe.required', 'true');
+      const previous = process.env.GIT_CONFIG_GLOBAL;
+      process.env.GIT_CONFIG_GLOBAL = config;
+      try {
+        const result = await call('neo.home.read', { path: 'peer.md' }).catch((error) => ({
+          ok: false,
+          reason: error.message,
+        }));
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(await readFile(join(root, 'peer.md'), 'utf8')).toBe('Unfiltered peer progress.\n');
+      } finally {
+        if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+        else process.env.GIT_CONFIG_GLOBAL = previous;
+      }
+    }
+  );
   test('pulls peer changes, commits and pushes exact content, including an unchanged retry', async () => {
     await commit(peer, 'peer.md', 'Peer progress.\n');
     await git(peer, 'push');

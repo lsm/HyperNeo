@@ -71,31 +71,42 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
-  test('does not execute an inherited filter selected by writable home attributes', async () => {
-    await writeFile(join(root, '.gitattributes'), '*.md filter=home-probe\n');
-    await git('add', '.gitattributes');
-    await git('commit', '-m', 'Home attributes');
-    const config = join(fixture, 'gitconfig');
-    const marker = join(fixture, 'filter-ran-outside-home');
-    await git(
-      'config',
-      '--file',
-      config,
-      'filter.home-probe.clean',
-      `printf executed > '${marker}'; cat`
-    );
-    const previous = process.env.GIT_CONFIG_GLOBAL;
-    process.env.GIT_CONFIG_GLOBAL = config;
-    try {
-      const result = await save({ path: 'filtered.md', content: 'Curated progress.' });
-      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
-      expect(result.ok).toBe(true);
-      expect(await git('show', 'HEAD:filtered.md')).toBe('Curated progress.');
-    } finally {
-      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-      else process.env.GIT_CONFIG_GLOBAL = previous;
+  test.each(['global', 'system'])(
+    'does not execute an inherited %s filter selected by home attributes',
+    async (source) => {
+      await writeFile(join(root, '.gitattributes'), '*.md filter=home-probe\n');
+      await git('add', '.gitattributes');
+      await git('commit', '-m', 'Home attributes');
+      const config = join(fixture, 'gitconfig');
+      const marker = join(fixture, 'filter-ran-outside-home');
+      await git(
+        'config',
+        '--file',
+        config,
+        'filter.home-probe.clean',
+        `printf executed > '${marker}'; cat`
+      );
+      const previous = new Map(
+        ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'].map((key) => [
+          key,
+          process.env[key],
+        ])
+      );
+      process.env[source === 'system' ? 'GIT_CONFIG_SYSTEM' : 'GIT_CONFIG_GLOBAL'] = config;
+      if (source === 'system') process.env.GIT_CONFIG_NOSYSTEM = '0';
+      try {
+        const result = await save({ path: 'filtered.md', content: 'Curated progress.' });
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(await git('show', 'HEAD:filtered.md')).toBe('Curated progress.');
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
     }
-  });
+  );
   test.each(['first save', 'legacy ignore'])('preserves runtime folders on %s', async (state) => {
     const prior = process.env.GIT_CONFIG_GLOBAL;
     try {
