@@ -78,8 +78,10 @@ try {
     for (const kind of ['close'] as const) {
       const result = await finish(kind, kind);
       assert(result.ok && result.todo.state === (kind === 'close' ? 'closed_unverified' : 'removed'));
-      assert.equal(result.todo.report, text);
-      assert.equal((await visible(kind)).report, text);
+      assert(result.todo.report === text, 'close receipt must retain the complete report');
+      assert.equal((await visible(kind)).state, 'closed_unverified');
+      const detail = await hub.request<{ ok: boolean; entry: { todos: NeoTodo[] } }>('operation.invoke', { name: 'neo.ask.read', input: { todoId: kind } });
+      assert(detail.ok && detail.entry.todos.find(todo => todo.id === kind)?.report === text, 'opened card must retain the complete report');
       receipts.push({ kind, state: result.todo.state, replyBytes: Buffer.byteLength(JSON.stringify(result)) });
     }
     report.receipts = receipts;

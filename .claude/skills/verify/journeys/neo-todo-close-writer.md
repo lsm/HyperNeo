@@ -11,7 +11,9 @@ bash .claude/skills/verify/proof-run.sh "$AFTER_EVIDENCE" .claude/skills/verify/
 The real neo.todo.close RPC must first reproduce a partial state/card mutation
 when the ask stamp fails. After the move, state and card must roll back together,
 as observed through neo.snapshot. A successful close without a passed check is
-closed_unverified, and complete large reports survive both receipt and snapshot.
+closed_unverified. Snapshots retain summary state; complete large reports must
+survive the receipt and neo.ask.read when the card is opened, following the
+work-card-summaries journey.
 Todo/ask/question/session SQL, including stop-context reads, must leave main.
 
 Hold an owned 1.2-second WAL lock and measure a real health RPC during close.

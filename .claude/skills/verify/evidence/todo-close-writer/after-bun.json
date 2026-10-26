@@ -1,0 +1,34 @@
+{
+  "mode": "verify",
+  "surface": "real close RPC and neo.snapshot",
+  "refused": [
+    {
+      "kind": "close",
+      "error": "MessageHubResponseError: synthetic finalization refusal",
+      "observed": {
+        "state": "doing",
+        "card": "open",
+        "visibleState": "doing"
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "kind": "close",
+      "state": "closed_unverified",
+      "replyBytes": 1750972
+    }
+  ],
+  "fullReport": {
+    "bytes": 850000,
+    "sha256": "3f9b3fceb06c0114abcd818ca083bf1b4f701bd5cb4da59995440ac8398388bb"
+  },
+  "contention": {
+    "writeMs": 1210.890375,
+    "healthMs": 0.7726669999999558,
+    "maxLagMs": 2.0162920000000213,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true,
+  "mainSql": 0
+}

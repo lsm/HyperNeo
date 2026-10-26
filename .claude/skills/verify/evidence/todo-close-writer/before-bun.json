@@ -1,0 +1,17 @@
+{
+  "mode": "before",
+  "surface": "real close RPC and neo.snapshot",
+  "refused": [
+    {
+      "kind": "close",
+      "error": "MessageHubResponseError: synthetic finalization refusal",
+      "observed": {
+        "state": "closed_unverified",
+        "card": "retired",
+        "visibleState": "closed_unverified"
+      }
+    }
+  ],
+  "baselineReproduced": true,
+  "mainSql": 22
+}
