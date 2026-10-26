@@ -69,7 +69,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       name: 'Bash',
       input: {
         command: sandboxProof
-          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (mkdir -p '${isolated}/data/Neo/.git/info'; printf HOME_OK > '${isolated}/data/Neo/blocked.txt'; printf 'evidence/\\n' >> '${isolated}/data/Neo/.git/info/exclude'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
+          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf HOME_OK > '${isolated}/data/Neo/blocked.txt'; printf '*.md filter=probe' > '${isolated}/data/Neo/.gitattributes'; mkdir -p '${isolated}/data/Neo/.git/info'; printf FILTER_PROBE >> '${isolated}/data/Neo/.git/config'; mkdir -p '${isolated}/data/Neo/.git/hooks'; printf HOOK_PROBE > '${isolated}/data/Neo/.git/hooks/pre-push'; printf 'evidence/\\n' >> '${isolated}/data/Neo/.git/info/exclude'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
           : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
       },
     },
@@ -801,7 +801,9 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
       expect(existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt'))).toBe(true);
       expect(readFileSync(join(newCwd, 'blocked.txt'), 'utf8')).toBe('HOME_OK');
-      expect(readFileSync(join(newCwd, '.git/info/exclude'), 'utf8')).toContain('evidence/');
+      expect(readFileSync(join(newCwd, '.gitattributes'), 'utf8')).toContain('filter=probe');
+      for (const path of ['.git/config', '.git/hooks/pre-push', '.git/info/exclude'])
+        expect(existsSync(join(newCwd, path))).toBe(false);
       for (const path of [workerCheckout, join(isolated, 'data')])
         expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
     }

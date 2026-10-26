@@ -42,6 +42,7 @@ export async function neoReadAccess(
   return {
     filesystem: {
       allowWrite: [cwd ?? neoFolderPath(), temp, ...neoReadCheckoutPaths()],
+      denyWrite: [join(cwd ?? neoFolderPath(), '.git')],
     },
     env: {
       TMPDIR: temp,
