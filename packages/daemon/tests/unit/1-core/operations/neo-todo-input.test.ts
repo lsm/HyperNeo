@@ -93,7 +93,11 @@ test('legacy rows remain readable and a check edit replaces their old completion
   expect(edit.inputSchema.parse({ todoId: legacy.id, doneWhen: 'Override' })).not.toHaveProperty(
     'doneWhen'
   );
-  const edited = await call('neo.todo.edit', { todoId: legacy.id, check });
+  const edited = await call('neo.todo.edit', {
+    todoId: legacy.id,
+    check,
+    addUrls: ['https://github.com/example/project/pull/42'],
+  });
   expect(edited).toMatchObject({
     ok: true,
     todo: { check, doneWhen: 'File /synthetic/result.txt exists.' },
