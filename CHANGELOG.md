@@ -4,10 +4,13 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
-## [0.49.0] - 2026-10-24
+## [0.49.0] - 2026-10-25
 
 ### Added
 
+- **Session tools**: Save tool choices and apply them consistently to current and new SDK sessions (#8881, #8819).
+- **Phone setup**: Guide device pairing from Settings (#8640).
+- **Kimi models**: Add K3.1 Pro and Highspeed with region-aware availability (#8635).
 - **Coding settings**: Configure repository policy and explicitly add or remove watched repositories from Settings (#8588, #8610).
 - **Work feed**: Limit an instance's feed to sessions it started (#8604).
 - **Neo settings**: List muted sessions and unmute them individually (#8590).
@@ -20,6 +23,13 @@ All notable changes to HyperNeo will be documented in this file.
 
 ### Fixed
 
+- **New-user sessions**: Resolve model targets with thinking effort, keep non-coding work in one visible folder, and isolate automatic project discovery (#8617, #8621, #8620).
+- **Tools panel**: Show the tools observed in the current SDK query (#8636, #8641).
+- **Neo work**: Deliver worker milestones and card answers reliably; keep Waiting on you cards first with stable ordering (#8843, #8834, #8911).
+- **File previews**: Preserve preview and draft context and allow explicit non-sensitive attachment paths (#8801, #8811, #8883).
+- **Responsiveness**: Move queued work and settings writes to the database writer, reclaim stale jobs, and keep slow WebSocket clients connected (#8898, #8868, #8905, #8871).
+- **Coding ledger**: Reduce review-query overhead and scan fairly across quota failures (#8861, #8893).
+- **Worker isolation**: Enforce the prepared worker OS write sandbox (#8632).
 - **Device pairing**: Restore `hyperneo pair` and `hyperneo devices` in compiled binaries and list both commands in help (#8615).
 - **First start**: Download the Claude Code SDK without blocking the event loop, load embeddings in compiled binaries, and preserve explicit test mode in compiled entrypoints (#8599, #8601, #8612).
 - **Browser security**: Refuse cross-site WebSocket upgrades and mutating HTTP requests (#8594).
