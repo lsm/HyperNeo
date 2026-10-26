@@ -1,6 +1,9 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { callCodingBranchDb } from './branch-facts-db.ts';
+import { codingConnectorIdentityReads } from './connector-identity-db.ts';
 import { withBusyRetry } from '../../../../storage/busy-retry.ts';
 import type { ConnectorOutcome } from '../../../github/connectors/connector.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
@@ -17,11 +20,11 @@ const Pr = z.object({
 type Subject = Parameters<CodingPollFactsRepository['read']>[0];
 type Target = { facts: CodingPollFactsRepository; subject: Subject };
 
-export function codingConnectorPrTarget(
+export async function codingConnectorPrTarget(
   getDatabase: () => Database,
   url: string,
   accept = 'application/vnd.hyperneo.pr-basic+json'
-): { value: Target } | { reason: ConnectorOutcome } {
+): Promise<{ value: Target } | { reason: ConnectorOutcome }> {
   const pr = parsePrUrl(url.toLowerCase());
   if (!pr) return { reason: { ok: false, error: 'Unable to parse GitHub PR URL' } };
   const allowed = (process.env.GH_HOST || 'github.com').toLowerCase();
@@ -29,18 +32,19 @@ export function codingConnectorPrTarget(
     return { reason: { ok: false, error: `PR host ${pr.host} is not allowed for GitHub lookups` } };
   const db = getDatabase();
   const repo = `${pr.owner}/${pr.repo}`;
-  const alias =
+  const canonical =
     pr.host === 'github.com'
-      ? (db.prepare('SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?').get(repo) as {
-          canonical: string;
-        } | null)
-      : null;
+      ? await callCodingBranchDb(
+          () => gatewayFor(db).call(codingConnectorIdentityReads, 'canonical', repo),
+          'coding.connector.identity'
+        )
+      : repo;
   return {
     value: {
       facts: new CodingPollFactsRepository(db),
       subject: {
         credentialId: 'github-connector',
-        url: `https://${pr.host}/${alias?.canonical.toLowerCase() ?? repo}/pull/${pr.number}`,
+        url: `https://${pr.host}/${canonical}/pull/${pr.number}`,
         accept,
         apiVersion: 'v1',
       },
