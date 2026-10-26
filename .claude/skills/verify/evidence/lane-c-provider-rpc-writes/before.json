@@ -1,0 +1,82 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 306,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "create": {
+    "error": "provider mutation SQL reached main connection"
+  },
+  "update": {
+    "error": "provider mutation SQL reached main connection"
+  },
+  "setDefault": {
+    "error": "provider mutation SQL reached main connection"
+  },
+  "health": {
+    "error": "provider mutation SQL reached main connection"
+  },
+  "credentialsUpdate": {
+    "error": "provider mutation SQL reached main connection"
+  },
+  "persisted": {
+    "id": "30918125-dfae-43ad-949f-d1bee8e391af",
+    "providerId": "synthetic-provider-first",
+    "displayName": "synthetic-provider-first",
+    "kind": "built_in",
+    "authType": "none",
+    "isEnabled": false,
+    "isDefault": false,
+    "sortOrder": 0,
+    "configJson": "{\"command\":\"synthetic-command\",\"discoveredModels\":{\"models\":[{\"id\":\"synthetic-model\"}]}}",
+    "healthStatus": "unknown",
+    "createdAt": 1792974215786,
+    "updatedAt": 1792974215786
+  },
+  "rollback": {
+    "error": "provider mutation SQL reached main connection"
+  },
+  "rolledBack": null,
+  "delete": {
+    "error": "provider mutation SQL reached main connection"
+  },
+  "deleted": {
+    "id": "8dd6462c-c1b8-4c04-aebf-f2da39c2b49b",
+    "providerId": "synthetic-provider-second",
+    "displayName": "synthetic-provider-second",
+    "kind": "built_in",
+    "authType": "none",
+    "isEnabled": false,
+    "isDefault": false,
+    "sortOrder": 0,
+    "healthStatus": "unknown",
+    "createdAt": 1792974215786,
+    "updatedAt": 1792974215786
+  },
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 308,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 7
+}
