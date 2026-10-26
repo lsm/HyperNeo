@@ -72,6 +72,7 @@ import {
 } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
+import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
@@ -349,6 +350,7 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
 }
 
 export function createNeoOperations(service: NeoService) {
+  const mutationGateway = gatewayFor(service.db.getDatabase());
   const messageStatuses: NeoMessageStatusPresenter = (items) =>
     readNeoMessageStatuses((refs) => service.db.getNeoMessageStatusFactsAsync(refs), items);
   const snapshots = new Map<string, ReturnType<typeof buildSnapshot>>();
@@ -751,13 +753,25 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
-    ...createNeoTodoOperations(
-      service.todos,
-      service.todoSessions,
-      todoControls,
-      () => service.installedPacks(),
-      createArtifactRefReader(() => service.db.getDatabase()),
-      (todos) => service.todoWorkers(todos)
+    ...wireNeoTodoMutations(
+      createNeoTodoOperations(
+        service.todos,
+        service.todoSessions,
+        todoControls,
+        () => service.installedPacks(),
+        createArtifactRefReader(() => service.db.getDatabase()),
+        (todos) => service.todoWorkers(todos)
+      ),
+      {
+        gateway: mutationGateway,
+        write: mutationGateway.run.bind(mutationGateway),
+        packs: () => service.installedPacks(),
+        artifact: createArtifactRefReader(() => service.db.getDatabase()),
+        stop: (todo) => service.todoRunner.stop(todo),
+        start: (id) => service.todoRunner.start(id),
+        changed: () => service.notifyChanged(),
+        project: (todos) => service.todoWorkers(todos),
+      }
     ),
     createNeoAskReadOperation(
       service.todos,
