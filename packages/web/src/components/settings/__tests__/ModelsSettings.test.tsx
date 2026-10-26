@@ -1,5 +1,8 @@
+import { MessageHub } from '@hyperneo/shared/message-hub/message-hub';
+import { createResponseMessage, MessageType } from '@hyperneo/shared/message-hub/protocol';
+import type { HubMessage, IMessageTransport } from '@hyperneo/shared/message-hub/types';
 import { signal } from '@preact/signals';
-import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
+import { render, cleanup, screen, waitFor, fireEvent, act } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockConnectionState = signal<'connected' | 'disconnected'>('connected');
@@ -53,6 +56,71 @@ describe('ModelsSettings — load failure surfacing', () => {
   afterEach(() => {
     cleanup();
   });
+
+  it.each([false, true])(
+    'waits for delayed discovery through the real hub, forced=%s',
+    async (forced) => {
+      vi.useFakeTimers();
+      const hub = new MessageHub();
+      let receive: (message: HubMessage) => void = () => {};
+      const transport = {
+        name: 'delayed-models',
+        isReady: () => true,
+        getState: () => 'connected',
+        initialize: async () => {},
+        close: async () => {},
+        onMessage: (handler: (message: HubMessage) => void) => {
+          receive = handler;
+          return () => {};
+        },
+        onConnectionChange: () => () => {},
+        send: async (message: HubMessage) => {
+          if (message.type !== MessageType.REQUEST) return;
+          const refresh = (message.data as { forceRefresh?: boolean }).forceRefresh;
+          const delay = forced ? (refresh ? 30000 : 0) : 15000;
+          const models =
+            forced && !refresh
+              ? []
+              : [{ id: 'cold-sdk', display_name: 'Cold SDK model', provider: 'anthropic' }];
+          setTimeout(
+            () =>
+              receive(
+                createResponseMessage({
+                  method: message.method,
+                  sessionId: message.sessionId,
+                  requestId: message.id,
+                  data: { models },
+                })
+              ),
+            delay
+          );
+        },
+      } as IMessageTransport;
+      hub.registerTransport(transport);
+      mockGetHubIfConnected.mockReturnValue(hub);
+      try {
+        render(<ModelsSettings />);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        if (forced) fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10001);
+        });
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.queryByText('Cold SDK model')).toBeNull();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(forced ? 20000 : 5000);
+        });
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.getAllByText('Cold SDK model').length).toBeGreaterThan(0);
+      } finally {
+        cleanup();
+        hub.cleanup();
+        vi.useRealTimers();
+      }
+    }
+  );
 
   it('shows a durable error with Retry instead of a silent empty state when the hub is missing', async () => {
     render(<ModelsSettings />);
