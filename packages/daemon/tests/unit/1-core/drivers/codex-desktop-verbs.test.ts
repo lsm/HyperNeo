@@ -1,20 +1,13 @@
-import { createServer } from 'node:http';
-import { WebSocketServer } from 'ws';
-import { vi } from 'vitest';
-import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
-import {
-  prepareWorkerSandbox,
-  releaseWorkerSandbox,
-  workerSandboxPaths,
-} from '../../../../src/lib/drivers/worker-sandbox';
-import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
+import { WebSocketServer } from 'ws';
 import {
-  connectCodexAppServer,
   type CodexAppServer,
+  connectCodexAppServer,
 } from '../../../../src/lib/drivers/codex-app-server';
 import {
   admitCodexSteerTurn,
@@ -25,19 +18,26 @@ import {
   codexTurnState,
   codexUserInputIds,
   createCodexDesktopAdapter,
+  queueCodexMessage,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
 import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
-import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
-import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
+import {
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+  workerSandboxPaths,
+} from '../../../../src/lib/drivers/worker-sandbox';
 import {
   configureLogger,
   getLoggerConfig,
   LogLevel,
   subscribeToStructuredLogs,
 } from '../../../../src/lib/logger';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -1130,6 +1130,34 @@ describe('codex-desktop adapter status and send', () => {
     } finally {
       await releaseWorkerSandbox(root);
     }
+  });
+
+  test('a refused worker profile surfaces as not_delivered instead of a raw error', async () => {
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    await prepareWorkerSandbox(root);
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    writeFileSync(join(root, '.codex/config.toml'), '[experimental]\n');
+    const detail = {
+      thread: { id: 'idle', folder: root, rolloutPath: '', branch: null },
+      roots: [],
+    } as unknown as Parameters<typeof queueCodexMessage>[0];
+    await expect(
+      queueCodexMessage(
+        detail,
+        'run local tests',
+        {
+          desktopSocketPath: '',
+          spawn: (() => {
+            throw new Error('offline');
+          }) as never,
+          newId: () => 'n',
+          desktopRunning: async () => false,
+        } as never,
+        'auto'
+      )
+    ).resolves.toMatchObject({ ok: false, reason: 'not_delivered' });
+    await releaseWorkerSandbox(root).catch(() => {});
   });
 
   test.each(['native', 'cli'] as const)(

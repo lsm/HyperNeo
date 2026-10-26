@@ -170,12 +170,19 @@ try {
   assert(codexResult.ok, JSON.stringify(codexResult));
   const codexLaunch = JSON.parse(readFileSync(join(run, 'evidence/codex-launch.json'), 'utf8'));
   assertWorkLocations(codexLaunch.config?.shell_environment_policy?.set ?? {}, 'codex');
+  const codexFilesystem = (codexLaunch.config?.permissions?.['hyperneo-worker']?.filesystem ??
+    {}) as Record<string, string>;
   assert(
-    !codexLaunch.config.sandbox_workspace_write.writable_roots.includes(
-      codexLaunch.config.shell_environment_policy.set.HYPERNEO_WORKTREES
-    ),
+    codexFilesystem[codexLaunch.config.shell_environment_policy.set.HYPERNEO_WORKTREES] !==
+      'write',
     'Codex writable roots must exclude the shared worktrees tree'
   );
+  for (const key of ['HYPERNEO_EVIDENCE', 'HYPERNEO_BUILDS', 'TMPDIR']) {
+    assert(
+      codexFilesystem[codexLaunch.config.shell_environment_policy.set[key]] === 'write',
+      `Codex writable roots must include ${key}`
+    );
+  }
   await app.jobProcessor.stop();
   const registry = await rpc('rpc:mcp.registry.list', {}) as { servers: { id: string }[] };
   for (const server of registry.servers) await rpc('rpc:mcp.registry.setEnabled', { id: server.id, enabled: false });

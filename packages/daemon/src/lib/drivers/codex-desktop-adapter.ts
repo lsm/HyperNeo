@@ -814,7 +814,15 @@ export async function queueCodexMessage(
   deps: CodexDesktopAdapterDeps,
   mode: 'auto' | 'queue' = 'auto'
 ): Promise<Result<WorkDelivery>> {
-  const sandbox = await resumeWorkerSandbox(detail.thread.folder);
+  let sandbox: Awaited<ReturnType<typeof resumeWorkerSandbox>> = null;
+  try {
+    sandbox = await resumeWorkerSandbox(detail.thread.folder);
+  } catch (error) {
+    return reject(
+      'not_delivered',
+      `worker sandbox: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   const owner = await steerCodexDesktopTurn(
     deps.desktopSocketPath,
     deps.spawn,
@@ -960,7 +968,16 @@ async function tryDesktopCodexSend(
   deps: CodexDesktopAdapterDeps,
   mode: 'steer'
 ): Promise<CodexSendGate<'app-server'>> {
-  await resumeWorkerSandbox(detail.thread.folder);
+  try {
+    await resumeWorkerSandbox(detail.thread.folder);
+  } catch (error) {
+    return {
+      reason: reject(
+        'not_delivered',
+        `worker sandbox: ${error instanceof Error ? error.message : String(error)}`
+      ),
+    };
+  }
   return steerCodexDesktopTurn(
     deps.desktopSocketPath,
     deps.spawn,

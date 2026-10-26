@@ -144,3 +144,9 @@ locations included. Keychain/1Password IPC and arbitrary MCP processes remain
 uncovered. Policy tests run inside prepared workers; the real OS denial/allowed
 repo-read proof is `worker-secret-read.md`, run by Neo after deployment on a host
 that can apply a fresh sandbox. Nested sandbox failure is not OS proof.
+
+
+Prepared Codex workers get read-only `.agents`, `.codex` and `.aws` inside their
+clone: the daemon owns the persisted profile under `.codex`, and credential-style
+directories stay immutable even in-clone; repository content outside those three
+paths remains writable.
