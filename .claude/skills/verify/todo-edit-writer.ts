@@ -28,7 +28,7 @@ const hub = new MessageHub({ defaultSessionId: 'global' });
 const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws` });
 hub.registerTransport(transport);
 const db = app.db.getDatabase(), prepare = db.prepare.bind(db), todos = new NeoAskTodoRepository(db);
-let recording = false, mainSql = 0, measureLag = false, maxLagMs = 0, previous = performance.now();
+let recording = 0, mainSql = 0, measureLag = false, maxLagMs = 0, previous = performance.now();
 let lock: ReturnType<typeof spawn> | undefined;
 let lockExit: Promise<void> | undefined;
 const timer = setInterval(() => { const now = performance.now(); if (measureLag) maxLagMs = Math.max(maxLagMs, now - previous - 10); previous = now; }, 10);
@@ -36,9 +36,9 @@ db.prepare = ((sql: string) => { if (recording && /neo_todos|neo_asks|neo_questi
 const report: Record<string, unknown> = { mode, surface: 'real neo.todo.edit RPC and neo.snapshot' };
 type Receipt = { ok: false; reason: string } | { ok: true; todo: NeoTodo; todos: NeoTodo[]; records?: string[] };
 const edit = async (input: unknown) => {
-  recording = true;
+  recording++;
   try { return await hub.request<Receipt>('operation.invoke', { name: 'neo.todo.edit', input }); }
-  finally { recording = false; }
+  finally { recording--; }
 };
 const visible = async (id: string) => (await hub.request<NeoSnapshot>('operation.invoke', { name: 'neo.snapshot', input: {} })).todoAsks.flatMap(entry => entry.todos).find(todo => todo.id === id)!;
 const url = (n: number) => `https://github.com/synthetic/edit/pull/${n}`;

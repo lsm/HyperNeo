@@ -35,9 +35,9 @@
     "state": "closed_unverified"
   },
   "contention": {
-    "writeMs": 1267.279583,
-    "healthMs": 0.5954159999998865,
-    "maxLagMs": 2.5437090000000353,
+    "writeMs": 1236.767875,
+    "healthMs": 0.6024589999999534,
+    "maxLagMs": 4.413833000000068,
     "affectedWriteUnder250ms": false
   },
   "verified": true,
