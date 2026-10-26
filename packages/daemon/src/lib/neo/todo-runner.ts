@@ -473,10 +473,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const judgement =
         pack && pack.readFacts && pack.judge ? pack.judge(todo, await pack.readFacts(todo)) : null;
       const result = judgement ? null : await rule.check(todo);
+      const completion =
+        judgement ??
+        (result?.done && !result.failed
+          ? { state: 'done' as const, evidence: result.evidence }
+          : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
-      const next = judgement
-        ? await recompute(live, {}, now, judgement)
+      const next = completion
+        ? await recompute(live, {}, now, completion)
         : await finish(
             live,
             ask,
@@ -484,7 +489,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             now
           );
       if (
-        judgement &&
+        completion &&
         next.state !== live.state &&
         ['done', 'failed', 'blocked'].includes(next.state)
       )

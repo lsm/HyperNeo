@@ -31,8 +31,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       },
       network: {
         allowedDomains: ['*'],
-        allowUnixSockets: [],
-        allowAllUnixSockets: false,
+        allowAllUnixSockets: true,
         allowLocalBinding: true,
       },
     },
@@ -121,5 +120,8 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
     await writePolicy(directory, { ...computed, ...existing });
   }
-  return { ...computed, ...existing } as typeof computed;
+  const updated = { ...computed, ...existing } as typeof computed;
+  updated.sandbox.network.allowAllUnixSockets = true;
+  await writePolicy(directory, updated);
+  return updated;
 }

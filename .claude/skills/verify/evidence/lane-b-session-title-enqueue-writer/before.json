@@ -1,0 +1,19 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 342,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "jobs": [],
+  "mainSqlAttempts": 1
+}

@@ -23,6 +23,8 @@ import type {
 import type { Session } from '@hyperneo/shared';
 import { ClientEventGateway, STATE_CHANNELS } from '@hyperneo/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository.ts';
+import { healthSessionCountReads } from '../storage/repositories/health-session-count-read.ts';
+import { sessionProjectionReads } from '../storage/repositories/session-projection-read.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
 import { sanitizeGlobalSettings } from './rpc-handlers/settings-handlers.ts';
 import { BUILD_METADATA } from './build-metadata.ts';
@@ -305,7 +307,9 @@ export class StateProjectionService {
         uptime: Date.now() - startTime,
         sessions: {
           active: this.sessionManager.getActiveSessions(),
-          total: this.sessionManager.getTotalSessions(),
+          total: await this.sessionManager
+            .getDatabase()
+            .gateway.call(healthSessionCountReads, 'countHumanSessions'),
         },
       },
 
@@ -334,10 +338,9 @@ export class StateProjectionService {
   private async getSessionsState(): Promise<SessionsState> {
     const settings = this.settingsManager.getGlobalSettings();
 
-    const allSessions = this.sessionManager.listSessions({ includeArchived: true });
-    const hasArchivedSessions = allSessions.some((s) => s.status === 'archived');
-
-    const sessions = settings.showArchived ? allSessions : this.sessionManager.listSessions();
+    const { sessions, hasArchivedSessions } = await this.sessionManager
+      .getDatabase()
+      .gateway.call(sessionProjectionReads, 'snapshot', settings.showArchived);
 
     return {
       sessions,
@@ -417,11 +420,17 @@ export class StateProjectionService {
 
   async broadcastSystemChange(): Promise<void> {
     const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SYSTEM);
-    const state = { ...(await this.getSystemState()), version };
-
-    this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
-      channel: 'global',
-    });
+    try {
+      const state = { ...(await this.getSystemState()), version };
+      this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
+        channel: 'global',
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[StateProjectionService] Failed to broadcast system state:',
+        error instanceof Error ? error.message : error
+      );
+    }
   }
 
   async broadcastSettingsChange(): Promise<void> {

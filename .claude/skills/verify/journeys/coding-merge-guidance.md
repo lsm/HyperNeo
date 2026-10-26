@@ -31,4 +31,6 @@ merge message. This checks notification text and generated worker guidance, not
 actual session transport, GitHub review acquisition, actor selection, final
 admission activation or a live deployment. Use `coding-merge-admission.md` for
 the final operation door, `coding-actor-assignments.md` for actor dispatch and
-`coding-delivery-completion.md` for the deployment-smoke completion gate.
+`coding-delivery-completion.md` for independent smoke admission and completion
+from the todo's declared check. A PR/issue check does not acquire an additional
+deployment-smoke requirement.

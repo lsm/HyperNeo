@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import MarkdownRenderer from '../MarkdownRenderer';
+import { previewReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
 
 afterEach(cleanup);
 
@@ -29,6 +30,20 @@ async function renderWith(onReference = vi.fn()) {
 }
 
 describe('MarkdownRenderer preview references', () => {
+  it('sends a spaced inline-code path as one complete reference', async () => {
+    const text = 'Open `My notes.md`.';
+    const onReference = vi.fn();
+    render(
+      <MarkdownRenderer
+        content={text}
+        references={previewReferenceCandidates(text).map((item) => item.reference)}
+        onReference={onReference}
+      />
+    );
+    const link = await screen.findByRole('link', { name: 'Open preview: My notes.md' });
+    fireEvent.click(link);
+    expect(onReference).toHaveBeenCalledWith('My notes.md');
+  });
   it('opens a Markdown link, inline code path, bare path or PR link in the app', async () => {
     const { onReference } = await renderWith();
     for (const text of [

@@ -87,7 +87,7 @@ export function registerVoiceHandlers(
       )
   );
 
-  messageHub.onRequest<{ encoding?: string; sampleRate?: number }>(
+  messageHub.onRequest<{ encoding?: string; sampleRate?: number; language?: string }>(
     'voice.stream.start',
     async (data, context) => {
       if (data?.encoding !== 'pcm16' || data.sampleRate !== 16_000)
@@ -107,6 +107,7 @@ export function registerVoiceHandlers(
         const streamId = crypto.randomUUID();
         const started = await VoiceStream.start(streamId, {
           clientId,
+          language: data.language === 'zh' || data.language === 'en' ? data.language : undefined,
           voice: () => settingsManager.getGlobalSettings().voice,
           credentialManager,
           transcribeWav: (audioBase64) =>

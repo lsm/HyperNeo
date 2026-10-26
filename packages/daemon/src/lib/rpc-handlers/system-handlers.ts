@@ -1,4 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
+import { healthSessionCountReads } from '../../storage/repositories/health-session-count-read.ts';
 import type { HealthStatus } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
@@ -17,7 +18,9 @@ export function setupSystemHandlers(
       uptime: Date.now() - startTime,
       sessions: {
         active: sessionManager.getActiveSessions(),
-        total: sessionManager.getTotalSessions(),
+        total: await sessionManager
+          .getDatabase()
+          .gateway.call(healthSessionCountReads, 'countHumanSessions'),
       },
     };
 

@@ -103,17 +103,34 @@ test('worker reports reuse the existing card and preserve a durable hold through
     });
     expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
     store.updateTodo(store.getTodo('todo')!, { state: 'doing', report: 'Routine activity' }, 4);
-    await store.recompute(
-      store.getTodo('todo')!,
-      {},
-      5,
-      { state: 'done', evidence: 'Routine check' },
-      async () => {}
-    );
+    await store.recompute(store.getTodo('todo')!, {}, 5, { state: 'no_opinion' }, async () => {});
     expect(store.getTodo('todo')).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
     store.answerQuestion(first.question, ['Use staging'], 'button', 6);
     store.updateTodo(store.getTodo('todo')!, { state: 'doing' }, 7);
     expect(store.getTodo('todo')).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+  } finally {
+    db.close();
+  }
+});
+
+test('a passed check completes human-blocked work and retires its unanswered card', async () => {
+  const { db, store, ref, write } = setup();
+  try {
+    const first = await write(ref, report);
+    if (!first.ok) throw new Error(first.reason);
+    await store.recompute(
+      store.getTodo('todo')!,
+      {},
+      5,
+      { state: 'done', evidence: 'Observed outcome' },
+      async () => {}
+    );
+    expect(store.getTodo('todo')).toMatchObject({
+      state: 'done',
+      evidence: 'Observed outcome',
+      blockedBy: null,
+    });
+    expect(store.getQuestion(first.question.id)).toMatchObject({ state: 'retired', answer: null });
   } finally {
     db.close();
   }

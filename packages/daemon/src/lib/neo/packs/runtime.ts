@@ -30,6 +30,7 @@ import { createCodingReviewThreadReader } from './coding/connector-review-thread
 import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
+import { createCoreTodoPack } from '../core-todo-checks.ts';
 
 export function createNeoCodingReaders(db: () => Database) {
   const readMerge = createCodingMergeReader(db);
@@ -131,7 +132,20 @@ export function createNeoService(...args: NeoServiceArgs) {
         return branch ? configured.readBranchPrs(branch) : [];
       };
       return {
-        packs: [coding, lifeAdmin],
+        packs: [
+          coding,
+          lifeAdmin,
+          createCoreTodoPack(db.getDatabase(), async (repo, sha, build) => {
+            const fact = await new CodingPrLedgerRepository(db.getDatabase()).ancestryFacts.refresh(
+              {
+                repo,
+                baseOid: sha,
+                headOid: build,
+              }
+            );
+            return fact.ancestry.status === 'known' && fact.ancestry.contains;
+          }),
+        ],
         defaults: NEO_DEFAULT_PACKS,
         operations: createNeoProjectTreeOperations(core.repo, (refs) =>
           configured.readRefStates(refs)

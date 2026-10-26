@@ -498,7 +498,7 @@ describe('codex-desktop adapter status and send', () => {
     }),
     worktreesDir = '/codex/worktrees',
     stdout = '',
-    overrides: { newId?: () => string; onSpawn?: () => void } = {}
+    overrides: { newId?: () => string; onSpawn?: () => void; realServer?: boolean } = {}
   ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
@@ -523,7 +523,16 @@ describe('codex-desktop adapter status and send', () => {
       machine: 'laptop',
       now: () => NOW,
       spawn,
-      appServer,
+      appServer: async () => {
+        const server = await appServer();
+        return {
+          ...server,
+          call: (method, params) =>
+            method === 'thread/loaded/list' && !overrides.realServer
+              ? Promise.resolve({ data: ['idle', 'busy'], nextCursor: null })
+              : server.call(method, params),
+        };
+      },
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',
@@ -533,6 +542,101 @@ describe('codex-desktop adapter status and send', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
+
+  test.each(['', 'thread/loaded/list', 'thread/resume', 'thread/settings/update'])(
+    'saved unloaded input reaches its reply or names the failed step: %s',
+    async (failedStep) => {
+      const server = createServer();
+      const sockets = new WebSocketServer({ server });
+      const path = join(dir, 'unloaded.sock');
+      let loaded = false;
+      let consumed = 0;
+      const calls: string[] = [];
+      const policy = vi
+        .spyOn(sandbox, 'resumeWorkerSandbox')
+        .mockResolvedValue(sandbox.codexWorkerSandbox(dir));
+      sockets.on('connection', (socket) =>
+        socket.on('message', (bytes) => {
+          const request = JSON.parse(String(bytes));
+          if (request.id === undefined) return;
+          calls.push(request.method);
+          const reply = (result: unknown) =>
+            socket.send(JSON.stringify({ id: request.id, result }));
+          if (request.method === failedStep) {
+            socket.close();
+            return;
+          }
+          if (request.method === 'thread/loaded/list') {
+            reply({ data: loaded ? ['idle'] : [], nextCursor: null });
+            return;
+          }
+          if (request.method === 'thread/resume') {
+            loaded = true;
+            reply({});
+            return;
+          }
+          if (!loaded && ['thread/settings/update', 'thread/queue/add'].includes(request.method)) {
+            socket.send(
+              JSON.stringify({
+                id: request.id,
+                error: { code: -32600, message: 'thread not found: idle' },
+              })
+            );
+            return;
+          }
+          if (request.method === 'thread/queue/add') {
+            consumed++;
+            appendFileSync(
+              join(dir, 'finished.jsonl'),
+              `\n${heardAs(request.params.clientUserMessageId, request.params.input[0].text)}\n${saidAt('Received saved work.')}`
+            );
+            reply({ queuedSubmission: { id: 'saved-queue' } });
+            return;
+          }
+          reply({});
+        })
+      );
+      await new Promise<void>((resolve) => server.listen(path, resolve));
+      try {
+        const driver = adapter(0, '', () => connectCodexAppServer(path), undefined, '', {
+          realServer: true,
+        });
+        const result = await driver.send!(ref('idle'), 'continue saved work', user);
+        if (failedStep) {
+          expect(result).toMatchObject({
+            ok: false,
+            reason: 'not_delivered',
+            notSent: true,
+            detail: expect.stringContaining(failedStep),
+          });
+          expect(consumed).toBe(0);
+        } else {
+          expect(result).toMatchObject({
+            ok: true,
+            value: { delivered: true, queuedSubmissionId: 'saved-queue' },
+          });
+          expect(consumed).toBe(1);
+          const status = await driver.status!(
+            ref('idle'),
+            undefined,
+            result.ok ? result.value.receipt : undefined
+          );
+          expect(JSON.stringify(status)).toContain('Received saved work.');
+          expect(calls.filter((method) => method !== 'initialize')).toEqual([
+            'thread/loaded/list',
+            'thread/resume',
+            'thread/settings/update',
+            'thread/queue/add',
+          ]);
+        }
+      } finally {
+        policy.mockRestore();
+        for (const socket of sockets.clients) socket.terminate();
+        sockets.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+  );
 
   test.each(['', '  Final Codex message 🔬\n'.repeat(400)])(
     'exposes explicit turn-end payloads without borrowing earlier prose: %s',
@@ -852,6 +956,86 @@ describe('codex-desktop adapter status and send', () => {
     });
   });
 
+  test.each([false, true])(
+    'prepared queue refreshes future-turn sandbox defaults (refused=%s)',
+    async (refused) => {
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      await prepareWorkerSandbox(root);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+      db.close();
+      const calls: string[] = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push(method);
+          if (method === 'thread/settings/update') {
+            expect(params).toMatchObject({
+              threadId: 'idle',
+              sandboxPolicy: {
+                type: 'workspaceWrite',
+                networkAccess: true,
+                writableRoots: expect.arrayContaining([root, join(root, '.git')]),
+                excludeSlashTmp: true,
+                excludeTmpdirEnvVar: true,
+              },
+            });
+            if (refused) throw new Error('sandbox settings refused');
+            return {};
+          }
+          expect(method).toBe('thread/queue/add');
+          return { queuedSubmission: { id: 'sandboxed-queue' } };
+        },
+        close: () => {},
+      }));
+      try {
+        const result = await driver.send!(ref('idle'), 'run local tests', user);
+        expect(result).toMatchObject(
+          refused
+            ? {
+                ok: false,
+                reason: 'not_delivered',
+                detail: 'thread/settings/update: Error: sandbox settings refused',
+                notSent: true,
+              }
+            : { ok: true, value: { queuedSubmissionId: 'sandboxed-queue' } }
+        );
+        expect(calls).toEqual(
+          refused ? ['thread/settings/update'] : ['thread/settings/update', 'thread/queue/add']
+        );
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    }
+  );
+
+  test('prepared workers do not bypass a required policy refresh through offline CLI queueing', async () => {
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    await prepareWorkerSandbox(root);
+    const db = new Database(statePath);
+    db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+    db.close();
+    const driver = adapter(
+      0,
+      '',
+      async () => {
+        throw new Error('offline');
+      },
+      undefined,
+      'offline-queue'
+    );
+    try {
+      expect(await driver.send!(ref('idle'), 'run local tests', user)).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+      });
+      expect(spawned).toEqual([]);
+    } finally {
+      await releaseWorkerSandbox(root);
+    }
+  });
+
   test.each(['native', 'cli'] as const)(
     'automatic queue restores purged prepared-worker runtime before dispatch: %s',
     async (route) => {
@@ -872,6 +1056,7 @@ describe('codex-desktop adapter status and send', () => {
           '',
           async () => ({
             call: async (method) => {
+              if (method === 'thread/settings/update') return {};
               expect(method).toBe('thread/queue/add');
               observe();
               if (route === 'cli') throw new Error('method not found (-32601)');
@@ -1156,7 +1341,7 @@ describe('codex-desktop adapter status and send', () => {
       expect(await driver.queue!(ref('busy'), 'hi', user)).toEqual({
         ok: false,
         reason: 'not_delivered',
-        detail: error,
+        detail: `thread/queue/add: Error: ${error}`,
       });
       expect(spawned).toEqual([]);
       expect(closed).toBe(true);

@@ -135,11 +135,8 @@ export function createCodingPack(deps: {
     todos: {
       ...todos,
       schema(db) {
-        const legacy = !!db
-          .prepare("SELECT 1 FROM sqlite_master WHERE name = 'pack_coding_session_facts'")
-          .get();
         todos.schema(db);
-        initializeCodingWatches(db, legacy ? deps.projectRepos() : []);
+        initializeCodingWatches(db, []);
       },
     },
     readFacts: todos.readFacts,
