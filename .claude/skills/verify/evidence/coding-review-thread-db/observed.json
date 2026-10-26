@@ -1,0 +1,147 @@
+{
+  "regressionCommit": "fa96b7970e3ea8e44e1a87da5d0264c0c5aca62f",
+  "productionChangedLines": 61,
+  "runtimes": {
+    "bun": {
+      "before": {
+        "folder": "bun-before",
+        "applicationHead": "fa96b7970e3ea8e44e1a87da5d0264c0c5aca62f",
+        "mainConnectionTargetSql": 52,
+        "gatewayCommands": 0,
+        "counts": {
+          "cold": 2,
+          "repeat": 2,
+          "failed": 1,
+          "partial": 1,
+          "head-change": 2,
+          "recovered": 2,
+          "alias": 2,
+          "reopen": 2
+        },
+        "maxLoopLagMs": 3.28716600000007,
+        "contention": null,
+        "freeMemoryPercentBefore": 60,
+        "freeGiBBefore": 222.86635208129883,
+        "temporaryDaemonDataRemoved": true
+      },
+      "verify": {
+        "folder": "bun-verify",
+        "applicationHead": "05a4c71983975b144d0ce936fb314434e6c75bf5",
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 54,
+        "counts": {
+          "cold": 2,
+          "repeat": 2,
+          "failed": 1,
+          "partial": 1,
+          "head-change": 2,
+          "recovered": 2,
+          "alias": 2,
+          "reopen": 2,
+          "late": 2,
+          "held": 2
+        },
+        "maxLoopLagMs": 3.4425420000002305,
+        "contention": {
+          "healthMs": 0.48279099999945174,
+          "affectedMs": 1203.2487919999999,
+          "affectedOperationUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 61,
+        "freeGiBBefore": 222.84204864501953,
+        "temporaryDaemonDataRemoved": true
+      }
+    },
+    "deno": {
+      "before": {
+        "folder": "deno-before",
+        "applicationHead": "fa96b7970e3ea8e44e1a87da5d0264c0c5aca62f",
+        "mainConnectionTargetSql": 52,
+        "gatewayCommands": 0,
+        "counts": {
+          "cold": 2,
+          "repeat": 2,
+          "failed": 1,
+          "partial": 1,
+          "head-change": 2,
+          "recovered": 2,
+          "alias": 2,
+          "reopen": 2
+        },
+        "maxLoopLagMs": 2.3683750000000146,
+        "contention": null,
+        "freeMemoryPercentBefore": 62,
+        "freeGiBBefore": 222.83621978759766,
+        "temporaryDaemonDataRemoved": true
+      },
+      "verify": {
+        "folder": "deno-verify",
+        "applicationHead": "05a4c71983975b144d0ce936fb314434e6c75bf5",
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 54,
+        "counts": {
+          "cold": 2,
+          "repeat": 2,
+          "failed": 1,
+          "partial": 1,
+          "head-change": 2,
+          "recovered": 2,
+          "alias": 2,
+          "reopen": 2,
+          "late": 2,
+          "held": 2
+        },
+        "maxLoopLagMs": 66.44887500000004,
+        "contention": {
+          "healthMs": 2.0227500000000873,
+          "affectedMs": 1249.437833,
+          "affectedOperationUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 55,
+        "freeGiBBefore": 222.78482055664062,
+        "temporaryDaemonDataRemoved": true
+      }
+    }
+  },
+  "proofBinding": {
+    "testedCodeCommit": "05a4c71983975b144d0ce936fb314434e6c75bf5",
+    "testedGitTree": "194721bca9953a0de57c7471c5b845cddd2b1453",
+    "applicationTrees": {
+      "packages": "6885c7b6bc0c1c6da019bbc61a064e4242a45ef4",
+      "scripts": "be3485c8b94e4fd78a58da13a955a40dd687459f"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/coding-review-thread-db.ts": "c0c3845bc8691e7132438d5a5fca1332eeb5a8c1",
+      ".claude/skills/verify/coding-review-thread-db-run.py": "a1737fb1559548cb4801d15f706addccffa234b0",
+      ".claude/skills/verify/coding-review-thread-proof-binding.ts": "2f4173797b4fdd76d122566817153e4e31a12652",
+      ".claude/skills/verify/resource-check.sh": "98061f6451380da36ea306fc9052f11ea575a7f4"
+    },
+    "runs": {
+      "bun": "bun-verify",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "limits": [
+    "No assignments are seeded; the actual merge-prepare RPC refuses after collecting GitHub facts. No merge admission success, external merge, UI or model turn is claimed.",
+    "The deliberately held 1.2-second writer exceeds the affected-operation 250 ms target. Health and loop lag are measured independently.",
+    "Main instrumentation covers all poll-fact SQL and connector identity alias reads only. Other main SQL, basic connector PR observation persistence, watched-repository and stage/health families remain outside this slice.",
+    "Gateway elapsed duration and serialized sizes are retained; queue, SQL and clone time are not separately attributed."
+  ],
+  "validation": {
+    "fullCheck": "passed",
+    "focusedTests": {
+      "vitest": 24,
+      "bun": 2
+    },
+    "mainThreadRatchet": {
+      "prepare": 1415,
+      "transaction": 151,
+      "exec": 116,
+      "query": 13,
+      "run": 612,
+      "open": 4
+    },
+    "baselineFilesChanged": false
+  }
+}
