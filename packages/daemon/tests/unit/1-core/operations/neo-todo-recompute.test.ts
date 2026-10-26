@@ -174,6 +174,33 @@ describe('ordered ask progression from facts', () => {
     expect(f.starts[1]).toContain('Perform next');
   });
 
+  test.each(['done', 'closed_unverified'] as const)(
+    'a %s close does not answer the next start card',
+    async (state) => {
+      const f = fixture();
+      f.add('first');
+      f.add('next');
+      f.store.askQuestion(
+        'start-next',
+        'ask',
+        {
+          text: 'Start next?',
+          kind: 'start',
+          startTodos: ['next'],
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+        },
+        Date.now()
+      );
+      await f.runner.recompute(f.store.getTodo('first')!, { state });
+      expect(f.starts).toHaveLength(0);
+      expect(f.store.getTodo('next')?.state).not.toBe('doing');
+      expect(f.store.getQuestion('start-next')).toMatchObject({ state: 'open', answer: null });
+    }
+  );
+
   test('the final step completes without another start', async () => {
     const f = fixture();
     f.add('final');
