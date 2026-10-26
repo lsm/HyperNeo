@@ -166,23 +166,25 @@ describe('Neo project hierarchy', () => {
       await move.execute({ id: 'child', parentId: 'root', expectedRevision: 1 }, caller)
     ).toEqual({ ok: true });
     expect(repo.getProject('child')?.parentId).toBe('root');
-    expect(await section.execute({ parentId: 'root', epicUrl }, caller)).toEqual({ ok: true });
+    expect(await section.execute({ parentId: 'root', epicUrl }, caller)).toMatchObject({
+      ok: true,
+    });
   });
 
-  test('authorization rejects non-root sessions before external reads or writes', async () => {
+  test('authorization rejects callers without a session before external reads or writes', async () => {
     save('root');
     save('child');
     workspace('root');
     repo.reserveBinding({ kind: 'worker', projectId: 'child', sessionId: 'holder' });
     const read = mock(async () => [epic]);
     const [move, section] = createNeoProjectTreeOperations(repo, read);
-    const caller = { source: 'mcp' as const, sessionId: 'holder' };
+    const caller = { source: 'internal' as const };
     expect(
       await move.execute({ id: 'child', parentId: 'root', expectedRevision: 1 }, caller)
-    ).toEqual({ ok: false, reason: 'root_or_human_only' });
+    ).toEqual({ ok: false, reason: 'local_session_required' });
     expect(await section.execute({ parentId: 'root', epicUrl }, caller)).toEqual({
       ok: false,
-      reason: 'root_or_human_only',
+      reason: 'local_session_required',
     });
     expect(read).not.toHaveBeenCalled();
     expect(repo.getProject('child')?.parentId).toBeNull();

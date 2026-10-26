@@ -10,3 +10,14 @@ export function requireNeoTreeAuthor(
     ? { value: true }
     : { reason: { ok: false, reason: 'root_or_human_only' } };
 }
+
+export function requireLocalTreeAuthor(caller: OperationCaller):
+  | {
+      value: true;
+    }
+  | { reason: { ok: false; reason: string } } {
+  return (caller.source === 'rpc' && caller.principal === 'local') ||
+    (caller.source === 'mcp' && !!caller.sessionId)
+    ? { value: true }
+    : { reason: { ok: false, reason: 'local_session_required' } };
+}

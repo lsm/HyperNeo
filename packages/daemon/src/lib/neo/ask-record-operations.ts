@@ -60,17 +60,23 @@ export function requireNeoAskSession(
     : { reason: { ok: false, reason: 'no_session: only a Neo session opens an ask.' } };
 }
 
+export function requireAskSession(caller: OperationCaller): Gate<string> {
+  return caller.sessionId
+    ? { value: caller.sessionId }
+    : { reason: { ok: false, reason: 'no_session: opening an ask needs a session.' } };
+}
+
 export function requireNeoAskGoal(
   goalId: string | null,
-  sessionId: string,
+  _sessionId: string,
   goal: SessionGoal | null
 ): Gate<string | null> {
-  return !goalId || goal?.ownerSessionId === sessionId
+  return !goalId || goal
     ? { value: goalId }
     : {
         reason: {
           ok: false,
-          reason: 'goal_not_found: asks can only name a goal owned by their Neo session.',
+          reason: 'goal_not_found: no such goal.',
         },
       };
 }
@@ -127,11 +133,7 @@ export function createNeoAskRecordOperations(
     result.ok ? { ...result, todos: await project(result.todos) } : result;
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(
-      (caller: OperationCaller) => requireNeoAskSession(caller, isNeoSession),
-      'caller',
-      'result:outcome'
-    )
+    .pipe((caller: OperationCaller) => requireAskSession(caller), 'caller', 'result:outcome')
     .pipe(
       (sessionId: string, input: z.infer<typeof Open>) => {
         const project = requireNeoAskProject(input, resolveProject, knownProjects);
@@ -349,7 +351,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). goalId links work in a goal cycle to a goal owned by this Neo session. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
+        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

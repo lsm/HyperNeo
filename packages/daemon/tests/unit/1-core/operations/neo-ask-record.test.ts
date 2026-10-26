@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   createNeoAskRecordOperations,
+  requireAskSession,
   requireNeoAskGoal,
   requireNeoAskProject,
   requireNeoAskSession,
@@ -211,18 +212,20 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(h.store.getAsk(opened.ask.id)?.outcome).toBe('Finished');
   });
 
-  test('only the goal owner links an ask; retries and repo splits retain that goal', async () => {
+  test('an ask links any existing goal; retries and repo splits retain that goal', async () => {
     const { store, goals, call, started } = setup();
     const mine = goals.create('neo-a', { title: 'Ship', doneTest: 'Released' }, 'neo', 1);
     const other = goals.create('neo-other', { title: 'Other', doneTest: 'Released' }, 'neo', 1);
-    for (const goalId of ['missing', other.id]) {
-      expect(await call('neo.ask.open', { ...opening, goalId }, turn('m1'))).toMatchObject({
+    expect(await call('neo.ask.open', { ...opening, goalId: 'missing' }, turn('m1'))).toMatchObject(
+      {
         ok: false,
         reason: expect.stringContaining('goal_not_found'),
-      });
-    }
+      }
+    );
     expect(store.listAsks(undefined, 100)).toEqual([]);
     expect(started).toEqual([]);
+    const foreign = await call('neo.ask.open', { ...opening, goalId: other.id }, turn('m1'));
+    expect(foreign.ok && foreign.ask.goalId).toBe(other.id);
     const result = await call('neo.ask.open', { ...opening, goalId: mine.id }, turn('m1'));
     if (!result.ok) throw new Error(result.reason);
     expect(result.ask.goalId).toBe(mine.id);
@@ -444,10 +447,15 @@ describe('requireNeoAskSession', () => {
       refused
     );
   });
+});
 
+describe('requireAskSession and requireNeoAskGoal', () => {
   test('any daemon session opens an ask and may name a goal another session owns', () => {
-    expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual({
+    expect(requireAskSession({ source: 'mcp', sessionId: 'worker-1' })).toEqual({
       value: 'worker-1',
+    });
+    expect(requireAskSession({ source: 'rpc', principal: 'local' })).toMatchObject({
+      reason: { ok: false, reason: 'no_session: opening an ask needs a session.' },
     });
     const goal = { ownerSessionId: 'neo:root' } as unknown as Parameters<
       typeof requireNeoAskGoal

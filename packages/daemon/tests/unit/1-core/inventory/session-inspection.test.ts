@@ -42,7 +42,6 @@ const message = (index: number): SpaceSessionMessage => ({
 });
 function fixtures() {
   const deps = {
-    readBinding: mock(() => binding as NeoBinding | null),
     readSession: mock(() => row as SessionInspectionRecord | null),
     readMessages: mock<SessionInspectionDependencies['readMessages']>(() => [message(1)]),
     now: mock(() => 100),
@@ -61,31 +60,28 @@ describe('ordinary inspection pure gates', () => {
     expect(admitSessionInspection(input, caller)).toEqual({ value: input });
   });
   test.each([
+    { source: 'mcp', role: 'workflow_worker', sessionId: 'worker' },
+  ] satisfies OperationCaller[])('admits any daemon session: %j', (caller) => {
+    expect(admitSessionInspection(input, caller)).toEqual({ value: input });
+  });
+  test.each([
     { source: 'rpc' },
     { source: 'rpc', principal: 'remote' },
     { source: 'internal', principal: 'local', role: 'neo', sessionId: binding.sessionId },
     { source: 'mcp', role: 'neo' },
-    { source: 'mcp', role: 'universal_read', sessionId: 'chat' },
-    { source: 'mcp', role: 'long_term_agent', sessionId: 'agent' },
-    { source: 'mcp', role: 'workflow_worker', sessionId: 'worker' },
   ] satisfies OperationCaller[])('rejects other interfaces without a read grant: %j', (caller) => {
     expect(admitSessionInspection(input, caller)).toEqual({
       reason: { accepted: false, reason: 'inspection_forbidden' },
     });
   });
-  test.each([
-    null,
-    { ...binding, sessionId: 'other' },
-    { ...binding, kind: 'worker' as const },
-    { ...binding, projectId: 'a' },
-  ])('requires actual matching coordinator identity: %j', (candidate) => {
-    expect(requireInspectionCaller(input, neo, candidate)).toEqual({
+  test('any local session is inspect-capable regardless of bindings', () => {
+    const worker: OperationCaller = { source: 'mcp', role: 'workflow_worker', sessionId: 'w' };
+    expect(requireInspectionCaller(input, worker)).toEqual({ value: input });
+    expect(requireInspectionCaller(input, neo)).toEqual({ value: input });
+    expect(requireInspectionCaller(input, human)).toEqual({ value: input });
+    expect(requireInspectionCaller(input, { source: 'internal' })).toEqual({
       reason: { accepted: false, reason: 'inspection_forbidden' },
     });
-  });
-  test('root Neo is inspect-capable, not an execution worker', () => {
-    expect(requireInspectionCaller(input, neo, binding)).toEqual({ value: input });
-    expect(requireInspectionCaller(input, human, null)).toEqual({ value: input });
   });
   test.each([null, { ...row, id: 'different' }])(
     'missing/mismatched identity is not an empty history: %j',
@@ -210,26 +206,23 @@ describe('ordinary session inspection operation', () => {
     for (const port of Object.values(f.deps)) expect(port).not.toHaveBeenCalled();
     expect(f.registry.get('daemon.session.inspect')?.policy).toEqual({
       safetyClass: 'read',
-      roles: ['neo'],
+      roles: ['neo', 'workflow_worker', 'direct_task_worker', 'long_term_agent'],
     });
-    expect(listOperationSummaries(f.registry, neo).map(({ name }) => name)).toEqual([
-      'daemon.session.inspect',
-    ]);
-    expect(listOperationSummaries(f.registry, { source: 'mcp', role: 'long_term_agent' })).toEqual(
-      []
-    );
+    expect(
+      listOperationSummaries(f.registry, { source: 'mcp', role: 'long_term_agent' }).map(
+        ({ name }) => name
+      )
+    ).toEqual(['daemon.session.inspect']);
     expect(await f.invoke({ sessionId: input.sessionId })).toEqual({
       kind: 'completed',
       value: presentSessionInspection(input, row, [message(1)], 100),
     });
-    expect(f.deps.readBinding).not.toHaveBeenCalled();
     expect(f.deps.readSession).toHaveBeenCalledWith(input.sessionId);
     expect(f.deps.readMessages.mock.calls).toEqual([[input.sessionId, 5, undefined]]);
     expect(f.deps.now).toHaveBeenCalledTimes(1);
   });
   test.each([
     { source: 'rpc', principal: 'remote' },
-    { source: 'mcp', role: 'universal_read', sessionId: 'chat' },
     { source: 'internal', role: 'neo', sessionId: binding.sessionId },
   ] satisfies OperationCaller[])('caller denial precedes all read ports: %j', async (caller) => {
     const f = fixtures();
@@ -241,7 +234,6 @@ describe('ordinary session inspection operation', () => {
   });
   test('any daemon session inspects others, without configs or transcripts', async () => {
     const f = fixtures();
-    f.deps.readBinding.mockReturnValue(null);
     const worker: OperationCaller = { source: 'mcp', role: 'workflow_worker', sessionId: 'w' };
     expect(await f.invoke(input, worker)).toEqual({
       kind: 'completed',
@@ -250,18 +242,6 @@ describe('ordinary session inspection operation', () => {
     expect(f.deps.readSession).toHaveBeenCalledWith(input.sessionId);
   });
 
-  test('forged/stale Neo role cannot reach target or history without its binding', async () => {
-    const f = fixtures();
-    f.deps.readBinding.mockReturnValue(null);
-    expect(await f.invoke(input, neo)).toEqual({
-      kind: 'completed',
-      value: { accepted: false, reason: 'inspection_forbidden' },
-    });
-    expect(f.deps.readBinding).toHaveBeenCalledWith(binding.sessionId);
-    expect(f.deps.readSession).not.toHaveBeenCalled();
-    expect(f.deps.readMessages).not.toHaveBeenCalled();
-    expect(f.deps.now).not.toHaveBeenCalled();
-  });
   test.each([
     { candidate: null, reason: 'session_not_found' },
     { candidate: { ...row, status: 'archived' }, reason: 'session_archived' },
@@ -298,16 +278,11 @@ describe('ordinary session inspection operation', () => {
     expect(await f.invoke(value, neo)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
     for (const port of Object.values(f.deps)) expect(port).not.toHaveBeenCalled();
   });
-  test.each(['binding', 'session', 'history'] as const)(
+  test.each(['session', 'history'] as const)(
     'infrastructure failure in %s has no retry or fallback',
     async (stage) => {
       const f = fixtures();
-      const port =
-        stage === 'binding'
-          ? f.deps.readBinding
-          : stage === 'session'
-            ? f.deps.readSession
-            : f.deps.readMessages;
+      const port = stage === 'session' ? f.deps.readSession : f.deps.readMessages;
       port.mockImplementation(() => {
         throw new Error('storage failed');
       });

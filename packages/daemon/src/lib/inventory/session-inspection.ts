@@ -1,12 +1,10 @@
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
-import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SessionInspectionRecord } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { SpaceSessionMessage } from '../session/space-session-reads.ts';
-import { isMainNeoBinding } from '../neo/binding-roles.ts';
 
 const InputSchema = z
   .object({
@@ -56,7 +54,6 @@ type Result = z.infer<typeof ResultSchema>;
 type Rejection = z.infer<typeof RejectionSchema>;
 type Gate<T> = { value: T } | { reason: Rejection };
 export interface SessionInspectionDependencies {
-  readBinding(sessionId: string): NeoBinding | null;
   readSession(sessionId: string): SessionInspectionRecord | null;
   readMessages(sessionId: string, limit: number, before?: string): readonly SpaceSessionMessage[];
   now?: () => number;
@@ -64,22 +61,14 @@ export interface SessionInspectionDependencies {
 
 export function admitSessionInspection(input: Input, caller: OperationCaller): Gate<Input> {
   return (caller.source === 'rpc' && caller.principal === 'local') ||
-    (caller.source === 'mcp' && caller.role === 'neo' && !!caller.sessionId)
+    (caller.source === 'mcp' && !!caller.sessionId)
     ? { value: input }
     : { reason: { accepted: false, reason: 'inspection_forbidden' } };
 }
 
-export function requireInspectionCaller(
-  input: Input,
-  caller: OperationCaller,
-  binding: NeoBinding | null
-): Gate<Input> {
+export function requireInspectionCaller(input: Input, caller: OperationCaller): Gate<Input> {
   return (caller.source === 'rpc' && caller.principal === 'local') ||
-    (caller.source === 'mcp' &&
-      caller.role === 'neo' &&
-      binding &&
-      binding.sessionId === caller.sessionId &&
-      isMainNeoBinding(binding))
+    (caller.source === 'mcp' && !!caller.sessionId)
     ? { value: input }
     : { reason: { accepted: false, reason: 'inspection_forbidden' } };
 }
@@ -135,19 +124,7 @@ export function createSessionInspectionOperation(deps: SessionInspectionDependen
   )
     .input(['input', 'caller'])
     .pipe(admitSessionInspection, ['input', 'caller'], 'result:inspection')
-    .pipe(
-      (caller: OperationCaller) => ({
-        binding: caller.source === 'mcp' ? (deps.readBinding(caller.sessionId!) ?? null) : null,
-      }),
-      'caller',
-      'binding'
-    )
-    .pipe(
-      (input: Input, caller: OperationCaller, { binding }: { binding: NeoBinding | null }) =>
-        requireInspectionCaller(input, caller, binding),
-      ['inspection', 'caller', 'binding'],
-      'result:inspection'
-    )
+    .pipe(requireInspectionCaller, ['input', 'caller'], 'result:inspection')
     .pipe(
       (input: Input) => ({ row: deps.readSession(input.sessionId) ?? null }),
       'inspection',
@@ -170,8 +147,11 @@ export function createSessionInspectionOperation(deps: SessionInspectionDependen
   return defineOperation({
     name: 'daemon.session.inspect',
     description:
-      'Inspect any existing session by its exact daemon.snapshot session ID: ordinary chats, Space/task/workflow/execution sessions and Neo holders alike. Local human RPC or persisted Neo coordinators/holders only. Returns bounded newest-first excerpts with optional earlier-history cursor, never configs, prompts or raw transcripts. A filled page/cursor does not prove more history exists. Recorded processing status is not live progress or proof of completion. Archived history requires includeArchived. Starts no work and writes nothing.',
-    policy: { safetyClass: 'read', roles: ['neo'] },
+      'Inspect any existing session by its exact daemon.snapshot session ID: ordinary chats, Space/task/workflow/execution sessions and Neo holders alike. The local human or any daemon-local session. Returns bounded newest-first excerpts with optional earlier-history cursor, never configs, prompts or raw transcripts. A filled page/cursor does not prove more history exists. Recorded processing status is not live progress or proof of completion. Archived history requires includeArchived. Starts no work and writes nothing.',
+    policy: {
+      safetyClass: 'read',
+      roles: ['neo', 'workflow_worker', 'direct_task_worker', 'long_term_agent'],
+    },
     inputSchema: InputSchema,
     resultSchema: ResultSchema,
     execute: async (input, caller) => inspect(input, caller),

@@ -169,11 +169,9 @@ export function resolveGoalOwner(
     return input.ownerSessionId
       ? { value: input.ownerSessionId }
       : refuse('owner_unresolved: ownerSessionId is required for this caller.');
-  if (caller.role !== 'neo' || !caller.sessionId)
-    return refuse('owner_denied: only a Neo session owns goals.');
-  return !input.ownerSessionId || input.ownerSessionId === caller.sessionId
-    ? { value: caller.sessionId }
-    : refuse('owner_denied: a session acts only on its own goals.');
+  if (!caller.sessionId)
+    return refuse('owner_denied: a session caller needs its session id to own goals.');
+  return { value: input.ownerSessionId ?? caller.sessionId };
 }
 
 export function requireGoalChange(goal: SessionGoal, patch: SessionGoalPatch): Gate<SessionGoal> {
@@ -192,8 +190,8 @@ export function requireKnownOwner(owner: string, known: boolean): Gate<string> {
   return known ? { value: owner } : refuse(`owner_unknown: no session ${owner}.`);
 }
 
-export function requireOwnedGoal(goal: SessionGoal | null, owner: string): Gate<SessionGoal> {
-  return goal?.ownerSessionId === owner ? { value: goal } : refuse('goal_not_found');
+export function requireExistingGoal(goal: SessionGoal | null): Gate<SessionGoal> {
+  return goal ? { value: goal } : refuse('goal_not_found');
 }
 
 export function requireGoalDoneTest<T>(
@@ -241,7 +239,7 @@ export function createSessionGoalOperations({
   const owned = (pipeline: PipelineAPI) =>
     owner(pipeline)
       .pipe((input: { goalId: string }) => goals.get(input.goalId), 'input', 'goal')
-      .pipe(requireOwnedGoal, ['goal', 'outcome'], 'result:outcome');
+      .pipe(requireExistingGoal, 'goal', 'result:outcome');
   const done = (result: SessionGoal) => ({ accepted: true as const, goal: result });
 
   const create = owner(superpipe({})('goal.session.create') as PipelineAPI)

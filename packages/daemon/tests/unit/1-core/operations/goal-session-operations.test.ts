@@ -209,7 +209,7 @@ describe('goal what-works compaction', () => {
       db.close();
     }
   });
-  test('a nudge requests a rewrite even without ten entries and foreign sessions cannot compact', async () => {
+  test('a nudge requests a rewrite even without ten entries and other sessions may compact', async () => {
     const { db, call, schedules } = setup();
     try {
       const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
@@ -221,8 +221,8 @@ describe('goal what-works compaction', () => {
           { goalId: goal.id, worksNote: 'Not mine' },
           { source: 'mcp', role: 'neo', sessionId: 'neo:other' }
         )
-      ).toEqual({ accepted: false, reason: 'goal_not_found' });
-      expect((await call('goal.session.get', { goalId: goal.id })).goal.worksNote).toBeNull();
+      ).toMatchObject({ accepted: true });
+      expect((await call('goal.session.get', { goalId: goal.id })).goal.worksNote).toBe('Not mine');
     } finally {
       db.close();
     }
@@ -575,7 +575,7 @@ describe('goal-owned schedules', () => {
         { goalId: goal.id },
         { source: 'mcp', role: 'neo', sessionId: 'neo:other' }
       )
-    ).toEqual({ accepted: false, reason: 'goal_not_found' });
+    ).toMatchObject({ accepted: true });
     (await schedules.facts(goal.id))!.commit();
     await call('goal.session.update', { goalId: goal.id, metrics: { a: 1, z: 0 } });
     expect((await call('goal.facts', { goalId: goal.id })).facts).toMatchObject({
@@ -622,17 +622,16 @@ describe('session-owned goals', () => {
     db.close();
   });
 
-  test('another session cannot reach the goal, and a human names the owner', async () => {
+  test('another session reaches the goal, and a human names the owner', async () => {
     const { db, call } = setup();
     const created = await call('goal.session.create', { title: 'Ship', metrics: { adopters: 0 } });
     const other: OperationCaller = { source: 'mcp', sessionId: 'neo:other', role: 'neo' };
-    expect(await call('goal.session.get', { goalId: created.goal.id }, other)).toEqual({
-      accepted: false,
-      reason: 'goal_not_found',
+    expect(await call('goal.session.get', { goalId: created.goal.id }, other)).toMatchObject({
+      accepted: true,
+      goal: { id: created.goal.id },
     });
     expect(await call('goal.session.list', { ownerSessionId: 'neo:root' }, other)).toMatchObject({
-      accepted: false,
-      reason: expect.stringContaining('owner_denied'),
+      accepted: true,
     });
     expect(await call('goal.session.list', {}, human)).toMatchObject({
       reason: expect.stringContaining('owner_unresolved'),
@@ -709,7 +708,11 @@ describe('session-owned goals', () => {
 
   test('any session owns goals and works on goals it does not own', async () => {
     const { db, call } = setup();
-    const worker: OperationCaller = { source: 'mcp', sessionId: 'neo:other', role: 'worker' };
+    const worker: OperationCaller = {
+      source: 'mcp',
+      sessionId: 'neo:other',
+      role: 'workflow_worker',
+    };
     const created = await call('goal.session.create', { title: 'Shared', doneTest: 'Done' });
     expect(
       (await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, worker)).goal
@@ -721,13 +724,13 @@ describe('session-owned goals', () => {
     expect(
       await call('goal.session.update', { goalId: created.goal.id, title: 'Shared 2' }, worker)
     ).toMatchObject({ accepted: true, goal: { title: 'Shared 2' } });
-    expect(
-      await call('goal.session.list', { ownerSessionId: 'neo:root' }, worker)
-    ).toMatchObject({ accepted: true });
+    expect(await call('goal.session.list', { ownerSessionId: 'neo:root' }, worker)).toMatchObject({
+      accepted: true,
+    });
     expect(
       await call(
         'goal.journal.append',
-        { goalId: created.goal.id, done: 'helped', effect: 'goal progressed' },
+        { goalId: created.goal.id, done: 'helped', effect: 'goal progressed', worked: 'more' },
         worker
       )
     ).toMatchObject({ accepted: true });
@@ -807,7 +810,7 @@ describe('goal journal', () => {
     db.close();
   });
 
-  test('a cycle appends one entry per run, newest first, and only the owner reaches it', async () => {
+  test('a cycle appends one entry per run, newest first, and other sessions reach it', async () => {
     const { db, call, audited } = setup();
     const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
       .goal;
@@ -838,14 +841,15 @@ describe('goal journal', () => {
       failed: null,
     });
     const other: OperationCaller = { source: 'mcp', sessionId: 'neo:other', role: 'neo' };
-    expect(await call('goal.journal.append', entry, other)).toEqual({
-      accepted: false,
-      reason: 'goal_not_found',
-    });
-    expect(await call('goal.journal.list', { goalId: goal.id, limit: 1 })).toMatchObject({
-      entries: [{ runId: 'run-2' }],
-    });
-    expect(audited.filter((name) => name === 'goal.journal.append')).toHaveLength(3);
+    expect(
+      await call('goal.journal.append', { ...entry, runId: 'run-other' }, other)
+    ).toMatchObject({ accepted: true });
+    expect(
+      (await call('goal.journal.list', { goalId: goal.id })).entries.map(
+        (item: { runId: string }) => item.runId
+      )
+    ).toEqual(['run-other', 'run-2', 'run-1']);
+    expect(audited.filter((name) => name === 'goal.journal.append')).toHaveLength(4);
     db.close();
   });
 });
