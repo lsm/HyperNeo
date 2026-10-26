@@ -1,3 +1,4 @@
+import { attachDeliveryEnqueueWriter } from '../../../helpers/delivery-enqueue-writer';
 import { createMailboxTestDb } from '../../../helpers/mailbox-test-db';
 import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
@@ -1173,7 +1174,9 @@ describe('AgentSession', () => {
         getErrorTerminalResultSubtypeAfter: mock(() => null),
         recordDeliveryTurnEnd: mock(() => {}),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({ isProcessingDelivery: mock(() => true) }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({ isProcessingDelivery: mock(() => true) })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       const resent = mock(async () => 'started' as const);
       agentSession.lifecycleManager.startQueryAndEnqueue = resent as never;
@@ -1204,9 +1207,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryRetryableByUuid: retrySpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1244,9 +1249,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryRetryableByUuid: retrySpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1417,10 +1424,12 @@ describe('AgentSession', () => {
       const updateSession = mock(() => {});
       mockDb.updateSession = updateSession as never;
       const enqueue = mock(() => ({}));
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      })) as never;
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      ) as never;
       mockDb.getUserMessageIdsByStatus = mock(() => [
         { dbId: 'db-1', uuid: 'queued-uuid', timestamp: 1 },
       ]) as never;
@@ -1545,7 +1554,9 @@ describe('AgentSession', () => {
       const inline = mock(() => {
         throw new Error('main release forbidden');
       });
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleSessionDeliveries: inline }) as never);
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({ rescheduleSessionDeliveries: inline } as never)
+      );
       armRetry();
       expect(await agentSession.retryNowAfterRateLimit()).toBe(false);
       expect(commit).toHaveBeenCalledTimes(1);
@@ -1701,9 +1712,11 @@ describe('AgentSession', () => {
         }),
         markDeliveryRetryableByUuid: mock(() => 'db-1'),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1748,9 +1761,11 @@ describe('AgentSession', () => {
         }),
         markDeliveryRetryableByUuid: mock(() => 'db-1'),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1788,9 +1803,11 @@ describe('AgentSession', () => {
         getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1839,9 +1856,11 @@ describe('AgentSession', () => {
         markDeliverySubmittedByUuids: markSubmittedSpy,
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1889,7 +1908,7 @@ describe('AgentSession', () => {
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({}));
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter({}));
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1926,9 +1945,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1973,9 +1994,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -2019,7 +2042,9 @@ describe('AgentSession', () => {
 
     it('reconcileStrandedDeliveries skips processing, queued, and waiting_for_input', async () => {
       const activeDeliveryMessageUuids = mock(() => new Set<string>());
-      mockDb.getJobQueueRepo = mock(() => ({ activeDeliveryMessageUuids }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({ activeDeliveryMessageUuids })
+      );
 
       await agentSession.stateManager.setProcessing('msg-processing');
       expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
@@ -2037,10 +2062,12 @@ describe('AgentSession', () => {
     it('reconcileStrandedDeliveries skips both locked mutations when the idle owner goes stale while waiting for the lock', async () => {
       const enqueue = mock(() => ({}));
       const markDeliveryFailedByUuid = mock(() => null);
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      );
       mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
         status === 'enqueued'
           ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
@@ -2075,10 +2102,12 @@ describe('AgentSession', () => {
     it('reconcileStrandedDeliveries fences on the turn owner too — a successor delivery admission invalidates it', async () => {
       const enqueue = mock(() => ({}));
       const markDeliveryFailedByUuid = mock(() => null);
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      );
       mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
         status === 'enqueued'
           ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
@@ -2112,10 +2141,12 @@ describe('AgentSession', () => {
     it('reconcileStrandedDeliveries with a still-current owner re-enqueues and settles as before', async () => {
       const enqueue = mock(() => ({}));
       const markDeliveryFailedByUuid = mock(() => 'db-2');
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      );
       mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
         status === 'enqueued'
           ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
@@ -2502,7 +2533,7 @@ describe('AgentSession', () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       const setQueuedIfIdle = mock(async () => false);
       agentSession.stateManager.setQueuedIfIdle = setQueuedIfIdle;
 
@@ -2512,11 +2543,43 @@ describe('AgentSession', () => {
       expect(agentSession.getProcessingState().status).not.toBe('queued');
     });
 
+    it('deliverChatMessage waits for insertion before publishing queued state', async () => {
+      let release!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let queued!: () => void;
+      const arrived = new Promise<void>((resolve) => {
+        queued = resolve;
+      });
+      const jobQueue = {
+        enqueue: mock(async () => {
+          queued();
+          await hold;
+          return { id: 'job' };
+        }),
+      };
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
+      const setQueued = mock(async () => true);
+      agentSession.stateManager.setQueuedIfIdle = setQueued;
+      const pending = agentSession.deliverChatMessage('held-ack');
+      try {
+        await arrived;
+        expect(setQueued).not.toHaveBeenCalled();
+        release();
+        await pending;
+        expect(setQueued).toHaveBeenCalledWith('held-ack');
+      } finally {
+        release();
+        await pending;
+      }
+    });
+
     it('deliverChatMessage treats queued publication failure as non-fatal after insertion', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       agentSession.stateManager.setQueuedIfIdle = mock(async () => {
         throw new Error('subscriber failed');
       });
@@ -2529,7 +2592,7 @@ describe('AgentSession', () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       const cancelSpy = mock(() => {});
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
@@ -2555,7 +2618,7 @@ describe('AgentSession', () => {
         enqueue: mock(() => ({ id: 'job' })),
         activeDeliveryMessageUuids: mock(() => new Set(['predecessor-msg'])),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       const cancelSpy = mock(() => {});
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
@@ -2591,11 +2654,13 @@ describe('AgentSession', () => {
     });
 
     it('deliverChatMessage publishes failed status when durable enqueue fails', async () => {
-      mockDb.getJobQueueRepo = mock(() => ({
-        enqueue: mock(() => {
-          throw new Error('delivery enqueue failure');
-        }),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          enqueue: mock(() => {
+            throw new Error('delivery enqueue failure');
+          }),
+        })
+      );
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveryFailedByUuid: mock(() => 'db-2'),
       }));
@@ -2609,6 +2674,40 @@ describe('AgentSession', () => {
         messageIds: ['db-2'],
         status: 'failed',
       });
+    });
+
+    it('deliverChatMessage preserves queued input when the enqueue reply is lost after commit', async () => {
+      const fixture = createMailboxTestDb();
+      const gateway = new DbGateway(':memory:', fixture.db);
+      bindGateway(fixture.db, gateway);
+      const uuid = 'synthetic-lost-enqueue-reply';
+      fixture.sdkMessageRepo.saveUserMessage(
+        mockSession.id,
+        { type: 'user', uuid, message: { role: 'user', content: 'synthetic input' } },
+        'enqueued'
+      );
+      mockDb.getJobQueueRepo = mock(() => fixture.jobQueue);
+      mockDb.getSDKMessageRepo = mock(() => fixture.sdkMessageRepo);
+      const run = gateway.run.bind(gateway);
+      gateway.run = async (op, input) => {
+        await run(op, input);
+        throw new Error('synthetic lost commit reply');
+      };
+      try {
+        await expect(agentSession.deliverChatMessage(uuid)).rejects.toThrow(
+          'synthetic lost commit reply'
+        );
+        expect(fixture.jobQueue.listJobs({ queue: 'message_delivery', limit: 10 })).toHaveLength(1);
+        expect(fixture.sdkMessageRepo.getUserSendStatus(mockSession.id, uuid)).toBe('enqueued');
+        expect(mockInternalEventBus.publish).not.toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: mockSession.id,
+          messageIds: expect.any(Array),
+          status: 'failed',
+        });
+      } finally {
+        await gateway.close();
+        fixture.close();
+      }
     });
 
     it('resetQuery should delegate to lifecycleManager', async () => {
@@ -5890,7 +5989,7 @@ describe('AgentSession', () => {
         );
         repo.markDeliverySubmittedByUuids(sessionId, [uuid]);
       }
-      deliverMessage(db.getJobQueueRepo(), sessionId, activeUuid, { origin: 'chat' });
+      await deliverMessage(db.getJobQueueRepo(), sessionId, activeUuid, { origin: 'chat' });
 
       expect(await agentSession.reconcileStrandedDeliveries()).toBe(1);
 

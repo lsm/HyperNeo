@@ -1,0 +1,10 @@
+{
+  "head": "92e24c5372142c45cef2e76cbc5f687bfd19ef6d",
+  "failedCheck": "Daemon Unit Tests (daemon-g)",
+  "job": 121347764274,
+  "test": "HTTP page writer retries preserve one acquisition and one observation",
+  "expectedAttempts": 3,
+  "receivedAttempts": 4,
+  "localReproduction": "Vitest run of coding-poll-writer.test.ts: 1 failed, 4 passed",
+  "cause": "The fault injector uses the Bun-specific inTransaction property to exclude the nested savepoint. Node SQLite uses a private transaction depth, so the fixture counts the nested invocation as another outer attempt."
+}

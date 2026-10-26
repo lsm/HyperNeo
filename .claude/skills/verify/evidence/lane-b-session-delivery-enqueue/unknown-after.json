@@ -1,0 +1,10 @@
+{
+  "exitCode": 0,
+  "focusedTestsPassed": 344,
+  "regressionKind": "inline gateway with actual SQLite transaction",
+  "committedDeliveryJobs": 1,
+  "observedInputStatus": "enqueued",
+  "failedStatusPublished": false,
+  "fault": "reply rejected after the real enqueue transaction committed",
+  "environment": "scrubbed environment and disposable home"
+}

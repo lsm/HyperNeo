@@ -1,0 +1,233 @@
+{
+  "mode": "verify",
+  "races": [
+    {
+      "name": "neo.session.mute",
+      "reply": {
+        "ok": true,
+        "mutedSessions": [
+          "synthetic-muted"
+        ]
+      },
+      "persisted": {
+        "autoDispatch": false,
+        "standingRules": [],
+        "mutedSessions": [
+          "synthetic-muted"
+        ],
+        "packs": [
+          "synthetic-concurrent-pack"
+        ]
+      },
+      "autoScroll": false
+    },
+    {
+      "name": "neo.rule.save",
+      "reply": {
+        "ok": true,
+        "standingRules": [
+          "Keep the complete synthetic rule."
+        ]
+      },
+      "persisted": {
+        "autoDispatch": false,
+        "standingRules": [
+          "Keep the complete synthetic rule."
+        ],
+        "mutedSessions": [],
+        "packs": [
+          "synthetic-concurrent-pack"
+        ]
+      },
+      "autoScroll": false
+    },
+    {
+      "name": "neo.preferences.set",
+      "reply": {
+        "ok": true,
+        "preferences": {
+          "model": "synthetic-model",
+          "provider": "anthropic",
+          "thinkingLevel": "off"
+        }
+      },
+      "persisted": {
+        "autoDispatch": false,
+        "standingRules": [],
+        "mutedSessions": [],
+        "packs": [
+          "synthetic-concurrent-pack"
+        ],
+        "preferences": {
+          "model": "synthetic-model",
+          "provider": "anthropic",
+          "thinkingLevel": "off"
+        }
+      },
+      "autoScroll": false
+    }
+  ],
+  "mainWrites": 0,
+  "concurrent": {
+    "settingSources": [
+      "user",
+      "project",
+      "local"
+    ],
+    "permissionMode": "default",
+    "model": "sonnet",
+    "showArchived": false,
+    "autoScroll": true,
+    "chatDisplayMode": "compact",
+    "githubPollingInterval": 120,
+    "voice": {
+      "enabled": false,
+      "endpoint": "",
+      "model": "",
+      "allowInsecureTls": false,
+      "allowPrivateNetwork": false,
+      "mode": "auto"
+    },
+    "exa": {
+      "enabled": false
+    },
+    "coordinatorMode": false,
+    "maxConcurrentWorkers": 3,
+    "sandbox": {
+      "enabled": false,
+      "autoAllowBashIfSandboxed": true,
+      "excludedCommands": [
+        "git"
+      ],
+      "network": {
+        "allowedDomains": [
+          "github.com",
+          "*.github.com",
+          "gist.github.com",
+          "*.npmjs.org",
+          "registry.npmjs.org",
+          "*.yarnpkg.com",
+          "registry.yarnpkg.com",
+          "packages.gitlab.com",
+          "*.pkg.dev",
+          "go.dev",
+          "crates.io",
+          "pypi.org",
+          "*.pypi.org",
+          "rubygems.org",
+          "*.rubygems.org",
+          "*.maven.org",
+          "*.gradle.org",
+          "cdn.jsdelivr.net",
+          "*.cloudflare.com",
+          "openai.com",
+          "*.openai.com",
+          "anthropic.com",
+          "*.anthropic.com",
+          "openrouter.ai",
+          "*.openrouter.ai",
+          "*.google.dev",
+          "*.google.com",
+          "*.googleapis.com",
+          "*.googleusercontent.com",
+          "*.gcp.goog",
+          "*.run.app",
+          "*.appspot.com",
+          "*.cloudfunctions.net",
+          "cohere.com",
+          "*.cohere.com",
+          "mistral.ai",
+          "*.mistral.ai",
+          "huggingface.co",
+          "*.huggingface.co",
+          "replicate.com",
+          "*.replicate.com",
+          "together.ai",
+          "*.together.ai",
+          "api.together.xyz",
+          "groq.com",
+          "*.groq.com"
+        ],
+        "allowLocalBinding": true,
+        "allowAllUnixSockets": true
+      }
+    },
+    "outputLimiter": {
+      "enabled": true,
+      "bash": {
+        "headLines": 100,
+        "tailLines": 200,
+        "excludedCommandPrefixes": []
+      },
+      "read": {
+        "maxLines": 1000
+      },
+      "grep": {
+        "maxMatches": 250
+      },
+      "excludeTools": []
+    },
+    "toolSelectionDefaults": {
+      "version": 1,
+      "choices": {
+        "mcp:1309f441-ae57-41b4-bd07-b061d82746a8": {
+          "selected": true,
+          "aliases": [
+            "fetch-mcp"
+          ]
+        },
+        "mcp:74e65a5b-3187-4013-b195-2524983f70e0": {
+          "selected": false,
+          "aliases": [
+            "chrome-devtools-mcp"
+          ]
+        },
+        "mcp:aa13e4e9-7da5-4cc2-9482-5a1322915717": {
+          "selected": false,
+          "aliases": [
+            "chrome-devtools-user-mcp"
+          ]
+        },
+        "skill:6cd05aae-7645-4e71-9b95-ecfab7ed5bee": {
+          "selected": true,
+          "aliases": []
+        },
+        "skill:bb9389fa-7bbd-4ddd-bd1b-5b883f1c3e00": {
+          "selected": true,
+          "aliases": []
+        },
+        "skill:1b83325a-c21d-4887-9117-824e5d5d5c69": {
+          "selected": true,
+          "aliases": []
+        }
+      }
+    },
+    "neo": {
+      "autoDispatch": true,
+      "packs": [
+        "later-pack"
+      ],
+      "standingRules": [
+        "First concurrent rule.",
+        "Second concurrent rule."
+      ],
+      "preferences": {
+        "model": "synthetic-model",
+        "provider": "anthropic",
+        "thinkingLevel": "off"
+      },
+      "mutedSessions": [
+        "concurrent-a",
+        "concurrent-b"
+      ]
+    }
+  },
+  "settingsEvents": 8,
+  "contention": {
+    "writeMs": 1201.116875,
+    "healthMs": 0.43587500000001,
+    "maxLagMs": 2.409167000000025,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true
+}

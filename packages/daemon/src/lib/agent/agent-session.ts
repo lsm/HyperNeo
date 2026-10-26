@@ -193,6 +193,7 @@ import {
   type ContextClearBoundaryOwner,
   type DeliveryOutcome,
   type DriveTurnOutcome,
+  DeliveryEnqueueRejectedError,
   deliverMessage,
   deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
@@ -2971,10 +2972,11 @@ export class AgentSession
         throw new Error(`Session ${this.session.id} is archived`);
       }
       try {
-        deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+        await deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
         });
       } catch (err) {
+        if (!(err instanceof DeliveryEnqueueRejectedError)) throw err;
         const failedDbId = await this.db.writeSDKMessage(
           'markDeliveryFailedByUuid',
           this.session.id,
@@ -3063,7 +3065,7 @@ export class AgentSession
         (uuid) => this.messageQueue.isRunning() && this.messageQueue.hasPendingOrInFlight(uuid)
       );
       for (const uuid of stranded) {
-        deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+        await deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
         void this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
       }
       return stranded.length;

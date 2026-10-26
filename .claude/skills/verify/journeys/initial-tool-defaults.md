@@ -36,8 +36,10 @@ unsupportedDefaultsRefused, coldReadback and restartPreserved:
 
 Run initial-tool-default-writes, session-tool-inputs, legacy-tool-preferences,
 session lifecycle/manager, AgentSession and SessionRepository suites. Native/SDK
-configuration and consumers remain unchanged until 6d.5. initialCreationWired=true;
-sdkConsumerWired, sdkApplyVerified and queryStarted remain false. This is persistence
+consumer wiring is covered by `canonical-sdk-tool-inputs.md`. This harness reports
+initialCreationWired=true;
+sdkConsumerWired, sdkApplyVerified and queryStarted remain false as harness scope
+flags, not current global availability. This is persistence
 and constructor/cache proof, not SDK attachment or a new UI control.
 
 Check disk space before heavy runs; stop below 25 GiB and notify Neo. Reuse

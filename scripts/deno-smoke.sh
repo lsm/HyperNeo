@@ -40,7 +40,8 @@ if [ -n "$DENO_SMOKE_BIN" ] && [ ! -x "$DENO_SMOKE_BIN" ]; then
 	exit 1
 fi
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/deno-smoke.XXXXXX")"
+SMOKE_TMP_ROOT=${TMPDIR:-/tmp}
+WORK_DIR="$(mktemp -d "${SMOKE_TMP_ROOT%/}/deno-smoke.XXXXXX")"
 DB_PATH="$WORK_DIR/deno-smoke.db"
 LOG_FILE="$WORK_DIR/daemon.log"
 mkdir -p "$WORK_DIR/home"
@@ -474,6 +475,12 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
+NEO_SETTINGS_RUN="$WORK_DIR/neo-settings-writer"
+mkdir -p "$NEO_SETTINGS_RUN/home" "$NEO_SETTINGS_RUN/tmp"
+env -i HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$NEO_SETTINGS_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-settings-writer.ts" verify "$NEO_SETTINGS_RUN"
+
 CLEANUP_ENQUEUE_RUN="$WORK_DIR/cleanup-enqueue"
 mkdir -p "$CLEANUP_ENQUEUE_RUN/home"
 env -i HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
@@ -527,5 +534,17 @@ mkdir -p "$CREDENTIAL_STORE_WRITES_RUN/home"
 env -i HOME="$CREDENTIAL_STORE_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CREDENTIAL_STORE_WRITES_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-credential-store-writes.ts" "$CREDENTIAL_STORE_WRITES_RUN"
+
+SESSION_DELIVERY_ENQUEUE_RUN="$WORK_DIR/session-delivery-enqueue"
+mkdir -p "$SESSION_DELIVERY_ENQUEUE_RUN/home"
+env -i HOME="$SESSION_DELIVERY_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_DELIVERY_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-delivery-enqueue.ts" "$SESSION_DELIVERY_ENQUEUE_RUN"
+
+STALE_RECLAIM_RUN="$WORK_DIR/stale-reclaim-writer"
+mkdir -p "$STALE_RECLAIM_RUN/home" "$STALE_RECLAIM_RUN/tmp"
+env -i HOME="$STALE_RECLAIM_RUN/home" PATH="$PATH" TMPDIR="$STALE_RECLAIM_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$STALE_RECLAIM_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-stale-reclaim-writer.ts" "$STALE_RECLAIM_RUN"
 
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

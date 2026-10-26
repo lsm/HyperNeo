@@ -1,0 +1,12 @@
+{
+  "verified": true,
+  "mainWrites": 0,
+  "contention": {
+    "writeMs": 1223.8144580000003,
+    "healthMs": 0.4735000000000582,
+    "maxLagMs": 3.2420420000003105,
+    "affectedWriteUnder250ms": false
+  },
+  "smokePassed": true,
+  "temporaryDataRemoved": true
+}
