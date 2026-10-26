@@ -405,17 +405,148 @@ describe('withCodexDesktopIpc', () => {
   });
 
   describe('existing-thread work.send without a Desktop owner', () => {
-    test.each(
-      (['active', 'completed'] as const).flatMap((state) =>
-        (['refused', 'hung'] as const).flatMap((launcher) =>
-          (['missing', 'stale'] as const).map(
-            (connection) => [state, launcher, connection] as const
+    const buildDriver = async (options: {
+      desktopSocketPath: string;
+      desktopRunning: () => Promise<boolean>;
+      calls: string[];
+      launches: string[][];
+    }) => {
+      const statePath = join(directory, 'state.sqlite');
+      const rollout = join(directory, 'rollout.jsonl');
+      writeFileSync(
+        rollout,
+        JSON.stringify({
+          type: 'event_msg',
+          payload: { type: 'task_complete' },
+        }) + '\n'
+      );
+      const db = new Database(statePath);
+      db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+      CREATE TABLE projects (id TEXT, name TEXT);
+      CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+      db.prepare(
+        `INSERT INTO threads VALUES ('thread-1', 'Existing worker', '', '', '/tmp/verify', 'desktop', 0, 1, ?)`
+      ).run(rollout);
+      db.close();
+      const driver = createCodexDesktopAdapter({
+        statePath,
+        desktopSocketPath: options.desktopSocketPath,
+        desktopRunning: options.desktopRunning,
+        worktreesDir: directory,
+        machine: 'test',
+        now: Date.now,
+        spawn: (args) => {
+          options.launches.push(args);
+          throw new Error('Synthetic Desktop open refused');
+        },
+        appServer: async () => ({
+          call: async (method: string, params: Record<string, unknown>) => {
+            options.calls.push(method);
+            if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
+            if (method === 'thread/queue/add') {
+              const text = (params.input as { text: string }[])[0].text;
+              appendFileSync(
+                rollout,
+                JSON.stringify({
+                  type: 'response_item',
+                  timestamp: new Date().toISOString(),
+                  payload: {
+                    type: 'message',
+                    role: 'user',
+                    id: params.clientUserMessageId,
+                    content: [{ type: 'input_text', text }],
+                  },
+                }) + '\n'
+              );
+              return { queuedSubmission: { id: 'existing-queue' } };
+            }
+            throw new Error(`Unexpected peer request ${method}`);
+          },
+          close: () => {},
+        }),
+        bootstrapServer: async () => {
+          throw new Error('Existing work must not bootstrap');
+        },
+        prepareDesktopProject: async () => {
+          throw new Error('Existing work must not create a project');
+        },
+        startDesktopTurn: async () => {
+          throw new Error('Existing work must not use new-thread handoff');
+        },
+        folderExists: () => true,
+        makeFolder: () => {},
+        homeDir: directory,
+        gitCheckout: async () => null,
+        newId: () => 'existing-input',
+      });
+      return {
+        driver,
+        send: () =>
+          invokeOperation(
+            createOperationRegistry(
+              createWorkVerbOperations({
+                adapters: () => [driver],
+                daemonName: 'test',
+                isOpenTodo: (todoId: string) => todoId === 'open-todo',
+                remote: { list: () => [], invoke: async () => ({}) },
+              })
+            ),
+            'work.send',
+            {
+              ref: { adapter: driver.id, id: 'thread-1' },
+              message: 'Existing worker input',
+              todoId: 'open-todo',
+            },
+            { source: 'mcp', role: 'neo', sessionId: 'neo' }
+          ),
+      };
+    };
+
+    test('queues through the app-server when Desktop is not running', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'error',
+          error: 'no-client-found',
+        })
+      );
+      const calls: string[] = [];
+      const launches: string[][] = [];
+      const { send } = await buildDriver({
+        desktopSocketPath: f.path,
+        desktopRunning: async () => false,
+        calls,
+        launches,
+      });
+      const result = await Promise.race([
+        send(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Existing-thread delivery waited for Desktop open')),
+            2000
           )
-        )
-      )
-    )(
-      'queues %s input even if Desktop open would be %s and socket is %s',
-      async (state, launcher, connection) => {
+        ),
+      ]);
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            delivered: true,
+            queuedSubmissionId: 'existing-queue',
+            receipt: { executionId: 'thread-1', inputId: 'existing-input' },
+          },
+        },
+      });
+      expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
+      expect(f.seen).toEqual([]);
+      expect(launches).toEqual([]);
+    });
+
+    test.each(['missing', 'stale'] as const)(
+      'a running Desktop with a %s IPC socket refuses the auto send without enqueueing',
+      async (connection) => {
         const f = await fixture((message, _socket, send) =>
           send({
             type: 'response',
@@ -424,141 +555,42 @@ describe('withCodexDesktopIpc', () => {
             error: 'no-client-found',
           })
         );
-        let desktopSocketPath = f.path;
-        if (connection === 'missing') desktopSocketPath = join(directory, 'missing.sock');
+        let desktopSocketPath = join(directory, 'missing.sock');
         if (connection === 'stale') {
           desktopSocketPath = join(directory, 'stale.sock');
           renameSync(f.path, desktopSocketPath);
           await new Promise<void>((resolve) => server!.close(() => resolve()));
           server = undefined;
         }
-        const statePath = join(directory, 'state.sqlite');
-        const rollout = join(directory, 'rollout.jsonl');
-        writeFileSync(
-          rollout,
-          JSON.stringify({
-            type: 'event_msg',
-            payload: { type: state === 'active' ? 'task_started' : 'task_complete' },
-          }) + '\n'
-        );
-        const db = new Database(statePath);
-        db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
-        CREATE TABLE projects (id TEXT, name TEXT);
-        CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
-        db.prepare(
-          `INSERT INTO threads VALUES ('thread-1', 'Existing worker', '', '', '/tmp/verify', 'desktop', 0, 1, ?)`
-        ).run(rollout);
-        db.close();
         const calls: string[] = [];
         const launches: string[][] = [];
-        let releaseOpen!: (code: number) => void;
-        const openExit = new Promise<number>((resolve) => {
-          releaseOpen = resolve;
-        });
-        const driver = createCodexDesktopAdapter({
-          statePath,
+        const { send } = await buildDriver({
           desktopSocketPath,
-          desktopRunning: async () => false,
-          worktreesDir: directory,
-          machine: 'test',
-          now: Date.now,
-          spawn: (args) => {
-            launches.push(args);
-            if (launcher === 'refused') throw new Error('Synthetic Desktop open refused');
-            return {
-              stdout: null,
-              stderr: null,
-              exitCode: null,
-              exited: openExit,
-              kill: () => releaseOpen(1),
-            };
-          },
-          appServer: async () => ({
-            call: async (method, params) => {
-              calls.push(method);
-              if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
-              if (method === 'thread/queue/add') {
-                const text = (params.input as { text: string }[])[0].text;
-                appendFileSync(
-                  rollout,
-                  JSON.stringify({
-                    type: 'response_item',
-                    timestamp: new Date().toISOString(),
-                    payload: {
-                      type: 'message',
-                      role: 'user',
-                      id: params.clientUserMessageId,
-                      content: [{ type: 'input_text', text }],
-                    },
-                  }) + '\n'
-                );
-                return { queuedSubmission: { id: 'existing-queue' } };
-              }
-              throw new Error(`Unexpected peer request ${method}`);
-            },
-            close: () => {},
-          }),
-          bootstrapServer: async () => {
-            throw new Error('Existing work must not bootstrap');
-          },
-          prepareDesktopProject: async () => {
-            throw new Error('Existing work must not create a project');
-          },
-          startDesktopTurn: async () => {
-            throw new Error('Existing work must not use new-thread handoff');
-          },
-          folderExists: () => true,
-          makeFolder: () => {},
-          homeDir: directory,
-          gitCheckout: async () => null,
-          newId: () => 'existing-input',
+          desktopRunning: async () => true,
+          calls,
+          launches,
         });
-        const registry = createOperationRegistry(
-          createWorkVerbOperations({
-            adapters: () => [driver],
-            daemonName: 'test',
-            isOpenTodo: (todoId) => todoId === 'open-todo',
-            remote: { list: () => [], invoke: async () => ({}) },
-          })
-        );
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          const result = await Promise.race([
-            invokeOperation(
-              registry,
-              'work.send',
-              {
-                ref: { adapter: driver.id, id: 'thread-1' },
-                message: 'Existing worker input',
-                todoId: 'open-todo',
-              },
-              { source: 'mcp', role: 'neo', sessionId: 'neo' }
-            ),
-            new Promise<never>((_, reject) => {
-              timer = setTimeout(
-                () => reject(new Error('Existing-thread delivery waited for Desktop open')),
-                2000
-              );
-            }),
-          ]);
-          expect(result).toMatchObject({
-            kind: 'completed',
-            value: {
-              ok: true,
-              value: {
-                delivered: true,
-                queuedSubmissionId: 'existing-queue',
-                receipt: { executionId: 'thread-1', inputId: 'existing-input' },
-              },
-            },
-          });
-          expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
-          expect(f.seen).toEqual([]);
-          expect(launches).toEqual([]);
-        } finally {
-          clearTimeout(timer);
-          releaseOpen(1);
-        }
+        const result = await Promise.race([
+          send(),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Existing-thread delivery waited for the handoff')),
+              5000
+            )
+          ),
+        ]);
+        expect(result).toMatchObject({
+          kind: 'completed',
+          value: {
+            ok: false,
+            reason: 'not_delivered',
+            notSent: true,
+            detail: expect.stringContaining('No background writer was started'),
+          },
+        });
+        expect(calls).toEqual([]);
+        expect(f.seen).toEqual([]);
+        expect(launches).toEqual([]);
       }
     );
   });
