@@ -3,7 +3,8 @@
     "operation": "neo.question.get",
     "input": { "id": "synthetic-question" },
     "canonical": { "questionId": "synthetic-question" },
-    "error": "Invalid input: expected string, received undefined at questionId"
+    "error": "Invalid input: expected string, received undefined at questionId",
+    "source": "sanitized historical input shape"
   },
   {
     "operation": "neo.coding.write.plan",
@@ -15,6 +16,27 @@
       "repo": "synthetic/repo",
       "candidates": [{ "adapter": "codex-desktop", "model": "synthetic-model" }]
     },
-    "error": "Invalid input: expected array, received undefined at candidates"
+    "error": "Invalid input: expected array, received undefined at candidates",
+    "source": "observed input shape supplied by Neo"
+  },
+  {
+    "operation": "work.send",
+    "input": {
+      "ref": { "adapter": "hyperneo", "id": "synthetic-worker" },
+      "text": "Synthetic message"
+    },
+    "canonical": {
+      "ref": { "adapter": "hyperneo", "id": "synthetic-worker" },
+      "message": "Synthetic message"
+    },
+    "error": "invalid_input: missing message",
+    "source": "reconstructed from operation_refusals operation+reason, schema and Neo-supplied known alias"
+  },
+  {
+    "operation": "neo.todo.close",
+    "input": { "todo_id": "synthetic-todo", "reason": "Synthetic completion" },
+    "canonical": { "todoId": "synthetic-todo", "reason": "Synthetic completion" },
+    "error": "invalid_input: missing todoId",
+    "source": "reconstructed from operation_refusals operation+reason, schema and Neo-supplied known alias"
   }
 ]

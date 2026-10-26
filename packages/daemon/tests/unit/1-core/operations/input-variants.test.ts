@@ -10,6 +10,7 @@ import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-op
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { parseOperationInput } from '../../../../src/lib/operations/invoke.ts';
+import { SendWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
 import fixtures from './fixtures/refused-inputs.json';
 
 const invoke = async (schema: z.ZodType, input: unknown) => {
@@ -98,7 +99,18 @@ describe('operation input variants through the MCP door', () => {
         ),
       ];
       for (const fixture of fixtures) {
-        const operation = operations.find((op) => op.name === fixture.operation)!;
+        const operation =
+          operations.find((op) => op.name === fixture.operation) ??
+          defineOperation({
+            name: fixture.operation,
+            description: 'Reconstructed refused shape',
+            inputSchema:
+              fixture.operation === 'work.send'
+                ? SendWorkInputSchema
+                : z.object({ todoId: z.string().min(1), reason: z.string().min(1) }),
+            resultSchema: z.unknown(),
+            execute: async (input) => input,
+          });
         expect(await parseOperationInput(operation, fixture.input)).toEqual(
           await parseOperationInput(operation, fixture.canonical)
         );
@@ -106,6 +118,38 @@ describe('operation input variants through the MCP door', () => {
     } finally {
       db.close();
     }
+  });
+  test('question lookup aliases do not spread to sibling operations or other text fields', async () => {
+    const db = new Database(':memory:');
+    try {
+      const operations = createNeoQuestionOperations(
+        new NeoAskTodoRepository(db),
+        async () => {},
+        async () => ({ ok: true })
+      );
+      for (const name of ['neo.question.retire', 'neo.question.answer']) {
+        const operation = operations.find((op) => op.name === name)!;
+        const canonical = name.endsWith('retire')
+          ? { questionId: 'q', reason: 'reason' }
+          : { questionId: 'q', answer: 'answer' };
+        expect(await parseOperationInput(operation, { ...canonical, id: 'ignored' })).toMatchObject(
+          { value: { input: canonical } }
+        );
+        const { questionId: _questionId, ...rest } = canonical;
+        expect(await parseOperationInput(operation, { ...rest, id: 'q' })).toMatchObject({
+          reason: { code: 'invalid_input' },
+        });
+      }
+    } finally {
+      db.close();
+    }
+  });
+  test('does not reinterpret a canonical text field as a message alias', async () => {
+    const schema = z.object({
+      text: z.string(),
+      message: z.object({ content: z.string() }).optional(),
+    });
+    expect((await invoke(schema, { text: 'Report' })).value).toEqual({ text: 'Report' });
   });
   test('normalizes finite scalar variants inside objects, arrays and records', async () => {
     const schema = z.object({
