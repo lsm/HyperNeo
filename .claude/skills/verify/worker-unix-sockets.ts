@@ -61,7 +61,11 @@ try {
       await hub.request('settings.global.update', { updates: { workerUnixSockets: [] } });
       assert.deepEqual(codexWorkerSandbox(run).config.features.network_proxy.unix_sockets, {});
       const store = new NeoAskTodoRepository(app.db.getDatabase());
-      assert.equal(store.requestWorkerSocket(root.sessionId, allowed)?.state, 'answered');
+      const reopened = store.requestWorkerSocket(root.sessionId, allowed)!;
+      assert.equal(reopened.state, 'open');
+      await hub.request('operation.invoke', { name: 'neo.question.answer', input: { questionId: reopened.id, answer: 'yes' } });
+      assert.deepEqual(app.settingsManager.getGlobalSettings().workerUnixSockets, [allowed]);
+      report.reapprovalAfterRemoval = true;
       report.removalAppliesToNextSession = true;
     }
     await transport.close();

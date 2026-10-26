@@ -32,8 +32,11 @@ test.each(['yes', 'no'] as const)('human %s persists without asking again', (ans
   expect(request().state).toBe('answered');
   if (answer === 'yes') {
     db.updateGlobalSettings({ workerUnixSockets: [] });
-    expect(request().state).toBe('answered');
+    expect(request().state).toBe('open');
     expect(db.getGlobalSettings().workerUnixSockets).toEqual([]);
+    expect(request().id).toBe(question.id);
+    store.answerQuestion(request(), 'yes', 'button', Date.now());
+    expect(db.getGlobalSettings().workerUnixSockets).toEqual([socket]);
   }
 });
 
