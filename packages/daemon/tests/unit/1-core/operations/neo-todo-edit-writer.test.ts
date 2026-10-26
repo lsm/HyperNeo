@@ -24,6 +24,7 @@ describe('Neo todo edit commits through its writer', () => {
   let store: NeoAskTodoRepository;
   let check: (todo: NeoTodo) => Promise<NeoTodoCheckResult | null>;
   let started: string[];
+  let announced: Array<{ tables: string[]; title: string | undefined }>;
   let start: (id: string) => Promise<void>;
   const url = (n: number) => `https://github.com/synthetic/edit/pull/${n}`;
   beforeEach(() => {
@@ -37,6 +38,13 @@ describe('Neo todo edit commits through its writer', () => {
     gateway = new DbGateway(':memory:', writer);
     bindGateway(main, gateway);
     store = new NeoAskTodoRepository(writer);
+    announced = [];
+    gateway.onChanges = (changes) => {
+      announced.push({
+        tables: [...new Set(changes.map((change) => change.table))],
+        title: store.getTodo('first')?.title,
+      });
+    };
     store.openAsk({
       id: 'ask',
       projectId: null,
@@ -164,8 +172,15 @@ describe('Neo todo edit commits through its writer', () => {
       }).toEqual(unchanged);
       expect(checks).toBe(when === 'before preparation' ? 0 : 1);
       expect(started).toEqual([]);
+      expect(announced).toEqual([]);
     }
   );
+
+  test('committed edits announce the visible title only after the write commits', async () => {
+    add('first');
+    expect(await edit({ todoId: 'first', title: 'Visible edit' })).toMatchObject({ ok: true });
+    expect(announced).toContainEqual({ tables: ['neo_todos'], title: 'Visible edit' });
+  });
 
   test('a failed ask stamp leaves both the title and human card unchanged', async () => {
     const todo = add('first');
@@ -191,6 +206,7 @@ describe('Neo todo edit commits through its writer', () => {
     expect(store.getTodo('first')?.title).toBe('first');
     expect(store.getQuestion('start')?.state).toBe('open');
     expect(started).toEqual([]);
+    expect(announced).toEqual([]);
   });
 
   test('editing succeeds with no todo SQL available on the main connection', async () => {

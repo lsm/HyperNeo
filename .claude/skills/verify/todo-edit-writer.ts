@@ -31,6 +31,8 @@ const db = app.db.getDatabase(), prepare = db.prepare.bind(db), todos = new NeoA
 let recording = 0, mainSql = 0, measureLag = false, maxLagMs = 0, previous = performance.now();
 let lock: ReturnType<typeof spawn> | undefined;
 let lockExit: Promise<void> | undefined;
+let changedEvents = 0;
+const stopEvents = hub.onEvent('neo.changed', () => { changedEvents++; });
 const timer = setInterval(() => { const now = performance.now(); if (measureLag) maxLagMs = Math.max(maxLagMs, now - previous - 10); previous = now; }, 10);
 db.prepare = ((sql: string) => { if (recording && /neo_todos|neo_asks|neo_questions|pack_coding_pr_claims/.test(sql)) mainSql++; return prepare(sql); }) as typeof db.prepare;
 const report: Record<string, unknown> = { mode, surface: 'real neo.todo.edit RPC and neo.snapshot' };
@@ -67,7 +69,12 @@ try {
   } else {
     assert.deepEqual(observed, { title: 'first', question: 'open', visibleTitle: 'first' });
     db.exec('DROP TRIGGER refuse_edit_stamp');
+    await hub.request('system.health', {});
+    const eventsBeforeEdit = changedEvents;
     assert.equal((await edit({ todoId: 'first', title: 'Committed title' })).ok, true);
+    await hub.request('system.health', {});
+    assert(changedEvents > eventsBeforeEdit, 'committed edit must reach neo.changed subscribers');
+    report.editAnnounced = { before: eventsBeforeEdit, after: changedEvents };
     assert.equal((await visible('first')).title, 'Committed title');
     const concurrent = await Promise.all(['first', 'second'].map(todoId => edit({ todoId, addUrls: [url(2)] })));
     assert(concurrent.every(result => result.ok));
@@ -116,6 +123,7 @@ try {
     report.verified = true;
   }
 } finally {
+  stopEvents();
   clearInterval(timer);
   db.prepare = prepare;
   lock?.kill();
