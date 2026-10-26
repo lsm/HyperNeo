@@ -56,6 +56,77 @@ afterEach(() => {
 const settingsPath = () => join(root, '.claude/settings.local.json');
 const settings = () => JSON.parse(readFileSync(settingsPath(), 'utf8'));
 
+test('runtime preparation refuses a linked Git directory before touching host markers', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../../src/lib/drivers/worker-sandbox.ts')
+  >('../../../../src/lib/drivers/worker-sandbox.ts');
+  const outside = join(fixture, 'synthetic-host');
+  mkdirSync(outside);
+  const marker = join(outside, 'hyperneo-worker-sandbox');
+  writeFileSync(marker, 'synthetic host bytes');
+  rmSync(join(root, '.git'), { recursive: true });
+  symlinkSync(outside, join(root, '.git'));
+  const runtime = join(workerSandboxPaths(root).TMPDIR, '..');
+  const mkdir = fileOperations.mkdir;
+  const inspect = fileOperations.lstat;
+  const privateDirectory = await inspect(fixture);
+  const runtimeMkdir = vi
+    .spyOn(fileOperations, 'mkdir')
+    .mockImplementation(async (path, options) =>
+      String(path).startsWith(runtime) ? undefined : mkdir(path, options)
+    );
+  const runtimeInspect = vi
+    .spyOn(fileOperations, 'lstat')
+    .mockImplementation(async (path) =>
+      String(path).startsWith(runtime) ? privateDirectory : inspect(path)
+    );
+  try {
+    const failure = await actual.prepareWorkerSandbox(root).then(
+      () => null,
+      (error) => error
+    );
+    expect(readFileSync(marker, 'utf8')).toBe('synthetic host bytes');
+    expect(failure).toBeInstanceOf(Error);
+  } finally {
+    runtimeMkdir.mockRestore();
+    runtimeInspect.mockRestore();
+  }
+});
+
+test('a config replacement cannot copy synthetic host TOML into the clone', async () => {
+  await persistCodexWorkerProfile(root);
+  const path = join(root, '.codex/config.toml');
+  const original = parse(readFileSync(path, 'utf8'));
+  writeFileSync(path, stringify({ ...original, model: 'synthetic-repo-model' }));
+  const host = join(fixture, 'synthetic-host.toml');
+  const hostText = stringify({ ...original, model: 'synthetic-private-host-model' });
+  writeFileSync(host, hostText);
+  const swap = () => {
+    rmSync(path);
+    symlinkSync(host, path);
+  };
+  const inspect = fileOperations.lstat;
+  const open = fileOperations.open;
+  const inspection = vi.spyOn(fileOperations, 'lstat').mockImplementation(async (candidate) => {
+    const entry = await inspect(candidate);
+    if (candidate === path) swap();
+    return entry;
+  });
+  const opening = vi.spyOn(fileOperations, 'open').mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (args[0] === path) swap();
+    return handle;
+  });
+  try {
+    await persistCodexWorkerProfile(root);
+    expect(parse(readFileSync(path, 'utf8')).model).toBe('synthetic-repo-model');
+    expect(readFileSync(host, 'utf8')).toBe(hostText);
+  } finally {
+    inspection.mockRestore();
+    opening.mockRestore();
+  }
+});
+
 test('refreshing an installed profile leaves worker-controlled Git metadata alone', async () => {
   await persistCodexWorkerProfile(root);
   const outside = join(fixture, 'synthetic-host');
@@ -102,19 +173,24 @@ test('a Git exclude swapped after inspection cannot change host bytes', async ()
 });
 
 test.each([
+  ['Codex', 'git'],
   ['Codex', 'exclude'],
   ['Codex', 'info'],
+  ['Claude', 'git'],
   ['Claude', 'exclude'],
   ['Claude', 'info'],
 ])('%s refuses a symlinked Git %s without changing host bytes', async (engine, target) => {
   const outside = join(fixture, 'synthetic-host');
-  mkdirSync(outside);
-  const path = join(outside, 'exclude');
+  mkdirSync(join(outside, 'info'), { recursive: true });
+  const path = join(outside, target === 'git' ? 'info/exclude' : 'exclude');
   const original = 'synthetic host file\n';
   writeFileSync(path, original);
-  const link = join(root, '.git/info', target === 'info' ? '' : 'exclude');
+  const link =
+    target === 'git'
+      ? join(root, '.git')
+      : join(root, '.git/info', target === 'info' ? '' : 'exclude');
   rmSync(link, { recursive: true, force: true });
-  symlinkSync(target === 'info' ? outside : path, link);
+  symlinkSync(target === 'exclude' ? path : outside, link);
   const failure = await (engine === 'Codex'
     ? persistCodexWorkerProfile(root)
     : installClaudeNativeWrites(root, [join(fixture, 'source')])
