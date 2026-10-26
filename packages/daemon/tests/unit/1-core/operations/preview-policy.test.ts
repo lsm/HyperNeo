@@ -42,16 +42,37 @@ describe('artifact capture policy', () => {
     });
     for (const path of [
       '/tmp/report.md',
-      '/synthetic/home/.codex/reports/report.md',
       '/synthetic/evidence/report.md',
-      '/synthetic/home/.claude/projects/report.md',
-      '/synthetic/home/.config/gh/report.md',
+      '/synthetic/home/Documents/report.md',
+      '/synthetic/repo/.claude/worktrees/worker/report.md',
     ])
       expect(await admit(path)).toEqual({
         context,
         root: path.slice(0, path.lastIndexOf('/')),
         relativePath: 'report.md',
       });
+  });
+  test.each(['.claude/reports', '.codex/cache', '.config/app', '.hidden'])(
+    'denies home dot-folder %s for explicit and relative paths',
+    async (folder) => {
+      const workspacePath = `${deps.home}/${folder}`;
+      expect(await admit(`${workspacePath}/report.md`)).toEqual({
+        accepted: false,
+        reason: 'sensitive_path',
+      });
+      expect(
+        await admit('report.md', worker, {
+          ...deps,
+          loadBinding: () => ({ ...binding, workspacePath }),
+        })
+      ).toEqual({ accepted: false, reason: 'sensitive_path' });
+    }
+  );
+  test('denies credential directories even outside home', async () => {
+    expect(await admit('/synthetic/backup/.config/gh/report.md')).toEqual({
+      accepted: false,
+      reason: 'sensitive_path',
+    });
   });
   test('does not veto an explicitly chosen file because context or ownership is unavailable', async () => {
     for (const loadBinding of [() => null, () => ({ ...binding, workspacePath: null })]) {
