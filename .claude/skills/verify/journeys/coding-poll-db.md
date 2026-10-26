@@ -84,3 +84,23 @@ receipts and the complete post-proof change list. The evidence-contract unit
 test checks the retained historical pair without binding future PRs to this
 application tree. A later production/helper change requires a new committed
 proof head and fresh runs before this PR can claim that head is verified.
+
+
+Run the focused regression set with the CI runner as well as Bun:
+
+```sh
+cd packages/daemon
+bash ../../.claude/skills/verify/resource-check.sh && \
+  NODE_ENV=test node node_modules/vitest/vitest.mjs run \
+  tests/unit/1-core/operations/coding-poll-writer.test.ts \
+  tests/unit/1-core/operations/coding-poll-proof-evidence.test.ts \
+  tests/unit/1-core/operations/neo-ledger-poll-http.test.ts
+```
+
+The CI follow-up reproduces the retry fixture's fourth counted attempt under
+Node/Vitest before fixing it. Fault injection now tracks synchronous wrapper
+nesting, so only outer writes count and receive busy faults in both runners.
+The three-attempt bound, single acquisition, single observation and exhaustion
+assertions remain. No production code changed in this follow-up. Both runtime
+proofs were refreshed from the committed fixture fix; the previous binding is
+retained in `proofBindingHistory`.
