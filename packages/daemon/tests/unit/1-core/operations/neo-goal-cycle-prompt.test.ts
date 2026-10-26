@@ -69,7 +69,7 @@ describe('Neo scheduled goal-cycle guidance', () => {
       expect(NEO_ROOT_PROMPT).toContain(text);
   });
   test('keeps the short root and gives only scheduled goal wakes a one-line closing label', () => {
-    expect(NEO_ROOT_PROMPT.trim().split(/\s+/).length).toBeLessThan(320);
+    expect(NEO_ROOT_PROMPT.trim().split(/\s+/).length).toBeLessThan(300);
     expect(NEO_ROOT_PROMPT).not.toContain('goal.journal');
     expect(neoPrompt([])).toContain('one plain-text summary line');
     expect(neoPrompt([])).toContain('On other turns');

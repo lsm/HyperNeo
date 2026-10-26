@@ -31,8 +31,10 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
-    expect(NEO_ROOT_PROMPT).toContain('end the turn; the event wakes you');
-    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(320);
+    expect(NEO_ROOT_TURN_END).toContain(
+      'When you are waiting on something, end the turn; the event wakes you'
+    );
+    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(300);
     expect(NEO_ROOT_PROMPT).toContain('neo.publication.publish');
     expect(NEO_ROOT_PROMPT).not.toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
