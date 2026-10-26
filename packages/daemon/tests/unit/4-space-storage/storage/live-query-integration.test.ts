@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -11,8 +11,8 @@ import type { QueryDiff } from '../../../../src/storage/live-query';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-function makeTempDbPath(): string {
-  return join(tmpdir(), `live-query-int-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+function makeTempDbDir(): string {
+  return mkdtempSync(join(tmpdir(), 'live-query-int-'));
 }
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
@@ -61,6 +61,7 @@ interface SessionRow {
 }
 
 describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)', () => {
+  let dbDir: string;
   let dbPath: string;
   let db: Database;
   let bunDb: BunDatabase;
@@ -71,7 +72,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     "SELECT id, title, status FROM sessions WHERE status != 'archived' ORDER BY id";
 
   beforeEach(async () => {
-    dbPath = makeTempDbPath();
+    dbDir = makeTempDbDir();
+    dbPath = join(dbDir, 'test.db');
     db = new Database(dbPath);
     reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
@@ -86,9 +88,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       db.close();
     } catch {}
     try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
+      rmSync(dbDir, { recursive: true, force: true });
     } catch {}
   });
 

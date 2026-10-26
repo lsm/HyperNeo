@@ -1,16 +1,19 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Database } from '../../../../src/storage';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { refreshGlmDisplayName } from '../../../../src/lib/credential-discovery';
 
 describe('refreshGlmDisplayName', () => {
   let db: Database;
+  let dbDir: string;
   let dbPath: string;
 
   beforeEach(async () => {
-    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
-    dbPath = `${tmpBase}/test-glm-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    dbDir = mkdtempSync(join(tmpdir(), 'test-glm-'));
+    dbPath = join(dbDir, 'test.sqlite');
     db = new Database(dbPath);
     const reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
@@ -19,7 +22,7 @@ describe('refreshGlmDisplayName', () => {
   afterEach(() => {
     db?.close();
     try {
-      unlinkSync(dbPath);
+      rmSync(dbDir, { recursive: true, force: true });
     } catch {}
   });
 
