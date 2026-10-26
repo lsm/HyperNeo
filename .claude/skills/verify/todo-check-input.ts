@@ -6,7 +6,6 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
-import { ArtifactFileRepository } from '../../../packages/daemon/src/storage/repositories/artifact-file-repository.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -15,16 +14,11 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const ghLog = join(run, 'evidence/gh.log');
-const compare = join(run, 'compare.json');
-writeFileSync(compare, JSON.stringify({ status: 'ahead' }));
 writeFileSync(
   join(run, 'bin/gh'),
   `#!/bin/sh
 printf '%s\\n' "$*" >> '${ghLog}'
-case "$*" in
-  'api repos/lsm/hyperneo/compare/'*) cat '${compare}' ;;
-  *) exit 1 ;;
-esac
+exit 1
 `,
   { mode: 0o700 }
 );
@@ -42,7 +36,7 @@ async function rpc(name: string, input: unknown) {
         const message = JSON.parse(String(event.data));
         if (message.id !== id && message.requestId !== id) return;
         clearTimeout(timeout);
-        if (message.error) fail(new Error(JSON.stringify(message.error)));
+        if (message.error) done({ error: message.error } as never);
         else done(message.data.value ?? message.data);
       };
       ws!.send(
@@ -92,16 +86,29 @@ try {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
   });
-  const missing = await rpc('neo.todo.add', { askId: 'ask', title: 'Missing check', doneWhen: 'Remember it' });
+  const missing = await rpc('neo.todo.add', {
+    askId: 'ask',
+    title: 'Missing check',
+    doneWhen: 'Remember it',
+  });
   assert.notEqual(missing.ok, true, 'adding a todo without a check must be rejected');
   assert.match(JSON.stringify(missing), /check/);
   const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'result.txt') } };
   const added = await rpc('neo.todo.add', { askId: 'ask', title: 'Observe result', check });
   assert(added.ok && added.todo, JSON.stringify(added));
   assert.equal(added.todo.doneWhen, `File ${check.params.path} exists.`);
-  const unknown = await rpc('neo.todo.add', { askId: 'ask', title: 'Unknown', check: { ...check, pack: 'unknown' } });
+  const unknown = await rpc('neo.todo.add', {
+    askId: 'ask',
+    title: 'Unknown',
+    check: { ...check, pack: 'unknown' },
+  });
   assert.notEqual(unknown.ok, true);
-  const legacy = store.addTodo('legacy', 'ask', { title: 'Old todo', doneWhen: 'Remember it', check: null, instruction: null, named: null }, 1);
+  const legacy = store.addTodo(
+    'legacy',
+    'ask',
+    { title: 'Old todo', doneWhen: 'Remember it', check: null, instruction: null, named: null },
+    1
+  );
   const edited = await rpc('neo.todo.edit', { todoId: legacy.id, check });
   assert(edited.ok && edited.todo, JSON.stringify(edited));
   assert.equal(edited.todo.doneWhen, `File ${check.params.path} exists.`);
@@ -110,7 +117,9 @@ try {
   const closed = await rpc('neo.todo.close', { todoId: edited.todo.id, reason: 'Observed result' });
   assert.equal(closed.todo?.state, 'done');
   receipts.push({ final: store.listTodos('ask'), isolatedPort: app.server.port });
-  console.log('PASS: real RPC rejects unchecked/unknown todos, derives wording, upgrades an old row and verifies the outcome.');
+  console.log(
+    'PASS: real RPC rejects unchecked/unknown todos, derives wording, upgrades an old row and verifies the outcome.'
+  );
 } finally {
   ws?.close();
   await app?.cleanup();
