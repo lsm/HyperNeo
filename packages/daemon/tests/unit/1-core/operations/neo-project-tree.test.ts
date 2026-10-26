@@ -154,6 +154,21 @@ describe('Neo project hierarchy', () => {
     }
   });
 
+  test('any daemon session reorganizes the tree, and forgetting stays root or human', async () => {
+    save('root');
+    save('child');
+    workspace('root');
+    repo.reserveBinding({ kind: 'worker', projectId: 'child', sessionId: 'holder' });
+    const read = mock(async () => [epic]);
+    const [move, section] = createNeoProjectTreeOperations(repo, read);
+    const caller = { source: 'mcp' as const, sessionId: 'holder' };
+    expect(
+      await move.execute({ id: 'child', parentId: 'root', expectedRevision: 1 }, caller)
+    ).toEqual({ ok: true });
+    expect(repo.getProject('child')?.parentId).toBe('root');
+    expect(await section.execute({ parentId: 'root', epicUrl }, caller)).toEqual({ ok: true });
+  });
+
   test('authorization rejects non-root sessions before external reads or writes', async () => {
     save('root');
     save('child');

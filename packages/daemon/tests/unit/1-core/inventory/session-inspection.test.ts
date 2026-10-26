@@ -239,6 +239,17 @@ describe('ordinary session inspection operation', () => {
     });
     for (const port of Object.values(f.deps)) expect(port).not.toHaveBeenCalled();
   });
+  test('any daemon session inspects others, without configs or transcripts', async () => {
+    const f = fixtures();
+    f.deps.readBinding.mockReturnValue(null);
+    const worker: OperationCaller = { source: 'mcp', role: 'workflow_worker', sessionId: 'w' };
+    expect(await f.invoke(input, worker)).toEqual({
+      kind: 'completed',
+      value: presentSessionInspection(input, row, [message(1)], 100),
+    });
+    expect(f.deps.readSession).toHaveBeenCalledWith(input.sessionId);
+  });
+
   test('forged/stale Neo role cannot reach target or history without its binding', async () => {
     const f = fixtures();
     f.deps.readBinding.mockReturnValue(null);

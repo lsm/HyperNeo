@@ -706,6 +706,33 @@ describe('session-owned goals', () => {
     expect(spaceGoals.listAllActive()).toEqual([]);
     db.close();
   });
+
+  test('any session owns goals and works on goals it does not own', async () => {
+    const { db, call } = setup();
+    const worker: OperationCaller = { source: 'mcp', sessionId: 'neo:other', role: 'worker' };
+    const created = await call('goal.session.create', { title: 'Shared', doneTest: 'Done' });
+    expect(
+      (await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, worker)).goal
+    ).toMatchObject({ ownerSessionId: 'neo:other' });
+    expect(await call('goal.session.get', { goalId: created.goal.id }, worker)).toMatchObject({
+      accepted: true,
+      goal: { ownerSessionId: 'neo:root' },
+    });
+    expect(
+      await call('goal.session.update', { goalId: created.goal.id, title: 'Shared 2' }, worker)
+    ).toMatchObject({ accepted: true, goal: { title: 'Shared 2' } });
+    expect(
+      await call('goal.session.list', { ownerSessionId: 'neo:root' }, worker)
+    ).toMatchObject({ accepted: true });
+    expect(
+      await call(
+        'goal.journal.append',
+        { goalId: created.goal.id, done: 'helped', effect: 'goal progressed' },
+        worker
+      )
+    ).toMatchObject({ accepted: true });
+    db.close();
+  });
 });
 
 describe('deleting the owner session', () => {

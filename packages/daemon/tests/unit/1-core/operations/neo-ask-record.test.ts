@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   createNeoAskRecordOperations,
+  requireNeoAskGoal,
   requireNeoAskProject,
   requireNeoAskSession,
 } from '../../../../src/lib/neo/ask-record-operations.ts';
@@ -442,5 +443,15 @@ describe('requireNeoAskSession', () => {
     expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual(
       refused
     );
+  });
+
+  test('any daemon session opens an ask and may name a goal another session owns', () => {
+    expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual({
+      value: 'worker-1',
+    });
+    const goal = { ownerSessionId: 'neo:root' } as unknown as Parameters<
+      typeof requireNeoAskGoal
+    >[2];
+    expect(requireNeoAskGoal('goal-1', 'worker-1', goal)).toEqual({ value: 'goal-1' });
   });
 });
