@@ -9,7 +9,7 @@ import type {
   NeoQuestionAnswer,
   NeoTodo,
 } from '@hyperneo/shared/types/neo-ask';
-import { neoLabelledOptions } from '@hyperneo/shared/types/neo-ask';
+import { neoLabelledOptions, isAgentResolvedQuestion } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -17,7 +17,7 @@ import type {
   NeoQuestionDraft,
   NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { requireLocalUser } from '../operations/caller.ts';
+import { requireLocalUser, isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { requireNeoOpenAsk } from './todo-operations.ts';
@@ -218,6 +218,12 @@ const Ask = z.discriminatedUnion('kind', [
 const Retire = z.object({ questionId: Text, reason: Text });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
+const Resolve = Answer.extend({
+  source: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('rule'), text: z.string().min(1) }),
+    z.object({ kind: z.literal('answer'), questionId: Text }),
+  ]),
+});
 
 const Get = z.object({
   questionId: z
@@ -279,6 +285,7 @@ const QuestionReadResult = z.union([
       state: true,
       answer: true,
       answeredAt: true,
+      retiredReason: true,
       confirm: true,
       document: true,
       replyTo: true,
@@ -287,6 +294,7 @@ const QuestionReadResult = z.union([
       sourceSession: true,
     }),
     answeredByHuman: z.boolean(),
+    resolvedByAgent: z.boolean(),
     answerDelivery: z.array(AnswerDelivery).optional(),
   }),
 ]);
@@ -300,6 +308,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
     state,
     answer,
     answeredAt,
+    retiredReason,
     confirm,
     document,
     replyTo,
@@ -316,6 +325,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       state,
       answer,
       answeredAt,
+      retiredReason,
       confirm,
       document,
       ...(artifacts ? { artifacts } : {}),
@@ -324,6 +334,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       ...(todoId ? { todoId } : {}),
     },
     answeredByHuman: state === 'answered',
+    resolvedByAgent: isAgentResolvedQuestion(question),
   };
 }
 
@@ -472,7 +483,9 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
               .join(', ') || 'none'
           }`
         : neoLabelledOptions(question.options ?? [], [answer].flat()) || 'none';
-  return `The human answered "${question.text}": ${said}.`;
+  return isAgentResolvedQuestion(question)
+    ? `Neo resolved "${question.text}": ${said}. ${question.retiredReason}`
+    : `The human answered "${question.text}": ${said}.`;
 }
 
 export function createNeoQuestionOperations(
@@ -488,7 +501,8 @@ export function createNeoQuestionOperations(
     askId: string
   ) => NeoCardReplyContext | null = () => null,
   publicationChanged: (conversationId: string) => void = () => {},
-  deliverAnswers: (questionId: string) => Promise<void> = async () => {}
+  deliverAnswers: (questionId: string) => Promise<void> = async () => {},
+  standingRules: () => readonly string[] = () => []
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -687,6 +701,97 @@ export function createNeoQuestionOperations(
     caller: OperationCaller
   ) => QuestionReceipt | Rejection;
 
+  const resolve = (superpipe({})('neo.question.resolve') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (
+        input: z.infer<typeof Resolve>,
+        caller: OperationCaller
+      ): Gate<{ question: NeoQuestion; ask: NeoAsk }> => {
+        let reason = 'question_closed: this question is no longer open.';
+        const question = store.writeCardReply(null, crypto.randomUUID(), () => {
+          const current = store.getQuestion(input.questionId);
+          const ask = current && store.getAsk(current.askId);
+          if (!current || !ask) {
+            reason = 'not_found: no such question.';
+            return null;
+          }
+          if (
+            !isLocalUser(caller) &&
+            (caller.role !== 'neo' || caller.sessionId !== ask.sessionId)
+          ) {
+            reason = 'not_owner: only this ask’s Neo or the user may resolve its worker card.';
+            return null;
+          }
+          const open = requireNeoOpenAsk(ask);
+          if ('reason' in open) {
+            reason = open.reason.reason;
+            return null;
+          }
+          if (
+            !['choice', 'reply'].includes(current.kind) ||
+            current.confirm ||
+            !store.questionAnswers.list(current.id).length
+          ) {
+            reason =
+              'worker_question_required: resolve only routed worker decisions, never approval cards.';
+            return null;
+          }
+          const plan = planNeoQuestionAnswer(current, input.answer);
+          if ('reason' in plan) {
+            reason = plan.reason.reason;
+            return null;
+          }
+          let citation: string;
+          if (input.source.kind === 'rule') {
+            if (!standingRules().includes(input.source.text)) {
+              reason = 'rule_not_found: cite a currently saved standing rule.';
+              return null;
+            }
+            citation = `Resolved by Neo from saved rule: ${input.source.text}`;
+          } else {
+            const prior = store.getQuestion(input.source.questionId);
+            if (
+              !prior ||
+              prior.state !== 'answered' ||
+              !['button', 'chat'].includes(prior.answeredBy ?? '') ||
+              prior.answer === null ||
+              store.getAsk(prior.askId)?.sessionId !== ask.sessionId
+            ) {
+              reason = 'human_answer_required: cite an earlier human answer owned by this Neo.';
+              return null;
+            }
+            const title = prior.text.length > 200 ? `${prior.text.slice(0, 200)}…` : prior.text;
+            citation = `Resolved by Neo from human answer "${title}" (${prior.id})`;
+          }
+          return store.resolveQuestion(current, plan.value.answer, citation, Date.now());
+        });
+        const ask = question && store.getAsk(question.askId);
+        return question && ask ? { value: { question, ask } } : fail(reason);
+      },
+      ['input', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      async ({
+        question,
+        ask,
+      }: {
+        question: NeoQuestion;
+        ask: NeoAsk;
+      }): Promise<QuestionReceipt> => {
+        await told(ask, question, neoQuestionAnsweredNote(question, []));
+        await deliverAnswers(question.id);
+        return { ok: true, question };
+      },
+      'outcome',
+      'outcome'
+    )
+    .endAsync('outcome') as (
+    input: z.infer<typeof Resolve>,
+    caller: OperationCaller
+  ) => Promise<QuestionReceipt | Rejection>;
+
   const answer = (superpipe({})('neo.question.answer') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocalUser, 'caller', 'result:outcome')
@@ -735,6 +840,15 @@ export function createNeoQuestionOperations(
 
   return [
     defineOperation({
+      name: 'neo.question.resolve',
+      description:
+        'Resolve an open worker card from a cited saved standing rule or earlier human answer owned by this Neo. Retires the card, stores the answer and citation, and uses its existing worker delivery/hold path. Neo or the local user on its behalf may call this. This is agent resolution, never human approval; start and confirmation cards are refused. source is {kind:"rule",text} with the exact saved text or {kind:"answer",questionId} for a human-answered card. Leave the card open when neither source applies.',
+      inputSchema: Resolve,
+      resultSchema: QuestionResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input, caller) => resolve(input, caller),
+    }),
+    defineOperation({
       name: 'neo.question.ask',
       description:
         'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, return a todo_closed record and open the question on the ask without linking that todo. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
@@ -755,7 +869,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.get',
       description:
-        "Read one of Neo's questions to the human by id: its text, state, answer and optional home path/hash binding. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports.",
+        "Read one of Neo's questions to the human by id: its text, state, answer and optional home path/hash binding. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports. resolvedByAgent marks a cited Neo resolution, whose durable citation is in retiredReason; it is never human approval.",
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },
