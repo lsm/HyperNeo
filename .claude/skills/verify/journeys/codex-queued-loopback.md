@@ -22,3 +22,8 @@ and model requests retain the real binding denial. Afterward the calls show
 `thread/settings/update` before `thread/queue/add`, `localServer.connected` is
 true and `outsideRefused` remains true. The helper stops both processes and
 releases worker runtime roots; the wrapper retains evidence and removes its data.
+The recorded turn context must also have `networkAccess: true`. Prepared workers
+must not fall back to offline CLI queueing when the required policy refresh cannot
+run; unprepared chats keep their existing queue behavior. Policy updates apply to
+future turns, so an already running restricted turn must finish before the next
+queued turn can use the restored policy.

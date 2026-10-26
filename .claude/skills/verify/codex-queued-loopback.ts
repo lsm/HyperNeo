@@ -69,10 +69,15 @@ try {
     try { return JSON.parse(readFileSync(path, 'utf8')).length >= 2; } catch { return false; }
   });
   const path = join(worker, 'loopback-observed.json');
+  const contexts = readFileSync(started.thread.path, 'utf8').split('\n').flatMap(line => {
+    try { const record = JSON.parse(line); return record.type === 'turn_context' ? [record.payload] : []; } catch { return []; }
+  });
   const observed = { calls, localServer: existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null,
+    networkAccess: contexts.at(-1)?.sandbox_policy?.network_access,
     outsideRefused: !existsSync(join(run, 'codex-app-server-outside/escaped.txt')),
   };
   writeFileSync(join(run, 'evidence/queued-loopback.json'), JSON.stringify(observed, null, 2));
+  assert.equal(observed.networkAccess, true, 'Queued turn recorded restricted networking');
   assert(observed.localServer?.connected, 'Queued worker could not start/connect to a loopback server');
   assert(observed.outsideRefused, 'Worker wrote outside its allowed roots');
 } finally {
@@ -81,6 +86,7 @@ try {
   model.kill();
   await modelDone;
   await releaseWorkerSandbox(worker);
+  writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ appServerClosed: true, modelClosed: true, runtimeReleased: true }));
   writeFileSync(join(run, 'evidence/model.log'), modelLog);
   writeFileSync(join(run, 'evidence/queue-calls.json'), JSON.stringify(calls, null, 2));
 }
