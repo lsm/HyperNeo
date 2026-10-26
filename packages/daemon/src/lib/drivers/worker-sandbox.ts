@@ -1,5 +1,6 @@
 import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { getDataDir } from '../data-dir.ts';
+import { secretHomePaths } from '../neo/secret-read-rules.ts';
 import { parse, stringify } from 'smol-toml';
 import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
@@ -116,32 +117,11 @@ export function workerSecretPaths() {
   const home = homedir();
   return [
     ...new Set([
-      ...[
-        '.config',
-        '.ssh',
-        '.docker',
-        '.kube',
-        '.aws',
-        '.npmrc',
-        '.netrc',
-        '.git-credentials',
-        '.zshrc',
-        '.zshenv',
-        '.zlogin',
-        '.zprofile',
-        '.bashrc',
-        '.bash_profile',
-        '.bash_login',
-        '.profile',
-        '.claude/.credentials.json',
-        '.claude/settings.json',
-        '.codex/auth.json',
-        'Library/Keychains',
-        'Library/Application Support/1Password',
-      ].map((path) => join(home, path)),
+      ...secretHomePaths(home),
+      ...['.zlogin', '.bash_login', '.codex/auth.json'].map((path) => join(home, path)),
       join(process.env.CODEX_HOME ?? join(home, '.codex'), 'auth.json'),
       join(getDataDir(), '.provider-credential-key'),
-      ...['.credentials.json', 'settings.json'].map((path) =>
+      ...['.credentials.json', 'settings.json', 'settings.local.json'].map((path) =>
         join(process.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), path)
       ),
     ]),
