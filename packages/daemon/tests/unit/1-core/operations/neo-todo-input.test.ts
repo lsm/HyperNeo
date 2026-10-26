@@ -90,9 +90,10 @@ test('legacy rows remain readable and a check edit replaces their old completion
   );
   expect(store.getTodo(legacy.id)).toMatchObject({ check: null, doneWhen: 'Remember it' });
   const edit = ops.find((op) => op.name === 'neo.todo.edit')!;
-  expect(edit.inputSchema.parse({ todoId: legacy.id, doneWhen: 'Override' })).not.toHaveProperty(
-    'doneWhen'
-  );
+  expect(edit.inputSchema.parse({ todoId: legacy.id, doneWhen: 'Override' })).toMatchObject({
+    todoId: legacy.id,
+    doneWhen: 'Override',
+  });
   const edited = await call('neo.todo.edit', {
     todoId: legacy.id,
     check,

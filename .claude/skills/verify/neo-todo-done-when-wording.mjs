@@ -29,8 +29,12 @@ const evidence = {};
 const added = rpc('neo.todo.add', {
   askId: ask,
   title: 'Reword the gauge',
-  doneWhen: 'gauge level reads 5',
   instruction: 'Reword the done-when.',
+  check: {
+    pack: 'coding',
+    kind: 'pr_merged',
+    params: { urls: ['https://github.com/example/project/pull/42'] },
+  },
   target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'verify' } },
 });
 assert.equal(added.ok, true, JSON.stringify(added));
