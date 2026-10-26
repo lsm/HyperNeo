@@ -498,7 +498,13 @@ describe('codex-desktop adapter status and send', () => {
     }),
     worktreesDir = '/codex/worktrees',
     stdout = '',
-    overrides: { newId?: () => string; onSpawn?: () => void; realServer?: boolean } = {}
+    overrides: {
+      newId?: () => string;
+      onSpawn?: () => void;
+      realServer?: boolean;
+      desktopRunning?: () => Promise<boolean>;
+      desktopSocketPath?: string;
+    } = {}
   ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
@@ -518,7 +524,8 @@ describe('codex-desktop adapter status and send', () => {
         throw new Error('not used');
       },
       statePath,
-      desktopRunning: async () => false,
+      ...(overrides.desktopSocketPath ? { desktopSocketPath: overrides.desktopSocketPath } : {}),
+      desktopRunning: overrides.desktopRunning ?? (async () => false),
       worktreesDir,
       machine: 'laptop',
       now: () => NOW,
@@ -634,6 +641,45 @@ describe('codex-desktop adapter status and send', () => {
         for (const socket of sockets.clients) socket.terminate();
         sockets.close();
         await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+  );
+
+  test.each([true, false])(
+    'existing-thread sends route by Desktop ownership (Desktop running: %s)',
+    async (desktopRunning) => {
+      const calls: string[] = [];
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) => {
+            calls.push(method);
+            if (method === 'thread/queue/add') return { queuedSubmission: { id: 'queue-1' } };
+            if (method === 'thread/resume') return {};
+            throw new Error(`Unexpected app-server call ${method}`);
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { desktopRunning: async () => desktopRunning }
+      );
+      const result = await driver.send!(ref('idle'), 'continue held work', user);
+      if (desktopRunning) {
+        expect(result).toMatchObject({
+          ok: false,
+          reason: 'not_delivered',
+          notSent: true,
+          detail: expect.stringContaining('ownership endpoint is unavailable'),
+        });
+        expect(calls).toEqual([]);
+      } else {
+        expect(result).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'queue-1' },
+        });
+        expect(calls).toEqual(['thread/queue/add']);
       }
     }
   );

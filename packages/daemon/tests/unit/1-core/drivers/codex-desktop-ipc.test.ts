@@ -513,6 +513,118 @@ describe('withCodexDesktopIpc', () => {
     );
   });
 
+  describe('existing-thread work.send through the Desktop owner', () => {
+    test.each(['steer', 'start'] as const)(
+      'delivers by follower %s to the owner client and never touches the app-server',
+      async (delivery) => {
+        const f = await fixture((message, _socket, send) => {
+          if (message.method === 'thread-owner-discovery')
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              handledByClientId: 'desktop-owner',
+            });
+          if (message.method === 'thread-follower-steer-turn') {
+            if (delivery === 'start')
+              return send({
+                type: 'response',
+                requestId: message.requestId,
+                resultType: 'error',
+                error: 'active turn already ended',
+              });
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              result: { result: { turnId: 'turn-1' } },
+            });
+          }
+          if (message.method === 'thread-follower-start-turn')
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              result: { result: { turn: { id: 'turn-2' } } },
+            });
+          send({ type: 'response', requestId: message.requestId, resultType: 'success' });
+        });
+        const statePath = join(directory, 'owner-state.sqlite');
+        const db = new Database(statePath);
+        db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+        CREATE TABLE projects (id TEXT, name TEXT);
+        CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+        db.prepare(
+          `INSERT INTO threads VALUES ('thread-1', 'Held worker', '', '', '/tmp/verify', 'desktop', 0, 1, ?)`
+        ).run(join(directory, 'owner-rollout.jsonl'));
+        db.close();
+        const driver = createCodexDesktopAdapter({
+          statePath,
+          desktopSocketPath: f.path,
+          desktopRunning: async () => true,
+          worktreesDir: directory,
+          machine: 'test',
+          now: Date.now,
+          spawn: () => {
+            throw new Error('Owner delivery must not spawn processes');
+          },
+          appServer: async () => {
+            throw new Error('Owner delivery must not contact the app-server');
+          },
+          bootstrapServer: async () => {
+            throw new Error('Held work must not bootstrap');
+          },
+          prepareDesktopProject: async () => {
+            throw new Error('Held work must not create a project');
+          },
+          startDesktopTurn: async () => {
+            throw new Error('Held work must not use new-thread handoff');
+          },
+          folderExists: () => true,
+          makeFolder: () => {},
+          homeDir: directory,
+          gitCheckout: async () => null,
+          newId: () => 'owner-input',
+        });
+        const registry = createOperationRegistry(
+          createWorkVerbOperations({
+            adapters: () => [driver],
+            daemonName: 'test',
+            isOpenTodo: () => true,
+            remote: { list: () => [], invoke: async () => ({}) },
+          })
+        );
+        const result = await invokeOperation(
+          registry,
+          'work.send',
+          {
+            ref: { adapter: driver.id, id: 'thread-1' },
+            message: 'Held worker input',
+            todoId: 'open-todo',
+          },
+          { source: 'mcp', role: 'neo', sessionId: 'neo' }
+        );
+        expect(result).toMatchObject({
+          kind: 'completed',
+          value: {
+            ok: true,
+            value: {
+              delivered: true,
+              ...(delivery === 'steer'
+                ? { steeredIntoTurnId: 'turn-1' }
+                : { startedTurnId: 'turn-2' }),
+            },
+          },
+        });
+        const methods = f.seen.map((message) => message.method);
+        expect(methods).toContain('thread-owner-discovery');
+        expect(methods).toContain(
+          delivery === 'steer' ? 'thread-follower-steer-turn' : 'thread-follower-start-turn'
+        );
+      }
+    );
+  });
+
   test('an absolute IPC deadline prevents a delayed turn dispatch', async () => {
     const f = await fixture((message, _socket, send) =>
       send({ type: 'response', requestId: message.requestId, resultType: 'success' })
