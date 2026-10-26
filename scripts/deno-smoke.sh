@@ -40,7 +40,8 @@ if [ -n "$DENO_SMOKE_BIN" ] && [ ! -x "$DENO_SMOKE_BIN" ]; then
 	exit 1
 fi
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/deno-smoke.XXXXXX")"
+SMOKE_TMP_ROOT=${TMPDIR:-/tmp}
+WORK_DIR="$(mktemp -d "${SMOKE_TMP_ROOT%/}/deno-smoke.XXXXXX")"
 DB_PATH="$WORK_DIR/deno-smoke.db"
 LOG_FILE="$WORK_DIR/daemon.log"
 mkdir -p "$WORK_DIR/home"
@@ -473,6 +474,12 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   dump_log
   exit 1
 fi
+
+NEO_SETTINGS_RUN="$WORK_DIR/neo-settings-writer"
+mkdir -p "$NEO_SETTINGS_RUN/home" "$NEO_SETTINGS_RUN/tmp"
+env -i HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$NEO_SETTINGS_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-settings-writer.ts" verify "$NEO_SETTINGS_RUN"
 
 CLEANUP_ENQUEUE_RUN="$WORK_DIR/cleanup-enqueue"
 mkdir -p "$CLEANUP_ENQUEUE_RUN/home"

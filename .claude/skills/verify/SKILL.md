@@ -91,7 +91,7 @@ the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
 run if saving evidence fails. Keep baseline and fixed evidence in separate
 directories; the helper must close its resources in finally.
-The wrapper trims TMPDIR's trailing slash so its HOME/data paths match helpers'
+The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match helpers'
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
 wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
