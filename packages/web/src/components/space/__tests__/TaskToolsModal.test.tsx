@@ -120,6 +120,90 @@ describe('TaskToolsModal', () => {
     ).toBeTruthy();
   });
 
+  it('keeps observed tools visible when saved choices cannot load', async () => {
+    mockInventoryRequest.mockResolvedValue(observed(['confirmed-browser']));
+    mockCatalogRequest.mockRejectedValue(new Error('Synthetic catalog failure'));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.getByText(/Could not load saved tool choices/)).toBeTruthy());
+    expect(view.getByText('confirmed-browser')).toBeTruthy();
+    expect(view.getByText('Attached · 1 tool')).toBeTruthy();
+    expect(view.queryByRole('region', { name: 'Use tools in this session' })).toBeNull();
+  });
+
+  it('ignores a delayed saved selection from the previously displayed worker', async () => {
+    skillsStore.skills.value = [
+      {
+        id: 'wrapper',
+        name: 'browser-alias',
+        displayName: 'Browser',
+        enabled: false,
+        sourceType: 'mcp_server',
+        config: { type: 'mcp_server', appMcpServerId: 'browser' },
+      },
+    ] as typeof skillsStore.skills.value;
+    mockCatalogRequest.mockResolvedValue({
+      entries: [
+        { server: { id: 'browser', name: 'Browser registry', enabled: false }, enabled: false },
+      ],
+    });
+    let finish!: (value: unknown) => void;
+    mockSessionRequest.mockImplementation(({ sessionId }: { sessionId: string }) =>
+      sessionId === 'old'
+        ? new Promise((done) => {
+            finish = done;
+          })
+        : Promise.resolve({ session: saved(sessionId, true) })
+    );
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="old" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(mockSessionRequest).toHaveBeenCalledWith({ sessionId: 'old' }));
+    view.rerender(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="current" agentLabel="Coder" />
+    );
+    await view.findByRole('button', { name: 'Stop using here: Browser', exact: true });
+    await act(async () => {
+      finish({ session: saved('old') });
+    });
+    expect(
+      view.getByRole('button', { name: 'Stop using here: Browser', exact: true })
+    ).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Use here: Browser', exact: true })).toBeNull();
+  });
+
+  it('removes stale attachment claims from the picker when inventory refresh fails', async () => {
+    skillsStore.skills.value = [
+      {
+        id: 'wrapper',
+        name: 'browser-alias',
+        displayName: 'Browser',
+        enabled: false,
+        sourceType: 'mcp_server',
+        config: { type: 'mcp_server', appMcpServerId: 'browser' },
+      },
+    ] as typeof skillsStore.skills.value;
+    mockCatalogRequest.mockResolvedValue({
+      entries: [
+        { server: { id: 'browser', name: 'Browser registry', enabled: false }, enabled: false },
+      ],
+    });
+    mockInventoryRequest.mockResolvedValue(observed(['browser-alias']));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await view.findByRole('button', { name: 'Use here: Browser', exact: true });
+    expect(view.getAllByText('Attached · 1 tool')).toHaveLength(2);
+    mockInventoryRequest.mockRejectedValue(new Error('Synthetic inventory failure'));
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() =>
+      expect(view.getByText('Could not verify running tools. Try Refresh.')).toBeTruthy()
+    );
+    expect(view.queryAllByText('Attached · 1 tool')).toHaveLength(0);
+    expect(view.getByText(/running inventory unavailable/)).toBeTruthy();
+  });
+
   it('does not show configured-only servers as observed task tools', async () => {
     mockInventoryRequest.mockResolvedValue({
       state: 'not_running',
