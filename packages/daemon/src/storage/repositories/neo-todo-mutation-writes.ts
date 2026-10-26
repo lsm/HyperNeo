@@ -2,10 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoTodoCheckResult } from '../../lib/neo/pack-contract.ts';
-import {
-  createCodingTodoPolicy,
-  CodingTodoPrRepository,
-} from '../../lib/neo/packs/coding/todo-prs.ts';
+import { neoTodoWritePolicies } from '../../lib/neo/packs/todo-write-policies.ts';
 import { requireNeoTodoMayFinish, sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
   planNeoTodoDraft,
@@ -37,9 +34,7 @@ class NeoTodoMutationWriter {
   private readonly policies: readonly NeoTodoPolicy[];
   constructor(db: Database) {
     this.todos = new NeoAskTodoRepository(db);
-    this.policies = [
-      { id: 'coding', todos: createCodingTodoPolicy(new CodingTodoPrRepository(db)) },
-    ];
+    this.policies = neoTodoWritePolicies(db);
   }
 
   private withUrls(plan: Plan, input: Input) {
