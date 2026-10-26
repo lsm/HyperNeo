@@ -1,5 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { mailboxExpiryWrites } from '../../storage/repositories/mailbox-expiry-commands.ts';
 import { MAILBOX_EXPIRE_FIRE } from '../job-queue-constants.ts';
 import { expireMailboxEntries } from '../mailbox/expire.ts';
 
@@ -9,8 +11,11 @@ export function mailboxExpireNextRunStage(_jobQueue: JobQueueRepository): number
   return Date.now() + NEXT_RUN_DELAY_MS;
 }
 
-export function mailboxExpireScheduleStage(jobQueue: JobQueueRepository, nextRunAt: number): void {
-  enqueueMailboxExpireIfMissing(jobQueue, nextRunAt);
+export async function mailboxExpireScheduleStage(
+  jobQueue: JobQueueRepository,
+  nextRunAt: number
+): Promise<void> {
+  await gatewayFor(jobQueue.db).call(mailboxExpiryWrites, 'schedule', nextRunAt);
 }
 
 export function mailboxExpireSweepStage(

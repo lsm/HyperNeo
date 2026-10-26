@@ -8,5 +8,11 @@
   "concurrentSuccessors": 1,
   "receiptLoadingFailureRollsBackInsertion": true,
   "unavailableWriterDoesNotReplay": true,
-  "intervalCallbackOutsideTransaction": true
+  "intervalCallbackOutsideTransaction": true,
+  "baseMergeRetainsMailboxExpiry": true,
+  "fullRepositoryChecks": "pass",
+  "refreshedDaemonProofs": [
+    "Bun",
+    "Deno"
+  ]
 }

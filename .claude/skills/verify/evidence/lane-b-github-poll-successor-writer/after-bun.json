@@ -8,7 +8,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 320,
+    "uptime": 376,
     "sessions": {
       "active": 0,
       "total": 0
@@ -16,28 +16,28 @@
   },
   "claimed": 1,
   "first": {
-    "id": "e0919290-b68b-4b40-b951-f2016ed75325",
+    "id": "4e6c6755-e0f7-4fc9-9a7f-f25fc5dad6b3",
     "queue": "github.poll",
     "status": "completed",
     "payload": {},
     "result": {
       "polled": true,
-      "nextRunAt": 1792985420342
+      "nextRunAt": 1792987553756
     },
     "error": null,
     "priority": 0,
     "maxRetries": 3,
     "retryCount": 0,
-    "runAt": 1792985360337,
-    "createdAt": 1792985360337,
-    "startedAt": 1792985360341,
+    "runAt": 1792987493752,
+    "createdAt": 1792987493752,
+    "startedAt": 1792987493754,
     "heartbeatAt": null,
-    "completedAt": 1792985360343,
-    "claimToken": "1dc71a7d-9cdd-442b-8f82-12f0bce20cc0"
+    "completedAt": 1792987493756,
+    "claimToken": "0a092aaf-d5a9-436b-9fc4-a513a4da99c2"
   },
   "successors": [
     {
-      "id": "c45959b0-43ef-4f01-b650-ff07126f7bfc",
+      "id": "2cb6a3b4-4733-48d8-a887-09c862bd93e0",
       "queue": "github.poll",
       "status": "pending",
       "payload": {},
@@ -46,8 +46,8 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792985420342,
-      "createdAt": 1792985360343,
+      "runAt": 1792987553756,
+      "createdAt": 1792987493756,
       "startedAt": null,
       "heartbeatAt": null,
       "completedAt": null,
@@ -64,7 +64,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 332,
+    "uptime": 389,
     "sessions": {
       "active": 0,
       "total": 0
@@ -72,7 +72,7 @@
   },
   "afterDuplicate": [
     {
-      "id": "c45959b0-43ef-4f01-b650-ff07126f7bfc",
+      "id": "2cb6a3b4-4733-48d8-a887-09c862bd93e0",
       "queue": "github.poll",
       "status": "pending",
       "payload": {},
@@ -81,8 +81,8 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792985420342,
-      "createdAt": 1792985360343,
+      "runAt": 1792987553756,
+      "createdAt": 1792987493756,
       "startedAt": null,
       "heartbeatAt": null,
       "completedAt": null,

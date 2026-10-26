@@ -93,6 +93,10 @@ import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue
 import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
 import { jobStaleReclaimWrites } from '../repositories/job-stale-reclaim-write.ts';
+import {
+  mailboxExpiryReads,
+  mailboxExpiryWrites,
+} from '../repositories/mailbox-expiry-commands.ts';
 import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
@@ -172,6 +176,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     credentialStoreWrites,
     enqueueSessionDelivery,
     jobStaleReclaimWrites,
+    mailboxExpiryReads,
+    mailboxExpiryWrites,
     githubPollSuccessorWrites,
   ].map((op) => [op.name, op])
 );
