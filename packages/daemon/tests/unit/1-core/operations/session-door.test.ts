@@ -8,6 +8,11 @@ import { createBuildOperation } from '../../../../src/lib/system/build-operation
 import { startSessionDoor } from '../../../../src/lib/messaging/session-door';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { createDevicePairingOperations } from '../../../../src/lib/pairing/pairing-operations';
+import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter';
+import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 
@@ -120,6 +125,36 @@ describe('the session door', () => {
     }
   });
 
+  test('both device diagnostic reads answer over the socket without a paired device', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const repo = new DevicePairingRepository(db);
+    const door = await startSessionDoor(
+      () =>
+        createOperationRegistry(
+          createDevicePairingOperations({
+            repo: () => repo,
+            limiter: createPairingLimiter(),
+            now: () => 1_000_000,
+            revoked: () => {},
+          })
+        ),
+      join(dir, 'diagnostics.sock')
+    );
+    try {
+      for (const name of ['device.unpaired.list', 'device.would_refuse.list']) {
+        expect(await post(door.path, { sender: 'worker-1', name, input: {} })).toMatchObject({
+          status: 200,
+          body: { kind: 'completed', value: { ok: true } },
+        });
+      }
+    } finally {
+      await door.close();
+      db.close();
+    }
+  });
+
   test('every other registered operation is rejected by the socket allowlist', async () => {
     const allowed = new Set([
       'message.send',
@@ -130,6 +165,8 @@ describe('the session door', () => {
       'device.list',
       'device.revoke',
       'device.reset_human',
+      'device.unpaired.list',
+      'device.would_refuse.list',
     ]);
     for (const name of [...OPERATION_NAMES, 'system.health', 'unknown.operation']) {
       if (allowed.has(name)) continue;
