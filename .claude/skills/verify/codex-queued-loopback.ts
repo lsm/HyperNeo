@@ -62,8 +62,9 @@ try {
     }),
     newId: () => crypto.randomUUID(),
     spawn: () => { throw new Error('Unexpected CLI fallback'); },
+    desktopRunning: async () => false,
   } as unknown as CodexDesktopAdapterDeps;
-  const queued = await queueCodexMessage({ thread: { id, folder: worker, title: 'Synthetic worker', archived: 0, updatedAt: 1, rolloutPath: started.thread.path }, roots: [] }, 'Run the synthetic probe.', deps);
+  const queued = await queueCodexMessage({ thread: { id, folder: worker, title: 'Synthetic worker', archived: 0, updatedAt: 1, rolloutPath: started.thread.path }, roots: [] }, 'Run the synthetic probe.', deps, 'queue');
   assert(queued.ok, JSON.stringify(queued));
   await wait(() => {
     const path = join(run, 'evidence/codex-app-server-requests.json');

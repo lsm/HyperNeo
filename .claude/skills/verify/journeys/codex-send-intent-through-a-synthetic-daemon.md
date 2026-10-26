@@ -13,10 +13,16 @@ Codex Desktop IPC/app-server sockets. It invokes production work.send and
 receipt-bound work.status over real WebSocket operation.invoke. No credentials,
 model, real Codex state or GUI is involved.
 
-Automatic input for active and completed targets must return a native queue ID,
-delivered false and no receipt before consumption. It must make no Desktop
-ownership request, open, steer or turn/start call. The app-server loaded list
-is checked before settings or queue calls; only a saved, unloaded thread is resumed.
+Automatic input routes by Desktop ownership. While the synthetic Desktop peer is
+running, an automatic send must deliver through the owner client — owner
+discovery, opening an ownerless thread once, then follower steer, or follower
+turn start after a no-active-turn refusal — and must never call the app-server
+`thread/resume` or the native queue. With the Desktop probe reporting not
+running, automatic input for active and completed targets must return a native
+queue ID, delivered false and no receipt before consumption, and make no
+Desktop ownership request, open, steer or turn/start call. The app-server
+loaded list is checked before settings or queue calls; only a saved, unloaded
+thread is resumed.
 The stateful peer rejects settings and enqueue requests until that resume succeeds.
 The proof supplies a synthetic prepared-worker policy at the sandbox seam, so it
 does not require or prove OS runtime-directory permissions. The synthetic receiver
@@ -67,4 +73,5 @@ consumption and human Desktop confirmation; do not use working threads.
 
 Also run the Codex IPC contract suite alongside the adapter, verbs and handoff
 suites. Its operation-schema check uses explicit mode steer; automatic sends
-must retain queue receipts with missing/stale IPC and refused/hung launchers.
+must retain queue receipts with missing/stale IPC and refused/hung launchers
+when Desktop is not running, and owner delivery when it is.

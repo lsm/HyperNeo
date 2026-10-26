@@ -114,6 +114,10 @@ For a metadata-only Bun helper taking `[arguments] <run>`, use:
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory "$PROOF" verify
 ```
 
+For a dual-runtime native-filesystem helper, repeat with `VERIFY_PROOF_RUNTIME=deno`
+and the pinned Deno on PATH. The wrapper uses `deno run -A` and keeps its cache
+inside the disposable run; the default remains Bun.
+
 The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
 the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
@@ -204,9 +208,12 @@ Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
 They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
 Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
-sends use the native app-server queue; their proofs must show no Desktop ownership
-probe, open or turn/start. Check the loaded list and resume saved unloaded threads
-before settings or enqueue; already loaded threads must not be resumed.
+sends route by Desktop ownership: while the stubbed probe reports Desktop running
+they deliver through owner discovery plus follower steer or turn start, and their
+proofs must show no app-server `thread/resume` or native queue call; while it
+reports Desktop not running they use the native app-server queue, checking the
+loaded list and resuming saved unloaded threads before settings or enqueue, with
+already loaded threads never resumed.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

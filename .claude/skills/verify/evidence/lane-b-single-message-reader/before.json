@@ -1,0 +1,10 @@
+{
+  "storedBodyHashBefore": "3910d898bff65e58ab453e3763fa391776f324dcda766f2ebcb0453dcc588981",
+  "writerBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldError": "MessageHubResponseError: single-message session or body SQL reached main",
+  "mainSqlAttempts": 1,
+  "workerTimings": []
+}

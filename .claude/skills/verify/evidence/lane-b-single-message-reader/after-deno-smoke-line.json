@@ -1,0 +1,100 @@
+{
+  "storedBodyHashBefore": "3910d898bff65e58ab453e3763fa391776f324dcda766f2ebcb0453dcc588981",
+  "writerBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldMs": 11.509665999999925,
+  "concurrentWarmMs": 26.184208000000126,
+  "cappedReplyMatched": true,
+  "fullOutputMatched": true,
+  "fullReplyHash": "e9d5d7c12d84a94ec5b687adc51cbb0f3ec8478bd74e769ac23e8e60e26eb715",
+  "missingSession": "MessageHubResponseError: Session not found",
+  "conversationMissing": "MessageHubResponseError: Session not found",
+  "missingMessage": "MessageHubResponseError: Message not found",
+  "otherSession": "MessageHubResponseError: Message not found",
+  "invalidInput": "MessageHubResponseError: sessionId and messageUuid are required",
+  "healthMs": 0.7274160000001757,
+  "writerAfter": {
+    "outside": 0,
+    "inside": 1
+  },
+  "laterCommittedMessageObserved": true,
+  "workerFailure": "MessageHubResponseError: synthetic single-message reader failure",
+  "readerRecovered": true,
+  "actorCacheStayedEmpty": true,
+  "maxLoopLagMs": 3.4845000000000255,
+  "rpcLatencyUnder250ms": true,
+  "originalBodyHashAfter": "bf81f158a8b94feea15d8b876b7fc7a53a8803eafe31f9b5177d0a5aa9ec5141",
+  "originalBodyHashBefore": "bf81f158a8b94feea15d8b876b7fc7a53a8803eafe31f9b5177d0a5aa9ec5141",
+  "rssBytes": 351617024,
+  "walBytes": 4120032,
+  "mainSqlAttempts": 0,
+  "workerTimings": [
+    {
+      "roundTripMs": 4.532208999999966,
+      "replyBytes": 508122,
+      "encodeMs": 0.681833000000097
+    },
+    {
+      "roundTripMs": 1.9364580000001297,
+      "replyBytes": 36583,
+      "encodeMs": 0.06833299999971132
+    },
+    {
+      "roundTripMs": 3.2786670000000413,
+      "replyBytes": 508122,
+      "encodeMs": 0.5798330000002352
+    },
+    {
+      "roundTripMs": 6.161958000000141,
+      "replyBytes": 36583,
+      "encodeMs": 0.05062499999985448
+    },
+    {
+      "roundTripMs": 6.926124999999956,
+      "replyBytes": 508122,
+      "encodeMs": 0.512166999999863
+    },
+    {
+      "roundTripMs": 11.326958999999988,
+      "replyBytes": 36583,
+      "encodeMs": 0.04787499999974898
+    },
+    {
+      "roundTripMs": 11.778084000000035,
+      "replyBytes": 508122,
+      "encodeMs": 0.44004099999983737
+    },
+    {
+      "roundTripMs": 13.989125000000058,
+      "replyBytes": 36583,
+      "encodeMs": 0.04141699999991033
+    },
+    {
+      "roundTripMs": 14.355415999999877,
+      "replyBytes": 508122,
+      "encodeMs": 0.3682920000001104
+    },
+    {
+      "roundTripMs": 16.259000000000015,
+      "replyBytes": 36583,
+      "encodeMs": 0.03520799999978408
+    },
+    {
+      "roundTripMs": 16.580832999999984,
+      "replyBytes": 508122,
+      "encodeMs": 0.4006670000003396
+    },
+    {
+      "roundTripMs": 0.25695800000039526,
+      "replyBytes": 148,
+      "encodeMs": 0.005958999999620573
+    },
+    {
+      "roundTripMs": 4.196708000000399,
+      "replyBytes": 508122,
+      "encodeMs": 0.519249999999829
+    }
+  ]
+}

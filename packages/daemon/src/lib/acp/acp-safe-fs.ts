@@ -31,6 +31,13 @@ export async function writeFileWithinWorkspace(
   return backend.writeFileWithinWorkspace(workspace, segments, content, signal);
 }
 
+export const replaceFileWithinWorkspace: SafeFsBackendModule['replaceFileWithinWorkspace'] = async (
+  ...args
+) => {
+  const backend = await getSafeFsBackend();
+  return backend.replaceFileWithinWorkspace(...args);
+};
+
 export const withArtifactDescriptor: SafeFsBackendModule['withArtifactDescriptor'] = async (
   ...args
 ) => {

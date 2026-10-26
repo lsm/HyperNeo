@@ -7,7 +7,6 @@ import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { workerWorkLocations } from '../work-locations.ts';
 import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 
-let readWorkerSockets = (): string[] => [];
 let readWorkerSandbox = (): WorkerSandboxMode => 'off';
 
 export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
@@ -15,12 +14,6 @@ export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
 }
 
 export const workerSandboxOn = () => readWorkerSandbox() === 'always';
-
-export function configureWorkerSockets(read: () => string[]) {
-  readWorkerSockets = read;
-}
-
-export const workerUnixSockets = () => readWorkerSockets();
 
 export function workerWritableRoots(root: string) {
   const locations = workerWorkLocations(root);
@@ -99,7 +92,7 @@ export async function prepareWorkerSandbox(root: string) {
   return env;
 }
 
-export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) {
+export function codexWorkerSandbox(root: string) {
   const env = workerSandboxPaths(root);
   const writableRoots = [root, join(root, '.git'), ...new Set(workerWritableRoots(root))];
   return {
@@ -109,7 +102,6 @@ export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) 
         network_proxy: {
           enabled: true,
           domains: { '*': 'allow' },
-          unix_sockets: Object.fromEntries(sockets.map((path) => [path, 'allow'])),
           dangerously_allow_all_unix_sockets: true,
           allow_local_binding: true,
         },

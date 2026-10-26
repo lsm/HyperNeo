@@ -1,12 +1,7 @@
 import { appendFile, lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import {
-  prepareWorkerSandbox,
-  workerSandboxPaths,
-  workerUnixSockets,
-  workerWritableRoots,
-} from './worker-sandbox.ts';
+import { prepareWorkerSandbox, workerSandboxPaths, workerWritableRoots } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const RUNTIME_MANAGED_ENV_KEYS = [
@@ -48,7 +43,6 @@ function policy(root: string, roots: string[], siblings: string[]) {
       },
       network: {
         allowedDomains: ['*'],
-        allowUnixSockets: workerUnixSockets(),
         allowAllUnixSockets: true,
         allowLocalBinding: true,
       },
@@ -146,7 +140,6 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   const updated = { ...computed, ...existing } as typeof computed;
   updated.env = { ...(existing.env ?? computed.env), ...managedEnv(computed.env) };
   updated.sandbox.filesystem = computed.sandbox.filesystem;
-  updated.sandbox.network.allowUnixSockets = computed.sandbox.network.allowUnixSockets;
   updated.sandbox.network.allowAllUnixSockets = true;
   await writePolicy(directory, updated);
   return updated;
