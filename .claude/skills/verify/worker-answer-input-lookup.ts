@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, statSync, rmSync, chmodSync } from 'node:fs';
+import { mkdirSync, writeFileSync, statSync, rmSync, chmodSync, appendFileSync, readFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -19,6 +20,15 @@ for (const command of ['gh', 'open', 'ps']) {
   writeFileSync(path, '#!/bin/sh\nexit 1\n'); chmodSync(path, 0o700);
 }
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
+const desktopRecords = join(run, 'home/Library/Application Support/Claude/claude-code-sessions/account/scope');
+mkdirSync(desktopRecords, { recursive: true });
+writeFileSync(join(desktopRecords, 'local_card.json'), JSON.stringify({ sessionId: 'local_card', cliSessionId: 'worker', cwd: '/synthetic-proof-project' }));
+const copilotFixture = resolve(import.meta.dir, '../../../packages/daemon/tests/fixtures/copilot-sdk.ts');
+const acpFixture = resolve(import.meta.dir, '../../../packages/daemon/tests/fixtures/copilot-acp.ts');
+writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nif (process.argv.includes('--acp')) await import(${JSON.stringify(acpFixture)}); else { process.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(copilotFixture)}); }\n`, { mode: 0o700 });
+mkdirSync(join(run, 'home/evidence'), { recursive: true });
+writeFileSync(join(run, 'home/copilot-list.json'), '[]');
+mkdirSync(join(run, 'workspace'), { recursive: true });
 const config = getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') });
 let app = await createDaemonApp({ config, verbose: false });
 let peer: ReturnType<typeof Bun.spawn> | undefined;
@@ -71,6 +81,18 @@ try {
     for (const name of ['quote', 'partial', 'missing', 'claude-only', 'remote-only']) assert.equal((await lookup(name)).ok, false, name);
     assert.equal((await lookup('past', { sessionId: 'other-worker' })).ok, false);
     assert.equal((await lookup('claude-only', {}, 'claude-code')).value.turns[0].messageId, 'claude-input');
+    const desktop = await lookup('claude-only', { sessionId: 'local_card' }, 'claude-desktop');
+    assert.equal(desktop.value.turns[0].messageId, 'claude-input');
+    assert.equal((await lookup('claude-only', {}, 'claude-desktop')).ok, false, 'a raw CLI ID must not impersonate its Desktop owner');
+    const started = await rpc('work.start', { adapter: 'copilot-cli', place: { machine: hostname(), folder: join(run, 'workspace'), name: 'Synthetic' }, title: 'Owned history', model: 'synthetic-model', message: 'history' });
+    assert(started.ok, JSON.stringify(started));
+    const copilotId = started.value.ref.id;
+    const copilotHistory = join(run, 'data/copilot-workers', copilotId, 'session-state', copilotId, 'events.jsonl');
+    for (const [name, timestamp] of [['past', '1990-01-01T00:00:00Z'], ['future', '2090-01-01T00:00:00Z']])
+      appendFileSync(copilotHistory, JSON.stringify({ type: 'user.message', timestamp, data: { messageId: `${name}-copilot`, content: `${marker(name)}\nStored answer` } }) + '\n');
+    for (let n = 0; n < 160; n++) appendFileSync(copilotHistory, JSON.stringify({ type: 'user.message', timestamp: '2026-01-01T00:00:00Z', data: { messageId: `noise-${n}`, content: 'x'.repeat(2000) } }) + '\n');
+    for (const name of ['past', 'future']) assert.equal((await lookup(name, { sessionId: copilotId }, 'copilot-cli')).value.turns[0].messageId, `user:${name}-copilot`);
+    assert.equal((await lookup('past', { sessionId: 'external' }, 'copilot-cli')).ok, false);
     const peerRun = join(run, 'peer');
     for (const dir of ['home', 'tmp']) mkdirSync(join(peerRun, dir), { recursive: true });
     peer = Bun.spawn([process.execPath, import.meta.path, 'peer', peerRun], {
@@ -89,13 +111,16 @@ try {
     await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
     assert.equal((await lookup('past')).value.turns[0].messageId, 'past-input');
     assert.equal((await lookup('future')).value.turns[0].messageId, 'future-input');
-    writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ clockSkew: ['past', 'future'], interveningInputs: 160, nativeFeedIngested: true, exactOwningPeer: true, restart: true }, null, 2));
+    assert.equal((await lookup('claude-only', { sessionId: 'local_card' }, 'claude-desktop')).value.turns[0].messageId, 'claude-input');
+    for (const name of ['past', 'future']) assert.equal((await lookup(name, { sessionId: copilotId }, 'copilot-cli')).value.turns[0].messageId, `user:${name}-copilot`);
+    assert(!readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').includes('session.resume'), 'history lookup must not resume the peer');
+    writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ clockSkew: ['past', 'future'], interveningInputs: 160, nativeFeedIngested: true, exactOwningPeer: true, restart: true, desktopAlias: true, copilotBeyondByteWindow: true }, null, 2));
     console.log('PASS: exact native input lookup ignores clock and history windows, preserves scope across peer routing and restart');
   }
 } finally {
   await app.cleanup();
   if (peer) { peer.stdin.end(); assert.equal(await peer.exited, 0); }
-  for (const name of ['data', 'home', 'tmp', 'bin', 'peer', 'native-codex.jsonl', 'worker.jsonl']) rmSync(join(run, name), { recursive: true, force: true });
+  for (const name of ['data', 'home', 'tmp', 'bin', 'peer', 'workspace', 'native-codex.jsonl', 'worker.jsonl']) rmSync(join(run, name), { recursive: true, force: true });
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true, temporaryDataDeleted: true }));
 }
 process.exit(0);
