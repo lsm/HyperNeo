@@ -463,9 +463,7 @@ describe('QueryRunner startup gate', () => {
       { name: 'browser', status: 'connected', tools: [{ name: 42 }] },
     ];
     const malformed = await runner.getToolInventory();
-    expect(malformed.mcpServers).toEqual([
-      { name: 'browser', status: 'unverified', tools: null },
-    ]);
+    expect(malformed.mcpServers).toEqual([{ name: 'browser', status: 'unverified', tools: null }]);
     expect(malformed.tools).toEqual(['Read', 'mcp__browser__navigate']);
     await completeQuery(controlled, waitFor);
   });
