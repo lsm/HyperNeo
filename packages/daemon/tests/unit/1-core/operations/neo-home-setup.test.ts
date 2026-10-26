@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
@@ -74,6 +84,30 @@ afterEach(async () => {
 });
 
 describe('Neo home setup', () => {
+  test.each(['unreadable', 'dangling'])(
+    'initializes around a pre-existing %s ignore entry',
+    async (state) => {
+      const ignore = join(root, '.gitignore');
+      const missing = join(fixture, 'missing-ignore');
+      if (state === 'dangling') await symlink(missing, ignore);
+      else {
+        await writeFile(ignore, 'Human-owned policy.\n');
+        await chmod(ignore, 0);
+      }
+      try {
+        await expect(readFile(ignore, 'utf8')).rejects.toMatchObject({
+          code: state === 'dangling' ? 'ENOENT' : 'EACCES',
+        });
+        expect(await init()).toMatchObject({ ok: true });
+        expect(await git('ls-files')).toBe('README.md\ndirection.md');
+        expect(await git('show', 'HEAD:README.md')).toContain('# Neo home');
+        if (state === 'dangling') expect(await readlink(ignore)).toBe(missing);
+        else expect((await lstat(ignore)).mode & 0o777).toBe(0);
+      } finally {
+        if (state === 'unreadable') await chmod(ignore, 0o644);
+      }
+    }
+  );
   test('reserves project paths without running project SQL through the main repository', async () => {
     repo.saveProject({ id: 'synthetic-home', title: 'Synthetic', summary: '', context: '' }, 0);
     const list = spyOn(repo, 'listProjects').mockImplementation(() => {

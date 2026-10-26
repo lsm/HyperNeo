@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
@@ -71,6 +81,33 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test.each(['unreadable', 'dangling'])(
+    'saves without reading a pre-existing %s ignore entry',
+    async (state) => {
+      const ignore = join(root, '.gitignore');
+      await writeFile(ignore, '# Legacy home\n');
+      await git('commit', '-am', 'Legacy ignores');
+      const missing = join(fixture, 'missing-ignore');
+      if (state === 'dangling') {
+        await rm(ignore);
+        await symlink(missing, ignore);
+      } else await chmod(ignore, 0);
+      try {
+        await expect(readFile(ignore, 'utf8')).rejects.toMatchObject({
+          code: state === 'dangling' ? 'ENOENT' : 'EACCES',
+        });
+        expect(await save({ path: 'digest.md', content: 'Curated progress.\n' })).toMatchObject({
+          ok: true,
+        });
+        expect(await git('show', 'HEAD:digest.md')).toBe('Curated progress.');
+        expect(await git('show', 'HEAD:.gitignore')).toBe('# Legacy home');
+        if (state === 'dangling') expect(await readlink(ignore)).toBe(missing);
+        else expect((await lstat(ignore)).mode & 0o777).toBe(0);
+      } finally {
+        if (state === 'unreadable') await chmod(ignore, 0o644);
+      }
+    }
+  );
   test.each(['new', 'empty', 'tracked'])(
     'commits a %s document already written through file tools',
     async (state) => {
