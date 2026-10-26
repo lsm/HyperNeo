@@ -27,6 +27,20 @@ assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({ defaultSessionId: 'global' });
 const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws` });
 hub.registerTransport(transport);
+const observer = new MessageHub({ defaultSessionId: 'global' });
+const observerTransport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws` });
+observer.registerTransport(observerTransport);
+let observing = false, notifications = 0, internalNotifications = 0;
+let refreshed: Promise<NeoSnapshot> | undefined;
+let receivedChange: (() => void) | undefined;
+const observedChange = new Promise<void>(done => { receivedChange = done; });
+const stopObserving = observer.onEvent('neo.changed', () => {
+  if (!observing) return;
+  notifications++;
+  refreshed = observer.request<NeoSnapshot>('operation.invoke', { name: 'neo.snapshot', input: {} });
+  receivedChange?.();
+});
+const stopInternal = app.internalEventBus.subscribe('neo.changed', () => { if (observing) internalNotifications++; }, { subscriberName: 'verify.close.changed' });
 const db = app.db.getDatabase(), prepare = db.prepare.bind(db), todos = new NeoAskTodoRepository(db);
 let recording = 0, mainSql = 0, measureLag = false, maxLagMs = 0, previous = performance.now();
 let lock: ReturnType<typeof spawn> | undefined;
@@ -52,10 +66,13 @@ try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
   await transport.connect();
+  await observerTransport.connect();
   await app.db.createSession({ id: root, title: 'Synthetic finalization', workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   for (const kind of ['close'] as const) add(kind);
   db.exec("CREATE TRIGGER refuse_finalize_stamp BEFORE UPDATE OF updated_at ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic finalization refusal'); END");
+  await observer.request('system.health', {});
+  observing = true;
   const refused = [];
   for (const kind of ['close'] as const) {
     let error: string | null = null;
@@ -67,6 +84,9 @@ try {
     else assert.deepEqual(observed, { state: 'doing', card: 'open', visibleState: 'doing' });
   }
   report.refused = refused;
+  await observer.request('system.health', {});
+  report.rollbackNotifications = { websocket: notifications, internal: internalNotifications };
+  if (mode === 'verify') assert.equal(notifications, 0, 'a rolled-back close must not notify another client');
   if (mode === 'before') {
     assert(mainSql > 0);
     report.baselineReproduced = true;
@@ -82,6 +102,17 @@ try {
       assert.equal((await visible(kind)).state, 'closed_unverified');
       const detail = await hub.request<{ ok: boolean; entry: { todos: NeoTodo[] } }>('operation.invoke', { name: 'neo.ask.read', input: { todoId: kind } });
       assert(detail.ok && detail.entry.todos.find(todo => todo.id === kind)?.report === text, 'opened card must retain the complete report');
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([observedChange, new Promise((_, fail) => { timeout = setTimeout(() => fail(new Error('another client received no neo.changed after close')), 1500); })]);
+      } finally { clearTimeout(timeout); }
+      await observer.request('system.health', {});
+      const updated = await refreshed!;
+      assert.equal(updated.todoAsks.flatMap(entry => entry.todos).find(todo => todo.id === kind)?.state, 'closed_unverified');
+      assert.equal(notifications, 1);
+      assert.equal(internalNotifications, 1);
+      report.commitNotifications = { websocket: notifications, internal: internalNotifications, otherClientState: 'closed_unverified' };
+      observing = false;
       receipts.push({ kind, state: result.todo.state, replyBytes: Buffer.byteLength(JSON.stringify(result)) });
     }
     report.receipts = receipts;
@@ -111,10 +142,15 @@ try {
   }
 } finally {
   clearInterval(timer);
+  report.notificationCounts = { websocket: notifications, internal: internalNotifications };
+  observing = false;
+  stopObserving();
+  stopInternal();
   db.prepare = prepare;
   lock?.kill();
   await lockExit?.catch(() => {});
   await transport.close();
+  await observerTransport.close();
   await app.cleanup();
   globalThis.fetch = network;
   report.mainSql = mainSql;

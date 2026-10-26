@@ -15,6 +15,10 @@ closed_unverified. Snapshots retain summary state; complete large reports must
 survive the receipt and neo.ask.read when the card is opened, following the
 work-card-summaries journey.
 Todo/ask/question/session SQL, including stop-context reads, must leave main.
+An independent WebSocket client must receive one neo.changed after the successful
+commit and refresh its snapshot to closed_unverified, without a caller turn-end
+event. The internal Neo subscriber must also receive one change. Rollback emits
+neither; unit cases also keep refusals and settled-ask no-change results silent.
 
 Hold an owned 1.2-second WAL lock and measure a real health RPC during close.
 The affected write still fails 250 ms; state that explicitly. Save the JSON and

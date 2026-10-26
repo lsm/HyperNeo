@@ -23,6 +23,8 @@ describe('Neo todo close commits through the writer', () => {
   let stopping: () => Promise<void>;
   let refused: boolean;
   let stops: string[];
+  let announcements: number;
+  let onChanged: () => void;
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), 'neo-finalize-'));
     const file = join(directory, 'synthetic.db');
@@ -47,6 +49,8 @@ describe('Neo todo close commits through the writer', () => {
     stopping = async () => {};
     refused = false;
     stops = [];
+    announcements = 0;
+    onChanged = () => {};
   });
   afterEach(async () => {
     await gateway.close();
@@ -77,7 +81,10 @@ describe('Neo todo close commits through the writer', () => {
     return store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
   };
   const finish = (kind: 'close' | 'remove', input: Record<string, unknown> = {}) => {
-    const repo = new NeoAskTodoRepository(main);
+    const repo = new NeoAskTodoRepository(main, () => {
+      announcements++;
+      onChanged();
+    });
     const packs: NeoPack[] = [
       {
         id: 'coding',
@@ -144,6 +151,7 @@ describe('Neo todo close commits through the writer', () => {
       expect(store.getTodo('first')?.state).toBe('doing');
       expect(store.getQuestion('start')?.state).toBe('open');
       expect(stops).toEqual(['worker-first']);
+      expect(announcements).toBe(0);
     }
   );
 
@@ -173,6 +181,7 @@ describe('Neo todo close commits through the writer', () => {
       reason: expect.stringContaining('stop_failed:'),
     });
     expect(store.getTodo('first')?.state).toBe('doing');
+    expect(announcements).toBe(0);
   });
 
   test.each(['close'] as const)(
@@ -207,5 +216,17 @@ describe('Neo todo close commits through the writer', () => {
     });
     expect(stops).toEqual([]);
     expect(store.getTodo('first')?.state).toBe('doing');
+    expect(announcements).toBe(0);
+  });
+
+  test('a successful close announces exactly once after its state is committed', async () => {
+    add('first');
+    let seen: NeoTodo | null = null;
+    onChanged = () => {
+      seen = new NeoAskTodoRepository(main).getTodo('first');
+    };
+    expect(await finish('close')).toMatchObject({ ok: true, todo: { state: 'done' } });
+    expect(announcements).toBe(1);
+    expect(seen).toMatchObject({ state: 'done' });
   });
 });
