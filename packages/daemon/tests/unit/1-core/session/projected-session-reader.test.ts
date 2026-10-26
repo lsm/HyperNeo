@@ -1,4 +1,4 @@
-import { expect, mock, test } from 'bun:test';
+import { expect, mock, spyOn, test } from 'bun:test';
 import { DEFAULT_GLOBAL_SETTINGS, type MessageHub, type Session } from '@hyperneo/shared';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
 import type { SessionManager } from '../../../../src/lib/session-manager';
@@ -71,11 +71,14 @@ test('system-only projection preserves the response without loading session rows
   try {
     await db.createSession(createTestSession('projection-system'));
     const { service, syncCount, syncList } = fixture(db);
+    const call = spyOn(db.gateway, 'call');
     const result = await service.getGlobalSystemSnapshot();
     expect(result).not.toHaveProperty('sessions');
     expect(result.system.health.sessions).toEqual({ active: 2, total: 1 });
     expect(result.system.defaultModel).toBe('synthetic-model');
     expect(result.system.maxSessions).toBe(9);
+    expect(call.mock.calls.map((args) => args[1])).toEqual(['countHumanSessions']);
+    call.mockRestore();
     expect(syncCount).not.toHaveBeenCalled();
     expect(syncList).not.toHaveBeenCalled();
   } finally {

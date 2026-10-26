@@ -625,4 +625,10 @@ env -i HOME="$HEALTH_SESSION_COUNT_READER_RUN/home" PATH="$PATH" TMPDIR="$HEALTH
 	HYPERNEO_DATA_DIR="$HEALTH_SESSION_COUNT_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-health-session-count-reader.ts" "$HEALTH_SESSION_COUNT_READER_RUN"
 
+PROJECTED_SESSION_READER_RUN="$WORK_DIR/projected-session-reader"
+mkdir -p "$PROJECTED_SESSION_READER_RUN/home" "$PROJECTED_SESSION_READER_RUN/tmp"
+env -i HOME="$PROJECTED_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SESSION_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROJECTED_SESSION_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-session-reader.ts" "$PROJECTED_SESSION_READER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

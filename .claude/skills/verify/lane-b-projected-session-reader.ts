@@ -19,6 +19,7 @@ const NativeWorker = globalThis.Worker; const fetch = globalThis.fetch;
 const start = JobQueueProcessor.prototype.start; const prepare = SQLite.prototype.prepare;
 const processors = new Set<InstanceType<typeof JobQueueProcessor>>();
 let measuring = false; let mainSqlAttempts = 0; let rejectNextCount = false; let countRequests = 0;
+let rejectNextProjection = false;
 SQLite.prototype.prepare = function (...args) {
   const statement = Reflect.apply(prepare, this, args);
   if (!/\b(?:sessions|session_counters)\b/i.test(args[0])) return statement;
@@ -35,6 +36,11 @@ globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
   if (String(url).endsWith('/db-gateway-worker.ts')) {
     const post = worker.postMessage.bind(worker);
     worker.postMessage = ((message: { op?: string; lane?: string }) => {
+      if (message.op === 'sessions.projection.read' && rejectNextProjection) {
+        rejectNextProjection = false;
+        queueMicrotask(() => worker.dispatchEvent(new ErrorEvent('error', { message: 'synthetic projection row worker failure', cancelable: true })));
+        return;
+      }
       if (message.op === 'sessions.healthCount.read') {
         assert.equal(message.lane, 'read'); countRequests++;
         if (rejectNextCount) { rejectNextCount = false; queueMicrotask(() => worker.dispatchEvent(new ErrorEvent('error', { message: 'synthetic health count worker failure', cancelable: true }))); return; }
@@ -98,6 +104,8 @@ try {
   const archived = await full(); assert.equal(archived.settings.settings.showArchived, true); assert.deepEqual(archived.sessions.sessions, expectedAll); assert.equal(archived.sessions.hasArchivedSessions, true); evidence.archivedToggleMatched = true;
   await app.db.gateway.call(sessionWrites, 'createSession', session('health-later'));
   const updated = await health(); validate(updated, 4); evidence.committedCount = updated.sessions.total;
+  rejectNextProjection = true; evidence.rowWorkerFailure = await full().then(() => 'unexpected success', String); assert.match(String(evidence.rowWorkerFailure), /synthetic projection row worker failure/);
+  validate(await health(), 4);
   rejectNextCount = true; evidence.workerFailure = await health().then(() => 'unexpected success', String); assert.match(String(evidence.workerFailure), /synthetic health count worker failure/);
   evidence.otherRpcAfterFailure = await hub.request('message.sdkMessages', { sessionId: 'conv:health-liveness' }); assert.deepEqual(evidence.otherRpcAfterFailure, { sdkMessages: [], hasMore: false, backgroundTaskMessages: [] });
   const recovered = await full(); validate(recovered.system.health, 4); assert.equal(recovered.sessions.sessions.length, 4); assert.equal(recovered.sessions.hasArchivedSessions, true); evidence.recoveredHealth = recovered.system.health; evidence.fullRecoveryRows = recovered.sessions.sessions.length;

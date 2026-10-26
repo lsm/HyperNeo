@@ -105,6 +105,7 @@ import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-wri
 import { sessionListReads } from '../repositories/session-list-read.ts';
 import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
 import { healthSessionCountReads } from '../repositories/health-session-count-read.ts';
+import { sessionProjectionReads } from '../repositories/session-projection-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -193,5 +194,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sessionListReads,
     readLiveSessionList,
     healthSessionCountReads,
+    sessionProjectionReads,
   ].map((op) => [op.name, op])
 );
