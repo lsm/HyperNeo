@@ -1,5 +1,5 @@
 import type { RuntimeSocket } from './runtime-server/index.ts';
-import { Logger } from './logger.ts';
+import { Logger, emitStructuredLogEvent } from './logger.ts';
 import { onDeviceRevoked, type UpgradeIdentity } from './pairing/upgrade-auth.ts';
 import type { HubMessage, IMessageTransport, ConnectionState } from '@hyperneo/shared';
 import type { HubMessageWithMetadata } from '@hyperneo/shared/message-hub/protocol';
@@ -11,6 +11,7 @@ export interface WebSocketServerTransportOptions {
   debug?: boolean;
   router: MessageHubRouter;
   maxQueueSize?: number;
+  maxQueueBytes?: number;
   staleTimeout?: number;
   staleCheckInterval?: number;
 }
@@ -23,12 +24,13 @@ export class WebSocketServerTransport implements IMessageTransport {
   private connectionHandlers: Set<(state: ConnectionState, error?: Error) => void> = new Set();
   private clientDisconnectHandlers: Set<(clientId: string) => void> = new Set();
   private readonly maxQueueSize: number;
+  private readonly maxQueueBytes: number;
 
   private wsToClientId: Map<RuntimeSocket, string> = new Map();
   private clientIdToWs: Map<string, RuntimeSocket> = new Map();
   private readonly stopRevocations = onDeviceRevoked((deviceId) => this.closeDevice(deviceId));
 
-  private clientQueues: Map<string, number> = new Map();
+  private clientQueues = new Map<string, { drain(): void; size(): number }>();
 
   private lastActivityTime: Map<string, number> = new Map();
   private readonly staleTimeout: number;
@@ -39,6 +41,7 @@ export class WebSocketServerTransport implements IMessageTransport {
     this.name = options.name || 'websocket-server';
     this.router = options.router;
     this.maxQueueSize = options.maxQueueSize || 1000;
+    this.maxQueueBytes = options.maxQueueBytes ?? 32 * 1024 * 1024;
     this.staleTimeout = options.staleTimeout || 120000;
     this.staleCheckInterval = options.staleCheckInterval || 30000;
   }
@@ -135,34 +138,101 @@ export class WebSocketServerTransport implements IMessageTransport {
 
   registerClient(ws: RuntimeSocket, connectionSessionId: string): string {
     const clientId = generateUUID();
+    const pending: { data: string; bytes: number }[] = [];
+    let queuedBytes = 0;
+    let blocked = false;
+    let failed = false;
+    let windowStart = Date.now();
+    let messages = 0;
+    let bytes = 0;
+
+    const diagnose = (reason: string, data: string, messageBytes: number) => {
+      let envelope: Partial<HubMessage> = {};
+      try {
+        envelope = JSON.parse(data);
+      } catch {}
+      const seconds = Math.max(1, (Date.now() - windowStart) / 1000);
+      emitStructuredLogEvent({
+        level: reason === 'backpressure' || reason === 'socket_closing' ? 'info' : 'warn',
+        source: 'logger',
+        module: 'hyperneo:daemon:websocket',
+        args: ['client.websocket.pressure'],
+        metadata: {
+          clientId,
+          reason,
+          type: envelope?.type,
+          method: envelope?.method,
+          messageBytes,
+          bufferedBytes: ws.getBufferedAmount?.() ?? null,
+          queuedBytes,
+          queuedMessages: pending.length,
+          readyState: ws.readyState,
+          messagesPerSecond: messages / seconds,
+          bytesPerSecond: bytes / seconds,
+        },
+      });
+    };
+    const fail = (reason: string, data: string, size: number) => {
+      diagnose(reason, data, size);
+      failed = true;
+      pending.length = 0;
+      queuedBytes = 0;
+      ws.close(1011, 'Message dropped; reconnect to resync');
+      throw new Error(`Message dropped for client ${clientId}; ${reason}`);
+    };
+    const write = (data: string, size: number) => {
+      const sent = ws.send(data);
+      if (sent === 0) {
+        if (ws.readyState !== 1) {
+          diagnose('socket_closing', data, size);
+          failed = true;
+          pending.length = 0;
+          queuedBytes = 0;
+          return;
+        }
+        fail('runtime_overflow', data, size);
+      }
+      if (sent === -1) {
+        blocked = true;
+        diagnose('backpressure', data, size);
+      }
+    };
+    this.clientQueues.set(clientId, {
+      size: () => pending.length,
+      drain: () => {
+        blocked = false;
+        try {
+          while (pending.length && !blocked && !failed && ws.readyState === 1) {
+            const item = pending.shift()!;
+            queuedBytes -= item.bytes;
+            write(item.data, item.bytes);
+          }
+        } catch (error) {
+          this.logger.error('Failed to drain client queue:', error);
+        }
+      },
+    });
 
     const connection: ClientConnection = {
       id: clientId,
       send: (data: string) => {
-        const queueSize = this.clientQueues.get(clientId) || 0;
-        if (queueSize >= this.maxQueueSize) {
-          throw new Error(`Message queue full for client ${clientId} (max: ${this.maxQueueSize})`);
+        if (failed || ws.readyState !== 1) return;
+        const size = new Blob([data]).size;
+        if (Date.now() - windowStart >= 1000) {
+          windowStart = Date.now();
+          messages = 0;
+          bytes = 0;
         }
-
-        try {
-          this.clientQueues.set(clientId, queueSize + 1);
-          const sent = ws.send(data);
-          this.clientQueues.set(clientId, queueSize);
-          if (sent === 0) {
-            ws.close(1011, 'Message dropped; reconnect to resync');
-            throw new Error(`Message dropped for client ${clientId}; closed it to force a resync`);
-          }
-        } catch (error) {
-          this.clientQueues.set(clientId, queueSize);
-          this.logger.error(`[${this.name}] Failed to send:`, error);
-          throw error;
-        }
+        messages++;
+        bytes += size;
+        if (!blocked) return write(data, size);
+        if (pending.length >= this.maxQueueSize || queuedBytes + size > this.maxQueueBytes)
+          return fail('queue_overflow', data, size);
+        pending.push({ data, bytes: size });
+        queuedBytes += size;
       },
-      isOpen: () => ws.readyState === 1,
-      canAccept: () => {
-        const queueSize = this.clientQueues.get(clientId) || 0;
-        return queueSize < this.maxQueueSize;
-      },
+      isOpen: () => !failed && ws.readyState === 1,
+      canAccept: () => true,
       metadata: {
         ws,
         connectionSessionId,
@@ -181,6 +251,11 @@ export class WebSocketServerTransport implements IMessageTransport {
     }
 
     return clientId;
+  }
+
+  handleDrain(ws: RuntimeSocket): void {
+    const clientId = this.wsToClientId.get(ws);
+    if (clientId) this.clientQueues.get(clientId)?.drain();
   }
 
   closeDevice(deviceId: string): void {
@@ -294,12 +369,11 @@ export class WebSocketServerTransport implements IMessageTransport {
   }
 
   canClientAccept(clientId: string): boolean {
-    const queueSize = this.clientQueues.get(clientId) || 0;
-    return queueSize < this.maxQueueSize;
+    return this.getClientQueueSize(clientId) < this.maxQueueSize;
   }
 
   getClientQueueSize(clientId: string): number {
-    return this.clientQueues.get(clientId) || 0;
+    return this.clientQueues.get(clientId)?.size() ?? 0;
   }
 
   private notifyConnectionHandlers(state: ConnectionState, error?: Error): void {

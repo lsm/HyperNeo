@@ -14,6 +14,7 @@ const handlers = createWebSocketHandlers(transport, {} as SessionManager);
 let drops = 0;
 let resyncs = 0;
 let maxBufferedBytes = 0;
+let maxQueuedMessages = 0;
 let received = Buffer.alloc(0);
 const count = 384;
 const payload = 'x'.repeat(64 * 1024);
@@ -45,6 +46,7 @@ const server = await createBunServer({
       setTimeout(() => {
         for (let i = 0; i < count; i++) {
           router.broadcast({ type: 'EVENT', method: 'proof.burst', id: `${i}`, sessionId: 'global', data: { payload } });
+          maxQueuedMessages = Math.max(maxQueuedMessages, transport.getClientQueueSize((ws.data as { clientId: string }).clientId));
         }
       }, 50);
     },
@@ -72,7 +74,7 @@ try {
     if (opcode === 1) ids.push(JSON.parse(received.subarray(offset + header, offset + header + size).toString()).id);
     offset += header + size;
   }
-  const evidence = { mode, count, messageBytes: Buffer.byteLength(JSON.stringify({ type: 'EVENT', method: 'proof.burst', id: '95', sessionId: 'global', data: { payload } })), drops, resyncs, maxBufferedBytes, delivered: ids.length, ordered: ids.every((id, i) => id === `${i}`) };
+  const evidence = { mode, count, messageBytes: Buffer.byteLength(JSON.stringify({ type: 'EVENT', method: 'proof.burst', id: '383', sessionId: 'global', data: { payload } })), drops, resyncs, maxBufferedBytes, maxQueuedMessages, maxQueuedBytesUpperBound: maxQueuedMessages * (payload.length + 100), delivered: ids.length, ordered: ids.every((id, i) => id === `${i}`) };
   await mkdir(`${run}/evidence`, { recursive: true });
   await writeFile(`${run}/evidence/backpressure.json`, JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));

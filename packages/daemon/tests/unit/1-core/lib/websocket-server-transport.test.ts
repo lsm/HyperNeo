@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, jest, mock, afterEach } from 'bun:tes
 import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
 import { MessageHubRouter } from '@hyperneo/shared';
 import type { ClientConnection, HubMessage } from '@hyperneo/shared';
+import { subscribeToStructuredLogs } from '../../../../src/lib/logger';
 
 describe('WebSocketServerTransport', () => {
   let transport: WebSocketServerTransport;
@@ -70,6 +71,61 @@ describe('WebSocketServerTransport', () => {
   });
 
   describe('registerClient', () => {
+    it('reports pressure type, UTF-8 bytes, buffer and offered rate without message bodies', () => {
+      const events: { metadata: Record<string, unknown> }[] = [];
+      const stop = subscribeToStructuredLogs((event) => {
+        if (event.message === 'client.websocket.pressure') events.push(event);
+      });
+      try {
+        const ws = { ...createMockWebSocket(), getBufferedAmount: () => 400 };
+        const id = transport.registerClient(ws, 'measured-client');
+        (ws.send as ReturnType<typeof mock>).mockImplementation(() => 0);
+        const data = JSON.stringify({ type: 'EVENT', method: 'proof.burst', data: 'private 😀' });
+        expect(() => registeredConnection!.send(data)).toThrow('runtime_overflow');
+        expect(events[0].metadata).toMatchObject({
+          clientId: id,
+          reason: 'runtime_overflow',
+          type: 'EVENT',
+          method: 'proof.burst',
+          messageBytes: new Blob([data]).size,
+          bufferedBytes: 400,
+          messagesPerSecond: 1,
+          bytesPerSecond: new Blob([data]).size,
+        });
+        expect(JSON.stringify(events)).not.toContain('private');
+      } finally {
+        stop();
+      }
+    });
+
+    for (const limits of [{ maxQueueSize: 1 }, { maxQueueBytes: 6 }]) {
+      it(`forces one resync rather than losing events when the queue exceeds ${JSON.stringify(limits)}`, async () => {
+        await transport.close();
+        transport = new WebSocketServerTransport({ router: mockRouter, ...limits });
+        const ws = createMockWebSocket();
+        transport.registerClient(ws, 'bounded-client');
+        (ws.send as ReturnType<typeof mock>).mockImplementation(() => -1);
+        registeredConnection!.send('first');
+        registeredConnection!.send('second');
+        expect(() => registeredConnection!.send('third')).toThrow('queue_overflow');
+        registeredConnection!.send('fourth');
+        transport.handleDrain(ws);
+        expect(ws.close).toHaveBeenCalledTimes(1);
+        expect(ws.send).toHaveBeenCalledTimes(1);
+      });
+    }
+
+    it('discards queued events on disconnect and ignores a late drain', () => {
+      const ws = createMockWebSocket();
+      const id = transport.registerClient(ws, 'gone-client');
+      (ws.send as ReturnType<typeof mock>).mockImplementation(() => -1);
+      registeredConnection!.send('first');
+      registeredConnection!.send('second');
+      transport.unregisterClient(id);
+      transport.handleDrain(ws);
+      expect(ws.send).toHaveBeenCalledTimes(1);
+    });
+
     it('delivers a burst in order after backpressure drains without replaying the accepted frame', () => {
       const ws = createMockWebSocket();
       const id = transport.registerClient(ws, 'slow-client');
@@ -92,7 +148,7 @@ describe('WebSocketServerTransport', () => {
       const ws = createMockWebSocket();
       transport.registerClient(ws, 'closing-client');
       (ws.send as ReturnType<typeof mock>).mockImplementation(() => {
-        ws.readyState = 2;
+        Object.defineProperty(ws, 'readyState', { value: 2 });
         return 0;
       });
       expect(() => registeredConnection!.send('closing')).not.toThrow();
