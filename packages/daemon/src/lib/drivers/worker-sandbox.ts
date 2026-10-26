@@ -83,6 +83,7 @@ export async function prepareWorkerSandbox(root: string) {
   const runtime = workerWorkLocations(root).scratch;
   for (const path of new Set([runtime, ...Object.values(env)])) {
     await mkdir(path, { recursive: true, mode: 0o700 });
+    if (path !== runtime && path !== env.XDG_CACHE_HOME) continue;
     const entry = await lstat(path);
     const owner = process.platform === 'win32' ? entry.uid : (process.getuid?.() ?? entry.uid);
     const mode = process.platform === 'win32' ? 0 : entry.mode;

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, type Stats } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, type Stats } from 'node:fs';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,6 +85,16 @@ test('runtime preparation creates every work location on demand', async () => {
   }
   await writeFile(join(env.TMPDIR, 'probe'), 'synthetic');
   expect(await readFile(join(env.TMPDIR, 'probe'), 'utf8')).toBe('synthetic');
+});
+
+test('runtime preparation tolerates shared work locations with ordinary modes', async () => {
+  const data = fixture('darwin', false);
+  const shared = join(data, 'worktrees', 'acme', 'demo');
+  mkdirSync(shared, { recursive: true });
+  chmodSync(shared, 0o755);
+  const env = (await prepareWorkerSandbox(root)) as Record<string, string>;
+  expect(env.HYPERNEO_WORKTREES).toBe(join(data, 'worktrees'));
+  expect(env.TMPDIR.startsWith(join(data, 'work', 'scratch'))).toBe(true);
 });
 
 test('Windows workers accept synthesized NTFS modes under the data root', async () => {
