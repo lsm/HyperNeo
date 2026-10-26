@@ -105,6 +105,22 @@ describe('root Neo system prompt', () => {
     expect(prompt).toContain('Preserve required proposal text, path and hash');
   });
 
+  test('guides verbatim publications next to the shortText and fullText rules', () => {
+    const prompt = neoPrompt([]);
+    expect(prompt).toContain(
+      'Use verbatim: true for deliverables the human will copy: translations, drafted emails/messages, text to paste'
+    );
+    expect(prompt).toContain(
+      'A verbatim message holds only the deliverable; any lead-in line is a separate normal message or is skipped'
+    );
+    expect(prompt).toContain('One message per deliverable');
+    expect(prompt).toContain(
+      'Plain text for emails and translations; Markdown or code only when the human wants it'
+    );
+    expect(prompt).toContain('Everything else stays shortText + fullText ("more")');
+    expect(prompt).toContain('Anything over the verbatim limit goes as a file');
+  });
+
   test('appends the pack briefing only when packs are enabled', () => {
     const coding = neoPrompt(neoSettingsPackBriefs());
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
