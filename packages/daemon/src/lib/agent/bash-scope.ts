@@ -465,7 +465,10 @@ const SLEEP_DURATION = /^(\d+(?:\.\d+)?)([smhd]?)$/;
 const SLEEP_BOUNDARY = new Set([' ', '\t', '\n', '\r', '(', ')', '{', '}', ';', '|', '&']);
 
 function normalizeSleepText(text: string): string {
-  return text.replace(/\\(.)/g, '$1').replace(/['"]/g, '');
+  return text
+    .replace(/\\(.)/g, '$1')
+    .replace(/\$(?=['"])/g, '')
+    .replace(/['"]/g, '');
 }
 
 function isSleepToken(token: string): boolean {
@@ -479,7 +482,13 @@ function containsSleepWord(text: string): boolean {
       const after = text[i + 5];
       const wordEnd = after === undefined || SLEEP_BOUNDARY.has(after);
       const before = text.slice(boundaryEnd, i);
-      if (wordEnd && (i === boundaryEnd || /^[^\s'"`;|&(){}]*\/$/.test(before))) return true;
+      if (
+        wordEnd &&
+        (i === boundaryEnd ||
+          /^[^\s'"`;|&(){}]*\/$/.test(before) ||
+          /^[A-Za-z_][A-Za-z0-9_]*=$/.test(before))
+      )
+        return true;
     }
     if (SLEEP_BOUNDARY.has(text[i])) boundaryEnd = i + 1;
   }

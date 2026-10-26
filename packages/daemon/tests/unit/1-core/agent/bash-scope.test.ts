@@ -461,6 +461,15 @@ describe('sleepCommandVerdict / createSleepBoundHook', () => {
     expect(sleepCommandVerdict("slee'ep' 999")).toBe('none');
   });
 
+  test('ANSI-C quoting and indirect sleeps are vetoed', () => {
+    expect(sleepCommandVerdict("sle$'ep' 999")).toBe('denied');
+    expect(sleepCommandVerdict("sleep$'' 999")).toBe('denied');
+    expect(sleepCommandVerdict('x=sleep; $x 9999')).toBe('denied');
+    expect(sleepCommandVerdict('x=sleep')).toBe('denied');
+    expect(sleepCommandVerdict('x=$(sleep 5)')).toBe('allowed');
+    expect(sleepCommandVerdict('x=$(sleep 999)')).toBe('denied');
+  });
+
   test('commands without sleeps are neutral', () => {
     expect(sleepCommandVerdict('echo done')).toBe('none');
     expect(sleepCommandVerdict('asleep 5')).toBe('none');
