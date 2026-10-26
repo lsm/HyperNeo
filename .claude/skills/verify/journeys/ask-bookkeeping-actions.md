@@ -12,6 +12,8 @@ an ask-level question. Check this before and after reopening the database. A
 retry adding unfiled work under a completed parent ask with child cards must
 return an ask_settled record with the remedy to open a new ask with a different
 title, without adding work.
+Supply an explicit completion check on that retry, as required for new todos;
+the settled-ask bookkeeping record must still return without adding the todo.
 
 A question naming a closed todo must open at ask level with a todo_closed
 record, without a stale todo link. Settling an ask done with unfinished todos

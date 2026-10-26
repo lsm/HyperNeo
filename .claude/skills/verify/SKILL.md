@@ -60,6 +60,11 @@ screenshots and visual layout unverified.
 If browser origin approval is denied, retain that refusal and leave visual proof
 unverified. Do not retry through another browser or transport to bypass it;
 release the helper and preserve its daemon evidence before cleanup.
+Trust the wrapper exit status, not a helper's PASS line. A closed-database error
+from background Neo recovery during shutdown makes the daemon proof fail, even
+if its reader assertions passed. Retain the log; ask-bookkeeping-actions provides
+a listener-free MCP/public-reader/audit proof, without claiming daemon startup
+or shutdown verification.
 
 Give it a model, once per run (stored in the run's DB only):
 

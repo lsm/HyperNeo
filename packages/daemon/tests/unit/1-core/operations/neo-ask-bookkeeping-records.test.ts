@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -150,7 +151,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       const result = await h.call('neo.ask.open', {
         title: h.ask.title,
         request: 'Follow-up',
-        todos: [{ title: 'New task', doneWhen: 'Observed' }],
+        todos: [{ title: 'New task', check: pendingTodoCheck }],
       });
       expect(result).toMatchObject({
         ok: true,

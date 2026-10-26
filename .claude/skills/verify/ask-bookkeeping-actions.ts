@@ -65,7 +65,7 @@ for (const phase of ['initial', 'reopen']) {
       assert(settled.records[0].startsWith('todos_unfinished:'));
       assert(settled.todos.every((todo: { state: string }) => todo.state === 'closed_unverified'));
       store.openAsk({ id: 'child', parentId: ask.id, repo: 'github.com/synthetic/child', projectId: null, sessionId: ask.sessionId, originMessageId: null, title: 'Child card', request: 'Filed work', createdAt: 1 });
-      const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ title: 'New follow-up', doneWhen: 'Observed result' }] });
+      const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ title: 'New follow-up', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } }] });
       assert.equal(retry.ask.id, ask.id); assert.equal(retry.todos.length, 3);
       assert(retry.records[0].includes('Open a new ask for it with a different title'));
 

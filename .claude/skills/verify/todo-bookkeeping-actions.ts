@@ -48,7 +48,7 @@ for (const phase of ['initial', 'reopen']) {
       const result = await call('neo.todo.remove', { todoId: todo.id, replacedBy: 'missing', reason: 'Superseded' }, 'replacement_missing');
       assert.equal(result.todo.state, 'removed'); assert.equal(result.todo.replacedBy, null); removed = todo.id;
       store.settleAsk(ask, 'dropped', 'Synthetic drop', 3);
-      await call('neo.todo.add', { askId: ask.id, title: 'Late work', doneWhen: 'Observed' }, 'ask_settled');
+      await call('neo.todo.add', { askId: ask.id, title: 'Late work', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } }, 'ask_settled');
       await call('neo.todo.continue', { todoId: todo.id, message: 'Late follow-up' }, 'ask_settled');
       assert.equal(store.listTodos(ask.id).length, 1);
     }
