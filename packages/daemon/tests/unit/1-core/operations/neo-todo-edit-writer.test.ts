@@ -166,6 +166,54 @@ describe('Neo todo edit commits through its writer', () => {
     ).toHaveLength(1);
   });
 
+  test('a new core completion check is derived and reopens a previously done todo', async () => {
+    const first = add('first', [url(1)]);
+    store.updateTodo(first, { state: 'done', finishedAt: 2 }, 2);
+    const required = { pack: 'core', kind: 'evidence', params: { path: '/synthetic/receipt' } };
+    expect(await edit({ todoId: 'first', check: required })).toMatchObject({
+      ok: true,
+      todo: {
+        check: required,
+        doneWhen: 'File /synthetic/receipt exists.',
+        state: 'todo',
+        finishedAt: null,
+      },
+    });
+  });
+
+  test('explicit PR replacement and appended URLs share current ownership admission', async () => {
+    add('first');
+    add('second');
+    const required = { pack: 'coding', kind: 'pr_merged', params: { urls: [url(1)] } };
+    const results = await Promise.all(
+      ['first', 'second'].map((todoId) => edit({ todoId, check: required, addUrls: [url(2)] }))
+    );
+    expect(
+      results.every(
+        (result) =>
+          result.ok && result.todo.check?.params.urls.join(',') === [url(1), url(2)].join(',')
+      )
+    ).toBe(true);
+    expect(
+      results.filter(
+        (result) =>
+          result.ok && result.records?.some((record) => record.startsWith('pr_already_tracked:'))
+      )
+    ).toHaveLength(1);
+  });
+
+  test('an invalid core check refuses the whole edit', async () => {
+    add('first');
+    expect(
+      await edit({
+        todoId: 'first',
+        title: 'Not committed',
+        check: { pack: 'core', kind: 'evidence', params: { path: 'relative' } },
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('invalid_core_check:') });
+    expect(store.getTodo('first')?.title).toBe('first');
+  });
+
   test('completion refuses a check replaced while the external check runs', async () => {
     add('first', [url(1)]);
     check = async () => {

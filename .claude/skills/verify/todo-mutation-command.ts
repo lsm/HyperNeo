@@ -9,7 +9,7 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import type { neoTodoMutations } from '../../../packages/daemon/src/storage/repositories/neo-todo-mutation-writes.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
-import type { NeoSnapshot } from '../../../packages/shared/src/types/neo-snapshot.ts';
+import type { NeoTodo as FullTodo } from '../../../packages/shared/src/types/neo-ask.ts';
 
 const [mode, directory] = process.argv.slice(2);
 assert(['before', 'verify'].includes(mode));
@@ -41,8 +41,7 @@ const apply = async (input: Parameters<Commit>[0], checked?: Parameters<Commit>[
   finally { recording = false; }
 };
 const rpc = <R>(name: string, input: unknown) => hub.request<R>('operation.invoke', { name, input });
-const snapshot = () => rpc<NeoSnapshot>('neo.snapshot', {});
-const visible = async (id: string) => (await snapshot()).todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === id)!;
+const visible = async (id: string) => (await rpc<{ ok: true; entry: { todos: FullTodo[] } }>('neo.ask.read', { askId: 'ask' })).entry.todos.find(todo => todo.id === id)!;
 const url = (number: number) => `https://github.com/synthetic/mutation/pull/${number}`;
 try {
   await app.spaceRuntimeService.ready();

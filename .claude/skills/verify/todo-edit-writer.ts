@@ -9,7 +9,7 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import type { NeoTodo } from '../../../packages/shared/src/types/neo-ask.ts';
-import type { NeoSnapshot } from '../../../packages/shared/src/types/neo-snapshot.ts';
+import type { NeoTodo as FullTodo } from '../../../packages/shared/src/types/neo-ask.ts';
 
 const [mode, directory] = process.argv.slice(2);
 assert(['before', 'verify'].includes(mode));
@@ -40,7 +40,7 @@ const edit = async (input: unknown) => {
   try { return await hub.request<Receipt>('operation.invoke', { name: 'neo.todo.edit', input }); }
   finally { recording--; }
 };
-const visible = async (id: string) => (await hub.request<NeoSnapshot>('operation.invoke', { name: 'neo.snapshot', input: {} })).todoAsks.flatMap(entry => entry.todos).find(todo => todo.id === id)!;
+const visible = async (id: string) => (await hub.request<{ ok: true; entry: { todos: FullTodo[] } }>('operation.invoke', { name: 'neo.ask.read', input: { askId: 'ask' } })).entry.todos.find(todo => todo.id === id)!;
 const url = (n: number) => `https://github.com/synthetic/edit/pull/${n}`;
 try {
   await app.spaceRuntimeService.ready();
@@ -79,6 +79,12 @@ try {
     assert(full.ok && full.todo.state === 'closed_unverified' && full.todo.report === text);
     assert.equal((await visible('report')).report, text);
     report.fullReport = { bytes: Buffer.byteLength(text), sha256: createHash('sha256').update(text).digest('hex'), replyBytes: Buffer.byteLength(JSON.stringify(full)), state: full.todo.state };
+    const required = { pack: 'core', kind: 'evidence', params: { path: join(run, 'kept.txt') } };
+    const changedCheck = await edit({ todoId: 'report', check: required });
+    assert(changedCheck.ok);
+    assert.deepEqual(changedCheck.todo.check, required);
+    assert.equal(changedCheck.todo.doneWhen, `File ${required.params.path} exists.`);
+    report.changedCheck = changedCheck.todo.check;
     assert.equal(mainSql, 0);
     lock = spawn('/usr/bin/python3', ['-c', "import sqlite3,sys,time\ndb=sqlite3.connect(sys.argv[1]); db.execute('BEGIN IMMEDIATE'); print('locked',flush=True); time.sleep(1.2); db.rollback(); db.close()", app.db.getDbPath()], { stdio: ['ignore', 'pipe', 'pipe'] });
     lockExit = new Promise<void>((done, fail) => { lock!.once('error', fail); lock!.once('exit', code => code === 0 ? done() : fail(new Error('synthetic lock failed'))); });
