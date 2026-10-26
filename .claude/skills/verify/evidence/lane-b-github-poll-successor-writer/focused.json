@@ -1,0 +1,12 @@
+{
+  "ciRunnerPasses": 113,
+  "ciRunnerFailures": 0,
+  "realSQLiteHandlerCases": 12,
+  "serviceIntegrationCases": 15,
+  "repositoryCases": 86,
+  "temporaryHomeRemoved": true,
+  "concurrentSuccessors": 1,
+  "receiptLoadingFailureRollsBackInsertion": true,
+  "unavailableWriterDoesNotReplay": true,
+  "intervalCallbackOutsideTransaction": true
+}

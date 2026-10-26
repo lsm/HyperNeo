@@ -16,7 +16,7 @@ Real health RPCs bracket the path. Baseline evidence must fail on forbidden SQL;
 fixed Bun/Deno evidence must record zero target main SQL and a completed job.
 
 Focused tests cover concurrent pending-only admission, held receipts, unavailable
-writers, rejected inserts and triggerPoll failures. Save
+writers, receipt rollback and triggerPoll failures. Save
 evidence/github-poll-successor-writer.json before removing owned temporary data.
 GitHubService startup/settings refresh, real GitHub API behavior, UI, worker death,
 contention and large-queue latency remain outside this proof.

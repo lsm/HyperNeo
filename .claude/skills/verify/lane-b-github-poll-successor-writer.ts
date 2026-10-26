@@ -98,7 +98,7 @@ try {
   await transport?.close();
   await processor?.stop();
   await Promise.all([...processors].map((owned) => owned.stop()));
-  await new Promise<void>((resolve, reject) => http.close((error) => error ? reject(error) : resolve()));
+  if (http.listening) await new Promise<void>((resolve, reject) => http.close((error) => error ? reject(error) : resolve()));
   await app?.cleanup();
   writeFileSync(join(run, 'evidence/github-poll-successor-writer.json'), JSON.stringify(evidence, null, 2));
   for (const name of ['data', 'home', 'workspace']) rmSync(join(run, name), { recursive: true, force: true });
