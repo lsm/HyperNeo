@@ -324,11 +324,13 @@ function claudeDesktopAdapters(
   prepareExecution: WorkExecutionPreparer,
   inbox: FamilyOperationContext['claudeInbox'],
   mods: FamilyOperationContext['claudeDesktopMods'],
-  permissionMode: () => string
+  permissionMode: () => string,
+  readInput: NonNullable<ClaudeDesktopAdapterDeps['readInput']>
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
   if (!existsSync(sessionsDir)) return [];
   const deps: ClaudeDesktopAdapterDeps = {
+    readInput,
     mods: mods?.ready,
     sessionsDir,
     sendInbox: inbox?.send,
@@ -623,7 +625,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       prepareExecution,
       context.claudeInbox,
       context.claudeDesktopMods,
-      () => neoWorkerPermissionMode(context.deps.db.getGlobalSettings().neo)
+      () => neoWorkerPermissionMode(context.deps.db.getGlobalSettings().neo),
+      (sessionId, marker) =>
+        context.deps.db.gateway.call(readWorkInput, 'find', sessionId, {
+          adapter: 'claude-code',
+          marker,
+        })
     ),
     ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
     ...acpAgentAdapters(
@@ -697,8 +704,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
     createReadWorkOperation({
       readTurns,
-      readInput: (sessionId, input) =>
-        context.deps.db.gateway.call(readWorkInput, 'find', sessionId, input),
+      readInput: async (sessionId, input) =>
+        input.adapter === 'codex-desktop' || input.adapter === 'claude-code'
+          ? context.deps.db.gateway.call(readWorkInput, 'find', sessionId, {
+              adapter: input.adapter,
+              marker: input.marker,
+            })
+          : (adapters
+              .find((adapter) => adapter.id === input.adapter)
+              ?.readInput?.(sessionId, input.marker) ?? null),
       remote: remoteDaemons,
       daemonName: machine,
     }),

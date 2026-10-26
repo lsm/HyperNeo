@@ -41,7 +41,7 @@ marker; reconciliation.json records that the card still becomes accepted.
 Restart must preserve the claim so no uncertain send is replayed. Missing retained
 peer history remains uncertain; elapsed time never authorizes a resend or hold release.
 
-Known limits tracked outside this journey's current proof:
+Related coverage and known limits:
 
 - [#8874](https://github.com/lsm/HyperNeo/issues/8874): these two clock modes now
   prove exact card recovery beyond 8/50 inputs. The owning-peer lookup journey

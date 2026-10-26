@@ -1,6 +1,26 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { z } from 'zod';
 import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
+import type { WorkTurn } from '../../storage/work-turns.ts';
+
+export async function readCopilotInput(
+  file: string,
+  sessionId: string,
+  marker: string
+): Promise<WorkTurn | null> {
+  let cursor: WorkTurnPage['nextCursor'];
+  do {
+    const page = readCopilotHistory(file, sessionId, undefined, 10, 10, cursor);
+    const match = page.turns.find(
+      (turn) =>
+        turn.role === 'user' && (turn.text === marker || turn.text.startsWith(`${marker}\n`))
+    );
+    if (match) return match;
+    cursor = page.nextCursor;
+    if (cursor) await new Promise((done) => setTimeout(done, 0));
+  } while (cursor);
+  return null;
+}
 
 const Event = z.object({
   type: z.string(),
