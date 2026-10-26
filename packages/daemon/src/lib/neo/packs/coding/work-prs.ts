@@ -224,6 +224,41 @@ function gh(args: string[], spawnImpl: SpawnFn, resourceHint: 'core' | 'graphql'
   return runGhJson(args, homedir(), spawnImpl, { resourceHint });
 }
 
+const CheckRunsSchema = z.object({
+  check_runs: z.array(
+    z.object({ status: z.string().nullish(), conclusion: z.string().nullish() })
+  ),
+});
+const CombinedStatusSchema = z.object({ statuses: z.array(z.object({ state: z.string() })) });
+
+// statusCheckRollup costs one GraphQL node per check context, so it dominates the
+// pullRequest query's point cost. CI state comes from REST instead, which draws
+// from the separate 15k/hour REST quota.
+async function readCheckRollup(
+  url: string,
+  raw: Record<string, unknown>,
+  spawnImpl: SpawnFn
+): Promise<GhCheck[]> {
+  if (raw.state !== 'OPEN' || typeof raw.headRefOid !== 'string' || !raw.headRefOid) return [];
+  const meta = parsePrUrl(url);
+  if (!meta) return [];
+  const base = `repos/${meta.owner}/${meta.repo}/commits/${raw.headRefOid}`;
+  const rollup: GhCheck[] = [];
+  const runs = await gh(['gh', 'api', `${base}/check-runs?per_page=100`], spawnImpl, 'core');
+  const parsedRuns = runs.ok ? CheckRunsSchema.safeParse(runs.data) : null;
+  if (parsedRuns?.success)
+    for (const run of parsedRuns.data.check_runs)
+      rollup.push({
+        status: run.status ? run.status.toUpperCase() : null,
+        conclusion: run.conclusion ?? null,
+      });
+  const statuses = await gh(['gh', 'api', `${base}/status`], spawnImpl, 'core');
+  const parsedStatuses = statuses.ok ? CombinedStatusSchema.safeParse(statuses.data) : null;
+  if (parsedStatuses?.success)
+    for (const status of parsedStatuses.data.statuses) rollup.push({ state: status.state });
+  return rollup;
+}
+
 async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
   const key = `${repo}:${base}`;
   const cached = rulesCache.get(key);
@@ -266,12 +301,15 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
+          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
         ],
         spawnImpl,
         'graphql'
       );
-      return { raw: outcome.ok ? outcome.data : null };
+      if (!outcome.ok) return { raw: null };
+      const raw = { ...(outcome.data as Record<string, unknown>) };
+      raw.statusCheckRollup = await readCheckRollup(url, raw, spawnImpl);
+      return { raw };
     },
     ['url', 'spawnImpl'],
     'read'
