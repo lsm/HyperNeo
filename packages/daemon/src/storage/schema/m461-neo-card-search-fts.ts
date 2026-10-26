@@ -78,9 +78,10 @@ export function runMigration461(db: Database): void {
       VALUES ('todo', new.id, new.ask_id, new.title, ${TODO_META}, ${TODO_BODY}, new.updated_at);
     END;
     CREATE TRIGGER IF NOT EXISTS neo_card_search_todo_au
-    AFTER UPDATE OF title, state, next_action, report, evidence, updated_at ON neo_todos BEGIN
+    AFTER UPDATE OF title, state, next_action, report, evidence, ask_id, updated_at ON neo_todos BEGIN
       UPDATE neo_card_search_content
-      SET title = new.title, meta = ${TODO_META}, body = ${TODO_BODY}, updated_at = new.updated_at
+      SET title = new.title, meta = ${TODO_META}, body = ${TODO_BODY}, ask_id = new.ask_id,
+          updated_at = new.updated_at
       WHERE source = 'todo' AND entity_id = new.id;
     END;
     CREATE TRIGGER IF NOT EXISTS neo_card_search_todo_ad
@@ -107,7 +108,8 @@ export function runMigration461(db: Database): void {
     | { present: number }
     | undefined;
   if (indexed) return;
-  db.exec(`
+  db.transaction(() => {
+    db.exec(`
     INSERT INTO neo_card_search_content (source, entity_id, ask_id, title, meta, body, updated_at)
     SELECT 'ask', id, id, title, request, outcome, updated_at FROM neo_asks;
     INSERT INTO neo_card_search_content (source, entity_id, ask_id, title, meta, body, updated_at)
@@ -137,5 +139,6 @@ export function runMigration461(db: Database): void {
       END,
       created_at
     FROM neo_questions;
-  `);
+    `);
+  })();
 }
