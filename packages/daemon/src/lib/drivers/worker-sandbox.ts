@@ -8,7 +8,6 @@ import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { WorkerSandboxMode } from '@hyperneo/shared';
 
-let readWorkerSockets = (): string[] => [];
 let readWorkerSandbox = (): WorkerSandboxMode => 'off';
 
 export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
@@ -16,12 +15,6 @@ export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
 }
 
 export const workerSandboxOn = () => readWorkerSandbox() === 'always';
-
-export function configureWorkerSockets(read: () => string[]) {
-  readWorkerSockets = read;
-}
-
-export const workerUnixSockets = () => readWorkerSockets();
 
 export function workerSandboxPaths(root: string) {
   const base = process.platform === 'darwin' ? '/tmp' : tmpdir();
@@ -92,7 +85,7 @@ export async function prepareWorkerSandbox(root: string) {
   return env;
 }
 
-export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) {
+export function codexWorkerSandbox(root: string) {
   const env = workerSandboxPaths(root);
   const writableRoots = [root, join(root, '.git'), ...new Set(Object.values(env))];
   return {
@@ -102,7 +95,6 @@ export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) 
         network_proxy: {
           enabled: true,
           domains: { '*': 'allow' },
-          unix_sockets: Object.fromEntries(sockets.map((path) => [path, 'allow'])),
           dangerously_allow_all_unix_sockets: true,
           allow_local_binding: true,
         },

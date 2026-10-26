@@ -1,5 +1,4 @@
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
-import { discoverSigningSocket } from './worker-sockets.ts';
 import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -658,8 +657,6 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
-    const socket = await discoverSigningSocket();
-    if (socket) await this.requestWorkerSocket(socket);
     if (id) await this.alignCoordinatorConfig(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
@@ -681,13 +678,6 @@ export class NeoService {
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
     await publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
-  }
-
-  async requestWorkerSocket(socket: string) {
-    const session = this.defaultSessionId() ?? (await this.openDefault());
-    const question = await this.todos.write('requestWorkerSocket', session, socket);
-    this.notifyChanged();
-    return question;
   }
 
   deliverQuestionAnswers(questionId?: string): Promise<void> {

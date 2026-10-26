@@ -1,5 +1,4 @@
 import { readNeoReply } from './intake.ts';
-import { workerSocketOperation } from './worker-sockets.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
@@ -733,9 +732,6 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     ...createNeoRuleQuestions(service),
-    workerSocketOperation(service, (caller) =>
-      admitNeoCaller(service, caller, 'neo.workerSocket.ask')
-    ),
     ...createPackPreferenceQuestions(
       service.db.getDatabase(),
       service.todos,

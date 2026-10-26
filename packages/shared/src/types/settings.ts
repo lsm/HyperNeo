@@ -157,7 +157,6 @@ export type WorkerSandboxMode = (typeof WORKER_SANDBOX_MODES)[number];
 
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   workerSandbox?: WorkerSandboxMode;
-  workerUnixSockets?: string[];
   toolSelectionDefaults?: SessionToolSelection;
 
   settingSources: SettingSource[];
@@ -204,7 +203,6 @@ export interface SessionSettings extends GlobalSettings {
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   workerSandbox: 'off',
-  workerUnixSockets: [],
   settingSources: ['user', 'project', 'local'],
   permissionMode: 'default',
   model: 'sonnet',
