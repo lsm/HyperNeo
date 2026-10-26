@@ -77,6 +77,31 @@ test('Work cards defer full todo bodies until the card is opened', async () => {
     ).entry.todos.find((item) => item.id === todo.id)?.instruction
   ).toBe('x'.repeat(1155));
 });
+test.each([20, 21])(
+  'summary counts include all %i completed todos across the paging cutoff',
+  async (count) => {
+    const before = read(await snapshot()).todoAsks.find((entry) => entry.ask.id === 'ask-18')!;
+    for (let index = 0; index < count; index++) {
+      const todo = service.todos.addTodo(
+        `count-done-${index}`,
+        'ask-18',
+        {
+          title: `Completed ${index}`,
+          doneWhen: 'Done',
+          instruction: null,
+          check: null,
+          named: null,
+        },
+        1
+      );
+      service.todos.updateTodo(todo, { state: 'done' }, 2);
+    }
+    const entry = read(await snapshot()).todoAsks.find((entry) => entry.ask.id === 'ask-18')!;
+    expect(entry.doneCount).toBe(count);
+    expect(entry.summary?.todoCount).toBe(before.summary!.todoCount + count);
+    expect(entry.todos.filter((todo) => todo.state === 'done')).toHaveLength(count === 20 ? 20 : 0);
+  }
+);
 function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
   expect(outcome.kind).toBe('completed');
   if (outcome.kind !== 'completed') throw new Error(outcome.message);

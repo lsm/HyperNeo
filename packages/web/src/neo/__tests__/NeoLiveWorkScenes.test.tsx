@@ -291,6 +291,59 @@ function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = fals
 }
 
 describe('card reply notice navigation', () => {
+  it.each(['pending', 'failed'])(
+    'keeps a %s card read stable while editing the draft',
+    async (state) => {
+      let resolve!: (value: unknown) => void;
+      let reject!: (cause: Error) => void;
+      const pending = new Promise((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      const read = vi.fn(() => pending);
+      const request = vi.fn((_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+      );
+      const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+      try {
+        const { model, container } = mountCard('open');
+        const full = model.value.snapshot.todoAsks[0];
+        act(() => {
+          model.value = {
+            ...model.value,
+            snapshot: {
+              ...model.value.snapshot,
+              todoAsks: [
+                {
+                  ...full,
+                  questions: [],
+                  summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+                },
+              ],
+            },
+          };
+        });
+        fireEvent.click(container.querySelector('[data-ask="waiting"] [data-ask-details-toggle]')!);
+        await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        if (state === 'failed') {
+          await act(async () => reject(new Error('Full card unavailable')));
+          expect(await screen.findByText('Full card unavailable')).toBeTruthy();
+        }
+        await act(async () => {
+          fireEvent.input(screen.getByRole('textbox', { name: 'Draft' }), {
+            target: { value: 'Unsent draft' },
+          });
+        });
+        expect(read).toHaveBeenCalledTimes(1);
+        if (state === 'pending') {
+          await act(async () => resolve({ ok: true, entry: full }));
+          expect(await screen.findByRole('button', { name: /Approve/ })).toBeTruthy();
+        } else expect(screen.getByText('Full card unavailable')).toBeTruthy();
+      } finally {
+        hub.mockRestore();
+      }
+    }
+  );
   it('keeps question reply quotes readable when their card is summarized', async () => {
     const { model } = mountCard('open');
     const full = model.value.snapshot.todoAsks[0];
