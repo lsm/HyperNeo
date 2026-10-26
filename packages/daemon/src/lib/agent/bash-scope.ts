@@ -1,5 +1,4 @@
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
-import { basename } from 'node:path';
 import { SCOPED_BASH_TOOL_PATTERN } from '@hyperneo/shared';
 
 export function parseScopedBashPrefix(entry: string): string | null {
@@ -460,33 +459,18 @@ function checkCommandText(text: string, visit: (segment: string) => boolean): bo
 
 export const NEO_SLEEP_MAX_SECONDS = 300;
 
-const SLEEP_WRAPPER_HEADS = new Set([
-  'bash',
-  'sh',
-  'dash',
-  'zsh',
-  'ksh',
-  'busybox',
-  'xargs',
-  'timeout',
-  'env',
-  'nohup',
-  'nice',
-  'ionice',
-  'sudo',
-  'doas',
-  'command',
-  'exec',
-  'setsid',
-  'stdbuf',
-  'time',
-  'watch',
-]);
-
 type SleepVerdict = 'none' | 'allowed' | 'denied';
 
+const SLEEP_WORD = /(?:^|[\s'"`(;|&])(?:\S*\/)*sleep(?:[\s]|$)/;
+const SLEEP_HEAD = /^(?:\S*\/)*sleep$/;
+const SLEEP_DURATION = /^(\d+(?:\.\d+)?)([smhd]?)$/;
+
+function normalizeSleepText(text: string): string {
+  return text.replace(/\\(.)/g, '$1').replace(/['"]/g, ' ');
+}
+
 function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
-  let s = segment.trim();
+  let s = normalizeSleepText(segment).trim();
   if (!s) return 'none';
   s = s
     .replace(/^[({]+/, '')
@@ -494,20 +478,14 @@ function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
     .trim();
   if (!s) return 'none';
   const stripped = stripLeadingAssignments(s);
-  if (stripped === null) return /(?:^|[ \t])(?:\S*\/)?sleep[ \t]/.test(s) ? 'invalid' : 'none';
-  if (!stripped) return 'none';
+  if (stripped === null || !stripped)
+    return stripped === null && SLEEP_WORD.test(s) ? 'invalid' : 'none';
   const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
-  if (!head) return 'none';
-  const headName = basename(head);
-  if (SLEEP_WRAPPER_HEADS.has(headName)) {
-    const rest = stripped.slice(stripped.indexOf(head) + head.length);
-    return /(?:^|[\s'"`(;|&])(?:\S*\/)*sleep(?:[\s]|$)/.test(rest) ? 'invalid' : 'none';
-  }
-  if (headName !== 'sleep') return 'none';
+  if (!head || !SLEEP_HEAD.test(head)) return SLEEP_WORD.test(stripped) ? 'invalid' : 'none';
   if (args.length === 0) return 'invalid';
   let total = 0;
   for (const arg of args) {
-    const match = arg.match(/^(\d+(?:\.\d+)?)([smhd]?)$/);
+    const match = arg.match(SLEEP_DURATION);
     if (!match) return 'invalid';
     const unit = match[2] === 'm' ? 60 : match[2] === 'h' ? 3600 : match[2] === 'd' ? 86400 : 1;
     total += Number.parseFloat(match[1]) * unit;
@@ -538,8 +516,8 @@ export function sleepCommandVerdict(
     if (seconds === 'invalid') clean = false;
     else total += seconds;
   }
-  if (!seen) return 'none';
-  return clean && total <= maxSeconds ? 'allowed' : 'denied';
+  if (seen) return clean && total <= maxSeconds ? 'allowed' : 'denied';
+  return SLEEP_WORD.test(normalizeSleepText(command)) ? 'denied' : 'none';
 }
 
 export function createSleepBoundHook(maxSeconds: number = NEO_SLEEP_MAX_SECONDS): HookCallback {
