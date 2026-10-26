@@ -15,7 +15,7 @@ import {
   openArtifactPreview,
 } from '../../lib/artifact-preview-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
-import { testAskEntry } from './neo-test-views.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -133,6 +133,61 @@ describe('Neo public work scenes', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Your work' }));
       expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
     }
+  });
+
+  it('keeps every waiting card first, newest first, across unrelated snapshot updates', () => {
+    const { container, model } = mount(true, true);
+    const card = (id: string, state: 'waiting' | 'doing' | 'todo' | 'done', createdAt: number) => {
+      const entry = testAskEntry(id, id, { state });
+      entry.ask.createdAt = createdAt;
+      return entry;
+    };
+    const blocked = card('blocked', 'doing', 50);
+    blocked.todos = [testTodo('blocked-step', { state: 'blocked' })];
+    const old = card('waiting-old', 'waiting', 10);
+    old.todos = [testTodo('waiting-step', { state: 'blocked' })];
+    const a = card('waiting-a', 'waiting', 20);
+    const b = card('waiting-b', 'waiting', 20);
+    const running = card('running', 'doing', 60);
+    const queued = card('queued', 'todo', 70);
+    const done = card('done', 'done', 80);
+    const setCards = (todoAsks: typeof model.value.snapshot.todoAsks) =>
+      act(() => {
+        model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks } };
+      });
+    const order = () =>
+      [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'));
+    const expected = [
+      'waiting-a',
+      'waiting-b',
+      'waiting-old',
+      'blocked',
+      'running',
+      'queued',
+      'done',
+    ];
+    setCards([blocked, old, b, running, a, queued, done]);
+    expect(order()).toEqual(expected);
+    setCards([
+      { ...old, ask: { ...old.ask, updatedAt: 999 } },
+      a,
+      blocked,
+      b,
+      running,
+      queued,
+      done,
+    ]);
+    expect(order()).toEqual(expected);
+    setCards([blocked, running, { ...b, state: 'doing' }, a, old, queued, done]);
+    expect(order()).toEqual([
+      'waiting-a',
+      'waiting-old',
+      'blocked',
+      'running',
+      'waiting-b',
+      'queued',
+      'done',
+    ]);
   });
 
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
