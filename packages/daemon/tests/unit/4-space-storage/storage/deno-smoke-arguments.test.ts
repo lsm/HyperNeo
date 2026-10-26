@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 
 test('Deno smoke passes each inline program as one complete shell argument', () => {
   const script = readFileSync(
@@ -21,3 +23,31 @@ test('Deno smoke passes each inline program as one complete shell argument', () 
     expect(program).toHaveLength(1);
   }
 });
+
+test.each(['', '/'])(
+  'Deno smoke creates normalized proof paths with TMPDIR suffix %s',
+  (suffix) => {
+    const directory = mkdtempSync(join(tmpdir(), 'deno-smoke-path-'));
+    try {
+      const script = readFileSync(
+        new URL('../../../../../../scripts/deno-smoke.sh', import.meta.url),
+        'utf8'
+      );
+      const setup = script.slice(0, script.indexOf('\nDB_PATH='));
+      const result = spawnSync(
+        '/bin/bash',
+        ['-c', `deno() { :; };\n${setup}\nprintf '%s' "$WORK_DIR"`],
+        {
+          env: { PATH: '/usr/bin:/bin', TMPDIR: directory + suffix },
+          encoding: 'utf8',
+        }
+      );
+      expect(result.status).toBe(0);
+      expect(existsSync(result.stdout)).toBe(true);
+      expect(dirname(result.stdout)).toBe(resolve(directory));
+      expect(result.stdout).toBe(resolve(result.stdout));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+);

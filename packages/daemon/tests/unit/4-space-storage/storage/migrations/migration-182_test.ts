@@ -66,13 +66,13 @@ describe('Migration 182/221: uq_message_delivery_active_turn lifecycle', () => {
   });
   afterEach(() => db.close());
 
-  test('FRESH-DB path: createTables no longer creates the role-arbiter index (FIFO)', () => {
+  test('FRESH-DB path: createTables no longer creates the role-arbiter index (FIFO)', async () => {
     createTables(db);
     expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
 
     const repo = new JobQueueRepository(db as never);
-    deliverMessage(repo, 'sess-fresh', 'msg-a', { origin: 'chat' });
-    deliverMessage(repo, 'sess-fresh', 'msg-b', { origin: 'chat' });
+    await deliverMessage(repo, 'sess-fresh', 'msg-a', { origin: 'chat' });
+    await deliverMessage(repo, 'sess-fresh', 'msg-b', { origin: 'chat' });
     const jobs = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 });
     expect(jobs).toHaveLength(2);
     expect(jobs.every((job) => job.payload.role === undefined)).toBe(true);

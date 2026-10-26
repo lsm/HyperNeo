@@ -115,7 +115,7 @@ test('questions retain explicit human references without marking them answered',
 });
 
 test.each(['unknown', 'foreign', 'system', 'task', 'queued'])(
-  'both tools refuse %s references without publishing or creating questions',
+  'publication omits %s references while question admission remains unchanged',
   async (kind) => {
     const id =
       kind === 'unknown'
@@ -127,11 +127,11 @@ test.each(['unknown', 'foreign', 'system', 'task', 'queued'])(
           );
     expect(
       await invoke('neo.publication.publish', { ...publication, replyTo: [id] })
-    ).toMatchObject({ value: { accepted: false } });
+    ).toMatchObject({ value: { accepted: true, publication: { replyTo: [] } } });
     expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
       value: { ok: false },
     });
-    expect(service.publications.list(conversationId)).toHaveLength(0);
+    expect(service.publications.list(conversationId)).toHaveLength(1);
     expect(service.todos.listQuestions('work')).toHaveLength(0);
   }
 );
@@ -156,15 +156,15 @@ test('new publishes reject triggerId while legacy publications keep it readable'
   });
 });
 
-test('invalid mixed references refuse the entire publication and question', async () => {
+test('mixed publication references retain only received human inputs', async () => {
   const replyTo = [await received(), crypto.randomUUID()];
   expect(await invoke('neo.publication.publish', { ...publication, replyTo })).toMatchObject({
-    value: { accepted: false },
+    value: { accepted: true, publication: { replyTo: [replyTo[0]] } },
   });
   expect(await invoke('neo.question.ask', { ...question, replyTo })).toMatchObject({
     value: { ok: false },
   });
-  expect(service.publications.list(conversationId)).toHaveLength(0);
+  expect(service.publications.list(conversationId)).toHaveLength(1);
   expect(service.todos.listQuestions('work')).toHaveLength(0);
 });
 
