@@ -51,11 +51,17 @@ try {
         assert(unsupported.records[0].includes(url));
         assert.equal(unsupported.todo.title, 'URL recorded');
         assert.equal(unsupported.todo.check, null);
+        const malformed = await handler({ name: 'neo.todo.add', input: { askId: first.todo.askId, title: 'Malformed', doneWhen: 'Merged', check: { ...check, params: { urls: ['not-a-pr'] } } } });
+        const rejected = JSON.parse(malformed.content[0].text);
+        evidence.push({ phase, malformed: rejected });
+        assert.equal(rejected.ok, false);
+        assert(rejected.reason.includes('pr_merged_invalid_urls:'));
       }
       const records = db.prepare('SELECT operation, reason, accepted FROM operation_refusals ORDER BY id').all() as { reason: string; accepted: number }[];
       evidence.push({ phase, records });
-      assert.equal(records.length, 4);
-      assert(records.every(row => row.accepted === 1));
+      assert.equal(records.length, 5);
+      assert.equal(records.filter(row => row.accepted === 1).length, 4);
+      assert(records.some(row => row.accepted === 0 && row.reason.includes('pr_merged_invalid_urls:')));
     } finally { await app.cleanup(); }
   }
   console.log('PASS: real daemon MCP accepts bookkeeping conditions, returns records, and retains accepted audit records across restart.');

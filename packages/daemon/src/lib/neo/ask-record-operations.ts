@@ -19,7 +19,7 @@ import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] };
+type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[]; records?: string[] };
 
 const Text = z.string().trim().min(1);
 
@@ -44,6 +44,7 @@ const AskResult = z.union([
   z.object({
     ok: z.literal(true),
     ask: NeoAskEntrySchema.shape.ask,
+    records: z.array(z.string()).optional(),
     todos: NeoAskEntrySchema.shape.todos.element
       .omit({ status: true, link: true, remoteLink: true })
       .array(),
@@ -211,6 +212,7 @@ export function createNeoAskRecordOperations(
           .map((todo) => planNeoTodoDraft(todo, packs()))
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
+        const records: string[] = [];
         for (const todo of input.todos) {
           const row = recordedRow(todo);
           const added = !row
@@ -227,12 +229,18 @@ export function createNeoAskRecordOperations(
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
+          if ('records' in added && added.records) records.push(...added.records);
         }
         const parent = store.getAsk(ask.id) ?? ask;
         const children = store.listChildAsks(ask.id);
         if (split && parent.status === 'open' && !store.listTodos(ask.id).length && children.length)
           store.settleAsk(parent, 'done', neoSplitOutcome(children, family().length), Date.now());
-        return { ok: true, ask: store.getAsk(ask.id) ?? ask, todos: family() };
+        return {
+          ok: true,
+          ask: store.getAsk(ask.id) ?? ask,
+          todos: family(),
+          ...(records.length ? { records } : {}),
+        };
       },
       ['outcome', 'input', 'caller'],
       'outcome'

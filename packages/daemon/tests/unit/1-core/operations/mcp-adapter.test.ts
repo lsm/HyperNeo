@@ -6,6 +6,9 @@ import {
   type OperationRefusal,
 } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { runMigration383 } from '../../../../src/storage/schema/m383-operation-refusals.ts';
+import { runMigration459 } from '../../../../src/storage/schema/m459-operation-accepted-records.ts';
 
 function fixture() {
   const execute = mock(async (input: { text: string }) => ({ text: input.text }));
@@ -22,6 +25,25 @@ function fixture() {
 }
 
 describe('generic operation MCP adapter', () => {
+  test('upgrading retains prior audit entries as refusals', () => {
+    const db = new Database(':memory:');
+    try {
+      runMigration383(db);
+      db.prepare('INSERT INTO operation_refusals (operation, reason, at) VALUES (?, ?, ?)').run(
+        'example',
+        'old refusal',
+        1
+      );
+      runMigration459(db);
+      runMigration459(db);
+      expect(db.prepare('SELECT reason, accepted FROM operation_refusals').all()).toEqual([
+        { reason: 'old refusal', accepted: 0 },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('returns accepted bookkeeping records and sends them to the audit as accepted', async () => {
     const record = mock(async (_record: OperationRefusal) => {});
     const definition = defineOperation({

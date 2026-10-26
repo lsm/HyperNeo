@@ -14,8 +14,8 @@
    `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
    daemon. It seeds only this run's ask, URL-less session todo and coding ledger
    claim, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding
-   a duplicate refuses with the existing todo id/title; `addUrls` pins the PR on
-   that original; a competing edit refuses it. The helper marks the stub PR merged
+   a duplicate succeeds and records the existing todo id/title; `addUrls` pins the PR on
+   that original; a competing edit succeeds with a bookkeeping record. The helper marks the stub PR merged
    and waits up to 210 seconds for the coding pack to finish the original without
    a manual close. Evidence: `evidence/todo-pr-claims.json` includes RPC receipts,
    stored merged evidence and the Neo snapshot; `gh.log` shows stub-only lookups.

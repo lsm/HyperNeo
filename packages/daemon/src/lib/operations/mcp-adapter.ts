@@ -17,7 +17,9 @@ function mcpResult(value: unknown, isError = false) {
   };
 }
 
-export type OperationRefusal = { operation: string; reason: string };
+export type OperationRefusal = { operation: string; reason: string; accepted?: true };
+
+const AcceptedRecords = z.object({ ok: z.literal(true), records: z.array(z.string()) });
 
 export function operationRefusal(
   operation: string,
@@ -56,6 +58,12 @@ export function createOperationMcpHandler(
       );
       const refusal = operationRefusal(parsed.data.name, outcome);
       if (refusal) await recordRefusal(refusal);
+      if (!refusal && outcome.kind === 'completed') {
+        const recorded = AcceptedRecords.safeParse(outcome.value);
+        if (recorded.success)
+          for (const reason of recorded.data.records)
+            await recordRefusal({ operation: parsed.data.name, reason, accepted: true });
+      }
       return outcome.kind === 'completed'
         ? mcpResult(
             parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value

@@ -206,6 +206,30 @@ describe('one completion rule for Neo todos', () => {
 });
 
 describe('coding todo PR ownership through add and edit', () => {
+  test('an unknown PR is recorded without certifying completion', async () => {
+    const { db, store, call, runner } = setup();
+    try {
+      const added = await call('neo.todo.add', {
+        askId: 'ask',
+        title: 'PR not yet known',
+        doneWhen: 'Merged',
+        check: { pack: 'coding', kind: 'pr_merged', params: {} },
+      });
+      expect(added).toMatchObject({
+        ok: true,
+        records: [expect.stringContaining('pr_merged_needs_urls:')],
+      });
+      if (!added.ok) throw new Error(added.reason);
+      await runner.checkNow([added.todo.id], () => {});
+      expect(store.getTodo(added.todo.id)?.state).not.toBe('done');
+      expect(
+        await call('neo.todo.close', { todoId: added.todo.id, reason: 'PR remains unidentified' })
+      ).toMatchObject({ ok: true, todo: { state: 'closed_unverified' } });
+    } finally {
+      db.close();
+    }
+  });
+
   const draft = (urls: string[] = []) => ({
     title: 'Original fix',
     doneWhen: 'Merged',

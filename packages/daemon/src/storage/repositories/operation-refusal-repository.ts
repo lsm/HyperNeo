@@ -10,7 +10,7 @@ export const recordOperationRefusal = defineDbOp({
     { refusal, sessionId, at }: { refusal: OperationRefusal; sessionId: string; at: number }
   ): void => {
     db.prepare(
-      'INSERT INTO operation_refusals (operation, reason, session_id, at) VALUES (?, ?, ?, ?)'
-    ).run(refusal.operation, refusal.reason, sessionId, at);
+      'INSERT INTO operation_refusals (operation, reason, session_id, at, accepted) VALUES (?, ?, ?, ?, ?)'
+    ).run(refusal.operation, refusal.reason, sessionId, at, refusal.accepted ? 1 : 0);
   },
 });
