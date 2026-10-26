@@ -20,6 +20,7 @@ import {
   submitNeoDraft,
 } from '../../../web/src/neo/neo-intake.ts';
 import { presentConversationAskPage } from '../../../web/src/neo/conversation-ask-client.ts';
+import { attachmentMessage, readNeoAttachment } from '../../../web/src/neo/neo-attachments.ts';
 import { createVoicePreviewProof } from '../../../web/src/lib/voice/__tests__/voice-preview-proof.ts';
 
 const run = realpathSync(process.argv[2]);
@@ -326,10 +327,39 @@ try {
   quote.replyTo.id = 'different-message';
   await assert.rejects(quotedSend, /Synthetic lost intake receipt/);
   const quotedId = pendingAsks[0].requestId;
+  const encodedIntake = intake.snapshots.encode(pendingAsks);
+  assert.equal(typeof encodedIntake, 'string');
+  const decodedIntake = intake.snapshots.decode(encodedIntake);
+  assert(!('kind' in decodedIntake));
+  assert.equal(decodedIntake.entries[0].quote!.replyTo!.id, requestId);
+  assert.deepEqual(decodedIntake.entries[0].previewContext, reference);
+  const intakeScope = 'synthetic-intake-proof';
+  const snapshotStorage = intake.snapshots.storage(intakeScope, () => captureStorage);
+  const storedIntake = snapshotStorage.save(null, pendingAsks);
+  assert(!('kind' in storedIntake));
+  const loadedIntake = intake.snapshots.storage(intakeScope, () => captureStorage).read();
+  assert(!('kind' in loadedIntake));
+  assert.equal(loadedIntake.revision, storedIntake.revision);
+  assert.deepEqual(loadedIntake.snapshot, decodedIntake);
+  const staleIntake = snapshotStorage.save(null, []);
+  assert('kind' in staleIntake && staleIntake.kind === 'snapshot_conflict');
   pendingAsks[0].quote!.replyTo!.id = 'changed-display-target';
   Object.assign(pendingAsks[0].previewContext!, { snapshot: 'b'.repeat(64) });
   const quotedRetry = await intake.retry(quotedId);
   assert(quotedRetry?.ok && !quotedRetry.created);
+  let recoveryTransportCalls = 0;
+  const restoredIntake = createNeoIntakeClient(async () => {
+    recoveryTransportCalls++;
+    return hub;
+  });
+  assert.deepEqual(restoredIntake.snapshots.restore(JSON.stringify(loadedIntake.snapshot)), {
+    restored: 1,
+  });
+  assert.equal(recoveryTransportCalls, 0);
+  const snapshotReplay = await restoredIntake.retry(quotedId);
+  assert(snapshotReplay?.ok && !snapshotReplay.created);
+  assert.equal(recoveryTransportCalls, 1);
+  assert.deepEqual(snapshotReplay.previewContext, reference);
   const quotedRows = database()
     .getDatabase()
     .prepare('SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?')
@@ -383,6 +413,26 @@ try {
   count();
   await stop();
   await start();
+  const reopenedIntake = createNeoIntakeClient(async () => hub)
+    .snapshots.storage(intakeScope, () => captureStorage)
+    .read();
+  assert(!('kind' in reopenedIntake));
+  const restartedIntake = createNeoIntakeClient(async () => hub);
+  assert.deepEqual(restartedIntake.snapshots.restore(JSON.stringify(reopenedIntake.snapshot)), {
+    restored: 1,
+  });
+  const storedReplay = await restartedIntake.retry(quotedId);
+  assert(storedReplay?.ok && !storedReplay.created);
+  const storedMessages = database()
+    .getDatabase()
+    .prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE sdk_uuid = ?')
+    .get(quotedId) as { n: number };
+  const storedJobs = database()
+    .getDatabase()
+    .prepare("SELECT COUNT(*) AS n FROM job_queue WHERE json_extract(payload,'$.messageUuid') = ?")
+    .get(quotedId) as { n: number };
+  assert.equal(storedMessages.n, 1);
+  assert.equal(storedJobs.n, 1);
   assert.deepEqual(await readContext(), { ...reference, state: 'unavailable' });
   const replay = await submitNeoDraft(
     { sessionId, requestId, text: input.content, previewContext: reference },
@@ -409,6 +459,60 @@ try {
     content: 'An ordinary unbound ask.',
   });
   assert(legacy.ok && !('previewContext' in legacy));
+  const noteFiles = await Promise.all(
+    [0, 1].map((n) =>
+      readNeoAttachment(
+        new File(['x'.repeat(100_000)], `synthetic-notes-${n}.md`, { type: 'text/markdown' })
+      )
+    )
+  );
+  const notes = noteFiles.flatMap((file) => (typeof file === 'string' ? [] : [file]));
+  assert.equal(notes.length, 2);
+  const inlineText = attachmentMessage('Discuss the two attached notes.', notes);
+  assert(inlineText.length > DRAFT_CHAR_LIMIT);
+  let inlinePending: readonly NeoPendingAsk[] = [];
+  const inlineIntake = createNeoIntakeClient(
+    async () => hub,
+    (asks) => {
+      inlinePending = asks;
+    }
+  );
+  const inlineReceipt = await inlineIntake.send({ sessionId, text: inlineText });
+  assert(inlineReceipt.ok && inlineReceipt.created);
+  const inlineReply = await inlineIntake.send({
+    sessionId,
+    text: 'Reply to both attached notes.',
+    quote: {
+      author: 'You',
+      text: inlineText,
+      anchor: 'synthetic-inline-notes',
+      replyTo: { kind: 'message', id: inlineReceipt.requestId },
+    },
+  });
+  assert(inlineReply.ok && inlineReply.created);
+  const inlineSnapshot = inlineIntake.snapshots.decode(
+    inlineIntake.snapshots.encode(inlinePending)
+  );
+  assert(!('kind' in inlineSnapshot));
+  assert.equal(inlineSnapshot.entries.length, 2);
+  assert.equal(inlineSnapshot.entries[0].text, inlineText);
+  assert.equal(inlineSnapshot.entries[1].quote!.text, inlineText);
+  for (const entry of inlineSnapshot.entries) {
+    const replayed = await submitNeoDraft(entry, async () => hub);
+    assert(replayed.ok && !replayed.created);
+    const messages = database()
+      .getDatabase()
+      .prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE sdk_uuid = ?')
+      .get(entry.requestId) as { n: number };
+    const jobs = database()
+      .getDatabase()
+      .prepare(
+        "SELECT COUNT(*) AS n FROM job_queue WHERE json_extract(payload,'$.messageUuid') = ?"
+      )
+      .get(entry.requestId) as { n: number };
+    assert.equal(messages.n, 1);
+    assert.equal(jobs.n, 1);
+  }
   Object.assign(evidence, {
     passed: true,
     exactSnapshot: true,
@@ -440,6 +544,14 @@ try {
     legacyRecoveryDedup: true,
     intakeQuoteSnapshotRetry: true,
     intakeDisplaySnapshotIsolation: true,
+    intakeSnapshotContract: true,
+    intakeSnapshotManualReplay: true,
+    intakeSnapshotInlineTextAttachments: true,
+    intakeSnapshotLongQuote: true,
+    intakeSnapshotStorage: true,
+    intakeSnapshotStorageRestartReplay: true,
+    intakeSnapshotHydration: true,
+    intakeSnapshotHydrationRestartReplay: true,
   });
 } finally {
   try {

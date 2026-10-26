@@ -39,7 +39,7 @@ export function NeoIcon({
       viewBox="0 0 24 24"
       fill={name === 'stop' ? 'currentColor' : 'none'}
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth={name === 'mic' ? 2.2 : 1.6}
       strokeLinecap="round"
       strokeLinejoin="round"
       class={`h-5 w-5 shrink-0 ${className}`}

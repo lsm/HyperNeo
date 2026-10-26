@@ -22,7 +22,11 @@ const pr = { url, number: 7, title: 'Synthetic shared fact', state, headRefOid: 
   statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }], body: 'Closes #3', closingIssuesReferences: [{ number: 3 }] };
 const query = args.find(arg => arg.startsWith('query=')) ?? '';
 let family = '', body: unknown;
-if (args[0] === 'pr' && args[1] === 'view') {
+if (args[0] === 'api' && args[1].startsWith(`repos/${repo}/pulls?`)) {
+  family = 'ledger-discovery';
+  const closed = args[1].includes('state=closed');
+  body = phase === 'partial' ? {} : phase === 'empty' || closed !== merged ? [] : [{ number: 7, title: pr.title, head: { ref: pr.headRefName, sha: head }, updated_at: when, created_at: createdAt, closed_at: pr.closedAt, merged_at: pr.mergedAt, draft: false, base: { repo: { full_name: repo } } }];
+} else if (args[0] === 'pr' && args[1] === 'view') {
   family = args.includes('state,mergeCommit') ? 'deploy-merge' : 'work-detail'; body = pr;
 } else if (args[0] === 'pr' && args[1] === 'list') {
   family = args.includes('--head') ? 'branch-membership' : 'query-window'; body = phase === 'empty' ? [] : [pr];
@@ -32,7 +36,7 @@ if (args[0] === 'pr' && args[1] === 'view') {
     const node = { ...pr, isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null,
       reviews: { nodes: pr.reviews }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] } };
     body = { data: { rateLimit: { cost: 7, remaining: 4900, resetAt: new Date(now + 3600_000).toISOString() },
-      repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: phase === 'partial' }, nodes: merged ? [] : [node] }, done: { nodes: merged ? [node] : [] } } } };
+      repository: { nameWithOwner: repo, p7: node } } };
   } else if (query.includes('issueOrPullRequest')) {
     const issue = args.includes('p=3');
     family = issue ? 'issue-reference' : 'ask-reference';
@@ -46,6 +50,10 @@ if (args[0] === 'pr' && args[1] === 'view') {
   family = 'deploy-ancestry'; body = { status: 'ahead' };
 } else if (args[0] === 'api' && args.some(arg => arg.includes('/rules/branches/'))) {
   family = 'work-rules'; body = [{ type: 'pull_request', parameters: { required_review_thread_resolution: true } }];
+} else if (args[0] === 'api' && args.some(arg => arg.includes('/commits/') && arg.includes('/check-runs'))) {
+  family = 'work-ci'; body = { check_runs: [{ name: 'synthetic-check', status: 'completed', conclusion: 'success', app_id: null }] };
+} else if (args[0] === 'api' && args.some(arg => arg.includes('/commits/') && arg.includes('/status?'))) {
+  family = 'work-ci'; body = { statuses: [] };
 } else {
   process.stderr.write('unsupported synthetic request'); process.exit(2);
 }

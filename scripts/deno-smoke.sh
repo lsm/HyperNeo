@@ -40,7 +40,8 @@ if [ -n "$DENO_SMOKE_BIN" ] && [ ! -x "$DENO_SMOKE_BIN" ]; then
 	exit 1
 fi
 
-WORK_DIR="$(mktemp -d)"
+SMOKE_TMP_ROOT=${TMPDIR:-/tmp}
+WORK_DIR="$(mktemp -d "${SMOKE_TMP_ROOT%/}/deno-smoke.XXXXXX")"
 DB_PATH="$WORK_DIR/deno-smoke.db"
 LOG_FILE="$WORK_DIR/daemon.log"
 mkdir -p "$WORK_DIR/home"
@@ -183,6 +184,59 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" den
 	dump_log
 	exit 1
 fi
+
+if ! SMOKE_DB_PATH="$DB_PATH" deno eval '
+	const { DatabaseSync } = await import("node:sqlite");
+	const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"), { readOnly: true });
+	const row = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = ?").get("table");
+	db.close();
+	const tables = Number(row.n);
+	if (!(tables > 80)) {
+		console.error(`[deno-smoke] FAIL: expected > 80 sqlite tables, found ${tables}`);
+		Deno.exit(1);
+	}
+	console.log(`[deno-smoke] sqlite tables: ${tables} (> 80)`);
+'; then
+	dump_log
+	exit 1
+fi
+
+echo "[deno-smoke] sending SIGTERM"
+kill -TERM "$DAEMON_PID"
+EXITED=0
+for _ in $(seq 1 30); do
+	if ! kill -0 "$DAEMON_PID" 2> /dev/null; then
+		EXITED=1
+		break
+	fi
+	sleep 1
+done
+if [ "$EXITED" != "1" ]; then
+	echo "[deno-smoke] FAIL: daemon still alive 30s after SIGTERM"
+	dump_log
+	exit 1
+fi
+EXIT_STATUS=0
+wait "$DAEMON_PID" || EXIT_STATUS=$?
+if [ "$EXIT_STATUS" != "0" ]; then
+	echo "[deno-smoke] FAIL: daemon exited with status $EXIT_STATUS after SIGTERM"
+	dump_log
+	exit 1
+fi
+if ! grep -q "Received SIGTERM, shutting down gracefully" "$LOG_FILE"; then
+	echo "[deno-smoke] FAIL: no 'Received SIGTERM' shutdown log line"
+	dump_log
+	exit 1
+fi
+if ! grep -q "Graceful shutdown complete" "$LOG_FILE"; then
+	echo "[deno-smoke] FAIL: no 'Graceful shutdown complete' log line"
+	dump_log
+	exit 1
+fi
+DAEMON_PID=""
+
+# Repository fixtures own the migrated DB only after the daemon writer has exited.
+echo "[deno-smoke] daemon stopped; running isolated database fixtures"
 
 if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/storage/sdk-status-reader.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
   const { SDKStatusReader } = await import("file://" + Deno.env.get("SMOKE_READER_PATH"));
@@ -390,61 +444,42 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       if (await gateway.call(codingTodoPrReads, "isWaiting", id) !== (state === "OPEN")) Deno.exit(1);
     }
     console.log("[deno-smoke] cached PR waiting reader preserves missing, open, closed and merged decisions");
+    const { neoTodoWrites } = await import(src + "/storage/repositories/neo-ask-todo-repository.ts");
+    const stateId = "deno-state-first", nextId = "deno-state-next", body = "Complete report 🦊".repeat(1000);
+    db.prepare("INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES(?,?,?,?,1,1)").run("deno-state-ask", "deno-root", "Atomic state", "Complete both");
+    for (const [position, todoId] of [stateId, nextId].entries()) db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,started_at,report,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,1)").run(todoId, "deno-state-ask", position, todoId, "Observed", position ? "todo" : "doing", position ? null : 1, body);
+    db.prepare("INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES(?,?,?,?,?,1)").run("deno-state-question", "deno-state-ask", "Start first?", "start", JSON.stringify([stateId]));
+    const stateRead = () => db.prepare("SELECT state FROM neo_todos WHERE id=?").get(stateId).state;
+    const questionRead = () => db.prepare("SELECT state FROM neo_questions WHERE id=?").get("deno-state-question").state;
+    db.exec("CREATE TRIGGER refuse_state_ask BEFORE UPDATE OF updated_at ON neo_asks BEGIN SELECT RAISE(ABORT, \u0027synthetic state refusal\u0027); END");
+    refused = false;
+    try { await gateway.call(neoTodoWrites, "commitState", stateId, {}, 10, {state:"done",evidence:"Complete"}); }
+    catch (error) { refused = String(error).includes("synthetic state refusal"); }
+    db.exec("DROP TRIGGER refuse_state_ask");
+    if (!refused || stateRead() !== "doing" || questionRead() !== "open") Deno.exit(1);
+    const committed = await gateway.call(neoTodoWrites, "commitState", stateId, {}, 11, {state:"done",evidence:"Complete"});
+    if (committed.todo.state !== "done" || committed.startNext !== nextId || committed.todo.report !== body || questionRead() !== "retired" || db.prepare("SELECT state FROM neo_todos WHERE id=?").get(nextId).state !== "todo") Deno.exit(1);
+    console.log("[deno-smoke] todo state, pruning and ask stamps commit together; next work is returned without dispatch");
+    for (const missingId of ["deno-unknown-state", "deno-deleted-state"]) {
+      if (missingId === "deno-deleted-state") {
+        db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,created_at,updated_at) VALUES(?,?,2,?,?,1,1)").run(missingId, "deno-state-ask", "Deleted step", "Observed");
+        db.prepare("DELETE FROM neo_todos WHERE id=?").run(missingId);
+      }
+      const missing = await gateway.call(neoTodoWrites, "commitState", missingId, {}, 20, {state:"done",evidence:"Late completion"});
+      if (missing.todo !== null || missing.startNext !== null || stateRead() !== "done" || questionRead() !== "retired") Deno.exit(1);
+    }
+    console.log("[deno-smoke] missing and deleted todo state commands return empty results without changing siblings");
   } finally { db.close(); await gateway.close(); }
 '; then
   dump_log
   exit 1
 fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" deno eval '
-	const { DatabaseSync } = await import("node:sqlite");
-	const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"), { readOnly: true });
-	const row = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = ?").get("table");
-	db.close();
-	const tables = Number(row.n);
-	if (!(tables > 80)) {
-		console.error(`[deno-smoke] FAIL: expected > 80 sqlite tables, found ${tables}`);
-		Deno.exit(1);
-	}
-	console.log(`[deno-smoke] sqlite tables: ${tables} (> 80)`);
-'; then
-	dump_log
-	exit 1
-fi
-
-echo "[deno-smoke] sending SIGTERM"
-kill -TERM "$DAEMON_PID"
-EXITED=0
-for _ in $(seq 1 30); do
-	if ! kill -0 "$DAEMON_PID" 2> /dev/null; then
-		EXITED=1
-		break
-	fi
-	sleep 1
-done
-if [ "$EXITED" != "1" ]; then
-	echo "[deno-smoke] FAIL: daemon still alive 30s after SIGTERM"
-	dump_log
-	exit 1
-fi
-EXIT_STATUS=0
-wait "$DAEMON_PID" || EXIT_STATUS=$?
-if [ "$EXIT_STATUS" != "0" ]; then
-	echo "[deno-smoke] FAIL: daemon exited with status $EXIT_STATUS after SIGTERM"
-	dump_log
-	exit 1
-fi
-if ! grep -q "Received SIGTERM, shutting down gracefully" "$LOG_FILE"; then
-	echo "[deno-smoke] FAIL: no 'Received SIGTERM' shutdown log line"
-	dump_log
-	exit 1
-fi
-if ! grep -q "Graceful shutdown complete" "$LOG_FILE"; then
-	echo "[deno-smoke] FAIL: no 'Graceful shutdown complete' log line"
-	dump_log
-	exit 1
-fi
-DAEMON_PID=""
+NEO_SETTINGS_RUN="$WORK_DIR/neo-settings-writer"
+mkdir -p "$NEO_SETTINGS_RUN/home" "$NEO_SETTINGS_RUN/tmp"
+env -i HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$NEO_SETTINGS_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-settings-writer.ts" verify "$NEO_SETTINGS_RUN"
 
 CLEANUP_ENQUEUE_RUN="$WORK_DIR/cleanup-enqueue"
 mkdir -p "$CLEANUP_ENQUEUE_RUN/home"
@@ -481,5 +516,131 @@ mkdir -p "$OWNED_WITHDRAWAL_RUN/home"
 env -i HOME="$OWNED_WITHDRAWAL_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$OWNED_WITHDRAWAL_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-owned-input-withdrawal.ts" "$OWNED_WITHDRAWAL_RUN"
+
+RATE_LIMIT_RETRY_RUN="$WORK_DIR/rate-limit-retry"
+mkdir -p "$RATE_LIMIT_RETRY_RUN/home"
+env -i HOME="$RATE_LIMIT_RETRY_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$RATE_LIMIT_RETRY_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-rate-limit-retry.ts" "$RATE_LIMIT_RETRY_RUN"
+
+PROVIDER_RPC_WRITES_RUN="$WORK_DIR/provider-rpc-writes"
+mkdir -p "$PROVIDER_RPC_WRITES_RUN/home"
+env -i HOME="$PROVIDER_RPC_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROVIDER_RPC_WRITES_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-provider-rpc-writes.ts" "$PROVIDER_RPC_WRITES_RUN"
+
+CREDENTIAL_STORE_WRITES_RUN="$WORK_DIR/credential-store-writes"
+mkdir -p "$CREDENTIAL_STORE_WRITES_RUN/home"
+env -i HOME="$CREDENTIAL_STORE_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$CREDENTIAL_STORE_WRITES_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-credential-store-writes.ts" "$CREDENTIAL_STORE_WRITES_RUN"
+
+SESSION_DELIVERY_ENQUEUE_RUN="$WORK_DIR/session-delivery-enqueue"
+mkdir -p "$SESSION_DELIVERY_ENQUEUE_RUN/home"
+env -i HOME="$SESSION_DELIVERY_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_DELIVERY_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-delivery-enqueue.ts" "$SESSION_DELIVERY_ENQUEUE_RUN"
+
+STALE_RECLAIM_RUN="$WORK_DIR/stale-reclaim-writer"
+mkdir -p "$STALE_RECLAIM_RUN/home" "$STALE_RECLAIM_RUN/tmp"
+env -i HOME="$STALE_RECLAIM_RUN/home" PATH="$PATH" TMPDIR="$STALE_RECLAIM_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$STALE_RECLAIM_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-stale-reclaim-writer.ts" "$STALE_RECLAIM_RUN"
+
+MAILBOX_EXPIRY_RUN="$WORK_DIR/mailbox-expiry-writer"
+mkdir -p "$MAILBOX_EXPIRY_RUN/home" "$MAILBOX_EXPIRY_RUN/tmp"
+env -i HOME="$MAILBOX_EXPIRY_RUN/home" PATH="$PATH" TMPDIR="$MAILBOX_EXPIRY_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$MAILBOX_EXPIRY_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-mailbox-expiry-writer.ts" "$MAILBOX_EXPIRY_RUN"
+
+GITHUB_POLL_SUCCESSOR_RUN="$WORK_DIR/github-poll-successor-writer"
+mkdir -p "$GITHUB_POLL_SUCCESSOR_RUN/home" "$GITHUB_POLL_SUCCESSOR_RUN/tmp"
+env -i HOME="$GITHUB_POLL_SUCCESSOR_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_SUCCESSOR_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_SUCCESSOR_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-github-poll-successor-writer.ts" "$GITHUB_POLL_SUCCESSOR_RUN"
+
+NATIVE_FEED_ENQUEUE_RUN="$WORK_DIR/native-feed-enqueue-writer"
+mkdir -p "$NATIVE_FEED_ENQUEUE_RUN/home" "$NATIVE_FEED_ENQUEUE_RUN/tmp"
+env -i HOME="$NATIVE_FEED_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$NATIVE_FEED_ENQUEUE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$NATIVE_FEED_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-native-feed-enqueue-writer.ts" "$NATIVE_FEED_ENQUEUE_RUN"
+
+SESSION_TITLE_ENQUEUE_RUN="$WORK_DIR/session-title-enqueue-writer"
+mkdir -p "$SESSION_TITLE_ENQUEUE_RUN/home" "$SESSION_TITLE_ENQUEUE_RUN/tmp"
+env -i HOME="$SESSION_TITLE_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SESSION_TITLE_ENQUEUE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_TITLE_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-title-enqueue-writer.ts" "$SESSION_TITLE_ENQUEUE_RUN"
+
+SKILL_VALIDATION_ENQUEUE_RUN="$WORK_DIR/skill-validation-enqueue-writer"
+mkdir -p "$SKILL_VALIDATION_ENQUEUE_RUN/home" "$SKILL_VALIDATION_ENQUEUE_RUN/tmp"
+env -i HOME="$SKILL_VALIDATION_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SKILL_VALIDATION_ENQUEUE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SKILL_VALIDATION_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-skill-validation-enqueue-writer.ts" "$SKILL_VALIDATION_ENQUEUE_RUN"
+
+GITHUB_POLL_REFRESH_RUN="$WORK_DIR/github-poll-refresh-writer"
+mkdir -p "$GITHUB_POLL_REFRESH_RUN/home" "$GITHUB_POLL_REFRESH_RUN/tmp"
+env -i HOME="$GITHUB_POLL_REFRESH_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_REFRESH_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-refresh-writer.ts" "$GITHUB_POLL_REFRESH_RUN"
+
+GITHUB_POLL_REFRESH_RETRY_RUN="$WORK_DIR/github-poll-refresh-retry"
+mkdir -p "$GITHUB_POLL_REFRESH_RETRY_RUN/home" "$GITHUB_POLL_REFRESH_RETRY_RUN/tmp"
+env -i HOME="$GITHUB_POLL_REFRESH_RETRY_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RETRY_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_REFRESH_RETRY_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-refresh-retry.ts" "$GITHUB_POLL_REFRESH_RETRY_RUN"
+
+GITHUB_POLL_STARTUP_DEGRADED_RUN="$WORK_DIR/github-poll-startup-degraded"
+mkdir -p "$GITHUB_POLL_STARTUP_DEGRADED_RUN/home" "$GITHUB_POLL_STARTUP_DEGRADED_RUN/tmp"
+env -i HOME="$GITHUB_POLL_STARTUP_DEGRADED_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_STARTUP_DEGRADED_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_STARTUP_DEGRADED_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-startup-degraded.ts" "$GITHUB_POLL_STARTUP_DEGRADED_RUN"
+
+GITHUB_POLL_CAPABILITY_FAILURE_RUN="$WORK_DIR/github-poll-capability-failure"
+mkdir -p "$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" "$GITHUB_POLL_CAPABILITY_FAILURE_RUN/tmp"
+env -i HOME="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-capability-failure.ts" "$GITHUB_POLL_CAPABILITY_FAILURE_RUN"
+
+TRANSCRIPT_SESSION_READER_RUN="$WORK_DIR/transcript-session-reader"
+mkdir -p "$TRANSCRIPT_SESSION_READER_RUN/home" "$TRANSCRIPT_SESSION_READER_RUN/tmp"
+env -i HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SESSION_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRANSCRIPT_SESSION_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" "$TRANSCRIPT_SESSION_READER_RUN"
+
+SESSION_LIST_READER_RUN="$WORK_DIR/session-list-reader"
+mkdir -p "$SESSION_LIST_READER_RUN/home" "$SESSION_LIST_READER_RUN/tmp"
+env -i HOME="$SESSION_LIST_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_LIST_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-list-reader.ts" "$SESSION_LIST_READER_RUN"
+
+SESSION_LIST_LIVE_READER_RUN="$WORK_DIR/session-list-live-reader"
+mkdir -p "$SESSION_LIST_LIVE_READER_RUN/home" "$SESSION_LIST_LIVE_READER_RUN/tmp"
+env -i HOME="$SESSION_LIST_LIVE_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_LIVE_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_LIST_LIVE_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-list-live-reader.ts" "$SESSION_LIST_LIVE_READER_RUN"
+
+HEALTH_SESSION_COUNT_READER_RUN="$WORK_DIR/health-session-count-reader"
+mkdir -p "$HEALTH_SESSION_COUNT_READER_RUN/home" "$HEALTH_SESSION_COUNT_READER_RUN/tmp"
+env -i HOME="$HEALTH_SESSION_COUNT_READER_RUN/home" PATH="$PATH" TMPDIR="$HEALTH_SESSION_COUNT_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$HEALTH_SESSION_COUNT_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-health-session-count-reader.ts" "$HEALTH_SESSION_COUNT_READER_RUN"
+
+PROJECTED_SESSION_READER_RUN="$WORK_DIR/projected-session-reader"
+mkdir -p "$PROJECTED_SESSION_READER_RUN/home" "$PROJECTED_SESSION_READER_RUN/tmp"
+env -i HOME="$PROJECTED_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SESSION_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROJECTED_SESSION_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-session-reader.ts" "$PROJECTED_SESSION_READER_RUN"
+
+PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN="$WORK_DIR/projected-system-broadcast-failure"
+mkdir -p "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp"
+env -i HOME="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-system-broadcast-failure.ts" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN"
+
+TRANSCRIPT_SHUTDOWN_ORDER_RUN="$WORK_DIR/transcript-shutdown-order"
+mkdir -p "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp"
+env -i HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-shutdown-order.ts" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN"
 
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

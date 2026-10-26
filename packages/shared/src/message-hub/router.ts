@@ -4,7 +4,7 @@ import { isEventMessage } from './protocol.ts';
 
 export interface ClientConnection {
   id: string;
-  send(data: string): void;
+  send(data: string, info?: { bytes: number; type?: string; method?: string }): void;
   isOpen(): boolean;
   canAccept?(): boolean;
   metadata?: Record<string, unknown>;
@@ -75,10 +75,13 @@ export class MessageHubRouter {
     return new Blob([value]).size;
   }
 
-  private serializeForSend(message: HubMessage): string | null {
+  private serializeForSend(
+    message: HubMessage
+  ): { json: string; bytes: number; type: string; method: string } | null {
     const json = this.safeStringify(message);
     const size = this.byteLength(json);
-    if (size <= this.maxMessageSize) return json;
+    if (size <= this.maxMessageSize)
+      return { json, bytes: size, type: message.type, method: message.method };
 
     this.logger.warn(
       `[MessageHubRouter] Refusing oversized outbound message ${message.method} (${size} bytes; limit ${this.maxMessageSize})`
@@ -170,10 +173,10 @@ export class MessageHubRouter {
       return { ok: false, reason: 'unavailable' };
     }
 
-    let json: string | null;
+    let frame: ReturnType<MessageHubRouter['serializeForSend']>;
     try {
-      json = this.serializeForSend(message);
-      if (json === null) return { ok: false, reason: 'message_too_large' };
+      frame = this.serializeForSend(message);
+      if (frame === null) return { ok: false, reason: 'message_too_large' };
     } catch (error) {
       this.logger.error(
         `[MessageHubRouter] Failed to serialize message for client ${clientId}:`,
@@ -183,7 +186,7 @@ export class MessageHubRouter {
     }
 
     try {
-      client.connection.send(json);
+      client.connection.send(frame.json, frame);
       return { ok: true };
     } catch (error) {
       this.logger.error(`[MessageHubRouter] Failed to send to client ${clientId}:`, error);
@@ -200,10 +203,10 @@ export class MessageHubRouter {
     failed: number;
     skipped?: number;
   } {
-    let json: string | null;
+    let frame: ReturnType<MessageHubRouter['serializeForSend']>;
     try {
-      json = this.serializeForSend(message);
-      if (json === null) {
+      frame = this.serializeForSend(message);
+      if (frame === null) {
         return { sent: 0, failed: this.clients.size, skipped: 0 };
       }
     } catch (error) {
@@ -235,7 +238,7 @@ export class MessageHubRouter {
       }
 
       try {
-        client.connection.send(json);
+        client.connection.send(frame.json, frame);
         sentCount++;
       } catch (error) {
         this.logger.error(`Failed to broadcast to client ${client.clientId}:`, error);
@@ -330,10 +333,10 @@ export class MessageHubRouter {
       };
     }
 
-    let json: string | null;
+    let frame: ReturnType<MessageHubRouter['serializeForSend']>;
     try {
-      json = this.serializeForSend(message);
-      if (json === null) {
+      frame = this.serializeForSend(message);
+      if (frame === null) {
         return {
           sent: 0,
           failed: allRecipients.size,
@@ -359,7 +362,7 @@ export class MessageHubRouter {
       const client = this.getClientById(clientId);
       if (client && client.connection.isOpen()) {
         try {
-          client.connection.send(json);
+          client.connection.send(frame.json, frame);
           sent++;
         } catch (error) {
           this.logger.error(`Failed to send channel event to client ${clientId}:`, error);

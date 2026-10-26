@@ -23,6 +23,10 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { clearCacheAndNotifyProvidersChanged } from './auth-handlers.ts';
 import { withProviderLock } from './provider-mutation-lock.ts';
 import { Logger } from '../logger.ts';
+import {
+  providerRpcWrites,
+  providerWriter,
+} from '../../storage/repositories/provider-rpc-writes.ts';
 
 const log = new Logger('provider-handlers');
 
@@ -252,6 +256,7 @@ function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInterna
 
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   const { messageHub, providerRepo, credentialManager, internalEventBus } = deps;
+  const writer = providerWriter(providerRepo);
 
   messageHub.onRequest('providers.list', async () => {
     const records = providerRepo.listProviders();
@@ -333,7 +338,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         if (data.params.providerId === 'acp') {
           validateAcpConfigCommand(data.params.configJson);
         }
-        const record = providerRepo.createProvider(data.params);
+        const record = await writer.call(providerRpcWrites, 'createProvider', data.params);
 
         try {
           if (record.kind !== 'custom_endpoint') {
@@ -364,7 +369,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
           }
         } catch (err) {
-          providerRepo.deleteProvider(record.id);
+          await writer.call(providerRpcWrites, 'deleteProvider', record.id);
           rethrowKeychainError(err, 'create', record.providerId);
         }
 
@@ -422,7 +427,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
           let record: ProviderRecord | null = null;
           try {
-            record = providerRepo.updateProvider(data.id, updates);
+            record = await writer.call(providerRpcWrites, 'updateProvider', data.id, updates);
             if (!record) throw new Error(`Provider ${data.id} not found`);
 
             const shouldResync =
@@ -505,7 +510,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       if (record.kind === 'built_in') {
         markBuiltInProviderDisabled(record.providerId);
       }
-      providerRepo.deleteProvider(data.id);
+      await writer.call(providerRpcWrites, 'deleteProvider', data.id);
       await removeProviderFromRegistry(record.providerId);
       await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { success: true };
@@ -514,7 +519,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
   messageHub.onRequest('providers.setDefault', async (data: { id: string }) => {
     return withProviderLock(async () => {
-      providerRepo.setDefaultProvider(data.id);
+      await writer.call(providerRpcWrites, 'setDefaultProvider', data.id);
       notifyProvidersChanged(internalEventBus);
       return { success: true };
     });
@@ -526,7 +531,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
     const provider = getProviderRegistry().get(record.providerId);
     if (!provider) {
-      providerRepo.updateProvider(data.id, {
+      await writer.call(providerRpcWrites, 'updateProvider', data.id, {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });
@@ -537,7 +542,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     try {
       const available = await provider.isAvailable();
       if (!available) {
-        providerRepo.updateProvider(data.id, {
+        await writer.call(providerRpcWrites, 'updateProvider', data.id, {
           healthStatus: 'unhealthy',
           lastHealthCheckAt: Date.now(),
         });
@@ -548,7 +553,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         await provider.verifyCommandAvailable({ force: true });
       }
       await provider.getModels();
-      providerRepo.updateProvider(data.id, {
+      await writer.call(providerRpcWrites, 'updateProvider', data.id, {
         healthStatus: 'healthy',
         lastHealthCheckAt: Date.now(),
       });
@@ -556,7 +561,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       return { healthy: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      providerRepo.updateProvider(data.id, {
+      await writer.call(providerRpcWrites, 'updateProvider', data.id, {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });

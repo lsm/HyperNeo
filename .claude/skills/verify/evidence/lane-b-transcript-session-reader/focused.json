@@ -1,0 +1,41 @@
+{
+  "base": "7676185cf3e8fe01ee2995f78d7910c123b3e253",
+  "redCommit": "28aaf3abfb7a9f57d8da483ad3dedb6f159a1bde",
+  "productionChangedLines": 13,
+  "productionBudget": 70,
+  "focusedTests": 73,
+  "fullRepositoryCheck": "passed",
+  "baseline": {
+    "focusedFailures": 4,
+    "mainSqlAttempts": 1,
+    "coldRpcError": "Session not found"
+  },
+  "changedCallGraph": [
+    "message.sdkMessages delegates existence to its existing asynchronous page door",
+    "SDKPageParams carries one serializable requireSession flag",
+    "readSDKMessagePage checks the persisted session using SDKMessageRepository.sessionExists",
+    "sessionExists reuses SessionRepository.getSession on the same repository connection; no new SQL site",
+    "existing sdk-status worker transaction encloses existence, page and background metadata reads",
+    "memory path runs the same gate synchronously; no actor, callback or runtime crosses the boundary"
+  ],
+  "unchanged": [
+    "storage/index.ts",
+    "sdk-status-worker.ts",
+    "all transcript pagination SQL and projections",
+    "full RPC response contract",
+    "non-page handler actor behavior"
+  ],
+  "verification": [
+    "real cold and concurrent warm WebSocket RPCs on Bun and Deno",
+    "missing ordinary session rejection and explicit database conversation bypass",
+    "injected native worker failure, health and later request recovery",
+    "cold actor cache remains empty; stored body hash unchanged",
+    "zero main SQL attempts for sessions/sdk_messages/sdk_message_bodies",
+    "source proof data deleted after evidence saved"
+  ],
+  "unverified": [
+    "UI and served build",
+    "production workload",
+    "pagination query improvements and session list migration"
+  ]
+}

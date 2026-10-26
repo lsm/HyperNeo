@@ -6,6 +6,9 @@ import {
   type OperationRefusal,
 } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { runMigration383 } from '../../../../src/storage/schema/m383-operation-refusals.ts';
+import { runMigration459 } from '../../../../src/storage/schema/m459-operation-accepted-records.ts';
 
 function fixture() {
   const execute = mock(async (input: { text: string }) => ({ text: input.text }));
@@ -22,6 +25,90 @@ function fixture() {
 }
 
 describe('generic operation MCP adapter', () => {
+  test.each(['sync', 'async'])(
+    'a %s audit failure preserves a completed mutation and later audit attempts',
+    async (failure) => {
+      const value = {
+        ok: true as const,
+        todoId: 'created-once',
+        records: ['first note', 'second note'],
+      };
+      const execute = mock(async () => value);
+      const definition = defineOperation({
+        name: 'example',
+        description: 'Recorded mutation',
+        inputSchema: z.object({}),
+        resultSchema: z.object({
+          ok: z.literal(true),
+          todoId: z.string(),
+          records: z.array(z.string()),
+        }),
+        execute,
+      });
+      const attempts: string[] = [];
+      const handler = createOperationMcpHandler(
+        createOperationRegistry([definition]),
+        () => ({ sessionId: 'trusted-sender' }),
+        (record) => {
+          attempts.push(record.reason);
+          if (record.reason === 'first note') {
+            if (failure === 'sync') throw new Error('Audit unavailable');
+            return Promise.reject(new Error('Audit unavailable'));
+          }
+        }
+      );
+      const result = await handler({ name: 'example', input: {} });
+      expect(result.isError).not.toBe(true);
+      expect(JSON.parse(result.content[0].text)).toEqual(value);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(attempts).toEqual(value.records);
+    }
+  );
+
+  test('upgrading retains prior audit entries as refusals', () => {
+    const db = new Database(':memory:');
+    try {
+      runMigration383(db);
+      db.prepare('INSERT INTO operation_refusals (operation, reason, at) VALUES (?, ?, ?)').run(
+        'example',
+        'old refusal',
+        1
+      );
+      runMigration459(db);
+      runMigration459(db);
+      expect(db.prepare('SELECT reason, accepted FROM operation_refusals').all()).toEqual([
+        { reason: 'old refusal', accepted: 0 },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('returns accepted bookkeeping records and sends them to the audit as accepted', async () => {
+    const record = mock(async (_record: OperationRefusal) => {});
+    const definition = defineOperation({
+      name: 'example',
+      description: 'Recorded success',
+      inputSchema: z.object({}),
+      resultSchema: z.object({ ok: z.literal(true), records: z.array(z.string()) }),
+      execute: async () => ({ ok: true as const, records: ['pr_already_tracked: existing todo'] }),
+    });
+    const handler = createOperationMcpHandler(
+      createOperationRegistry([definition]),
+      () => ({ sessionId: 'trusted-sender' }),
+      record
+    );
+    const result = await handler({ name: 'example', input: {} });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      ok: true,
+      records: ['pr_already_tracked: existing todo'],
+    });
+    expect(record.mock.calls).toEqual([
+      [{ operation: 'example', reason: 'pr_already_tracked: existing todo', accepted: true }],
+    ]);
+  });
+
   test('formats the shared result and ignores caller metadata in arguments', async () => {
     const { handler, caller, execute } = fixture();
     expect(

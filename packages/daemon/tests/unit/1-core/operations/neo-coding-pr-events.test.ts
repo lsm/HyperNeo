@@ -74,6 +74,131 @@ function setup(activatedAt = 0) {
 }
 
 describe('PR ledger events', () => {
+  test('approval pending CI advances to green and tells a live desktop owner exactly once', async () => {
+    const { db, told, cycle } = setup();
+    try {
+      for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'bot' }))
+        db.prepare(`INSERT INTO neo_pack_preferences VALUES (?, ?, ?, ?, ?, 'human', 1)`).run(
+          'coding',
+          'repo',
+          'lsm/a',
+          key,
+          JSON.stringify(value)
+        );
+      const approved = {
+        reviews: {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'head1abc' }, author: { login: 'bot' } }],
+        },
+      };
+      await cycle(response([node(1, approved, 'PENDING')]), 100);
+      const desktop = { adapter: 'codex-desktop', id: 'synthetic-desktop-owner' };
+      db.prepare('UPDATE pack_coding_pr_ledger SET owner = ? WHERE number = 1').run(
+        JSON.stringify(desktop)
+      );
+      expect(db.prepare('SELECT state, told_at FROM pack_coding_pr_ledger').get()).toMatchObject({
+        state: 'approved_pending',
+        told_at: null,
+      });
+      expect(told).toEqual([]);
+      await cycle(response([node(1, approved, 'SUCCESS')]), 200);
+      await cycle(response([node(1, approved, 'SUCCESS')]), 300);
+      expect(told).toEqual([
+        expect.objectContaining({
+          ref: desktop,
+          key: 'neo-pr-event:lsm/a#1:head1abc:approved_green',
+        }),
+      ]);
+      expect(db.prepare('SELECT state, told_at FROM pack_coding_pr_ledger').get()).toMatchObject({
+        state: 'approved_green',
+        told_at: expect.any(Number),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('attributed quota deferral resumes pending-owner delivery at reset', async () => {
+    const { db, ledger, events, deps, told, cycle, own } = setup();
+    try {
+      for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'bot' }))
+        db.prepare(`INSERT INTO neo_pack_preferences VALUES (?, ?, ?, ?, ?, 'human', 1)`).run(
+          'coding',
+          'repo',
+          'lsm/a',
+          key,
+          JSON.stringify(value)
+        );
+      const approved = {
+        reviews: {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'head1abc' }, author: { login: 'bot' } }],
+        },
+      };
+      await cycle(response([node(1, approved, 'PENDING')]), 100);
+      own(1);
+      const reads: string[] = [];
+      let limited = true;
+      let cycleAt = 200;
+      const quota = {
+        status: 429,
+        resource: 'graphql' as const,
+        remaining: 0,
+        resetAt: 1000,
+        requestId: 'synthetic',
+        retryAfterMs: null,
+        credentialBucket: 'synthetic:1',
+        retryAt: 1000,
+      };
+      const read = async (
+        repo: string,
+        previous?: import('../../../../src/lib/neo/packs/coding/ledger-quota.ts').LedgerQuota
+      ) => {
+        if (previous?.retryAt && cycleAt < previous.retryAt)
+          return {
+            error: 'GitHub acquisition cooldown',
+            retryAt: 1000,
+            quota: { ...previous, deferred: true },
+          };
+        reads.push(repo);
+        return limited
+          ? { error: 'HTTP 429', retryAt: 1000, quota }
+          : {
+              data: {
+                ...response(repo === 'lsm/a' ? [node(1, approved)] : []).data,
+                repository: {
+                  ...response(repo === 'lsm/a' ? [node(1, approved)] : []).data.repository,
+                  nameWithOwner: repo,
+                },
+              },
+            };
+      };
+      const sweep = async (now: number) => {
+        cycleAt = now;
+        await deliverCodingPrEvents(
+          events,
+          await reconcileCodingPrLedger(ledger, ['synthetic/empty', 'lsm/a'], read, now),
+          deps
+        );
+      };
+      await sweep(200);
+      await sweep(999);
+      expect(reads).toEqual(['synthetic/empty', 'lsm/a']);
+      expect(ledger.stateOf('https://github.com/lsm/a/pull/1')).toBe('approved_pending');
+      expect(told).toEqual([]);
+      limited = false;
+      await sweep(1000);
+      await sweep(1001);
+      expect(told).toEqual([
+        expect.objectContaining({ key: 'neo-pr-event:lsm/a#1:head1abc:approved_green' }),
+      ]);
+      expect(db.prepare('SELECT state,told_at FROM pack_coding_pr_ledger').get()).toMatchObject({
+        state: 'approved_green',
+        told_at: expect.any(Number),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('CI recovery and a merge reach the owner once and never Neo', async () => {
     const { db, told, woken, cycle, own } = setup();
     await cycle(response([node(1)]), 100);

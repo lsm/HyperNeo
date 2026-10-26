@@ -1,5 +1,5 @@
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
-import { releaseWorkerSandbox } from './worker-sandbox.ts';
+import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
@@ -377,6 +377,10 @@ export function readHyperneoTurnEnds(
   if (since === undefined) return [];
   const rows = db
     .prepare(`SELECT CAST(m.rowid AS TEXT) AS id, m.timestamp,
+    (SELECT p.timestamp FROM sdk_messages p WHERE p.session_id=m.session_id
+      AND p.parent_tool_use_id IS NULL AND p.rowid<m.rowid
+      AND p.message_type IN ('user','result') AND COALESCE(p.internal_compaction_turn,0)=0
+      AND COALESCE(p.tool_result_only,0)=0 ORDER BY p.rowid DESC LIMIT 1) AS started_at,
     COALESCE(NULLIF(json_extract(${sdkMessageBodyAt('m.rowid')}, '$.result'), ''),
       (SELECT group_concat(json_extract(block.value, '$.text'), char(10)) FROM json_each((
         SELECT CASE json_type(${sdkMessageBodyAt('a.rowid')}, '$.message.content')
@@ -396,11 +400,13 @@ export function readHyperneoTurnEnds(
     .all(sessionId, new Date(since).toISOString()) as {
     id: string;
     timestamp: string;
+    started_at: string | null;
     message: string;
   }[];
   return rows.flatMap((row) => {
     const at = workEntryTime(row.timestamp);
-    return at === undefined ? [] : [{ id: row.id, at, message: row.message }];
+    const startedAt = workEntryTime(row.started_at);
+    return at === undefined ? [] : [{ id: row.id, at, startedAt, message: row.message }];
   });
 }
 
@@ -596,7 +602,8 @@ export async function createHyperneoSession(
   if (prepared && !prepared.ok) return { reason: prepared };
   let sessionId: string | undefined;
   try {
-    if (prepared) await installClaudeNativeWrites(prepared.value.directory, [folder]);
+    if (prepared && workerSandboxOn())
+      await installClaudeNativeWrites(prepared.value.directory, [folder]);
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,

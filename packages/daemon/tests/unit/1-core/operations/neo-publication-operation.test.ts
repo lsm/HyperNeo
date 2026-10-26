@@ -89,7 +89,7 @@ describe('Neo publication without runtime input attribution', () => {
     expect(publish(draft, { ...caller, source: 'rpc' })).toMatchObject({ accepted: false });
   });
 
-  test('preserves registered artifact references and refuses invented references', () => {
+  test('delivers text with registered artifacts and omits invented references', () => {
     expect(publish({ ...draft, artifacts: [report] }, caller)).toMatchObject({
       accepted: true,
       publication: { artifacts: [report] },
@@ -99,22 +99,38 @@ describe('Neo publication without runtime input attribution', () => {
         { ...draft, requestId: 'bad', artifacts: [{ ...report, artifactId: 'missing' }] },
         caller
       )
-    ).toMatchObject({ accepted: false, reason: 'invalid_artifact_reference' });
+    ).toMatchObject({ accepted: true, publication: { artifacts: [], fullText: draft.fullText } });
   });
 
-  test('validates project references and keeps unrelated topics separate', () => {
+  test('omits missing project references without blocking bundled topics', () => {
     expect(
       publish({ ...draft, links: [{ kind: 'project', id: 'missing', label: 'Missing' }] }, caller)
-    ).toMatchObject({ accepted: false, reason: 'invalid_scene_reference' });
+    ).toMatchObject({ accepted: true, publication: { links: [] } });
     expect(
-      publish({ ...draft, links: [{ kind: 'project', id: 'garden', label: 'Garden' }] }, caller)
+      publish(
+        {
+          ...draft,
+          requestId: 'garden',
+          links: [{ kind: 'project', id: 'garden', label: 'Garden' }],
+        },
+        caller
+      )
     ).toMatchObject({ accepted: true });
     expect(
       publish(
         { ...draft, requestId: 'topics', fullText: '# Garden\nDone.\n# Travel\nWaiting.' },
         caller
       )
-    ).toMatchObject({ accepted: false, reason: 'multiple_topics' });
+    ).toMatchObject({
+      accepted: true,
+      publication: { fullText: '# Garden\nDone.\n# Travel\nWaiting.' },
+    });
+  });
+
+  test('omits unknown reply ids without attributing a human answer', () => {
+    const receipt = publish({ ...draft, replyTo: [conversationId] }, caller);
+    expect(receipt).toMatchObject({ accepted: true, publication: { replyTo: [] } });
+    expect(ledger.list(conversationId)![0].producerInput).toBeUndefined();
   });
 
   test.each(['askOrigin', 'producerInput', 'conversationId', 'publicationId'])(

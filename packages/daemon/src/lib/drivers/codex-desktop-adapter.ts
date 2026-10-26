@@ -3,6 +3,7 @@ import {
   prepareWorkerSandbox,
   releaseWorkerSandbox,
   resumeWorkerSandbox,
+  workerSandboxOn,
 } from './worker-sandbox.ts';
 import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
@@ -22,7 +23,7 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import type { CodexAppServer } from './codex-app-server.ts';
+import { CodexRequestError, type CodexAppServer } from './codex-app-server.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
@@ -544,10 +545,14 @@ export async function readCodexTurn(
     const openedPrs = readOpenedPrs
       ? readOpenedPrs(detail.thread.rolloutPath, lines)
       : codexOpenedPrs(lines);
+    let startedAt: number | undefined;
     const turnEnds = lines.flatMap((line, index) => {
       const entry = parseLine(line),
         payload = entry?.payload ?? {},
         at = workEntryTime(entry?.timestamp);
+      if (entry?.type === 'event_msg' && payload.type === 'task_started') startedAt = at;
+      const turnStartedAt = startedAt;
+      if (entry?.type === 'event_msg' && payload.type === 'task_complete') startedAt = undefined;
       return entry?.type === 'event_msg' &&
         payload.type === 'task_complete' &&
         at !== undefined &&
@@ -559,6 +564,7 @@ export async function readCodexTurn(
                   ? payload.turn_id
                   : String(at),
               at,
+              startedAt: turnStartedAt,
               ...(codexHeartbeatQuiet(payload.last_agent_message) &&
               !completedTurnOutcome(payload, lines, index).outcome
                 ? { notify: false as const }
@@ -632,14 +638,17 @@ export function codexQueueDelivery(
   lines: readonly string[],
   message: string,
   threadId: string,
-  before: ReadonlySet<string>
+  before: ReadonlySet<string>,
+  inputId: string
 ): WorkDelivery {
-  const opening = message.trim().split('\n')[0].slice(0, 200);
   const fresh = lines
     .map((line) => codexUserInput(parseLine(line)))
-    .findLast((input) => !!input && !before.has(input.id) && input.text.includes(opening));
+    .findLast(
+      (input) =>
+        !!input && input.id === inputId && !before.has(input.id) && input.text === message.trim()
+    );
   return {
-    delivered: rolloutHasUserMessage(lines, message),
+    delivered: !!fresh,
     ...(fresh ? { receipt: { executionId: threadId, inputId: fresh.id } } : {}),
   };
 }
@@ -750,15 +759,6 @@ export function withCodexInputEvidence(
     : outcome;
 }
 
-export function rolloutHasUserMessage(lines: readonly string[], message: string): boolean {
-  const opening = message.trim().split('\n')[0].slice(0, 200);
-  return lines.some((line) => {
-    const entry = parseLine(line);
-    if (entry?.type !== 'response_item') return false;
-    return messageText(entry.payload ?? {}, 'user')?.includes(opening) ?? false;
-  });
-}
-
 async function queueCodexCliMessage(
   detail: CodexThreadDetail,
   message: string,
@@ -766,9 +766,6 @@ async function queueCodexCliMessage(
 ): Promise<Result<WorkDelivery>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const before = codexUserInputIds(
-      await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
-    );
     const proc = deps.spawn(
       ['codex', 'queue', `--thread=${detail.thread.id}`, `--message=${message}`],
       { stdout: 'pipe', stderr: 'pipe' }
@@ -782,11 +779,10 @@ async function queueCodexCliMessage(
     if (code !== 0) {
       return reject('not_delivered', stderr.trim() || `codex queue exited with ${code}.`);
     }
-    const tail = await readRolloutTail(detail.thread.rolloutPath).catch(() => []);
     return {
       ok: true,
       value: {
-        ...codexQueueDelivery(tail, message, detail.thread.id, before),
+        delivered: false,
         ...(stdout.trim() ? { queuedSubmissionId: stdout.trim() } : {}),
       },
     };
@@ -813,20 +809,50 @@ export async function queueCodexMessage(
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
+  const sandbox = await resumeWorkerSandbox(detail.thread.folder);
   sendLog.warn('work.send route', {
     threadId: detail.thread.id,
     path: 'queue',
-    reason: 'explicit_queue_or_steering_unavailable',
+    reason: 'native_queue',
   });
   const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
+    let step = 'thread/loaded/list';
+    try {
+      let cursor: string | null = null;
+      let loaded = false;
+      do {
+        const page = z
+          .object({ data: z.array(z.string()), nextCursor: z.string().nullish() })
+          .parse(await server.call(step, { cursor }));
+        loaded = page.data.includes(detail.thread.id);
+        cursor = page.nextCursor ?? null;
+      } while (!loaded && cursor);
+      if (!loaded) {
+        step = 'thread/resume';
+        await server.call(step, {
+          threadId: detail.thread.id,
+          ...(sandbox ? { sandboxPolicy: sandbox.sandboxPolicy } : {}),
+        });
+      }
+      if (sandbox) {
+        step = 'thread/settings/update';
+        await server.call(step, {
+          threadId: detail.thread.id,
+          sandboxPolicy: sandbox.sandboxPolicy,
+        });
+      }
+    } catch (error) {
+      return reject('not_delivered', `${step}: ${String(error)}`, true);
+    }
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
     );
+    const clientUserMessageId = deps.newId();
     let added: unknown;
     try {
       added = await server.call('thread/queue/add', {
         threadId: detail.thread.id,
-        clientUserMessageId: deps.newId(),
+        clientUserMessageId,
         input: [{ type: 'text', text: message }],
       });
     } catch (error) {
@@ -836,18 +862,32 @@ export async function queueCodexMessage(
         )
       )
         return queueCodexCliMessage(detail, message, deps);
-      throw error;
+      if (
+        error instanceof CodexRequestError &&
+        z
+          .object({
+            code: z.literal(-32600),
+            message: z.string().includes(`thread ${detail.thread.id} already has an active writer`),
+          })
+          .safeParse(error.rejection).success
+      )
+        return reject('not_delivered', error.message, true);
+      return reject('not_delivered', `thread/queue/add: ${String(error)}`);
     }
-    const { queuedSubmission } = z
+    const parsed = z
       .object({
         queuedSubmission: z.object({ id: z.string().min(1) }),
       })
-      .parse(added);
+      .safeParse(added);
+    if (!parsed.success)
+      return reject('not_delivered', `thread/queue/add: ${parsed.error.message}`);
+    const { queuedSubmission } = parsed.data;
     const delivery = codexQueueDelivery(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => []),
       message,
       detail.thread.id,
-      before
+      before,
+      clientUserMessageId
     );
     return {
       ok: true,
@@ -859,7 +899,7 @@ export async function queueCodexMessage(
     };
   });
   sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: queued });
-  return !queued.ok && queued.reason === 'unreachable'
+  return !sandbox && !queued.ok && queued.reason === 'unreachable'
     ? queueCodexCliMessage(detail, message, deps)
     : queued;
 }
@@ -895,7 +935,7 @@ async function tryDesktopCodexSend(
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps,
-  mode: 'auto' | 'steer'
+  mode: 'steer'
 ): Promise<CodexSendGate<'app-server'>> {
   await resumeWorkerSandbox(detail.thread.folder);
   return steerCodexDesktopTurn(
@@ -914,37 +954,24 @@ async function tryServerCodexSend(
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps,
-  mode: 'auto' | 'steer'
+  mode: 'steer'
 ): Promise<CodexSendGate<never>> {
   sendLog.warn('work.send route', { threadId: detail.thread.id, path: route, mode });
+  let attempted = false;
   const result = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     const turn = admitCodexSteerTurn(
       await server.call('thread/turns/list', { threadId: detail.thread.id, limit: 1 })
     );
-    if ('value' in turn) {
-      try {
-        return await callCodexSteer(server, detail.thread.id, turn.value, message);
-      } catch (error) {
-        if (mode === 'steer' || !/NoActiveTurn|no active turn/.test(String(error))) throw error;
-      }
-    } else if (mode === 'steer') return turn.reason;
-    try {
-      await server.call('thread/resume', { threadId: detail.thread.id, excludeTurns: true });
-    } catch (error) {
-      if (String(error).includes(`thread ${detail.thread.id} already has an active writer`))
-        return queueCodexMessage(detail, message, deps);
-      throw error;
-    }
-    const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(
-      await server.call('turn/start', {
-        threadId: detail.thread.id,
-        input: [{ type: 'text', text: message, text_elements: [] }],
-      })
-    );
-    return { ok: true, value: { delivered: true, startedTurnId: started.turn.id } };
+    if ('reason' in turn) return turn.reason;
+    attempted = true;
+    return callCodexSteer(server, detail.thread.id, turn.value, message);
   });
   sendLog.warn('work.send app-server result', { threadId: detail.thread.id, mode, result });
-  return { reason: !result.ok ? reject('not_delivered', result.detail) : result };
+  return {
+    reason: !result.ok
+      ? reject('not_delivered', result.detail, attempted ? undefined : true)
+      : result,
+  };
 }
 
 export function codexWithdrawal(queuedSubmissionId: string, withdrawn: boolean): WorkWithdrawal {
@@ -1001,7 +1028,7 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   ref: WorkRef,
   message: string,
   deps: CodexDesktopAdapterDeps,
-  mode: 'auto' | 'steer'
+  mode: 'steer'
 ) => Promise<Result<WorkDelivery>>;
 
 const runCodexRename = (superpipe({})('codex-rename-work') as PipelineAPI)
@@ -1151,7 +1178,8 @@ export async function startCodexThread(
         if (!prepared.ok) return prepared;
         workFolder = prepared.value;
       }
-      const sandbox = request.preparation ? codexWorkerSandbox(workFolder.cwd) : null;
+      const sandbox =
+        request.preparation && workerSandboxOn() ? codexWorkerSandbox(workFolder.cwd) : null;
       if (sandbox) await prepareWorkerSandbox(workFolder.cwd);
       const projectFolder = request.inPlace
         ? folder
@@ -1303,11 +1331,10 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     start: (request) => runCodexStart(request, deps),
     rename: (ref, title) => runCodexRename(ref, title, deps),
     send: (ref, message, context) =>
-      runCodexSend(
+      runCodexQueue(
         ref,
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'auto'
+        deps
       ),
     steer: (ref, message, context) =>
       runCodexSend(

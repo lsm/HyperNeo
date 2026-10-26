@@ -30,3 +30,6 @@ End state, in `$RUN/evidence/sdk-permission-settings.json` and `permission-*.png
 What the SDK receives for each value is pinned by the `QueryOptionsBuilder` permission-mode
 table in `packages/daemon/tests/unit/1-core/agent/query-options-builder.test.ts`; this
 journey does not start a model turn.
+
+For actual native SDK spawn mode, inherited user auto settings and a prepared
+worker's bypass restriction, also run the `sdk-permission-spawn.md` journey.

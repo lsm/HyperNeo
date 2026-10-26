@@ -1,5 +1,5 @@
+import './neo-composer.css';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { ComponentChildren } from 'preact';
 import { Button } from '../components/ui/Button.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
@@ -41,7 +41,6 @@ export function NeoComposer({
   preference,
   onPreferenceSaved,
   quote,
-  activity,
   onCancelQuote,
   forSession,
   onStop,
@@ -60,7 +59,6 @@ export function NeoComposer({
   onStop?: () => void;
   preference?: NeoPreference;
   quote?: NeoQuote;
-  activity?: ComponentChildren;
   onCancelQuote?: () => void;
   onPreferenceSaved?: () => void;
   store: SessionStore;
@@ -73,6 +71,7 @@ export function NeoComposer({
 }) {
   const idSuffix = forSession ? '-session' : '';
   const [sending, setSending] = useState(false);
+  const [focused, setFocused] = useState(false);
   const coarsePointer = useCoarsePointer();
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const [interim, setInterim] = useState('');
@@ -85,6 +84,8 @@ export function NeoComposer({
   const currentPreview = useRef(boundPreview);
   currentPreview.current = boundPreview;
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
+  const attention = !!store.error.value || store.agentState.value.status === 'waiting_for_input';
+  const collapsed = !focused && !draft && !needsDraft && !attention;
   const draftContext = t(
     boundPreview
       ? 'composer.previewContext'
@@ -114,9 +115,12 @@ export function NeoComposer({
       const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 26;
       el.style.height = 'auto';
       const full = el.scrollHeight;
-      const height = Math.min(Math.max(full, line * 2), line * 8);
+      const height = Math.min(
+        Math.max(full, line * (collapsed ? 1 : 2)),
+        line * (collapsed ? 1 : 8)
+      );
       el.style.height = `${height}px`;
-      el.style.overflowY = full > line * 8 ? 'auto' : 'hidden';
+      el.style.overflowY = !collapsed && full > line * 8 ? 'auto' : 'hidden';
       idleHeight.current = height;
       if (wasVoiceBusy.current && !coarsePointer) {
         el.focus();
@@ -124,7 +128,7 @@ export function NeoComposer({
       }
     }
     wasVoiceBusy.current = voiceBusy;
-  }, [voiceBusy, coarsePointer, draft]);
+  }, [voiceBusy, coarsePointer, draft, collapsed]);
   const finishVoice = useRef<((intent: 'draft' | 'send') => void) | null>(null);
   const registerFinishVoice = useCallback((finish: ((intent: 'draft' | 'send') => void) | null) => {
     finishVoice.current = finish;
@@ -246,9 +250,15 @@ export function NeoComposer({
         event.preventDefault();
         void send();
       }}
-      class="pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60"
+      onPointerDown={(event) => {
+        if (collapsed && (event.target as Element).closest('button')) event.preventDefault();
+      }}
+      onFocusIn={() => setFocused(true)}
+      onFocusOut={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+      }}
+      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
-      {activity}
       {boundPreview && (
         <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
           <span role="status" class="min-w-0 flex-1 break-words">
@@ -340,7 +350,7 @@ export function NeoComposer({
           newLine
           hint={listening ? t('composer.listening') : undefined}
           heightPx={idleHeight.current || undefined}
-          class="text-base leading-relaxed text-fg-muted"
+          class="neo-composer-draft text-base leading-relaxed text-fg-muted"
         />
       ) : (
         <textarea
@@ -374,35 +384,47 @@ export function NeoComposer({
               void send();
             }
           }}
-          rows={2}
+          onFocus={() => setFocused(true)}
+          rows={collapsed ? 1 : 2}
           maxLength={16000}
-          placeholder={t(coarsePointer ? 'composer.placeholderTouch' : 'composer.placeholderKeys')}
+          placeholder={t(
+            collapsed
+              ? forSession
+                ? 'session.message'
+                : 'composer.message'
+              : coarsePointer
+                ? 'composer.placeholderTouch'
+                : 'composer.placeholderKeys'
+          )}
           class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
         />
       )}
-      <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <div class={`min-w-0 items-center gap-1 ${voiceBusy ? 'hidden' : 'flex'}`}>
+      <div class="neo-composer-toolbar mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div class="neo-composer-tools min-w-0 items-center gap-1 flex">
           <button
             type="button"
             aria-label={t('composer.attach')}
             title={t('composer.attachTitle')}
+            disabled={voiceBusy}
             onClick={() => fileInput.current?.click()}
             class="rounded-full p-2 text-fg-muted hover:bg-fill-soft hover:text-accent"
           >
             <NeoIcon name="plus" />
           </button>
-          <NeoPreferences
-            sessionId={sessionId}
-            store={store}
-            onError={onError}
-            preference={preference}
-            onSaved={onPreferenceSaved}
-            forSession={forSession}
-          />
+          <div class="neo-composer-preferences">
+            <NeoPreferences
+              sessionId={sessionId}
+              store={store}
+              onError={onError}
+              preference={preference}
+              onSaved={onPreferenceSaved}
+              forSession={forSession}
+            />
+          </div>
         </div>
         <span
           role="status"
-          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
+          class={`neo-composer-status min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
             voiceBusy
               ? voiceStatus
                 ? 'order-last flex w-full'
@@ -420,7 +442,7 @@ export function NeoComposer({
                 ? t('composer.question')
                 : null}
         </span>
-        <div class={`flex gap-2 ${voiceBusy ? 'min-w-0 flex-1' : 'ml-auto shrink-0'}`}>
+        <div class="neo-composer-actions flex min-w-0 items-center gap-4 ml-auto">
           <NeoVoice
             door={forSession ? 'session' : undefined}
             previewContext={boundPreview}
@@ -450,26 +472,29 @@ export function NeoComposer({
               <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
             </button>
           )}
-          <Button
-            type="submit"
-            size="sm"
-            aria-label={t(
-              recordingVoice && needsDraft
-                ? 'composer.stopDraft'
-                : recordingVoice
-                  ? 'composer.stopSend'
-                  : 'composer.send'
-            )}
-            title={
-              recordingVoice && needsDraft
-                ? t('composer.stopDraftTitle', { context: draftContext })
-                : recordingVoice
-                  ? t('composer.stopSendTitle')
-                  : undefined
-            }
-          >
-            <NeoIcon name="up" />
-          </Button>
+          {(!collapsed || voiceBusy) && (
+            <Button
+              type="submit"
+              size="sm"
+              class="h-11 min-w-11 shrink-0"
+              aria-label={t(
+                recordingVoice && needsDraft
+                  ? 'composer.stopDraft'
+                  : recordingVoice
+                    ? 'composer.stopSend'
+                    : 'composer.send'
+              )}
+              title={
+                recordingVoice && needsDraft
+                  ? t('composer.stopDraftTitle', { context: draftContext })
+                  : recordingVoice
+                    ? t('composer.stopSendTitle')
+                    : undefined
+              }
+            >
+              <NeoIcon name="up" />
+            </Button>
+          )}
         </div>
       </div>
     </form>

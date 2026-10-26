@@ -1,0 +1,5 @@
+{
+  "ciRunnerPasses": 12,
+  "ciRunnerFailures": 1,
+  "failure": "expected admission failure warning once, got zero"
+}

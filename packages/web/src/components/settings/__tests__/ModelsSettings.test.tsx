@@ -1,5 +1,9 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
+import { MessageHub } from '@hyperneo/shared/message-hub/message-hub';
+import { createResponseMessage, MessageType } from '@hyperneo/shared/message-hub/protocol';
+import type { HubMessage, IMessageTransport } from '@hyperneo/shared/message-hub/types';
 import { signal } from '@preact/signals';
-import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
+import { render, cleanup, screen, waitFor, fireEvent, act } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockConnectionState = signal<'connected' | 'disconnected'>('connected');
@@ -54,6 +58,72 @@ describe('ModelsSettings — load failure surfacing', () => {
     cleanup();
   });
 
+  it.each([false, true])(
+    'waits for delayed discovery through the real hub, forced=%s',
+    async (forced) => {
+      vi.useFakeTimers();
+      const hub = new MessageHub();
+      let receive: (message: HubMessage) => void = () => {};
+      const transport = {
+        name: 'delayed-models',
+        isReady: () => true,
+        getState: () => 'connected',
+        initialize: async () => {},
+        close: async () => {},
+        onMessage: (handler: (message: HubMessage) => void) => {
+          receive = handler;
+          return () => {};
+        },
+        onConnectionChange: () => () => {},
+        send: async (message: HubMessage) => {
+          if (message.type !== MessageType.REQUEST) return;
+          const refresh = (message.data as { forceRefresh?: boolean }).forceRefresh;
+          const delay = forced ? (refresh ? 60000 : 0) : 15000;
+          const models =
+            forced && !refresh
+              ? []
+              : [{ id: 'cold-sdk', display_name: 'Cold SDK model', provider: 'anthropic' }];
+          setTimeout(
+            () =>
+              receive(
+                createResponseMessage({
+                  method: message.method,
+                  sessionId: message.sessionId,
+                  requestId: message.id,
+                  data: { models },
+                })
+              ),
+            delay
+          );
+        },
+      } as IMessageTransport;
+      hub.registerTransport(transport);
+      mockGetHubIfConnected.mockReturnValue(hub);
+      try {
+        render(<ModelsSettings />);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        if (forced) fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10001);
+        });
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.queryByText('Cold SDK model')).toBeNull();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(forced ? 50000 : 5000);
+        });
+        expect(screen.queryByRole('alert')).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Change', exact: true }));
+        expect(screen.getAllByText('Cold SDK model').length).toBeGreaterThan(0);
+      } finally {
+        cleanup();
+        hub.cleanup();
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it('shows a durable error with Retry instead of a silent empty state when the hub is missing', async () => {
     render(<ModelsSettings />);
 
@@ -84,7 +154,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
-    expect(mockRequest).toHaveBeenCalledWith('models.list', { useCache: true });
+    expect(mockRequest).toHaveBeenCalledWith(
+      'models.list',
+      { useCache: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
   });
 
   it('keeps the error state when Retry runs while the hub is still missing', async () => {
@@ -120,7 +194,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
-    expect(mockRequest).toHaveBeenCalledWith('models.list', { useCache: true });
+    expect(mockRequest).toHaveBeenCalledWith(
+      'models.list',
+      { useCache: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
   });
 
   it('retries with forceRefresh after a failed explicit refresh', async () => {
@@ -148,7 +226,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     fireEvent.click(retry);
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+      expect(mockRequest).toHaveBeenLastCalledWith(
+        'models.list',
+        { forceRefresh: true },
+        { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+      );
     });
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
@@ -193,7 +275,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(2);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { useCache: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { useCache: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
@@ -222,7 +308,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(retry.disabled).toBe(true);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { forceRefresh: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
 
     resolveRequest({ models: [] });
     await waitFor(() => {
@@ -259,7 +349,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(5);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { forceRefresh: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
@@ -354,7 +448,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(4);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { forceRefresh: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
     await waitFor(() => {
       expect(refresh.disabled).toBe(true);
     });

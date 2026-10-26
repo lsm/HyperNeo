@@ -1,5 +1,6 @@
 export const NEO_OPERATION_NAMES = [
   'neo.ask.doneTodos',
+  'neo.ask.history',
   'neo.ask.open',
   'neo.ask.outcome',
   'neo.ask.read',
@@ -50,6 +51,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.edit',
   'neo.todo.remove',
   'neo.todo.retry',
+  'neo.workerSocket.ask',
   'pack.preferences.applyAnswer',
   'pack.preferences.ask',
   'pack.preferences.get',

@@ -10,6 +10,15 @@ const log = new Logger('codex-send');
 const CALL_TIMEOUT_MS = 30_000;
 const CLOSE_RETENTION_MS = 30 * 60_000;
 
+export class CodexRequestError extends Error {
+  constructor(
+    message: string,
+    readonly rejection: unknown
+  ) {
+    super(message);
+  }
+}
+
 export interface CodexAppServer {
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
   close(): void | Promise<void>;
@@ -46,7 +55,8 @@ export async function startCodexBootstrapServer(
   const server: CodexAppServer = {
     call: async (method, params) => {
       const response = await transport.sendRequest(method, params);
-      if ('error' in response) throw new Error(`${method}: ${response.error.message}`);
+      if ('error' in response)
+        throw new CodexRequestError(`${method}: ${response.error.message}`, response.error);
       return response.result;
     },
     close: () =>
@@ -180,7 +190,12 @@ export function connectCodexAppServer(
       pending.delete(message.id);
       clearTimeout(waiting.timer);
       if (message.error !== undefined) {
-        waiting.reject(new Error(`${waiting.method}: ${JSON.stringify(message.error)}`));
+        waiting.reject(
+          new CodexRequestError(
+            `${waiting.method}: ${JSON.stringify(message.error)}`,
+            message.error
+          )
+        );
       } else {
         waiting.resolve(message.result);
       }

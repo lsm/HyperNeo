@@ -53,6 +53,9 @@ export function createWebSocketHandlers(
   sessionManager: SessionManager
 ) {
   return {
+    drain(ws: RuntimeSocket<WebSocketData>) {
+      transport.handleDrain(ws);
+    },
     open(ws: RuntimeSocket<WebSocketData>) {
       const clientId = transport.registerClient(ws, GLOBAL_SESSION_ID);
 

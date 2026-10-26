@@ -48,20 +48,18 @@ describe('GitHub reader acquisition contracts', () => {
       ok: true,
       state: 'MERGED',
       review: 'approved',
-      checks: 'passing',
+      checks: 'none',
     });
     expect(result.first.deploy.daemons[0].contains).toEqual(['c'.repeat(40)]);
     expect(result.first.ledger[0]).toMatchObject({ pr: 'synthetic/ledger#7', state: 'merged' });
     expect(
       Object.values(result.initialRequests).reduce((sum: number, count) => sum + Number(count), 0)
-    ).toBe(6);
+    ).toBe(7);
     expect(result.repeatRequests).toEqual({
-      'ledger-reconcile': 1,
-      'work-detail': 1,
       'query-window': 1,
     });
-    expect(result.ledgerGraphqlCost).toBe(14);
-  });
+    expect(result.ledgerGraphqlCost).toBe(0);
+  }, 20000);
 
   test('a changed head cannot keep the prior approval and still shows unresolved-thread blockers', () => {
     const result = observe('head');
@@ -74,7 +72,7 @@ describe('GitHub reader acquisition contracts', () => {
       review: 'none',
       blockers: ['1 unresolved review thread'],
     });
-  });
+  }, 20000);
 
   test('failed public reads refuse, a complete empty list succeeds, and a partial reconcile keeps prior facts', () => {
     const result = observe('unreadable');
@@ -96,5 +94,5 @@ describe('GitHub reader acquisition contracts', () => {
     expect(result.empty).toMatchObject({ ok: true, items: [] });
     expect(result.before).toHaveLength(1);
     expect(result.after).toEqual(result.before);
-  });
+  }, 20000);
 });

@@ -1,6 +1,6 @@
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies.ts';
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, jest } from 'bun:test';
 import type { McpServerConfig, MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
@@ -202,6 +202,108 @@ describe('Session RPC Handlers — models.list', () => {
       '../../../../src/lib/rpc-handlers/session-handlers'
     );
     setupSessionHandlers(messageHubData.hub, {} as SessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('returns healthy models and identifies a failed provider during forced refresh', async () => {
+    const model = {
+      id: 'healthy-model',
+      name: 'Healthy',
+      provider: 'healthy',
+      contextWindow: 128000,
+    } as ModelInfo;
+    for (const [id, discover] of [
+      ['healthy', async () => [model]],
+      [
+        'broken',
+        async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        },
+      ],
+    ] as const) {
+      getProviderRegistry().register({
+        id,
+        displayName: id,
+        isAvailable: () => true,
+        getModels: discover,
+        listRemoteModels: discover,
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {} }),
+      } as unknown as Provider);
+    }
+    const handler = messageHubData.handlers.get('models.list')!;
+    const result = (await handler({ forceRefresh: true }, {})) as {
+      models: Array<{ id: string; available: boolean }>;
+      unavailableProviders: Array<{ providerId: string; available: boolean }>;
+    };
+    expect(result.models).toEqual([
+      expect.objectContaining({ id: 'healthy-model', available: true }),
+    ]);
+    expect(result.unavailableProviders).toContainEqual(
+      expect.objectContaining({ providerId: 'broken', available: false })
+    );
+  });
+
+  it('discovers slow and stalled providers concurrently within a bounded cold-start window', async () => {
+    const starts: string[] = [];
+    const model = {
+      id: 'cold-model',
+      name: 'Cold',
+      provider: 'cold',
+      contextWindow: 128000,
+    } as ModelInfo;
+    for (const [id, discover] of [
+      [
+        'cold',
+        () =>
+          new Promise<ModelInfo[]>((resolve) => {
+            starts.push('cold');
+            setTimeout(() => resolve([model]), 15000);
+          }),
+      ],
+      [
+        'stalled',
+        () =>
+          new Promise<ModelInfo[]>(() => {
+            starts.push('stalled');
+          }),
+      ],
+    ] as const) {
+      getProviderRegistry().register({
+        id,
+        displayName: id,
+        isAvailable: () => true,
+        getModels: discover,
+        listRemoteModels: discover,
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {} }),
+      } as unknown as Provider);
+    }
+    jest.useFakeTimers();
+    try {
+      const handler = messageHubData.handlers.get('models.list')!;
+      const response = handler({ forceRefresh: true }, {}).then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      );
+      await jest.advanceTimersByTimeAsync(1);
+      expect(starts).toEqual(['cold', 'stalled']);
+      await jest.advanceTimersByTimeAsync(30000);
+      const result = await response;
+      expect(result).not.toHaveProperty('error');
+      const value = ('value' in result ? result.value : null) as {
+        models: Array<{ id: string }>;
+        unavailableProviders: Array<{ providerId: string; available: boolean }>;
+      };
+      expect(value.models.map((item) => item.id)).toEqual(['cold-model']);
+      expect(value.unavailableProviders).toContainEqual(
+        expect.objectContaining({ providerId: 'stalled', available: false })
+      );
+    } finally {
+      clearModelsCache();
+      jest.useRealTimers();
+    }
   });
 
   it('returns only the configured curation subset', async () => {

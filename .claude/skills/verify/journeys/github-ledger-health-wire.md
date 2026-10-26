@@ -12,15 +12,19 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
 
 The helper starts an isolated daemon and runs the existing reconciliation entry
 through its real default reader and DB gateway. Its local gh stub emits complete,
-partial, rate-limited (Retry-After) and empty responses. Three partial cycles
+invalid REST coverage, rate-limited (Retry-After) and empty responses. Three invalid cycles
 raise a persisted incident without altering PR facts. An attempted rate failure
-records its deadline; the unattempted tail records cooldown, with no added miss.
+records its deadline and account/resource scope; a tail using the same account
+and core resource records cooldown without an added miss. Unrelated accounts
+and resources continue. The fixture supplies the non-secret authenticated user
+and response resource header instead of assuming a shared credential.
 After restart, a cooldown cycle makes zero reads; expiration resumes the same
 order and complete empty coverage recovers. Protected polling history is unchanged.
 
 Inspect `evidence/health-wire.json` and `requests.jsonl`; unit contracts also cover
 unreached tails without reset evidence, duplicate cycles and invalid/expired reset.
-No real GitHub, keys, credential files, live DB/copy, GUI or port 8399. No new
-timer/RPC/schema/permissions/reader; Neo concern/wake delivery stays separate.
+No real GitHub, keys, credential files, live DB/copy, GUI or port 8399.
+Neo concern/wake delivery stays separate. The fixture covers REST discovery
+and selective GraphQL hydration.
 All owned daemon resources stop in finally. This is synthetic evidence, not a
 claim of measured live-quota savings.

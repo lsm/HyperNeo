@@ -40,6 +40,7 @@ const marks = {
   doing: ['●', 'text-accent'],
   blocked: ['!', 'text-warning'],
   done: ['✓', 'text-success'],
+  closed_unverified: ['?', 'text-warning'],
   failed: ['✕', 'text-danger'],
   removed: ['', 'text-fg-faint'],
 } as const;
@@ -286,27 +287,18 @@ function QuestionBox({
       data-question-kind={question.kind}
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
-      {question.sourceSession && (
-        <div class="mb-2 flex flex-wrap items-center justify-end gap-2" data-question-source>
-          <span class="min-w-0 break-words text-right text-xs text-fg-muted">
-            {question.sourceSession.name ?? question.sourceSession.id} ·{' '}
-            {question.sourceSession.provider}
-          </span>
-          {question.sourceSession.link && onOpen && (
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              aria-label={t('question.openSessionTitle', {
-                name: question.sourceSession.name ?? question.sourceSession.id,
-              })}
-              onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
-            >
-              <NeoSessionMark
-                kind={neoSessionKind(question.sourceSession.adapter, question.sourceSession.link)}
-              />
-              {t('question.openSession')}
-            </button>
-          )}
+      {question.sourceSession?.link && onOpen && (
+        <div class="mb-2 flex justify-end" data-question-source>
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            aria-label={t('question.openSessionTitle', {
+              name: question.sourceSession.name ?? question.sourceSession.id,
+            })}
+            onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
+          >
+            {t('question.open')}
+          </button>
         </div>
       )}
       <MarkdownRenderer
@@ -422,7 +414,7 @@ function QuestionBox({
 }
 
 export function NeoAskTodos({
-  entry,
+  entry: received,
   focusedQuestion,
   disabled,
   onAnswer,
@@ -431,6 +423,7 @@ export function NeoAskTodos({
   onOpen,
   onSettle,
   onLoadDone,
+  onLoadDetails,
 }: {
   entry: NeoAskEntry;
   focusedQuestion?: { questionId: string };
@@ -441,7 +434,21 @@ export function NeoAskTodos({
   onOpen?: (link: string, title: string) => void;
   onSettle?: (status: 'done' | 'dropped') => void | Promise<void>;
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
+  onLoadDetails?: (askId: string) => Promise<NeoAskEntry>;
 }) {
+  const [details, setDetails] = useState<NeoAskEntry | null>(null);
+  const [readRevision, setReadRevision] = useState<number | null>(null);
+  const pendingDetail = useRef<{ revision: number } | null>(null);
+  const entry =
+    received.summary && details?.ask.id === received.ask.id
+      ? {
+          ...details,
+          state: received.state,
+          doneCount: received.doneCount,
+          ask: { ...details.ask, title: received.ask.title, status: received.ask.status },
+        }
+      : received;
+  const [detailError, setDetailError] = useState('');
   const cardRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
   const focusedQuestionId = focusedQuestion?.questionId;
@@ -485,6 +492,47 @@ export function NeoAskTodos({
   };
   const { ask, todos } = entry;
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
+  const readingDetails = open || expanded.length > 0;
+  useEffect(() => {
+    setReadRevision(null);
+    return () => {
+      pendingDetail.current = null;
+    };
+  }, [received.ask.id, readingDetails]);
+  useEffect(() => {
+    if (
+      !received.summary ||
+      !onLoadDetails ||
+      !readingDetails ||
+      pendingDetail.current ||
+      (readRevision !== null && readRevision >= received.ask.updatedAt)
+    )
+      return;
+    const ticket = { revision: received.ask.updatedAt };
+    pendingDetail.current = ticket;
+    setDetailError('');
+    void onLoadDetails(received.ask.id).then(
+      (value) => {
+        if (pendingDetail.current !== ticket) return;
+        pendingDetail.current = null;
+        setDetails(value);
+        setReadRevision(Math.max(ticket.revision, value.ask.updatedAt));
+      },
+      (cause) => {
+        if (pendingDetail.current !== ticket) return;
+        pendingDetail.current = null;
+        setDetailError(cause instanceof Error ? cause.message : t('ask.moreDoneFailed'));
+        setReadRevision(ticket.revision);
+      }
+    );
+  }, [
+    received.ask.id,
+    received.ask.updatedAt,
+    !!received.summary,
+    readingDetails,
+    onLoadDetails,
+    readRevision,
+  ]);
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
@@ -522,10 +570,18 @@ export function NeoAskTodos({
   const allExpanded = expandable.every((todo) => expanded.includes(todo.id));
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
   const hasDetails =
-    answered.length > 0 || retired.length > 0 || !!ask.outcome || removed.length > 0;
+    !!entry.summary ||
+    answered.length > 0 ||
+    retired.length > 0 ||
+    !!ask.outcome ||
+    removed.length > 0;
   const everything = allExpanded && (open || !hasDetails);
   const toggleEverything = () => {
-    setExpanded(everything ? [] : expandable.map((todo) => todo.id));
+    setExpanded(
+      everything
+        ? []
+        : listed.filter((todo) => entry.summary || neoTodoHasMore(todo)).map((todo) => todo.id)
+    );
     setOpen(!everything);
     if (everything)
       requestAnimationFrame(() => {
@@ -574,6 +630,22 @@ export function NeoAskTodos({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
+      {detailError && (
+        <p role="alert" class="mt-2 text-sm text-danger">
+          {detailError}
+        </p>
+      )}
+      {entry.summary && (
+        <p class="mt-1 text-xs text-fg-muted">
+          {t('ask.todos')} · {entry.summary.todoCount}
+          {entry.summary.openQuestionCount > 0 && (
+            <>
+              {' '}
+              · {t('ask.state.waiting')} · {entry.summary.openQuestionCount}
+            </>
+          )}
+        </p>
+      )}
       {ask.focusedSession && (
         <div class="mt-2 flex flex-wrap items-center justify-end gap-2" data-ask-focused-session>
           <span class="min-w-0 break-words text-right text-xs text-fg-muted">
@@ -621,7 +693,7 @@ export function NeoAskTodos({
               onOpen={onOpen}
               expanded={expanded.includes(todo.id)}
               onToggle={
-                neoTodoHasMore(todo)
+                entry.summary || neoTodoHasMore(todo)
                   ? () =>
                       setExpanded(
                         expanded.includes(todo.id)

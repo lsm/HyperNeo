@@ -1,0 +1,285 @@
+{
+  "rpcMs": 2.12662499999999,
+  "reply": {
+    "success": true,
+    "settings": {
+      "settingSources": [
+        "user",
+        "project",
+        "local"
+      ],
+      "permissionMode": "default",
+      "model": "sonnet",
+      "showArchived": true,
+      "autoScroll": true,
+      "chatDisplayMode": "compact",
+      "githubPollingInterval": 120,
+      "voice": {
+        "enabled": false,
+        "endpoint": "",
+        "model": "",
+        "allowInsecureTls": false,
+        "allowPrivateNetwork": false,
+        "mode": "auto",
+        "hasApiKey": false
+      },
+      "exa": {
+        "enabled": false,
+        "hasApiKey": false
+      },
+      "coordinatorMode": false,
+      "maxConcurrentWorkers": 3,
+      "sandbox": {
+        "enabled": false,
+        "autoAllowBashIfSandboxed": true,
+        "excludedCommands": [
+          "git"
+        ],
+        "network": {
+          "allowedDomains": [
+            "github.com",
+            "*.github.com",
+            "gist.github.com",
+            "*.npmjs.org",
+            "registry.npmjs.org",
+            "*.yarnpkg.com",
+            "registry.yarnpkg.com",
+            "packages.gitlab.com",
+            "*.pkg.dev",
+            "go.dev",
+            "crates.io",
+            "pypi.org",
+            "*.pypi.org",
+            "rubygems.org",
+            "*.rubygems.org",
+            "*.maven.org",
+            "*.gradle.org",
+            "cdn.jsdelivr.net",
+            "*.cloudflare.com",
+            "openai.com",
+            "*.openai.com",
+            "anthropic.com",
+            "*.anthropic.com",
+            "openrouter.ai",
+            "*.openrouter.ai",
+            "*.google.dev",
+            "*.google.com",
+            "*.googleapis.com",
+            "*.googleusercontent.com",
+            "*.gcp.goog",
+            "*.run.app",
+            "*.appspot.com",
+            "*.cloudfunctions.net",
+            "cohere.com",
+            "*.cohere.com",
+            "mistral.ai",
+            "*.mistral.ai",
+            "huggingface.co",
+            "*.huggingface.co",
+            "replicate.com",
+            "*.replicate.com",
+            "together.ai",
+            "*.together.ai",
+            "api.together.xyz",
+            "groq.com",
+            "*.groq.com"
+          ],
+          "allowLocalBinding": true,
+          "allowAllUnixSockets": true
+        }
+      },
+      "outputLimiter": {
+        "enabled": true,
+        "bash": {
+          "headLines": 100,
+          "tailLines": 200,
+          "excludedCommandPrefixes": []
+        },
+        "read": {
+          "maxLines": 1000
+        },
+        "grep": {
+          "maxMatches": 250
+        },
+        "excludeTools": []
+      },
+      "toolSelectionDefaults": {
+        "version": 1,
+        "choices": {
+          "mcp:cb42c323-5f41-41f5-8d66-98a0065047a6": {
+            "selected": true,
+            "aliases": [
+              "fetch-mcp"
+            ]
+          },
+          "mcp:e3fc7ad3-c627-49ea-b70f-9ba32564b7ba": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-mcp"
+            ]
+          },
+          "mcp:432efad0-22f0-485d-9cf0-73726b82f119": {
+            "selected": false,
+            "aliases": [
+              "chrome-devtools-user-mcp"
+            ]
+          },
+          "skill:7cf1e54a-def5-4511-a2a4-d2caed84c1f9": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:e7d03e68-8422-421b-8efc-97657fde0f7b": {
+            "selected": true,
+            "aliases": []
+          },
+          "skill:9e0f9418-b5fa-4afa-ae73-019fe253041a": {
+            "selected": true,
+            "aliases": []
+          }
+        }
+      }
+    }
+  },
+  "persisted": {
+    "settingSources": [
+      "user",
+      "project",
+      "local"
+    ],
+    "permissionMode": "default",
+    "model": "sonnet",
+    "showArchived": true,
+    "autoScroll": true,
+    "chatDisplayMode": "compact",
+    "githubPollingInterval": 120,
+    "voice": {
+      "enabled": false,
+      "endpoint": "",
+      "model": "",
+      "allowInsecureTls": false,
+      "allowPrivateNetwork": false,
+      "mode": "auto"
+    },
+    "exa": {
+      "enabled": false
+    },
+    "coordinatorMode": false,
+    "maxConcurrentWorkers": 3,
+    "sandbox": {
+      "enabled": false,
+      "autoAllowBashIfSandboxed": true,
+      "excludedCommands": [
+        "git"
+      ],
+      "network": {
+        "allowedDomains": [
+          "github.com",
+          "*.github.com",
+          "gist.github.com",
+          "*.npmjs.org",
+          "registry.npmjs.org",
+          "*.yarnpkg.com",
+          "registry.yarnpkg.com",
+          "packages.gitlab.com",
+          "*.pkg.dev",
+          "go.dev",
+          "crates.io",
+          "pypi.org",
+          "*.pypi.org",
+          "rubygems.org",
+          "*.rubygems.org",
+          "*.maven.org",
+          "*.gradle.org",
+          "cdn.jsdelivr.net",
+          "*.cloudflare.com",
+          "openai.com",
+          "*.openai.com",
+          "anthropic.com",
+          "*.anthropic.com",
+          "openrouter.ai",
+          "*.openrouter.ai",
+          "*.google.dev",
+          "*.google.com",
+          "*.googleapis.com",
+          "*.googleusercontent.com",
+          "*.gcp.goog",
+          "*.run.app",
+          "*.appspot.com",
+          "*.cloudfunctions.net",
+          "cohere.com",
+          "*.cohere.com",
+          "mistral.ai",
+          "*.mistral.ai",
+          "huggingface.co",
+          "*.huggingface.co",
+          "replicate.com",
+          "*.replicate.com",
+          "together.ai",
+          "*.together.ai",
+          "api.together.xyz",
+          "groq.com",
+          "*.groq.com"
+        ],
+        "allowLocalBinding": true,
+        "allowAllUnixSockets": true
+      }
+    },
+    "outputLimiter": {
+      "enabled": true,
+      "bash": {
+        "headLines": 100,
+        "tailLines": 200,
+        "excludedCommandPrefixes": []
+      },
+      "read": {
+        "maxLines": 1000
+      },
+      "grep": {
+        "maxMatches": 250
+      },
+      "excludeTools": []
+    },
+    "toolSelectionDefaults": {
+      "version": 1,
+      "choices": {
+        "mcp:cb42c323-5f41-41f5-8d66-98a0065047a6": {
+          "selected": true,
+          "aliases": [
+            "fetch-mcp"
+          ]
+        },
+        "mcp:e3fc7ad3-c627-49ea-b70f-9ba32564b7ba": {
+          "selected": false,
+          "aliases": [
+            "chrome-devtools-mcp"
+          ]
+        },
+        "mcp:432efad0-22f0-485d-9cf0-73726b82f119": {
+          "selected": false,
+          "aliases": [
+            "chrome-devtools-user-mcp"
+          ]
+        },
+        "skill:7cf1e54a-def5-4511-a2a4-d2caed84c1f9": {
+          "selected": true,
+          "aliases": []
+        },
+        "skill:e7d03e68-8422-421b-8efc-97657fde0f7b": {
+          "selected": true,
+          "aliases": []
+        },
+        "skill:9e0f9418-b5fa-4afa-ae73-019fe253041a": {
+          "selected": true,
+          "aliases": []
+        }
+      }
+    },
+    "outputStyle": "synthetic-style"
+  },
+  "rollbackConcurrent": {
+    "autoScroll": true
+  },
+  "result": "fail",
+  "error": "AssertionError [ERR_ASSERTION]: rollback must preserve an unrelated concurrent commit\n\ntrue !== false\n",
+  "targetSqlOnMain": 0
+}

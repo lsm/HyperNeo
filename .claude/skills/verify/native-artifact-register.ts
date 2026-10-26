@@ -51,7 +51,7 @@ try {
   assert.equal(Buffer.from(read.data, 'base64').toString(), text);
   const metadata = await invoke<{ accepted: boolean; metadata: { producer: unknown } }>('artifact.file.get', { artifactId: first.artifact.artifactId });
   assert.deepEqual(metadata.metadata.producer, { adapter: 'codex-desktop', id: 'synthetic-worker' });
-  for (const [path, reason] of [['../outside.md', 'unsafe_path'], [join(root, 'outside.md'), 'outside_roots'], ['.env', 'sensitive_path']])
+  for (const [path, reason] of [['../outside.md', 'unsafe_path'], ['.env', 'sensitive_path']])
     assert.deepEqual(await invoke('artifact.file.register', { ...input, requestId: path, path }), { accepted: false, reason });
   const neoId = 'neo:10000000-0000-4000-8000-000000008120';
   const neoWorkspace = join(root, 'neo-workspace');
@@ -61,7 +61,7 @@ try {
   const neoInput = { requestId: 'neo-own', context: { kind: 'ask', id: 'worker-card' }, path: 'own.md', title: 'Neo own workspace' };
   const neo = await invoke<{ accepted: boolean; artifact: ArtifactRef }>('artifact.file.register', neoInput);
   assert.equal(neo.accepted, true);
-  assert.deepEqual(await invoke('artifact.file.register', { ...neoInput, path: join(root, 'workspace', 'report.md'), requestId: 'not-neos' }), { accepted: false, reason: 'outside_roots' });
+  assert.equal((await invoke<{ accepted: boolean }>('artifact.file.register', { ...neoInput, path: join(root, 'workspace', 'report.md'), requestId: 'not-neos' })).accepted, true);
   const register = createArtifactRegistration(() => db, join(root, 'data'));
   const worker = { source: 'mcp' as const, role: 'direct_task_worker' as const, sessionId: 'codex-desktop:synthetic-worker' };
   assert.deepEqual(await register.execute(input, worker), first);
@@ -75,7 +75,7 @@ try {
   db.prepare('UPDATE neo_todos SET artifacts_json = ? WHERE id = ?').run(JSON.stringify([first.artifact, png.artifact]), context.id);
   const projected = new NeoAskTodoRepository(db).getTodo(context.id)!;
   assert.deepEqual(projected.artifacts, [first.artifact, png.artifact]);
-  Object.assign(evidence, { first, png, neo, metadata, readMatchesSource: true, ownerChecks: true, rootsUnchanged: true, projected: true });
+  Object.assign(evidence, { first, png, neo, metadata, readMatchesSource: true, ownerChecks: true, explicitPathsAllowed: true, projected: true });
   if (process.argv[3]) {
     const dist = fileURLToPath(new URL('../../../packages/web/dist/', import.meta.url));
     const web = Bun.serve({ hostname: '127.0.0.1', port: 0,
@@ -94,7 +94,7 @@ try {
     } finally { web.stop(true); }
   }
   db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'codex-desktop', id: 'replacement' }), context.id);
-  assert.deepEqual(await register.execute(input, worker), { accepted: false, reason: 'unavailable' });
+  assert.deepEqual(await register.execute({ ...input, path: join(root, 'workspace/report.md') }, worker), { accepted: false, reason: 'unavailable' });
   assert.deepEqual(await getter.execute({ artifactId: first.artifact.artifactId }, worker), { accepted: false, reason: 'unavailable' });
   evidence.revocationRechecked = true;
   const customHome = join(root, 'custom-home');
@@ -139,7 +139,8 @@ try {
       assert.equal(offset, Buffer.byteLength(largeText));
       assert(createArtifactRefReader(() => customDb)(large.artifact.artifactId, owner));
       const start = performance.now();
-      assert.deepEqual(await capture.execute({ ...customInput, requestId: 'locked-new-capture' }, owner), { accepted: false, reason: 'unavailable' });
+      assert.deepEqual(await capture.execute({ ...customInput, requestId: 'locked-new-capture' }, owner), { accepted: false, reason: 'ambiguous_context' });
+      assert.equal((await capture.execute({ ...customInput, path: join(root, 'workspace/report.md'), requestId: 'locked-absolute' }, owner) as { accepted: boolean }).accepted, true);
       evidence.captureLockRefusalMs = performance.now() - start;
       assert(Number(evidence.captureLockRefusalMs) < 1000, 'capture must not wait for the native writer');
       customDb.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'codex-desktop', id: 'revoked' }), context.id);

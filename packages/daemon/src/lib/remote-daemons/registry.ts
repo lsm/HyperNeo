@@ -5,6 +5,10 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_PROBE_REQUEST_TIMEOUT_MS = 4000;
 const CONNECT_FAILURE_MEMORY_MS = 60_000;
 
+export class RemoteNotSentError extends Error {
+  readonly name = 'RemoteNotSentError';
+}
+
 interface RemoteConnection {
   readonly hub: MessageHub;
   readonly transport: WebSocketClientTransport;
@@ -187,12 +191,16 @@ export class RemoteDaemonRegistry {
     options?: { timeoutMs?: number }
   ): Promise<unknown> => {
     const url = this.urls.get(daemonId);
-    if (url === undefined) throw new Error(`No attached daemon: ${daemonId}`);
+    if (url === undefined) throw new RemoteNotSentError(`No attached daemon: ${daemonId}`);
     const failed = this.connectFailures.get(daemonId);
     if (failed && this.now() - failed.at < CONNECT_FAILURE_MEMORY_MS)
-      throw new Error(`${failed.reason} (not retried for ${CONNECT_FAILURE_MEMORY_MS / 1000}s)`);
+      throw new RemoteNotSentError(
+        `${failed.reason} (not retried for ${CONNECT_FAILURE_MEMORY_MS / 1000}s)`
+      );
     const attempt = this.open(daemonId, url);
-    const connection = await attempt.connection;
+    const connection = await attempt.connection.catch((error: unknown) => {
+      throw new RemoteNotSentError(error instanceof Error ? error.message : String(error));
+    });
     try {
       return await connection.hub.request(
         method,

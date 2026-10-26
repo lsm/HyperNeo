@@ -1,3 +1,4 @@
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import {
@@ -20,7 +21,8 @@ type Receipt = { ok: true; question: NeoQuestion } | { ok: false; reason: string
 
 function setup(
   artifact?: ArtifactRefReader,
-  readSource?: Parameters<typeof createNeoQuestionOperations>[5]
+  readSource?: Parameters<typeof createNeoQuestionOperations>[5],
+  receivedHumanInput?: Parameters<typeof createNeoQuestionOperations>[3]
 ) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -53,7 +55,7 @@ function setup(
           ? { ok: false, reason: 'already_started: this todo is removed.' }
           : { ok: true };
       },
-      undefined,
+      receivedHumanInput,
       artifact,
       readSource ??
         (async (ref) =>
@@ -242,6 +244,7 @@ describe('neo.question operations', () => {
           sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
         });
         const draft = NeoTodoDraftSchema.parse({
+          check: pendingTodoCheck,
           title: 'Additional work',
           doneWhen: 'Merged',
           instruction: 'Do the additional work',
@@ -255,7 +258,7 @@ describe('neo.question operations', () => {
             async () => ({ ok: false, reason: 'not started' }),
             store.getAsk('ask')!,
             draft,
-            []
+            createTodoCheckPacks(db)
           );
           if (!result.ok) throw new Error(result.reason);
           joinedId = result.todo.id;
@@ -269,7 +272,12 @@ describe('neo.question operations', () => {
             request: 'Other work',
             createdAt: 1,
           });
-          const todo = store.addTodo('moved', 'other', draft, 1);
+          const todo = store.addTodo(
+            'moved',
+            'other',
+            { ...draft, doneWhen: 'Observed result' },
+            1
+          );
           joinedId = store.moveTodo(todo, 'ask', '', 2).id;
         }
         expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
@@ -761,8 +769,16 @@ describe('neo.question.retire and replaces', () => {
     });
     expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
     expect(await call('neo.question.retire', { questionId: moot.id, reason: 'again' })).toEqual({
-      ok: false,
-      reason: 'question_closed: this question is retired.',
+      ok: true,
+      question: expect.objectContaining({
+        id: moot.id,
+        state: 'retired',
+        retiredReason: 'the root cause was found',
+      }),
+    });
+    expect(store.getQuestion(moot.id)).toMatchObject({
+      state: 'retired',
+      retiredReason: 'the root cause was found',
     });
   });
 
@@ -787,14 +803,18 @@ describe('neo.question.retire and replaces', () => {
         .filter((q) => q.state === 'open')
         .map((q) => q.id)
     ).toEqual([next.id]);
-    expect(
-      await call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'reply',
-        text: 'Again?',
-        replaces: old.id,
-      })
-    ).toEqual({ ok: false, reason: `question_closed: question ${old.id} is retired.` });
+    const again = await call('neo.question.ask', {
+      askId: 'ask',
+      kind: 'reply',
+      text: 'Again?',
+      replaces: old.id,
+    });
+    expect(again).toMatchObject({ ok: true, question: { text: 'Again?', state: 'open' } });
+    expect(store.getQuestion(old.id)).toMatchObject({
+      state: 'retired',
+      retiredReason: 'replaced by the new question',
+      replacedBy: next.id,
+    });
   });
 
   test('never retires or replaces the start question that carries the go-ahead', async () => {
@@ -861,6 +881,77 @@ describe('neo.question.retire and replaces', () => {
   });
 });
 
+describe('question reference gates warn or omit instead of refusing', () => {
+  test('omits reply references that are not received human inputs instead of refusing', async () => {
+    const received = new Set(['22222222-2222-4222-8222-222222222222']);
+    const { call, store, db } = setup(undefined, undefined, (_caller, id) => received.has(id));
+    try {
+      const valid = '22222222-2222-4222-8222-222222222222';
+      const stale = '33333333-3333-4333-8333-333333333333';
+      const mixed = await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Which one?',
+        replyTo: [valid, stale],
+      });
+      expect(mixed).toMatchObject({ ok: true, question: { state: 'open', replyTo: [valid] } });
+      const onlyStale = await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Only stale?',
+        replyTo: [stale],
+      });
+      expect(onlyStale).toMatchObject({ ok: true, question: { state: 'open', replyTo: [] } });
+      expect(store.listQuestions('ask')).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('asking with replaces naming an answered question opens the new one and leaves the answer', async () => {
+    const { store, call, asked } = setup();
+    const old = await asked({ kind: 'reply', text: 'Pick a port?' });
+    await call('neo.question.answer', { questionId: old.id, answer: '9311' }, human);
+    const next = await call('neo.question.ask', {
+      askId: 'ask',
+      kind: 'reply',
+      text: 'Pick a port for the rerun?',
+      replaces: old.id,
+    });
+    expect(next).toMatchObject({ ok: true, question: { state: 'open' } });
+    expect(store.getQuestion(old.id)).toMatchObject({
+      state: 'answered',
+      answer: '9311',
+      replacedBy: null,
+    });
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+  });
+
+  test('retiring an answered question leaves the recorded answer untouched', async () => {
+    const { store, call, asked } = setup();
+    const decided = await asked({
+      kind: 'yesno',
+      text: 'Merge it?',
+      noLabel: 'Wait',
+      yesLabel: 'Merge',
+    });
+    await call('neo.question.answer', { questionId: decided.id, answer: 'yes' }, human);
+    const retired = await call('neo.question.retire', {
+      questionId: decided.id,
+      reason: 'tidying up',
+    });
+    expect(retired).toMatchObject({
+      ok: true,
+      question: { id: decided.id, state: 'answered', answer: 'yes' },
+    });
+    expect(store.getQuestion(decided.id)).toMatchObject({
+      state: 'answered',
+      answer: 'yes',
+      retiredReason: null,
+    });
+  });
+});
+
 describe('todo-owned question cards', () => {
   test('retains explicit todo ownership and retires only settled todo cards', async () => {
     const h = setup();
@@ -899,7 +990,7 @@ describe('todo-owned question cards', () => {
       h.db.close();
     }
   });
-  test('refuses a foreign or settled todo instead of making an unowned question', async () => {
+  test('records a foreign or settled reference while opening an ask-level question', async () => {
     const h = setup();
     try {
       h.store.openAsk({
@@ -920,7 +1011,11 @@ describe('todo-owned question cards', () => {
           text: 'Which?',
           todoId,
         });
-        expect(result.ok).toBe(false);
+        expect(result).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('todo_closed:')],
+        });
+        expect(result.ok ? (result.question.todoId ?? null) : false).toBeNull();
       }
     } finally {
       h.db.close();

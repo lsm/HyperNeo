@@ -1,3 +1,7 @@
+import type {
+  SessionToolApplication,
+  SessionToolChoiceKey,
+} from '@hyperneo/shared/types/session-tool-choice';
 import { sdkPendingRemoval } from '../../storage/repositories/sdk-message-transactions.ts';
 import type { ChildProcess } from 'node:child_process';
 import type {
@@ -193,6 +197,7 @@ import {
   type ContextClearBoundaryOwner,
   type DeliveryOutcome,
   type DriveTurnOutcome,
+  DeliveryEnqueueRejectedError,
   deliverMessage,
   deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
@@ -1662,6 +1667,14 @@ export class AgentSession
     return this.queryRunner.getToolInventory();
   }
 
+  async applyToolChoice(key: SessionToolChoiceKey): Promise<SessionToolApplication> {
+    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner)
+      return { application: 'restart_required', reason: 'provider_unverified' };
+    if (key.startsWith('skill:') && this.isQueryActiveOrStarting())
+      return { application: 'restart_required', reason: 'instructions_reload_unavailable' };
+    return this.queryRunner.applyToolChoice();
+  }
+
   async refreshToolsContextUsage(): Promise<void> {
     await this.sdkRuntimeConfig.refreshContextUsage();
   }
@@ -2971,10 +2984,11 @@ export class AgentSession
         throw new Error(`Session ${this.session.id} is archived`);
       }
       try {
-        deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+        await deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
         });
       } catch (err) {
+        if (!(err instanceof DeliveryEnqueueRejectedError)) throw err;
         const failedDbId = await this.db.writeSDKMessage(
           'markDeliveryFailedByUuid',
           this.session.id,
@@ -3063,7 +3077,7 @@ export class AgentSession
         (uuid) => this.messageQueue.isRunning() && this.messageQueue.hasPendingOrInFlight(uuid)
       );
       for (const uuid of stranded) {
-        deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+        await deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
         void this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
       }
       return stranded.length;

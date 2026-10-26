@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { mock } from 'bun:test';
-import type { AppMcpServer, AppSkill, McpEnablementOverride } from '../../../packages/shared/src/mod.ts';
+import type { AppMcpServer, AppSkill, McpEnablementOverride, Session } from '../../../packages/shared/src/mod.ts';
 import { projectLegacySessionToolSelection, resolveSessionToolChoices } from '../../../packages/daemon/src/lib/tools/session-tool-choice.ts';
 import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { Server } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js';
@@ -68,8 +68,11 @@ try {
     const overrides: McpEnablementOverride[] = name === 'session-server-off' ? [{ scopeType: 'session', scopeId: sessionId, serverId: server.id, enabled: false }] : [];
     for (const override of overrides) await hub.request('mcp.enablement.setOverride', override);
     const input = { session: { id: sessionId }, skills: [skill], registry: [server], overrides, disabledSkillIds: disabledSkills };
-    const snapshot = projectLegacySessionToolSelection(input);
+    const legacySnapshot = projectLegacySessionToolSelection(input);
+    const snapshot = (await hub.request<{session: Session}>('session.get', {sessionId})).session.config.toolSelection;
+    assert(snapshot);
     const resolved = resolveSessionToolChoices(input, snapshot);
+    assert.equal(resolved[0].selected, resolveSessionToolChoices(input, legacySnapshot)[0].selected);
     const expected = resolved.filter(choice => choice.selected).flatMap(choice => choice.aliases);
     const before = queries.length;
     await hub.request('message.send', { sessionId, content: 'Synthetic human asks to use browser' });
@@ -86,11 +89,11 @@ try {
     assert.deepEqual(observed.mcpServers.map(entry => entry.name), expected);
     for (const entry of observed.mcpServers) assert.deepEqual(entry.tools, ['navigate']);
     assert.equal(resolved[0].selected, name === 'wrapper-on');
-    (evidence.cases as unknown[]).push({ name, snapshot, resolved, sdkAliases: queries[before].aliases, observed });
+    (evidence.cases as unknown[]).push({ name, legacySnapshot, snapshot, resolved, sdkAliases: queries[before].aliases, observed });
     queries[before].finish();
   }
   evidence.pass = true;
-  console.log('PASS legacy projection matches actual SDK options and inventory in four isolated daemon sessions');
+  console.log('PASS legacy on/off parity and frozen aliases match actual SDK options and inventory in four isolated daemon sessions');
 } finally {
   for (const query of queries) query.finish();
   await transport.close();

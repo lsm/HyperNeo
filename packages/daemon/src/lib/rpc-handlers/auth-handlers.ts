@@ -1,5 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { MessageHub, ProviderRecord } from '@hyperneo/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import type {
   ProviderAuthStatus,
   ProviderAuthResponse,
@@ -23,11 +23,12 @@ import { getProviderRegistry } from '../providers/registry.ts';
 import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
-import {
-  credentialIdentity,
-  stripPersistedDiscovery,
-} from '../providers/discovery-refresh-pipeline.ts';
+import { credentialIdentity } from '../providers/discovery-refresh-pipeline.ts';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
+import {
+  providerRpcWrites,
+  providerWriter,
+} from '../../storage/repositories/provider-rpc-writes.ts';
 import {
   applyRecordedFailureToAuthStatus,
   classifyProviderFailure,
@@ -42,32 +43,19 @@ type ClearCacheCtx = {
   providerId?: string;
   providerRepo?: ProviderRepository;
   stripPersisted: boolean;
-  record?: ProviderRecord | null;
-  stripped?: string;
-  readError?: unknown;
-  stripError?: unknown;
+  persistError?: unknown;
 };
 
-function clearCacheLoadRecord(ctx: ClearCacheCtx): ClearCacheCtx {
+async function clearCacheLoadRecord(ctx: ClearCacheCtx): Promise<ClearCacheCtx> {
   if (ctx.providerId && ctx.providerRepo && ctx.stripPersisted) {
     try {
-      ctx.record = ctx.providerRepo.getProviderByProviderId(ctx.providerId);
+      await providerWriter(ctx.providerRepo).call(
+        providerRpcWrites,
+        'stripDiscovery',
+        ctx.providerId
+      );
     } catch (error) {
-      ctx.readError = error;
-    }
-  }
-  return ctx;
-}
-
-function clearCacheStripRecord(ctx: ClearCacheCtx): ClearCacheCtx {
-  if (ctx.record) {
-    ctx.stripped = stripPersistedDiscovery(ctx.record.configJson);
-    if (ctx.stripped !== ctx.record.configJson) {
-      try {
-        ctx.providerRepo!.updateProvider(ctx.record.id, { configJson: ctx.stripped });
-      } catch (error) {
-        ctx.stripError = error;
-      }
+      ctx.persistError = error;
     }
   }
   return ctx;
@@ -85,8 +73,7 @@ function clearCachePublishChanged(ctx: ClearCacheCtx): ClearCacheCtx {
 }
 
 function clearCacheRethrowIfNeeded(ctx: ClearCacheCtx): ClearCacheCtx {
-  if (ctx.readError) throw ctx.readError;
-  if (ctx.stripError) throw ctx.stripError;
+  if (ctx.persistError) throw ctx.persistError;
   return ctx;
 }
 
@@ -95,7 +82,6 @@ const runClearCacheAndNotifyProvidersChanged = (
 )
   .input(['ctx'])
   .pipe(clearCacheLoadRecord, 'ctx', 'ctx')
-  .pipe(clearCacheStripRecord, 'ctx', 'ctx')
   .pipe(clearCacheInvalidate, 'ctx', 'ctx')
   .pipe(clearCachePublishChanged, 'ctx', 'ctx')
   .pipe(clearCacheRethrowIfNeeded, 'ctx', 'ctx')

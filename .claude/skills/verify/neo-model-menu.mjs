@@ -36,6 +36,7 @@ try {
   const trigger = page.getByRole('button', { name: 'Model and thinking', exact: true });
   const menu = page.getByRole('group', { name: 'Model and thinking settings', exact: true });
   const option = (model) => menu.getByRole('button', { name: `${model.display_name} · Anthropic`, exact: true });
+  await page.getByRole('textbox', { name: 'Message Neo', exact: true }).focus();
   await trigger.click();
   await option(picked).waitFor();
   assert.equal(await menu.getByRole('slider', { name: 'Thinking', exact: true }).count(), 1);
@@ -60,6 +61,7 @@ try {
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.reload();
+    await page.getByRole('textbox', { name: 'Message Neo', exact: true }).focus();
     await trigger.click();
     await option(picked).waitFor();
     assert.equal(await option(picked).getAttribute('aria-pressed'), 'true');

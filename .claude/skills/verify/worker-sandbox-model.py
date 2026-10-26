@@ -18,7 +18,7 @@ printf 'outside-status=%s\\n' "$?"
 printf temp > "${{TMPDIR:-{worker}/fallback-tmp}}/probe-{engine}"
 printf 'temp-status=%s\\n' "$?"
 ''')
-protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine != 'codex' else []
+protected = [worker / '.git/hyperneo-native-writes.json', worker / '.git/hyperneo-worker-sandbox', worker / '.claude/settings.local.json'] if engine in ['claude', 'sdk'] else []
 policy_before = {path: path.read_bytes() for path in protected}
 if engine == 'sdk' and sys.platform == 'darwin' and os.environ.get('VERIFY_IMMUTABLE_RUNTIME') != '0':
     with probe.open('a') as script: script.write('mkdir -p "$TMPDIR/flagged"; printf synthetic > "$TMPDIR/flagged/file"; /usr/bin/chflags uchg "$TMPDIR/flagged/file" "$TMPDIR/flagged"; printf "%s" "$?" > observed-flags-sdk.txt\n')
@@ -27,7 +27,54 @@ if engine == 'sdk':
     with probe.open('a') as script: script.write('printf synthetic-report > "$HYPERNEO_HANDOFF_DIR/sandbox-report.txt"\n')
 with probe.open('a') as script:
     for path in protected: script.write(f"rm '{path}'\n")
+if os.environ.get('VERIFY_LOOPBACK') == '1':
+    (worker / 'loopback-probe.py').write_text('''import json, threading, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b'worker-loopback-ok')
+server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+server.timeout = 5
+thread = threading.Thread(target=server.handle_request)
+thread.start()
+try:
+    client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with client.open(f'http://127.0.0.1:{server.server_port}/probe', timeout=5) as response:
+        assert response.read() == b'worker-loopback-ok'
+    with open('loopback-observed.json', 'w') as output:
+        json.dump({'host': '127.0.0.1', 'port': server.server_port, 'connected': True}, output)
+finally:
+    thread.join(timeout=6); server.server_close()
+''')
+    with probe.open('a') as script:
+        script.write('/usr/bin/python3 ./loopback-probe.py\nprintf "loopback-status=%s\\n" "$?"\n')
+if os.environ.get('VERIFY_SIGNING_SOCK'):
+    with probe.open('a') as script:
+        script.write(f"""signed="${{TMPDIR:-{worker}/fallback-tmp}}/signed-{engine}"; rm -rf "$signed"; git init -q "$signed"
+git -C "$signed" -c user.name=Synthetic -c user.email=synthetic@example.invalid -c gpg.format=ssh -c 'user.signingkey=key::{os.environ['VERIFY_SIGNING_KEY']}' commit -q -S --allow-empty -m signed
+printf 'signing-status=%s\\n' "$?"
+git -C "$signed" cat-file commit HEAD | grep -c 'BEGIN SSH SIGNATURE' > signed-{engine}.txt
+""".replace('git -C', "SSH_AUTH_SOCK='" + os.environ['VERIFY_SIGNING_SOCK'] + "' git -C"))
 requests = []
+if (run / 'verify-sockets').exists():
+    (worker / 'socket-probe.py').write_text('''import json, socket, sys
+from pathlib import Path
+run, engine = Path(sys.argv[1]), sys.argv[2]
+observed = {}
+for name in ['allowed', 'denied']:
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(3)
+        try:
+            client.connect(str(run / (name + '.sock')))
+            observed[name] = client.recv(128) == b'synthetic-socket-ok'
+        except OSError:
+            observed[name] = False
+Path('socket-observed.json').write_text(json.dumps(observed))
+assert observed == {'allowed': True, 'denied': False}, observed
+''')
+    with probe.open('a') as script:
+        script.write(f"/usr/bin/python3 ./socket-probe.py '{run}' '{engine}'\nprintf 'socket-status=%s\\n' \"$?\"\n")
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -38,7 +85,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(b'{"input_tokens":100}'); return
         requests.append(body)
         n = len(requests)
-        if engine == 'sdk': (run / 'evidence/sdk-requests.json').write_text(json.dumps(requests, indent=2))
+        if engine in ['sdk', 'codex-app-server']: (run / f'evidence/{engine}-requests.json').write_text(json.dumps(requests, indent=2))
         usage = {'input_tokens': 10, 'output_tokens': 10}
         if engine in ['claude', 'sdk']:
             main = any(t.get('name') == 'Bash' for t in body.get('tools', []))
@@ -70,12 +117,12 @@ class Handler(BaseHTTPRequestHandler):
 server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 with probe.open('a') as script: script.write(f"curl --proxy \"${{http_proxy:-$HTTP_PROXY}}\" --noproxy '' -fsS http://127.0.0.1:{server.server_port}/probe > network-{engine}.txt\n")
-if engine == 'sdk':
+if engine in ['sdk', 'codex-app-server']:
     import time
-    (run / 'evidence/sdk-port').write_text(str(server.server_port))
+    (run / f'evidence/{engine}-port').write_text(str(server.server_port))
     try:
-        while not (run / 'sdk-finish').exists(): time.sleep(0.1)
-        (run / 'evidence/sdk-requests.json').write_text(json.dumps(requests, indent=2))
+        while not (run / f'{engine}-finish').exists(): time.sleep(0.1)
+        (run / f'evidence/{engine}-requests.json').write_text(json.dumps(requests, indent=2))
     finally:
         server.shutdown(); server.server_close()
     sys.exit(0)
@@ -93,13 +140,11 @@ else:
     expected_env = config['shell_environment_policy']['set']
     env['CODEX_HOME'] = str(home)
     args = [os.environ['VERIFY_CODEX'], '--no-daemon', '-a', 'never', '-c', 'model_provider="synthetic"', '-c', 'model_providers.synthetic.name="Synthetic"', '-c', f'model_providers.synthetic.base_url="http://127.0.0.1:{server.server_port}/v1"', '-c', 'model_providers.synthetic.wire_api="responses"', '-c', 'model_providers.synthetic.requires_openai_auth=false', '-c', 'features.shell_snapshot=false']
-    for key, value in config.items():
+    def configure(value, keys=()):
         if isinstance(value, dict):
-            for subkey, subvalue in value.items():
-                if isinstance(subvalue, dict):
-                    for leaf, scalar in subvalue.items(): args += ['-c', key + '.' + subkey + '.' + leaf + '=' + json.dumps(scalar)]
-                else: args += ['-c', key + '.' + subkey + '=' + json.dumps(subvalue)]
-        else: args += ['-c', key + '=' + json.dumps(value)]
+            for key, child in value.items(): configure(child, keys + (json.dumps(key),))
+        else: args.extend(['-c', '.'.join(keys) + '=' + json.dumps(value)])
+    configure(config)
     args += ['exec', '-s', launch['sandbox'], '-C', str(worker), '--json', '-m', 'synthetic', 'Run the synthetic probe.']
 try:
     result = subprocess.run(args, cwd=worker, env=env, capture_output=True, text=True, timeout=90)
@@ -109,7 +154,21 @@ try:
     observed['policyIntact'] = all(path.exists() and path.read_bytes() == contents for path, contents in policy_before.items())
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
+    if os.environ.get('VERIFY_LOOPBACK') == '1':
+        local = worker / 'loopback-observed.json'
+        observed['localServer'] = json.loads(local.read_text()) if local.exists() else None
+        (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
+        assert observed['localServer'] and observed['localServer']['connected'], 'Worker could not listen on loopback and connect to its server'
+    if os.environ.get('VERIFY_SIGNING_SOCK'):
+        signed = worker / f'signed-{engine}.txt'
+        observed['signedCommit'] = signed.exists() and signed.read_text().strip() == '1'
+        (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
+        assert observed['signedCommit'], 'Worker could not sign a commit through the agent socket'
     print(json.dumps(observed))
+    if (run / 'verify-sockets').exists():
+        sockets = json.loads((worker / 'socket-observed.json').read_text())
+        (run / f'evidence/{engine}-sockets.json').write_text(json.dumps(sockets))
+        assert sockets == {'allowed': True, 'denied': False}, sockets
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     assert observed['policyIntact'], 'BUG: worker removed its sandbox gate or settings'
     assert observed['networkAllowed'], 'Sandbox network probe failed'

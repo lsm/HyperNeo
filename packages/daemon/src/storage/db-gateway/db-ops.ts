@@ -1,3 +1,9 @@
+import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
+import {
+  codingPollPageReads,
+  codingPollPageWrites,
+} from '../../lib/neo/packs/coding/poll-http-db.ts';
+import { readWorkInput } from '../work-input.ts';
 import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
   codingAncestryReads,
@@ -20,7 +26,7 @@ import {
   neoTodoSessionWrites,
 } from '../repositories/neo-todo-session-repository.ts';
 import { codingTodoPrReads } from '../../lib/neo/packs/coding/todo-prs.ts';
-import { neoTodoReads } from '../repositories/neo-ask-todo-repository.ts';
+import { neoTodoReads, neoTodoWrites } from '../repositories/neo-ask-todo-repository.ts';
 import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
 import { neoWakeQueueWrite } from '../repositories/neo-wake-queue-repository.ts';
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
@@ -61,7 +67,10 @@ import {
   forgetAgentChildren,
   recordAgentChild,
 } from '../repositories/agent-child-process-repository.ts';
-import { recordNeoSessionMessage } from '../repositories/neo-session-message-repository.ts';
+import {
+  recordNeoSessionMessage,
+  sentDuringTurn,
+} from '../repositories/neo-session-message-repository.ts';
 import {
   acceptWorkDeliveryInput,
   recordWorkDeliveryOutcome,
@@ -79,9 +88,30 @@ import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write
 import { cancelRateLimitDelivery } from '../repositories/rate-limit-cancel-write.ts';
 import { claimOwnedInputWithdrawal } from '../repositories/owned-input-withdrawal-write.ts';
 import type { DbOp } from './db-op.ts';
+import { credentialStoreWrites } from '../repositories/credential-store-writes.ts';
+import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue-write.ts';
+import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
+import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
+import { jobStaleReclaimWrites } from '../repositories/job-stale-reclaim-write.ts';
+import {
+  mailboxExpiryReads,
+  mailboxExpiryWrites,
+} from '../repositories/mailbox-expiry-commands.ts';
+import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
+import { nativeFeedEnqueueWrites } from '../repositories/native-feed-enqueue-write.ts';
+import { sessionTitleEnqueueWrites } from '../repositories/session-title-enqueue-write.ts';
+import { skillValidationEnqueueWrites } from '../repositories/skill-validation-enqueue-write.ts';
+import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-write.ts';
+import { sessionListReads } from '../repositories/session-list-read.ts';
+import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
+import { healthSessionCountReads } from '../repositories/health-session-count-read.ts';
+import { sessionProjectionReads } from '../repositories/session-projection-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    codingPollPageReads,
+    codingPollPageWrites,
+    readWorkInput,
     codingMergeReads,
     codingMergeWrites,
     codingAncestryReads,
@@ -101,6 +131,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoSessionWrites,
     codingTodoPrReads,
     neoTodoReads,
+    neoTodoWrites,
     sdkMessageWrites,
     neoWakeQueueWrite,
     ...SDK_MESSAGE_TRANSACTIONS,
@@ -140,11 +171,29 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     recordAgentChild,
     forgetAgentChildren,
     recordNeoSessionMessage,
+    sentDuringTurn,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
     jobEnqueueWrites,
     enqueueMailboxAdmission,
     cancelRateLimitDelivery,
     claimOwnedInputWithdrawal,
+    globalSettingsWrites,
+    releaseRateLimitDeliveries,
+    providerRpcWrites,
+    credentialStoreWrites,
+    enqueueSessionDelivery,
+    jobStaleReclaimWrites,
+    mailboxExpiryReads,
+    mailboxExpiryWrites,
+    githubPollSuccessorWrites,
+    nativeFeedEnqueueWrites,
+    sessionTitleEnqueueWrites,
+    skillValidationEnqueueWrites,
+    githubPollRefreshWrites,
+    sessionListReads,
+    readLiveSessionList,
+    healthSessionCountReads,
+    sessionProjectionReads,
   ].map((op) => [op.name, op])
 );

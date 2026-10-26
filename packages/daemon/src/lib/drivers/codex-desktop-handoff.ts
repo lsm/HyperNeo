@@ -130,7 +130,7 @@ export async function steerCodexDesktopTurn(
       reason: 'desktop_running_probe_failed',
       detail: String(error),
     });
-    return { reason: reject('not_delivered', String(error)) };
+    return { reason: reject('not_delivered', String(error), true) };
   }
   if (!socketPath) {
     log.warn('work.send route', {
@@ -142,7 +142,8 @@ export async function steerCodexDesktopTurn(
     return {
       reason: reject(
         'not_delivered',
-        'Codex Desktop is running but its ownership endpoint is unavailable; no background writer was started.'
+        'Codex Desktop is running but its ownership endpoint is unavailable; no background writer was started.',
+        true
       ),
     };
   }
@@ -246,7 +247,8 @@ export async function steerCodexDesktopTurn(
         'not_delivered',
         dispatched
           ? `${String(error)} The steer may have been accepted; check work.status before retrying.`
-          : `${String(error)} No background writer was started; open the thread in Codex Desktop and retry.`
+          : `${String(error)} No background writer was started; open the thread in Codex Desktop and retry.`,
+        dispatched ? undefined : true
       ),
     };
   }

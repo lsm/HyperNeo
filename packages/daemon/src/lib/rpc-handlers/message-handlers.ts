@@ -125,11 +125,8 @@ export function setupMessageHandlers(
       sinceRowid?: number;
     };
 
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-
-    if (!agentSession && !(targetSessionId.startsWith('conv:') && db))
-      throw new Error('Session not found');
     return (db ?? sessionManager.getDatabase()).getSDKMessagePageAsync(targetSessionId, {
+      requireSession: !(targetSessionId.startsWith('conv:') && db),
       limit,
       before,
       since,

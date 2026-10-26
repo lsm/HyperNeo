@@ -79,7 +79,7 @@ try {
   const health=JSON.parse(probe.output().trim().split('\n').at(-1)!);
   assert.equal(snapshots.length,4);
   for(const snapshot of snapshots) {
-    assert.equal(snapshot.asks,50);assert.equal(snapshot.todos,231);assert.equal(snapshot.questions,66);
+    assert.equal(snapshot.asks,50);assert.equal(snapshot.todos,231);assert.equal(snapshot.questions,mode === 'reproduce' ? 66 : 0);
     assert.equal(snapshot.link,'/session/synthetic-230');
   }
   assert.equal(health.data.status,'ok');

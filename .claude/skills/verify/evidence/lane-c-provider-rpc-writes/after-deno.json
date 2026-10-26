@@ -1,0 +1,114 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 584,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "create": {
+    "success": true,
+    "provider": {
+      "id": "9866c873-99d0-4002-aade-feeb78f61560",
+      "providerId": "synthetic-provider-created",
+      "displayName": "synthetic-provider-created",
+      "kind": "built_in",
+      "authType": "none",
+      "isEnabled": false,
+      "isDefault": false,
+      "sortOrder": 0,
+      "healthStatus": "unknown",
+      "createdAt": 1792975535867,
+      "updatedAt": 1792975535867
+    }
+  },
+  "update": {
+    "success": true,
+    "provider": {
+      "id": "cbced2cc-ce29-4f20-a9c2-3b8dc48fe8a9",
+      "providerId": "synthetic-provider-first",
+      "displayName": "Updated synthetic provider",
+      "kind": "built_in",
+      "authType": "none",
+      "isEnabled": false,
+      "isDefault": false,
+      "sortOrder": 4,
+      "configJson": "{\"command\":\"synthetic-command\",\"discoveredModels\":{\"models\":[{\"id\":\"synthetic-model\"}]}}",
+      "healthStatus": "unknown",
+      "createdAt": 1792975535849,
+      "updatedAt": 1792975535869
+    }
+  },
+  "setDefault": {
+    "success": true
+  },
+  "health": {
+    "healthy": false,
+    "error": "Provider not registered"
+  },
+  "credentialsUpdate": {
+    "success": true,
+    "provider": {
+      "id": "cbced2cc-ce29-4f20-a9c2-3b8dc48fe8a9",
+      "providerId": "synthetic-provider-first",
+      "displayName": "Updated synthetic provider",
+      "kind": "built_in",
+      "authType": "api_key",
+      "isEnabled": false,
+      "isDefault": true,
+      "sortOrder": 4,
+      "configJson": "{\"command\":\"synthetic-command\"}",
+      "healthStatus": "healthy",
+      "lastHealthCheckAt": 1792975535872,
+      "createdAt": 1792975535849,
+      "updatedAt": 1792975535880
+    }
+  },
+  "persisted": {
+    "id": "cbced2cc-ce29-4f20-a9c2-3b8dc48fe8a9",
+    "providerId": "synthetic-provider-first",
+    "displayName": "Updated synthetic provider",
+    "kind": "built_in",
+    "authType": "api_key",
+    "isEnabled": false,
+    "isDefault": true,
+    "sortOrder": 4,
+    "configJson": "{\"command\":\"synthetic-command\"}",
+    "healthStatus": "healthy",
+    "lastHealthCheckAt": 1792975535872,
+    "createdAt": 1792975535849,
+    "updatedAt": 1792975535880
+  },
+  "rollback": {
+    "error": "synthetic credential failure"
+  },
+  "rolledBack": null,
+  "delete": {
+    "success": true
+  },
+  "deleted": null,
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 604,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 0
+}

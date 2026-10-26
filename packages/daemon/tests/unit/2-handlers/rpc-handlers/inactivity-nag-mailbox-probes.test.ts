@@ -115,7 +115,7 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
       skillsManager: noopProxy(),
       mcpImportService: noopProxy(),
     } as unknown as RPCHandlerDependencies;
-    setup = setupRPCHandlers(deps);
+    setup = await setupRPCHandlers(deps);
     claimRepo = new SpaceAgentInactivityClaimRepository(db.getDatabase());
     configRepo = new SpaceAgentInactivityConfigRepository(db.getDatabase());
     deliveries = [];

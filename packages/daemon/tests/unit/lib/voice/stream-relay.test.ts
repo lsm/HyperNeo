@@ -15,6 +15,7 @@ import {
   type VoiceStreamText,
 } from '../../../../src/lib/voice/stream-relay';
 import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
+import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
 import type { VoiceTranscribeOutcome } from '../../../../src/lib/voice/transcribe-pipeline';
 import recorded from './fixtures/wlk-deepgram.json';
 
@@ -99,6 +100,13 @@ describe('voice stream settings', () => {
     expect(finalsOf(recorded.zh).endsWith('iPhone上。')).toBe(true);
   });
 
+  test('voicePeerReasonBytes counts reason bytes whether the runtime passes a Buffer or a string', () => {
+    expect(voicePeerReasonBytes(Buffer.from('PRIVATE'))).toBe(7);
+    expect(voicePeerReasonBytes('PRIVATE')).toBe(7);
+    expect(voicePeerReasonBytes('请')).toBe(3);
+    expect(voicePeerReasonBytes(undefined)).toBe(0);
+  });
+
   test('pcm16Wav wraps PCM in a 16 kHz mono WAV header', () => {
     const wav = pcm16Wav(new Uint8Array([1, 2, 3, 4]));
     expect(Buffer.from(wav.subarray(0, 4)).toString()).toBe('RIFF');
@@ -117,6 +125,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
   let batches: string[];
   let logs: StructuredLogEvent[];
   let unsubscribe: () => void;
+  let connections: URL[];
 
   beforeEach(async () => {
     logs = [];
@@ -126,6 +135,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     received = 0;
     pushed = [];
     batches = [];
+    connections = [];
     onAudio = (socket, bytes) => socket.send(results(`heard ${bytes}`, false));
     onCloseStream = (socket) => {
       socket.send(results(`heard ${received}`, true));
@@ -137,6 +147,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     port = (server.address() as { port: number }).port;
     server.on('connection', (socket, request) => {
       const url = new URL(request.url!, 'http://stub');
+      connections.push(url);
       expect(url.pathname).toBe('/v1/listen');
       expect(url.searchParams.get('sample_rate')).toBe('16000');
       socket.on('message', (data: Buffer, isBinary: boolean) => {
@@ -176,6 +187,20 @@ describe('VoiceStream against a stub Deepgram server', () => {
     if ('error' in started) throw new Error(started.error);
     return started;
   };
+
+  test.each([undefined, 'zh', 'en'] as const)(
+    'sends language %s on the ASR connection request',
+    async (language) => {
+      const started = await VoiceStream.start('language', { ...deps(), language });
+      if ('error' in started) throw new Error(started.error);
+      try {
+        expect(started.via).toBe('streaming');
+        expect(connections[0].searchParams.getAll('language')).toEqual(language ? [language] : []);
+      } finally {
+        started.stream.close();
+      }
+    }
+  );
 
   test('relays chunks, pushes interim text, and returns the finals the server flushes on CloseStream', async () => {
     const { stream, via } = await start();
@@ -267,6 +292,34 @@ describe('VoiceStream against a stub Deepgram server', () => {
     }
   });
 
+  test('a socket that opens after the startup timeout still logs a relay-closed stream end', async () => {
+    let release: (value: null) => void = () => {};
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const starting = VoiceStream.start('s1', {
+        ...deps({ apiKeyEndpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions` }),
+        credentialManager: {
+          getCredentials: () =>
+            new Promise<null>((resolve) => {
+              release = resolve;
+            }),
+        },
+      });
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect(await starting).toMatchObject({ via: 'batch' });
+    } finally {
+      vi.useRealTimers();
+    }
+    release(null);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(logs.find((event) => event.message === 'voice.stream.end')?.metadata).toMatchObject({
+      streamId: 's1',
+      closedBy: 'relay',
+      code: 1000,
+      reason: 'normal_closure',
+    });
+  });
+
   test('without a streaming endpoint auto mode goes to batch', async () => {
     const { via } = await start({ streamEndpoint: undefined });
     expect(via).toBe('batch');
@@ -296,6 +349,68 @@ describe('VoiceStream against a stub Deepgram server', () => {
       peerReasonBytes: 23,
     });
     expect(JSON.stringify(logs)).not.toContain('PRIVATE_');
+  });
+
+  test('a server 1011 close logs who closed, the code, and stream timing without the peer reason', async () => {
+    onAudio = (socket) => {
+      socket.send(results('PRIVATE_TRANSCRIPT', false));
+      socket.close(1011, 'PRIVATE_CLOSE_REASON');
+    };
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const end = logs.find((event) => event.message === 'voice.stream.end');
+    expect(end?.metadata).toMatchObject({
+      streamId: 's1',
+      closedBy: 'server',
+      code: 1011,
+      reason: 'server_error',
+      peerReasonBytes: Buffer.byteLength('PRIVATE_CLOSE_REASON'),
+    });
+    expect(typeof end?.metadata?.durationMs).toBe('number');
+    expect(typeof end?.metadata?.sinceLastAudioMs).toBe('number');
+    expect(typeof end?.metadata?.sinceLastResultMs).toBe('number');
+    expect(JSON.stringify(logs)).not.toContain('PRIVATE_');
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+  });
+
+  test('a client cancel logs the end as client-closed with the normal close code', async () => {
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    stream.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(logs.find((event) => event.message === 'voice.stream.end')?.metadata).toMatchObject({
+      closedBy: 'client',
+      code: 1000,
+      reason: 'normal_closure',
+    });
+  });
+
+  test('a relay-initiated close logs the end as relay-closed', async () => {
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    stream.close('idle_timeout');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(logs.find((event) => event.message === 'voice.stream.end')?.metadata).toMatchObject({
+      closedBy: 'relay',
+      code: 1000,
+    });
+  });
+
+  test('a server keepalive ping shows up in the end log timing', async () => {
+    onAudio = (socket) => {
+      socket.ping();
+      socket.send(results('hi', false));
+    };
+    onCloseStream = (socket) => socket.close(1000);
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await stream.stop();
+    const end = logs.find((event) => event.message === 'voice.stream.end');
+    expect(end?.metadata?.closedBy).toBe('server');
+    expect(typeof end?.metadata?.sinceLastPingMs).toBe('number');
   });
 
   test('a stream that never heard any text falls back to batch with the buffered audio', async () => {

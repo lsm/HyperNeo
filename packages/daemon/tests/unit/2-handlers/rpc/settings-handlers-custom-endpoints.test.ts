@@ -52,6 +52,14 @@ function makeSettings(initial: GlobalSettings): {
       state.settings = settings;
     }),
   } as unknown as SettingsManager;
+  manager.updateGlobalSettingsAsync = async (updates) => {
+    const before = manager.getGlobalSettings();
+    const settings = manager.updateGlobalSettings(updates);
+    return { settings, before, after: settings };
+  };
+  manager.rollbackGlobalSettingsAsync = async ({ before }) => {
+    manager.updateGlobalSettings(before);
+  };
   return { manager, state };
 }
 

@@ -1,6 +1,7 @@
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { RemoteNotSentError } from '../remote-daemons/registry.ts';
 import { qualifyRemoteOrigin } from '../mailbox/address.ts';
 import { selectMessageOrigin, selectSendOrigin } from '../messaging/message-send.ts';
 import {
@@ -81,7 +82,14 @@ const REMOTE_SEND_TIMEOUT_MS = 180_000;
 const ForwardedOriginSchema = z.string().min(1).max(REPLY_ORIGIN_MAX).optional();
 
 export const StartWorkInputSchema = z.object({
-  todoId: z.string().trim().min(1).optional().describe('Neo: todo belonging to an open ask.'),
+  todoId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Todo reference for bookkeeping; missing or stale references are recorded without blocking.'
+    ),
   adapter: z.string().min(1),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),
@@ -98,7 +106,9 @@ export const SendWorkInputSchema = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe('Neo: todo belonging to an open ask, including follow-ups.'),
+    .describe(
+      'Todo reference for bookkeeping, including follow-ups; missing or stale references are recorded without blocking.'
+    ),
   ref: WorkRefSchema,
   message: MessageSchema,
   mode: z.enum(['auto', 'steer', 'queue']).optional(),
@@ -177,22 +187,25 @@ type SendResult = z.infer<typeof SendWorkResultSchema>;
 type StatusResult = z.infer<typeof WorkStatusResultSchema>;
 type StopResult = z.infer<typeof StopWorkResultSchema>;
 
-function admitNeoTodo(
+function neoTodoRecords(
   input: StartDraft | QueuedInput,
   caller: OperationCaller,
   deps: WorkVerbDeps
-): Gate<true> {
+): string[] {
   return !('message' in input) ||
     caller.role !== 'neo' ||
     caller.source === 'internal' ||
     (input.todoId && caller.sessionId && deps.isOpenTodo?.(input.todoId, caller.sessionId))
-    ? { value: true }
-    : {
-        reason: reject(
-          'todo_required',
-          'Neo work needs todoId belonging to an open ask owned by this session. Start a todo with neo.todo.add {start:true}; use neo.todo.continue or reference that todoId for follow-ups.'
-        ),
-      };
+    ? []
+    : [
+        'todo_required: this work has no todo belonging to an open ask owned by this session. Recorded without blocking delivery. Use neo.todo.add or reference an open todoId to track it.',
+      ];
+}
+
+function withTodoRecords<T>(outcome: Result<T>, records: string[]): Result<T> {
+  return outcome.ok && records.length
+    ? { ...outcome, records: [...(outcome.records ?? []), ...records] }
+    : outcome;
 }
 
 function workReplyInput<T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>>(
@@ -219,8 +232,8 @@ function workReplyInput<T extends StartInput | SendInput | z.infer<typeof Withdr
   };
 }
 
-export function reject(reason: WorkRejection, detail: string): Rejected {
-  return { ok: false, reason, detail };
+export function reject(reason: WorkRejection, detail: string, notSent?: true): Rejected {
+  return { ok: false, reason, detail, ...(notSent ? { notSent } : {}) };
 }
 
 export function pickRoute<Verb extends RoutedVerb>(
@@ -314,12 +327,16 @@ export async function forwardWork<Result>(
     );
     return reply.success ? reply.data : reject('unreachable', `${daemon} sent an unusable reply.`);
   } catch (error) {
-    return reject('unreachable', error instanceof Error ? error.message : String(error));
+    return reject(
+      'unreachable',
+      error instanceof Error ? error.message : String(error),
+      error instanceof RemoteNotSentError ? true : undefined
+    );
   }
 }
 
 export function annotateUnreachable(rejected: Rejected, hint: string): Rejected {
-  return rejected.reason === 'unreachable'
+  return rejected.reason === 'unreachable' && !rejected.notSent
     ? { ...rejected, detail: `${rejected.detail} ${hint}` }
     : rejected;
 }
@@ -353,7 +370,7 @@ export async function startWork(
     deps.remote,
     REMOTE_START_TIMEOUT_MS
   );
-  if (result.ok) return { ok: true, value: stampWork(result.value, route.daemon) };
+  if (result.ok) return { ...result, value: stampWork(result.value, route.daemon) };
   return annotateUnreachable(
     result,
     'The work may still have started there; check work.find before starting it again.'
@@ -473,7 +490,7 @@ function resolveStartPlace(
 
 const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
-  .pipe(admitNeoTodo, ['input', 'caller', 'deps'], 'result:outcome')
+  .pipe(neoTodoRecords, ['input', 'caller', 'deps'], 'records')
   .pipe(resolveStartPlace, ['input', 'caller', 'deps'], 'result:outcome')
   .pipe((resolved: StartInput) => resolved, 'outcome', 'input')
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
@@ -495,6 +512,7 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
   .pipe(startWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
   .pipe(presentWorkIdentity, 'outcome', 'outcome')
+  .pipe(withTodoRecords, ['outcome', 'records'], 'outcome')
   .endAsync('outcome') as (
   input: StartDraft,
   caller: OperationCaller,
@@ -503,12 +521,13 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
 
 const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
-  .pipe(admitNeoTodo, ['input', 'caller', 'deps'], 'result:outcome')
+  .pipe(neoTodoRecords, ['input', 'caller', 'deps'], 'records')
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
   .pipe(sendWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(withTodoRecords, ['outcome', 'records'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,
   caller: OperationCaller,
@@ -571,12 +590,13 @@ async function changeQueuedInput(
 }
 const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
-  .pipe(admitNeoTodo, ['input', 'caller', 'deps'], 'result:outcome')
+  .pipe(neoTodoRecords, ['input', 'caller', 'deps'], 'records')
   .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
   .pipe(changeQueuedInput, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(withTodoRecords, ['outcome', 'records'], 'outcome')
   .endAsync('outcome') as (
   input: QueuedInput,
   caller: OperationCaller,
@@ -655,7 +675,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.rename',
       description:
-        'Rename existing work using a supported harness API. Use a long-lived work-type title such as HyperNeo backend, ops, qlark or iOS. title is single-line plain text, trimmed, 1–200 characters. Codex uses thread/name/set so connected Desktop clients receive the name update without a restart; HyperNeo uses its session lifecycle API; Space uses task.update or agent.update. No other app private files or databases are written. Unsupported adapters return not_supported; API failures return not_delivered or unreachable with a reason. Only Neo or the user can rename work on another daemon.',
+        'Rename existing work using a supported harness API. Workers are long-lived sessions. Use a short title with the project and a number, such as neo-ios dev 1, neo-ios dev 2 or HyperNeo dev 3, never a task title. title is single-line plain text, trimmed, 1–200 characters. Codex uses thread/name/set so connected Desktop clients receive the name update without a restart; HyperNeo uses its session lifecycle API; Space uses task.update or agent.update. No other app private files or databases are written. Unsupported adapters return not_supported; API failures return not_delivered or unreachable with a reason. Only Neo or the user can rename work on another daemon.',
       inputSchema: RenameWorkInputSchema,
       resultSchema: RenameWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -673,7 +693,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. Workers are long-lived sessions: title is the project and a number, such as neo-ios dev 1 or HyperNeo dev 3, never a task title. Put the task in message. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -682,7 +702,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Copilot strict steer is unsupported: immediate input can fall back to a later turn. Copilot auto and queue enqueue input; delivered false plus receipt/queuedSubmissionId means accepted and waiting for consumption. Use receipt-bound work.status for its reply. Default mode auto preserves each adapter’s normal send behavior; on Codex it steers a running turn or starts an idle turn. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. For Codex auto and steer modes, running Desktop first opens unloaded work and waits for its owner, then steers through that owner; steeredIntoTurnId confirms that turn. If Desktop is running but cannot take ownership, delivery refuses without starting a background writer. In these modes, app-server is used only when Desktop is not running. After a turn started through app-server completes, that connection unsubscribes, with up to 30 minutes of idle grace before unload. Explicit Codex queue still uses the shared app-server queue API even when Desktop is running; it does not use this ownership handoff. In Codex auto mode, an idle thread starts a turn and returns startedTurnId with delivered true; if resume reports that this thread already has an active writer, it queues for that writer and returns queuedSubmissionId instead. Other unavailable or unconfirmed starts return not_delivered without queueing. Use work.queue to explicitly wait for the next turn. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Claude Desktop desktopUI is ui-unconfirmed when no supported live render/read acknowledgment exists; delivered, confirmedAt, links and Remote Control never confirm Desktop rendering or reading. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Copilot strict steer is unsupported: immediate input can fall back to a later turn. Copilot auto and queue enqueue input; delivered false plus receipt/queuedSubmissionId means accepted and waiting for consumption. Use receipt-bound work.status for its reply. Default mode auto preserves each adapter’s normal send behavior; on Codex it queues input for the next idle turn without requiring Desktop ownership. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. Explicit Codex steer uses Desktop ownership when Desktop is running and the app-server otherwise. Automatic Codex sends and explicit queue check loaded threads and resume saved unloaded threads before settings or native queue submission; already loaded threads are not resumed and no turn/start is issued. Queue acceptance returns queuedSubmissionId; delivered stays false unless a fresh matching input with a receipt is observed in the transcript. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Claude Desktop desktopUI is ui-unconfirmed when no supported live render/read acknowledgment exists; delivered, confirmedAt, links and Remote Control never confirm Desktop rendering or reading. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false reports a failed or uncertain send. notSent true proves no input was accepted, through no dispatch or an explicit precondition refusal; otherwise reconcile work.status before retrying. Reasons include not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -691,7 +711,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.queue',
       description:
-        'Queue next-turn peer input by ref. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
+        'Queue next-turn peer input by ref. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },

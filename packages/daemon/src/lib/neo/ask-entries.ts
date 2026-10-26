@@ -35,6 +35,7 @@ const NEO_TODO_STATUS_EN = {
   'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
   'todo.done': 'Done',
+  'todo.closedUnverified': 'Closed unverified',
 } as const;
 
 const coded = (code: keyof typeof NEO_TODO_STATUS_EN, params: Record<string, string> = {}) =>
@@ -45,6 +46,7 @@ export function neoTodoStatusLine(
   todos: readonly NeoTodo[],
   packLine: NeoStatusLine | null
 ): NeoStatusLine {
+  if (todo.state === 'closed_unverified') return coded('todo.closedUnverified');
   if (todo.state === 'removed') {
     const title = todos.find((other) => other.id === todo.replacedBy)?.title;
     if (title)
@@ -79,12 +81,47 @@ export function neoAskEntryState(
 
 export const NEO_DONE_TODOS_SHOWN = 3;
 
+export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
+  const line = (text: string) => text.split(/\r?\n/, 1)[0].slice(0, 200);
+  return {
+    ...entry,
+    summary: {
+      todoCount: entry.todos.filter((todo) => todo.state !== 'done').length + entry.doneCount,
+      questionCount: entry.questions.length,
+      openQuestionCount: entry.questions.filter((question) => question.state === 'open').length,
+      questionRefs: entry.questions.map(({ id, replacedBy }) => ({ id, replacedBy })),
+    },
+    ask: { ...entry.ask, request: '', outcome: null },
+    todos: entry.todos.map((todo) => ({
+      ...todo,
+      instruction: null,
+      report: null,
+      evidence: null,
+      reason: null,
+      blockedReason: null,
+      nextAction: null,
+      named: null,
+      check: null,
+      artifacts: undefined,
+      status: line(todo.status),
+      statusCodes: todo.statusCodes?.map((code) => ({
+        ...code,
+        params: Object.fromEntries(
+          Object.entries(code.params).map(([key, value]) => [key, line(value)])
+        ),
+      })),
+    })),
+    questions: [],
+  };
+}
+
 const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
   blocked: 0,
   failed: 1,
   doing: 2,
   todo: 3,
   done: 4,
+  closed_unverified: 4,
   removed: 5,
 };
 
@@ -168,6 +205,14 @@ const NeoTodoEntrySchema = NeoTodoSchema.extend({
 });
 
 export const NeoAskEntrySchema = z.object({
+  summary: z
+    .object({
+      todoCount: z.number(),
+      questionCount: z.number(),
+      openQuestionCount: z.number(),
+      questionRefs: z.array(z.object({ id: z.string(), replacedBy: Nullable })).optional(),
+    })
+    .optional(),
   ask: z.object({
     focusedSession: NeoQuestionSchema.shape.sourceSession,
     id: z.string(),

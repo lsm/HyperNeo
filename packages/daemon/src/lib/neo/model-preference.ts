@@ -105,10 +105,7 @@ export function createNeoPreferenceOperation(service: NeoService) {
     .pipe(requireNeoPreferenceModel, ['input', 'catalog'], 'result:admission')
     .pipe(
       async (input: NeoModelPreference) => {
-        const fallbacks =
-          input.fallbacks ?? service.db.getGlobalSettings().neo?.preferences?.fallbacks;
-        const preferences = { ...input, ...(fallbacks === undefined ? {} : { fallbacks }) };
-        await service.saveModelPreference(preferences);
+        const preferences = await service.saveModelPreference(input);
         return { ok: true as const, preferences };
       },
       'admission',

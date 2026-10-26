@@ -219,7 +219,7 @@ describe('Neo daemon notes', () => {
         await service.todoRunner.refresh((message, error) => {
           throw new Error(message, { cause: error });
         });
-        expect(reportJobs()).toHaveLength(7);
+        expect(reportJobs()).toHaveLength(6);
       }
     }
   );

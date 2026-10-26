@@ -19,7 +19,7 @@ import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] };
+type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[]; records?: string[] };
 
 const Text = z.string().trim().min(1);
 
@@ -44,6 +44,7 @@ const AskResult = z.union([
   z.object({
     ok: z.literal(true),
     ask: NeoAskEntrySchema.shape.ask,
+    records: z.array(z.string()).optional(),
     todos: NeoAskEntrySchema.shape.todos.element
       .omit({ status: true, link: true, remoteLink: true })
       .array(),
@@ -72,24 +73,6 @@ export function requireNeoAskGoal(
           reason: 'goal_not_found: asks can only name a goal owned by their Neo session.',
         },
       };
-}
-
-function requireNeoAskTodosFinished(
-  ask: NeoAsk,
-  status: z.infer<typeof Settle>['status'],
-  todos: readonly NeoTodo[]
-): Gate<NeoAsk> {
-  const unfinished = todos.filter(
-    (todo) => todo.state !== 'done' && !(todo.state === 'removed' && todo.reason)
-  );
-  if (status !== 'done' || !unfinished.length) return { value: ask };
-  const listed = unfinished.map((todo) => `"${todo.title}" (${todo.id}, ${todo.state})`);
-  return {
-    reason: {
-      ok: false,
-      reason: `todos_unfinished: finish or remove these todos first: ${listed.join(', ')}.`,
-    },
-  };
 }
 
 export function requireNeoAskProject(
@@ -201,14 +184,19 @@ export function createNeoAskRecordOperations(
           });
         if (homeless)
           return {
-            ok: false,
-            reason: `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it with a different title, since this title in this turn reaches the settled request.`,
+            ok: true,
+            ask,
+            todos: family(),
+            records: [
+              `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it with a different title, since this title in this turn reaches the settled request.`,
+            ],
           };
         const refused = input.todos
           .filter((todo) => !recordedRow(todo))
           .map((todo) => planNeoTodoDraft(todo, packs()))
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
+        const records: string[] = [];
         for (const todo of input.todos) {
           const row = recordedRow(todo);
           const added = !row
@@ -225,12 +213,18 @@ export function createNeoAskRecordOperations(
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
+          if ('records' in added && added.records) records.push(...added.records);
         }
         const parent = store.getAsk(ask.id) ?? ask;
         const children = store.listChildAsks(ask.id);
         if (split && parent.status === 'open' && !store.listTodos(ask.id).length && children.length)
           store.settleAsk(parent, 'done', neoSplitOutcome(children, family().length), Date.now());
-        return { ok: true, ask: store.getAsk(ask.id) ?? ask, todos: family() };
+        return {
+          ok: true,
+          ask: store.getAsk(ask.id) ?? ask,
+          todos: family(),
+          ...(records.length ? { records } : {}),
+        };
       },
       ['outcome', 'input', 'caller'],
       'outcome'
@@ -297,14 +291,6 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      (ask: NeoAsk, input: z.infer<typeof Settle>, caller: OperationCaller) =>
-        caller.source === 'rpc' && caller.principal === 'local'
-          ? { value: ask }
-          : requireNeoAskTodosFinished(ask, input.status, store.listTodos(ask.id)),
-      ['outcome', 'input', 'caller'],
-      'result:outcome'
-    )
-    .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Settle>): Promise<AskReceipt | Rejection> => {
         const failed: string[] = [];
         const stopped: string[] = [];
@@ -322,10 +308,36 @@ export function createNeoAskRecordOperations(
               stopped.length ? ` (stopped: ${stopped.join(', ')})` : ''
             }, and those sessions may still run.`,
           };
-        const settled = store.settleAsk(ask, input.status, input.outcome, Date.now());
+        const unfinished =
+          input.status === 'done'
+            ? store
+                .listTodos(ask.id)
+                .filter(
+                  (todo) =>
+                    !['done', 'closed_unverified'].includes(todo.state) &&
+                    !(todo.state === 'removed' && todo.reason)
+                )
+            : [];
+        const records = unfinished.length
+          ? [
+              `todos_unfinished: closed unverified: ${unfinished.map((todo) => `${todo.title} (${todo.id}): ${todo.doneWhen}`).join('; ')}`,
+            ]
+          : [];
+        const settled = store.settleAsk(
+          ask,
+          input.status,
+          input.outcome,
+          Date.now(),
+          unfinished.map((todo) => todo.id)
+        );
         for (const todo of store.listTodos(ask.id))
           if (!swept.has(todo.id) && sessions.readRef(todo.id)) await controls.stop(todo);
-        return { ok: true, ask: settled, todos: store.listTodos(ask.id) };
+        return {
+          ok: true,
+          ask: settled,
+          todos: store.listTodos(ask.id),
+          ...(records.length ? { records } : {}),
+        };
       },
       ['outcome', 'input'],
       'outcome'
@@ -348,7 +360,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.outcome',
       description:
-        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle still requires them finished.',
+        'Record the settled focused discussion outcome on an open ask owned by this Neo. Use only an explicit report from ask.focusedSession after the human says the discussion is settled, naming this ask and its decision, documents and PRs. outcome is concise Markdown with document/PR references, not inferred approval from a relayed turn. This keeps the ask and its todos open, preserves its session link and does not stop or dispatch work. Track agreed execution using existing todos and pack checks; neo.ask.settle records unfinished todos as closed unverified.',
       inputSchema: Outcome,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -357,7 +369,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'End an ask: done when its todos are done, dropped when the human drops it. Agent completion is refused while any todo is neither done nor removed with a reason; a local human may explicitly confirm done. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Unfinished todos are recorded and closed unverified when settling done; this never certifies their outcomes. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

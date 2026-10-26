@@ -51,8 +51,13 @@ const mock = createServer(async (req, res) => {
     if (args.includes('graphql')) {
       const budget = { cost: 7, remaining: 4866, resetAt: new Date(Date.now() + 3600_000).toISOString() };
       ledgerCalls.push({ resource: 'graphql', ...budget });
-      res.end(`HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ data: { rateLimit: budget } })}`);
+      const node = { number: 1, title: 'Synthetic', headRefName: 'fixture', headRefOid: 'head', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null, closedAt: null };
+      res.end(`HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ data: { rateLimit: budget, repository: { nameWithOwner: 'synthetic/a-public', p1: node } } })}`);
       return;
+    }
+    if (args[1].startsWith('repos/synthetic/a-public/pulls?')) {
+      const body = args[1].includes('state=closed') ? [] : [{ number: 1, title: 'Synthetic', head: { ref: 'fixture', sha: 'head' }, updated_at: 'initial', created_at: '2026-01-01T00:00:00Z', closed_at: null, draft: false, base: { repo: { full_name: 'synthetic/a-public' } } }];
+      res.end(`HTTP/2.0 200 OK\r\n\r\n${JSON.stringify(body)}`); return;
     }
     const path = args.find(arg => arg.startsWith('/repos/') || arg === '/user');
     assert(path);

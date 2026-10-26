@@ -27,7 +27,14 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
-export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'removed';
+export type NeoTodoState =
+  | 'todo'
+  | 'doing'
+  | 'blocked'
+  | 'done'
+  | 'closed_unverified'
+  | 'failed'
+  | 'removed';
 
 export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question' | 'needs-human';
 
@@ -160,6 +167,12 @@ export interface NeoQuestionEntry extends NeoQuestion {
 }
 
 export interface NeoAskEntry {
+  summary?: {
+    todoCount: number;
+    questionCount: number;
+    openQuestionCount: number;
+    questionRefs?: { id: string; replacedBy: string | null }[];
+  };
   ask: NeoAsk;
   state: NeoAskEntryState;
   todos: NeoTodoEntry[];

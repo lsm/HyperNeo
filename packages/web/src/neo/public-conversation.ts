@@ -179,7 +179,7 @@ export function presentNeoPublicConversation({
         })
       ),
     ...sessionMessages
-      .filter((message) => Date.parse(message.createdAt) >= from)
+      .filter((message) => message.kind !== 'worker-batch' && Date.parse(message.createdAt) >= from)
       .map(
         (message): NeoPublicEntry => ({
           kind: 'session',
@@ -243,11 +243,12 @@ export const resolveNeoCardReply = (superpipe({})('neo-card-reply-target') as Pi
   .pipe(
     (reply: Pick<NeoCardReply, 'askId' | 'questionId'>, entries: readonly NeoAskEntry[]) => {
       const entry = entries.find((entry) => entry.ask.id === reply.askId);
-      let question = entry?.questions.find((question) => question.id === reply.questionId);
+      const questions = entry?.summary?.questionRefs ?? entry?.questions;
+      let question = questions?.find((question) => question.id === reply.questionId);
       const seen = new Set<string>();
       while (question?.replacedBy && !seen.has(question.id)) {
         seen.add(question.id);
-        question = entry?.questions.find((next) => next.id === question!.replacedBy);
+        question = questions?.find((next) => next.id === question!.replacedBy);
       }
       return question && !seen.has(question.id)
         ? { value: { askId: reply.askId, questionId: question.id } }

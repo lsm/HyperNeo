@@ -250,6 +250,7 @@ export function NeoVoice({
           </div>
           <Button
             size="sm"
+            class="h-11 min-w-11 shrink-0"
             variant="danger"
             disabled={!!transcribing || recorder.isStarting}
             onClick={() => void transcribe('draft')}
@@ -263,6 +264,7 @@ export function NeoVoice({
         enabled && (
           <Button
             size="sm"
+            class="h-11 min-w-11 shrink-0"
             variant="ghost"
             disabled={!connected || !isVoiceRecordingSupported()}
             title={
@@ -271,7 +273,7 @@ export function NeoVoice({
             onClick={() => void start()}
             aria-label="Start voice input"
           >
-            <NeoIcon name="mic" />
+            <NeoIcon name="mic" class="!h-6 !w-6" />
           </Button>
         )
       )}

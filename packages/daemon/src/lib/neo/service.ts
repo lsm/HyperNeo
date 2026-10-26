@@ -1,7 +1,9 @@
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
+import { discoverSigningSocket } from './worker-sockets.ts';
 import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
 import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
@@ -301,17 +303,22 @@ export class NeoService {
     );
   }
 
-  async saveModelPreference(preferences: NeoModelPreference): Promise<void> {
-    const neo = this.db.getGlobalSettings().neo;
-    const updated = this.db.updateGlobalSettings({ neo: { ...neo, preferences } });
+  async saveModelPreference(preferences: NeoModelPreference): Promise<NeoModelPreference> {
+    const updated = await gatewayFor(this.db.getDatabase()).call(
+      globalSettingsWrites,
+      'neoPreferences',
+      preferences
+    );
+    const saved = updated.neo!.preferences!;
     this.publishSettings?.(updated);
     const root = this.repo.defaultBinding();
-    if (!root) return;
+    if (!root) return saved;
     const target = await this.alignModelPreference(root.sessionId).catch((error) => {
       this.log.warn('Neo model preference not applied', error);
       return null;
     });
-    await this.applyCompactPercent(root.sessionId, preferences, target);
+    await this.applyCompactPercent(root.sessionId, saved, target);
+    return saved;
   }
 
   private async applyCompactPercent(
@@ -651,6 +658,8 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
+    const socket = await discoverSigningSocket();
+    if (socket) await this.requestWorkerSocket(socket);
     if (id) await this.alignCoordinatorConfig(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
@@ -672,6 +681,13 @@ export class NeoService {
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
     await publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
+  }
+
+  async requestWorkerSocket(socket: string) {
+    const session = this.defaultSessionId() ?? (await this.openDefault());
+    const question = await this.todos.write('requestWorkerSocket', session, socket);
+    this.notifyChanged();
+    return question;
   }
 
   deliverQuestionAnswers(questionId?: string): Promise<void> {

@@ -22,7 +22,7 @@ End state, in `$RUN/evidence/`:
 - `neo-worker-permission.json`: unset shows `auto (not set)`; the four values show by name;
   `unchangedByOpen` is true for each; after the pick `neo` holds `acceptEdits` and the same
   rules, packs, mutes and autoDispatch.
-- `worker-permission-1280.png`, `worker-permission-390.png`: the "Claude workers" row with
+- `worker-permission-1280.png`, `worker-permission-390.png`: the "Workers" row with
   "Claude Code workers Neo starts from now on use this mode; running sessions keep theirs."
 - `prepare-args.jsonl`: the `P08 synthetic worker` launch carries
   `--permission-mode acceptEdits`. The script fails otherwise.

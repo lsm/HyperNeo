@@ -122,3 +122,65 @@ change the retained retry: one message and delivery keep the original target and
 exact Preview reference. Lifecycle tests also distinguish changed nested quote
 targets from equal-value retries. This checks capture isolation; durable pending
 request restoration remains a later #8707 rung.
+
+The bounded versioned snapshot codec additionally requires `intakeSnapshotContract`
+and `intakeSnapshotManualReplay`. Encode the actual pending intake projection
+after the synthetic lost receipt, decode it and manually replay that exact request
+through submitNeoDraft. Its original quote/Preview remains, created is false and
+there is still one SDK message/job. Codec-only tests require no network or storage
+effects; reject a corrupt batch as one typed refusal rather than an empty recovery.
+Prepared thumbnail bytes, exact original timestamps/states and absent legacy
+context roundtrip. This is the Build contract only; storage, map hydration and
+application recovery activation remain subsequent #8707 children.
+
+Require `intakeSnapshotInlineTextAttachments` and `intakeSnapshotLongQuote` too.
+Read two valid text files through readNeoAttachment, compose them with the actual
+attachmentMessage formatter and send the resulting body above100,000 characters
+through the actual intake/RPC door. Quote that accepted ask with its full text.
+Both pending records must roundtrip exactly and manually replay with created=false,
+one SDK message/job each. Snapshot free-form text uses the existing16MiB aggregate
+JSON budget; the100,000-character unsent editor bound must not reject already
+composed attachment bodies or quoted ask text. No live send limit is changed.
+
+Capacity activation is owned by the existing createNeoIntakeClient resource in
+the later storage/admission rung, tracked by #8839. The Build codec does not cap
+the current in-memory shown map: a characterization creates21 real failed intake
+entries across sessions, verifies whole-batch refusal with all IDs retained and
+no codec-triggered RPC, then explicitly discards one to roundtrip the remaining20.
+This is not evidence of an activated21st-send transport gate.
+
+Before enabling durable recovery, the resource must encode and persist its full
+candidate set before transport. A capacity/size/validation/storage refusal must
+preserve known entries and the last good stored snapshot and prevent that candidate
+from dispatching. No UI/caller slicing, FIFO eviction, hidden cross-session pruning,
+empty recovery fallback or replacement ID. Pre-existing overflow stays visible;
+only explicit durable discard or authoritative ledger settlement may free a slot.
+The activation rung must add failing-before-fix tests for the transport/storage
+gate and failed-write/removal recovery before it is wired into the application.
+
+Storage port Build checks additionally require `intakeSnapshotStorage` and
+`intakeSnapshotStorageRestartReplay`. Save the actual pending projection through
+the scoped port with injected synthetic Storage, read it through a fresh adapter,
+refuse a stale writer and manually replay the loaded exact request. Repeat the
+read/manual replay after the owned daemon restarts; one SDK message/job remains.
+This is actual port/codec/RPC behavior using synthetic storage, not real-browser
+durability, resource hydration or application persistence activation.
+
+Focused port cases distinguish absence from denied/corrupt reads, retain raw
+revisions for later explicit recovery, bind scope and generation, refuse stale/ABA
+writes, and confirm read-back before reporting success. Quota/ambiguous writes
+cannot silently switch to a memory outbox or remove the previous record first.
+Default sessionStorage access stays deferred until the port is explicitly used.
+
+Resource hydration Build additionally requires `intakeSnapshotHydration` and
+`intakeSnapshotHydrationRestartReplay`. Restore the storage-loaded batch into a
+fresh existing intake resource and assert no transport occurs until explicit
+retry. That retry uses the original request ID and exact quote/Preview through
+the existing send pipeline, before and after the owned daemon restart, retaining
+one message/job. Focused cases require whole-batch codec validation, one-shot
+pristine ownership, interrupted sends displayed as unconfirmed failures, accepted
+entries settled only by the existing ledger, legacy/unavailable context and exact
+prepared thumbnail retention without regeneration. Mutating display projections
+must not alter private retry payloads; discard/settlement cannot re-admit a stale
+restore. This explicit API is not application hydration activation, outgoing
+durable admission or automatic replay. Those later children still gate activation.

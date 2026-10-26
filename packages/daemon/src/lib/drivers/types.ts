@@ -109,8 +109,18 @@ export const WorkRejectionSchema = z.enum([
 
 export function workResultSchema<Value extends z.ZodType>(value: Value) {
   return z.discriminatedUnion('ok', [
-    z.object({ ok: z.literal(true), value }),
-    z.object({ ok: z.literal(false), reason: WorkRejectionSchema, detail: z.string() }),
+    z.object({ ok: z.literal(true), value, records: z.array(z.string()).optional() }),
+    z.object({
+      ok: z.literal(false),
+      reason: WorkRejectionSchema,
+      detail: z.string(),
+      notSent: z
+        .literal(true)
+        .optional()
+        .describe(
+          'Proves no input was accepted: no dispatch or an explicit precondition refusal. Otherwise reconcile before retrying.'
+        ),
+    }),
   ]);
 }
 
@@ -177,6 +187,7 @@ export const WorkStartedSchema = WorkSummarySchema.extend({
 });
 
 export const WorkTurnEndSchema = z.object({
+  startedAt: z.number().optional(),
   notify: z.literal(false).optional(),
   id: z.string().min(1),
   at: z.number(),
@@ -218,8 +229,8 @@ export type WorkRejection = z.infer<typeof WorkRejectionSchema>;
 export type WorkDetail = z.infer<typeof WorkDetailSchema>;
 export type WorkInput = z.infer<typeof WorkInputSchema>;
 export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
-export type Rejected = { ok: false; reason: WorkRejection; detail: string };
-export type Result<T> = { ok: true; value: T } | Rejected;
+export type Rejected = { ok: false; reason: WorkRejection; detail: string; notSent?: true };
+export type Result<T> = { ok: true; value: T; records?: string[] } | Rejected;
 
 export type WorkVerb =
   | 'find'

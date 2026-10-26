@@ -923,13 +923,16 @@ export function NeoPublicConversation({
   };
   return (
     <div class="space-y-6" aria-label={t('chat.public')}>
-      {conversation.status !== 'ready' && (
-        <p role="status" class="text-sm text-fg-muted">
-          {conversation.status === 'loading'
-            ? t('chat.loading')
-            : t(conversation.entries.length > 0 ? 'chat.unavailableRetained' : 'chat.unavailable')}
-        </p>
-      )}
+      {conversation.status !== 'ready' &&
+        (conversation.status === 'unavailable' || conversation.entries.length === 0) && (
+          <p role="status" class="text-sm text-fg-muted">
+            {conversation.status === 'loading'
+              ? t('chat.loading')
+              : t(
+                  conversation.entries.length > 0 ? 'chat.unavailableRetained' : 'chat.unavailable'
+                )}
+          </p>
+        )}
       {conversation.status === 'unavailable' && onRetry && (
         <button type="button" class="text-sm text-accent hover:underline" onClick={onRetry}>
           {t('chat.retryLoad')}

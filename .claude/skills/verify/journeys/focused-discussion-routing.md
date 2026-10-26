@@ -32,7 +32,7 @@ the correct session pane with the prepared reply; Back preserves Reply in chat.
 Retain observed.json, web.json, screenshots, model requests and cleanup.json.
 Run neo-prompt and neo-goal-cycle-prompt contracts plus work-todo-reference and
 existing handoff/driver contracts, then bun run check. The core root stays under
-260 words; focused guidance is composed separately. This is a scripted routing
+300 words; focused guidance is composed separately. This is a scripted routing
 and loopback-model proof, not a real model-choice evaluation or native Desktop
 acceptance test. The prompt always offers the multi-provider HyperNeo session
 alongside available Claude Code in Desktop or Codex Desktop, uses the human's

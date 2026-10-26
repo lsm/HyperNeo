@@ -6,11 +6,19 @@ import {
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { vi } from 'vitest';
-import type { Session } from '@hyperneo/shared';
+import type { AppMcpServer, AppSkill, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir, tmpdir } from 'os';
-import { mkdtempSync, mkdirSync, rmSync, statSync, realpathSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  realpathSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   buildProviderSettings,
@@ -121,6 +129,26 @@ describe('QueryOptionsBuilder', () => {
   afterEach(() => {});
 
   describe('build', () => {
+    it('prepared SDK workers honor a persisted local binding opt-out', async () => {
+      const root = join(handoffDataDir, 'local-binding-opt-out');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
+      const path = join(root, '.claude/settings.local.json');
+      const settings = JSON.parse(readFileSync(path, 'utf8'));
+      settings.sandbox.network.allowLocalBinding = false;
+      writeFileSync(path, JSON.stringify(settings));
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.sandbox?.network?.allowLocalBinding).toBe(false);
+        expect(JSON.parse(readFileSync(path, 'utf8')).sandbox.network.allowLocalBinding).toBe(
+          false
+        );
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    });
+
     it('prepared workers retain sandbox enforcement and recreate purged temp roots', async () => {
       const root = join(handoffDataDir, 'prepared');
       mkdirSync(join(root, '.git/info'), { recursive: true });
@@ -165,8 +193,7 @@ describe('QueryOptionsBuilder', () => {
     it('should set allowDangerouslySkipPermissions when bypassPermissions', async () => {
       mockSession.config.permissionMode = 'bypassPermissions';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
@@ -2485,6 +2512,23 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('permission mode', () => {
+    it('starts prepared SDK workers outside auto while retaining their bypass restriction', async () => {
+      const root = join(handoffDataDir, 'permission-worker');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'protected')]);
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.permissionMode).toBe('default');
+        expect(options.allowDangerouslySkipPermissions).toBe(false);
+        expect(options.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
+        mockSession.config.permissionMode = 'plan';
+        expect((await builder.build()).permissionMode).toBe('plan');
+      } finally {
+        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+      }
+    });
+
     it('should use session config permission mode first', async () => {
       mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
@@ -2504,22 +2548,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.permissionMode).toBe('prompt');
     });
 
-    it('should default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it('should default to bypassPermissions at spawn', async () => {
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
 
     it.each([
-      ['unset', undefined, undefined, 'bypassPermissions', true],
-      ['default', 'default', undefined, 'bypassPermissions', true],
-      ['bypassPermissions', 'bypassPermissions', undefined, 'bypassPermissions', true],
-      ['acceptEdits', 'acceptEdits', 'acceptEdits', undefined, false],
-      ['plan', 'plan', 'plan', undefined, false],
-      ['legacy delegate', 'delegate', 'delegate', undefined, false],
+      ['unset', undefined, 'bypassPermissions', true],
+      ['default', 'default', 'bypassPermissions', true],
+      ['bypassPermissions', 'bypassPermissions', 'bypassPermissions', true],
+      ['acceptEdits', 'acceptEdits', 'acceptEdits', false],
+      ['plan', 'plan', 'plan', false],
+      ['legacy delegate', 'delegate', 'delegate', false],
     ])(
       'a global %s permission mode keeps its SDK output',
-      async (_name, permissionMode, sent, deferred, skipsPermissions) => {
+      async (_name, permissionMode, sent, skipsPermissions) => {
         (mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue(
           permissionMode ? { permissionMode } : {}
         );
@@ -2529,16 +2572,14 @@ describe('QueryOptionsBuilder', () => {
         });
         const options = await built.build();
         expect(options.permissionMode).toBe(sent);
-        expect(built.getDeferredPermissionMode()).toBe(deferred);
         expect(options.allowDangerouslySkipPermissions ?? false).toBe(skipsPermissions);
       }
     );
 
-    it('should map default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it('should map default to bypassPermissions at spawn', async () => {
       mockSession.config.permissionMode = 'default';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
   });
 
@@ -3402,6 +3443,183 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.enableFileCheckpointing = true;
       const options = await builder.build();
       expect('enableFileCheckpointing' in options).toBe(true);
+    });
+  });
+
+  describe('canonical frozen SDK tool inputs', () => {
+    function fixture() {
+      const server: AppMcpServer = {
+        id: 'canonical-browser',
+        name: 'registry-browser',
+        sourceType: 'stdio',
+        command: 'not-executed',
+        enabled: false,
+        source: 'user',
+      };
+      const skills: AppSkill[] = [
+        {
+          id: 'canonical-wrapper',
+          name: 'wrapper-browser',
+          displayName: 'Browser',
+          description: 'Synthetic',
+          sourceType: 'mcp_server',
+          config: { type: 'mcp_server', appMcpServerId: server.id },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+        {
+          id: 'canonical-guide',
+          name: 'fixture-guide',
+          displayName: 'Guide',
+          description: 'Synthetic',
+          sourceType: 'builtin',
+          config: { type: 'builtin', commandName: 'fixture-guide' },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+        {
+          id: 'canonical-plugin',
+          name: 'fixture-plugin',
+          displayName: 'Plugin',
+          description: 'Synthetic',
+          sourceType: 'plugin',
+          config: { type: 'plugin', pluginPath: join(handoffDataDir, 'fixture-plugin') },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+        {
+          id: 'canonical-space',
+          name: 'space-guide',
+          displayName: 'Space',
+          description: 'Synthetic',
+          sourceType: 'builtin',
+          config: { type: 'builtin', commandName: 'space-guide', spaceOnly: true },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+      ];
+      const on = {
+        version: 1 as const,
+        choices: {
+          'mcp:canonical-browser': { selected: true, aliases: ['frozen-browser'] },
+          'skill:canonical-guide': { selected: true },
+          'skill:canonical-plugin': { selected: true },
+          'skill:canonical-space': { selected: true },
+        },
+      };
+      const context: QueryOptionsBuilderContext = {
+        ...mockContext,
+        skillsManager: {
+          listSkills: () => skills,
+          getEnabledSkills: () => skills.filter((skill) => skill.enabled),
+        } as unknown as SkillsManager,
+        appMcpServerRepo: {
+          list: () => [server],
+          get: () => server,
+        } as unknown as AppMcpServerRepository,
+        skillOverrides: [],
+      };
+      mockSession.config.toolSelection = on;
+      mockSession.config.tools = { disabledSkills: skills.map((skill) => skill.id) };
+      mockSession.config.sdkToolsPreset = ['Read'];
+      return { server, skills, on, context, builder: new QueryOptionsBuilder(context) };
+    }
+
+    it('uses frozen choices despite old global and session preference flags', async () => {
+      const f = fixture();
+      const options = await f.builder.build();
+      expect(options.mcpServers).toEqual({
+        'frozen-browser': { command: 'not-executed', args: [] },
+      });
+      expect(options.plugins).toEqual(
+        expect.arrayContaining([
+          { type: 'local', path: join(handoffDataDir, 'fixture-plugin') },
+          { type: 'local', path: expect.stringContaining('/fixture-guide') },
+        ])
+      );
+      expect(options.plugins).toHaveLength(2);
+      expect(options.tools).toEqual(['Read']);
+      expect(options.strictMcpConfig).toBe(true);
+    });
+
+    it('applies changed slot vetoes on the next query without changing saved choices', async () => {
+      const f = fixture();
+      const selection = structuredClone(f.on);
+      expect((await f.builder.build()).plugins).toHaveLength(2);
+      Object.assign(f.context, {
+        skillOverrides: f.skills.map((skill) => ({ skillId: skill.id, enabled: false })),
+      });
+      const restricted = await f.builder.build();
+      expect(restricted.mcpServers ?? {}).toEqual({});
+      expect(restricted.plugins ?? []).toEqual([]);
+      expect(mockSession.config.toolSelection).toEqual(selection);
+      Object.assign(f.context, { skillOverrides: [] });
+      const restored = await f.builder.build();
+      expect(restored.mcpServers).toHaveProperty('frozen-browser');
+      expect(restored.plugins).toHaveLength(2);
+    });
+
+    it('keeps a saved off selection off when catalogs turn on', async () => {
+      const f = fixture();
+      f.server.enabled = true;
+      f.skills.forEach((skill) => {
+        skill.enabled = true;
+      });
+      mockSession.config.tools = {};
+      mockSession.config.toolSelection = { version: 1, choices: {} };
+      const options = await new QueryOptionsBuilder({ ...f.context, skillOverrides: [] }).build();
+      expect(options.mcpServers ?? {}).toEqual({});
+      expect(options.plugins ?? []).toEqual([]);
+    });
+
+    it('keeps frozen aliases when server and wrapper names change', () => {
+      const f = fixture();
+      f.server.name = 'renamed-registry';
+      f.skills[0].name = 'renamed-wrapper';
+      expect(f.builder.getEffectiveMcpServers()).toEqual({
+        'frozen-browser': { command: 'not-executed', args: [] },
+      });
+    });
+
+    it('still refuses an invalid selected transport', () => {
+      const f = fixture();
+      f.server.command = ' ';
+      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+    });
+
+    it('uses the supplied query snapshot instead of a later session selection', async () => {
+      const f = fixture();
+      const captured = structuredClone(mockSession);
+      mockSession.config.toolSelection = { version: 1, choices: {} };
+      const options = await f.builder.build({ session: captured });
+      expect(options.mcpServers).toHaveProperty('frozen-browser');
+      expect(options.plugins).toHaveLength(2);
+      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+    });
+
+    it('captures one selection before asynchronous settings preparation', async () => {
+      const f = fixture();
+      mockSettingsManager.prepareSDKOptions = mock(async () => {
+        mockSession.config.toolSelection = { version: 1, choices: {} };
+      });
+      const options = await f.builder.build();
+      expect(options.mcpServers).toHaveProperty('frozen-browser');
+      expect(options.plugins).toHaveLength(2);
+      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+    });
+
+    it('fails closed on an unsupported saved version', () => {
+      const f = fixture();
+      mockSession.config.toolSelection = { version: 2, choices: {} } as never;
+      expect(() => f.builder.getEffectiveMcpServers()).toThrow('selection_version_unsupported');
     });
   });
 

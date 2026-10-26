@@ -88,12 +88,24 @@ try {
   for (let attempt = 0; attempt < 40; attempt++) {
     const raw = await readFile(join(run, 'data', 'voice.jsonl'), 'utf8');
     logs = raw.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)).filter((event) => ['hyperneo:daemon:voice', 'hyperneo:daemon:websocket'].includes(event.module));
-    if (logs.some((event) => event.message === 'voice.stream.close' && event.metadata.reason === 'client_disconnected')) break;
+    if (logs.some((event) => event.message === 'voice.stream.close' && event.metadata.reason === 'client_disconnected')
+      && logs.some((event) => event.message === 'voice.stream.end' && event.metadata.streamId === disconnected.streamId)) break;
     await Bun.sleep(50);
   }
   const streamLogs = (streamId: unknown) => logs.filter((event) => event.metadata.streamId === streamId);
   assert(streamLogs(streaming.started.streamId).some((event) => event.message === 'voice.stream.stop' && event.metadata.via === 'streaming' && event.metadata.audioBytes === 9600 && event.metadata.audioDurationMs === 300));
   assert(streamLogs(interrupted.started.streamId).some((event) => event.message === 'voice.asr.close' && event.metadata.code === 1011 && event.metadata.reason === 'server_error'));
+  assert(streamLogs(interrupted.started.streamId).some((event) => event.message === 'voice.asr.close' && event.metadata.peerReasonBytes === Buffer.byteLength('PRIVATE_TRANSCRIPT_TEXT')), 'persist the actual peer reason byte count under Bun');
+  const streamEnd = (streamId: unknown) => streamLogs(streamId).find((event) => event.message === 'voice.stream.end');
+  const interruptedEnd = streamEnd(interrupted.started.streamId);
+  assert(interruptedEnd && interruptedEnd.metadata.closedBy === 'server' && interruptedEnd.metadata.code === 1011 && interruptedEnd.metadata.reason === 'server_error', 'log the server 1011 close on the stream-end line');
+  assert.equal(typeof interruptedEnd.metadata.durationMs, 'number');
+  assert.equal(typeof interruptedEnd.metadata.sinceLastAudioMs, 'number');
+  const streamingEnd = streamEnd(streaming.started.streamId);
+  assert(streamingEnd && streamingEnd.metadata.closedBy === 'server' && streamingEnd.metadata.code === 1000, 'log the normal server close on the stream-end line');
+  assert.equal(typeof streamingEnd.metadata.sinceLastResultMs, 'number');
+  const disconnectedEnd = streamEnd(disconnected.streamId);
+  assert(disconnectedEnd && disconnectedEnd.metadata.closedBy === 'client' && disconnectedEnd.metadata.code === 1000, 'log the client close on the stream-end line');
   assert(streamLogs(interrupted.started.streamId).some((event) => event.message === 'voice.stream.stop' && event.metadata.fallbackReason === 'asr_disconnected' && event.metadata.via === 'batch'));
   assert(streamLogs(unavailable.started.streamId).some((event) => event.message === 'voice.stream.open' && event.metadata.fallbackReason === 'asr_unavailable'));
   assert(logs.some((event) => event.message === 'voice.stream.open' && event.metadata.status === 'refused'));
@@ -104,7 +116,7 @@ try {
   assert(streamLogs(disconnected.streamId).some((event) => event.message === 'voice.stream.close' && event.metadata.reason === 'client_disconnected' && event.metadata.audioBytes === 3200));
   assert(!JSON.stringify(logs).includes('PRIVATE_'));
   await writeFile(join(run, 'evidence', 'voice-diagnostics.json'), JSON.stringify({ streaming: streaming.started, interrupted: interrupted.started, unavailable: unavailable.started, batchCalls: batches, privacyPassed: true, logs }, null, 2));
-  console.log('PASS: streaming, forced ASR disconnect, batch fallback, refused start, client close and metadata-only persisted logs');
+  console.log('PASS: streaming, forced ASR disconnect, batch fallback, refused start, client close, stream-end close attribution and metadata-only persisted logs');
 } finally {
   socket.close();
   asr.stop(true);

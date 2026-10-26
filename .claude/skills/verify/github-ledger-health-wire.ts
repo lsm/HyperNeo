@@ -5,6 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
 import { CodingPrLedgerRepository, readCodingLedgerRepo, reconcileCodingPrLedger } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { createCodingLedgerReader } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger-source.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
@@ -15,14 +16,20 @@ writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o
 writeFileSync(join(run, 'bin/gh'), String.raw`#!${process.execPath}
 import {readFileSync,appendFileSync} from 'node:fs';
 const root=${JSON.stringify(run)},args=process.argv.slice(2);
-if(args[0]!=='api'||args[1]!=='graphql'||!args.includes('--include'))process.exit(2);
-const owner=args.find(x=>x.startsWith('o='))?.slice(2),name=args.find(x=>x.startsWith('n='))?.slice(2);
+if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
+if(args[1]==='user'){console.log(JSON.stringify({id:1,url:'https://api.github.com/users/synthetic'}));process.exit(0);}
+const rest=args[1]!=='graphql', parts=args[1].split('/');
+const owner=rest?parts[1]:args.find(x=>x.startsWith('o='))?.slice(2),name=rest?parts[2]:args.find(x=>x.startsWith('n='))?.slice(2);
 if(owner!=='synthetic'||!['first','tail'].includes(name))process.exit(2);
 const phase=readFileSync(root+'/phase','utf8'),repo=owner+'/'+name;
 appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase,repo})+'\n');
-if(phase==='rate'){process.stdout.write('HTTP/2.0 429\r\nretry-after: 3600\r\n\r\n{}');process.stderr.write('HTTP 429: Too Many Requests');process.exit(1);}
+if(phase==='rate'){process.stdout.write('HTTP/2.0 429\r\nx-ratelimit-resource: core\r\nretry-after: 3600\r\n\r\n{}');process.stderr.write('HTTP 429: Too Many Requests');process.exit(1);}
 const node={number:7,title:'Synthetic',headRefName:'fixture',headRefOid:'a'.repeat(40),state:'OPEN',isDraft:false,mergeable:'MERGEABLE',reviewDecision:null,closedAt:null};
-console.log(JSON.stringify({data:{rateLimit:{remaining:4000},repository:{nameWithOwner:repo,open:{pageInfo:{hasNextPage:phase==='partial'},nodes:phase==='empty'?[]:[node]},done:{nodes:[]}}}}));
+if(rest){
+ const pulls=phase==='partial'?{}:phase==='empty'||args[1].includes('state=closed')?[]:[{number:7,title:'Synthetic',head:{ref:'fixture',sha:node.headRefOid},updated_at:'initial',created_at:'2026-01-01T00:00:00Z',closed_at:null,draft:false,base:{repo:{full_name:repo}}}];
+ console.log(JSON.stringify(pulls));process.exit(0);
+}
+console.log(JSON.stringify({data:{rateLimit:{cost:1,remaining:4000,resetAt:'2099-01-01T00:00:00Z'},repository:{nameWithOwner:repo,p7:node}}}));
 `, { mode: 0o700 });
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
 const network = globalThis.fetch;
@@ -32,15 +39,22 @@ const phase = (name: string) => writeFileSync(join(run, 'phase'), name);
 const requests = () => readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
 const proof: Record<string, unknown> = { verified: false, realGithub: false, neoConcernDeliveryWired: false };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+let source = readCodingLedgerRepo;
 const sql = () => app!.db.getDatabase();
 async function open() {
+  source = createCodingLedgerReader();
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399); app.db.updateGlobalSettings({ neo: { packs: [] } });
+  sql().prepare("UPDATE neo_pack_preferences SET value_json=? WHERE pack='coding' AND key='watchedRepos'").run(JSON.stringify(repos));
 }
 try {
   phase('seed'); await open(); proof.runtime = { commit: BUILD_METADATA.commit, pid: process.pid, port: app!.server.port };
   let ledger = new CodingPrLedgerRepository(sql());
-  const cycle = (at: number) => reconcileCodingPrLedger(ledger, repos, readCodingLedgerRepo, at);
+  const cycle = async (at: number) => {
+    const clock = Date.now; Date.now = () => at;
+    try { return await reconcileCodingPrLedger(ledger, repos, source, at); }
+    finally { Date.now = clock; }
+  };
   const history = () => sql().prepare('SELECT * FROM pack_coding_poll_facts').all();
   sql().exec("INSERT INTO pack_coding_poll_facts (subject,fact_revision,observation_revision,value_json,attempted_at) VALUES ('[\"protected-history\"]',3,5,'[]',1)");
   const protectedRows = history(); await cycle(base);

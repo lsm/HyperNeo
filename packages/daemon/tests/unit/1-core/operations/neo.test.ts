@@ -49,7 +49,6 @@ describe('Neo MVP', () => {
   let failed: string | null;
   let delivered: Set<string>;
   let interrupt: ReturnType<typeof mock>;
-  let settings: { neo?: { standingRules?: string[] } };
   let published: unknown[];
 
   beforeEach(async () => {
@@ -64,7 +63,6 @@ describe('Neo MVP', () => {
     failed = null;
     delivered = new Set();
     interrupt = mock(async () => {});
-    settings = {};
     published = [];
     const queue = {
       listActiveByPayload: (_queue: string, match: Record<string, unknown>) =>
@@ -80,11 +78,7 @@ describe('Neo MVP', () => {
     };
     db = {
       getDatabase: () => sqlite,
-      getGlobalSettings: () => settings,
-      updateGlobalSettings: (updates: typeof settings) => {
-        settings = { ...settings, ...updates };
-        return settings;
-      },
+      getGlobalSettings: () => real.getGlobalSettings(),
       getSession: (id: string) => (active.has(id) ? { id } : null),
       getJobQueueRepo: () => queue,
       getSDKMessageRepo: () => ({
@@ -231,7 +225,7 @@ describe('Neo MVP', () => {
         { source: 'mcp', role: 'neo', sessionId: holder }
       )
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('human') } });
-    expect(settings.neo?.standingRules).toEqual(rules);
+    expect(db.getGlobalSettings().neo?.standingRules).toEqual(rules);
   });
 
   test('opening a missing project reports a domain rejection instead of an execution fault', async () => {
@@ -335,6 +329,7 @@ describe('Neo MVP', () => {
       'neo.draft.recover',
       'neo.rule.ask',
       'neo.rule.applyAnswer',
+      'neo.workerSocket.ask',
       'pack.preferences.ask',
       'pack.preferences.applyAnswer',
       'neo.preferences.set',
@@ -369,6 +364,7 @@ describe('Neo MVP', () => {
       'neo.coding.smoke',
       'neo.coding.result',
       'neo.pack.read',
+      'neo.ask.history',
       'neo.snapshot',
       'neo.project.save',
     ]);

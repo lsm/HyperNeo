@@ -1,3 +1,4 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
 import type { ModelInfo, PendingModelSwitch } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -290,9 +291,11 @@ export function useModelSwitcher(
         } catch {}
       }
 
-      const { models } = (await hub.request('models.list', {
-        useCache: true,
-      })) as { models: RawModelEntry[] };
+      const { models } = (await hub.request(
+        'models.list',
+        { useCache: true },
+        { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+      )) as { models: RawModelEntry[] };
       if (requestId !== requestIdRef.current) return;
 
       const modelInfos = mapRawModelsToModelInfos(models);

@@ -91,6 +91,30 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
+  it('loads question text and todo bodies only after opening the summary', async () => {
+    locale.value = 'en';
+    const summary = entry({
+      summary: { todoCount: 1, questionCount: 1, openQuestionCount: 1 },
+      todos: [todo('one', { instruction: null })],
+      questions: [],
+    });
+    const answer = vi.fn();
+    const load = vi.fn().mockResolvedValue({
+      ...summary,
+      summary: undefined,
+      questions: [question('choice', { kind: 'choice', options: ['Ship', 'Wait'] })],
+      todos: [todo('one', { instruction: 'Full task instructions', report: 'Full worker report' })],
+    });
+    const app = render(<NeoAskTodos entry={summary} onAnswer={answer} onLoadDetails={load} />);
+    expect(load).not.toHaveBeenCalled();
+    expect(app.queryByRole('button', { name: 'Ship' })).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: /Show details.*Todo one/i }));
+    await waitFor(() => expect(app.getByText('Full worker report')).toBeTruthy());
+    expect(app.getByText('Full task instructions')).toBeTruthy();
+    expect(load).toHaveBeenCalledWith('ask');
+    fireEvent.click(app.getByRole('button', { name: 'Ship' }));
+    expect(answer).toHaveBeenCalledWith('choice', ['Ship']);
+  });
   it('copies a quote after expanding and reopening a collapsed card', async () => {
     locale.value = 'en';
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
@@ -193,7 +217,7 @@ describe('NeoAskTodos', () => {
     expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
   });
 
-  it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge'])(
+  it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
     'opens a question source through the existing opener: %s',
     async (link) => {
       locale.value = 'en';
@@ -224,9 +248,12 @@ describe('NeoAskTodos', () => {
         />
       );
       const body = app.container.querySelector('#neo-ref-question-source')!;
-      expect(body.textContent).toContain('Review worker');
-      expect(body.textContent).toContain('Codex');
-      fireEvent.click(app.getByRole('button', { name: 'Open session: Review worker' }));
+      expect(body.textContent).not.toContain('Review worker');
+      expect(body.textContent).not.toContain('Codex');
+      const open = app.getByRole('button', { name: 'Open session: Review worker', exact: true });
+      expect(open.textContent).toBe('Open');
+      expect(open.querySelector('svg')).toBeNull();
+      fireEvent.click(open);
       expect(onOpen).toHaveBeenCalledWith(link, 'Codex · Review worker');
       fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
       expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
@@ -236,7 +263,7 @@ describe('NeoAskTodos', () => {
   it.each([
     { link: null, opener: true },
     { link: 'codex://threads/worker', opener: false },
-  ])('shows source identity without navigation: %j', ({ link, opener }) => {
+  ])('omits the source header when navigation is unavailable: %j', ({ link, opener }) => {
     locale.value = 'en';
     const onAnswer = vi.fn();
     const app = render(
@@ -263,11 +290,71 @@ describe('NeoAskTodos', () => {
       />
     );
     const header = app.container.querySelector('[data-question-source]');
-    expect(header?.textContent).toContain('Terminal worker');
-    expect(header?.textContent).toContain('Claude');
-    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+    expect(header).toBeNull();
+    expect(app.queryByRole('button', { name: /^Open session:/ })).toBeNull();
     fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
     expect(onAnswer).toHaveBeenCalledWith('source', 'yes');
+  });
+
+  it('shows a short localized opener even when the source title is broken', () => {
+    const onOpen = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('source', {
+              kind: 'reply',
+              sourceSession: {
+                adapter: 'codex-desktop',
+                id: 'worker',
+                name: '( · Codex',
+                label: 'Codex · ( · Codex',
+                provider: 'Codex',
+                link: 'codex://threads/worker',
+              },
+            }),
+          ],
+        })}
+        onOpen={onOpen}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.container.textContent).not.toContain('( · Codex');
+    const open = app.getByRole('button', { name: '打开会话：( · Codex', exact: true });
+    expect(open.textContent).toBe('打开');
+    fireEvent.click(open);
+    expect(onOpen).toHaveBeenCalledWith('codex://threads/worker', 'Codex · ( · Codex');
+  });
+
+  it('names the destination by its ID when the source has no title', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('source', {
+              kind: 'reply',
+              sourceSession: {
+                adapter: 'hyperneo',
+                id: 'worker-without-title',
+                name: null,
+                label: 'HyperNeo · worker-without-title',
+                provider: 'Anthropic',
+                link: '/session/worker-without-title',
+              },
+            }),
+          ],
+        })}
+        onOpen={vi.fn()}
+        onAnswer={vi.fn()}
+      />
+    );
+    const open = app.getByRole('button', {
+      name: 'Open session: worker-without-title',
+      exact: true,
+    });
+    expect(open.textContent).toBe('Open');
+    expect(app.container.querySelector('[data-question-source]')?.textContent).toBe('Open');
   });
 
   it('offers no session opener for a question without one source', () => {
@@ -279,7 +366,7 @@ describe('NeoAskTodos', () => {
         onAnswer={vi.fn()}
       />
     );
-    expect(app.queryByRole('button', { name: /^Open session/ })).toBeNull();
+    expect(app.queryByRole('button', { name: /^Open session:/ })).toBeNull();
   });
 
   it.each(guidanceQuestions)('renders the concise guidance example: $title', async (fixture) => {
@@ -418,7 +505,13 @@ describe('NeoAskTodos', () => {
     locale.value = 'en';
     const app = render(
       <NeoAskTodos
-        entry={entry({ todos: [todo('a', { report: 'More here' }), todo('b'), todo('c')] })}
+        entry={entry({
+          todos: [
+            todo('a', { report: 'More here' }),
+            todo('b', { instruction: null }),
+            todo('c', { instruction: null }),
+          ],
+        })}
         onAnswer={vi.fn()}
       />
     );
@@ -668,6 +761,28 @@ describe('NeoAskTodos', () => {
     ).toEqual(long.map((option, index) => `${'ABC'[index]}${option}`));
   });
 
+  it('shows an unverified close with a warning instead of a done checkmark', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [
+            todo('unverified', {
+              state: 'closed_unverified',
+              status: 'Closed unverified',
+              statusCodes: [{ code: 'todo.closedUnverified', params: {} }],
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const row = app.container.querySelector('[data-todo-state="closed_unverified"]');
+    expect(row?.textContent).toContain('已关闭，未验证');
+    expect(row?.textContent).toContain('?');
+    expect(row?.textContent).not.toContain('✓');
+    expect(row?.textContent).not.toContain('做完了');
+  });
+
   it('draws each todo state with its line and opens a session', () => {
     const onOpen = vi.fn();
     const app = render(
@@ -904,15 +1019,15 @@ describe('neoAskEntryGroup', () => {
     expect(neoAskEntryGroup({ state: 'dropped', todos: [] })).toBe('outcomes');
   });
 
-  it('moves a card holding a blocked todo to the very top', () => {
+  it('keeps waiting cards above blocked work', () => {
     const blocked = entry({ state: 'doing', todos: [todo('b', { state: 'blocked' })] });
     const waiting = entry({ state: 'waiting' });
     expect(neoAskEntryGroup(blocked)).toBe('attention');
     expect(neoAskEntryGroup({ ...blocked, state: 'done' })).toBe('outcomes');
     expect(neoAskEntryGroup({ ...blocked, state: 'dropped' })).toBe('outcomes');
     expect(neoAskEntriesInOrder([waiting, blocked, entry({ state: 'doing' })])).toEqual([
-      blocked,
       waiting,
+      blocked,
       expect.objectContaining({ state: 'doing' }),
     ]);
   });

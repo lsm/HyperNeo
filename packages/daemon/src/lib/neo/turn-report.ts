@@ -5,7 +5,7 @@ import type { NeoTodoRunnerDeps } from './todo-runner.ts';
 import type { NeoTurnReportReceipts } from './turn-report-receipts.ts';
 
 type Live = { status: string; waitingFor?: string } | null;
-type Turn = { id: string; at: number; message: string };
+type Turn = { id: string; at: number; startedAt?: number; senderMachine?: string; message: string };
 type Tell = NeoTodoRunnerDeps['tell'];
 
 export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as PipelineAPI)
@@ -17,9 +17,10 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       ref: WorkRef,
       live: Live,
       turn: Turn,
-      receipts: NeoTurnReportReceipts
-    ) => receipts.observe(todo.id, dispatchId, ref, live, turn),
-    ['todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'receipts'],
+      receipts: NeoTurnReportReceipts,
+      ask: NeoAsk
+    ) => receipts.observe(todo.id, dispatchId, ref, live, turn, ask.sessionId),
+    ['todo', 'dispatchId', 'ref', 'currentLive', 'turn', 'receipts', 'ask'],
     'observation'
   )
   .pipe((observation: { live: Live }) => observation.live, ['observation'], 'live')
@@ -48,13 +49,15 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       ask: NeoAsk,
       todo: NeoTodo,
       text: string,
-      observation: { messageId: string; skip: boolean },
+      observation: { messageId: string; previousId: string; skip: boolean },
       tell: Tell,
       receipts: NeoTurnReportReceipts
     ) => {
-      if (observation.skip) return;
-      await tell(ask, todo, text, observation.messageId, 'event');
-      receipts.acknowledge(observation.messageId);
+      if (!observation.skip) {
+        await tell(ask, todo, text, observation.messageId, 'event');
+        receipts.acknowledge(observation.messageId);
+      }
+      receipts.acknowledge(observation.previousId);
     },
     ['ask', 'todo', 'text', 'observation', 'tell', 'receipts'],
     'delivered'

@@ -22,6 +22,8 @@ import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
+import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const receipt = { executionId: ref.id, inputId: 'input-1' };
@@ -43,6 +45,9 @@ function setup(
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
+  db.prepare(
+    "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
+  ).run();
   new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
@@ -437,6 +442,172 @@ describe('neo todo runner', () => {
     expect(told).toEqual([]);
     db.close();
   });
+  test.each([false, true])(
+    'delivers one input per shared worker turn, explicit send: %s',
+    async (sent) => {
+      const h = setup(false);
+      try {
+        const todos = [
+          h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+          h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+        ];
+        for (const todo of todos) await h.runner.start(todo.id);
+        const startedAt = Date.now() + 10;
+        if (sent)
+          h.db
+            .prepare(`INSERT INTO neo_session_messages
+        (conversation_id,message_id,from_session,to_session,text,created_at)
+        VALUES ('conversation','explicit','worker-1','neo','PR opened',?)`)
+            .run(new Date(startedAt + 10).toISOString());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            turnEnds: [{ id: 'shared-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(
+          sent ? 0 : 1
+        );
+        for (const todo of todos) expect(h.store.getTodo(todo.id)?.state).toBe('doing');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('delivers one shared turn when bound todos first observe different live statuses', async () => {
+    let startedAt: number | null = null;
+    let reads = 0;
+    const h = setup(false, ':memory:', (name) => {
+      if (name !== 'work.status' || startedAt === null) return;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: ++reads === 1 ? 'done' : 'running',
+          lastActivityAt: startedAt + 100,
+          turnEnds: [{ id: 'shared-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+        },
+      });
+    });
+    try {
+      const todos = [
+        h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+        h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+      ];
+      for (const todo of todos) await h.runner.start(todo.id);
+      startedAt = Date.now() + 10;
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(reads).toBeGreaterThan(1);
+      expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each([
+    ['hyperneo', undefined, false],
+    ['codex-desktop', undefined, false],
+    ['claude-code', undefined, false],
+    ['hyperneo', 'attached-alias', false],
+    ['codex-desktop', 'attached-alias', false],
+    ['claude-code', 'attached-alias', false],
+    ['hyperneo', 'attached-alias', true],
+  ] as const)(
+    'matches a send from %s routed via %s using its recorded identity, other host: %s',
+    async (adapter, daemon, otherHost) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const source = { adapter, id: 'source-worker', ...(daemon ? { daemon } : {}) };
+        const startedAt = Date.now() + 10;
+        h.sessions.recordRef(todo.id, source, startedAt);
+        const dispatch = await h.sessions.inputs.accept(
+          todo.id,
+          'neo',
+          { verb: 'send', ref: source },
+          'Observe source',
+          startedAt
+        );
+        await h.sessions.inputs.recordOutcome(dispatch, { ref: source }, startedAt);
+        const localId = adapter === 'hyperneo' ? source.id : `${adapter}:${source.id}`;
+        const origin = renderAddress({ kind: 'session', sessionId: localId });
+        const sender = sessionSender(
+          daemon
+            ? qualifyRemoteOrigin(origin, otherHost ? 'another-host' : 'remote-self-name')
+            : origin
+        );
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+        (conversation_id,message_id,from_session,to_session,text,created_at)
+        VALUES ('conversation','source-send',?,'neo','PR opened',?)`)
+          .run(sender, new Date(startedAt + 10).toISOString());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            place: { machine: 'remote-self-name', name: 'Synthetic' },
+            turnEnds: [{ id: 'source-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(
+          otherHost ? 1 : 0
+        );
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
+    'does not silence a new worker report for an unrelated send: %s',
+    async (scenario) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const startedAt = Date.now() + 100;
+        const sentAt = startedAt + (scenario === 'earlier' ? -10 : scenario === 'later' ? 200 : 10);
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+          (conversation_id,message_id,from_session,to_session,text,created_at)
+          VALUES ('conversation','unrelated',?,?, 'Old milestone',?)`)
+          .run(
+            scenario === 'other-sender' ? 'another-worker' : ref.id,
+            scenario === 'other-recipient' ? 'another-neo' : 'neo',
+            new Date(sentAt).toISOString()
+          );
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            turnEnds: [
+              {
+                id: 'new-turn',
+                ...(scenario === 'unknown-start' ? {} : { startedAt }),
+                at: startedAt + 100,
+                message: 'Blocked for a new reason',
+              },
+            ],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+        expect(h.told.at(-1)).toContain('Blocked for a new reason');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
     'relays a terminal message verbatim as a report without changing the todo result: %s',
     async (message) => {
@@ -883,9 +1054,10 @@ describe('neo todo runner follow-ups', () => {
   test('continue sends the next step and reopens the todo; retry goes again only before a session', async () => {
     const { store, runner, calls, add, setStatus } = setup();
     const todo = add();
-    expect(await runner.proceed(todo.id, 'next')).toEqual({
-      ok: false,
-      reason: 'not_started: this todo is todo and has no session to continue.',
+    expect(await runner.proceed(todo.id, 'next')).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'todo' },
+      records: [expect.stringContaining('not_started:')],
     });
     await runner.start(todo.id);
     store.updateTodo(store.getTodo(todo.id)!, { state: 'done', report: 'Done' }, 3);
@@ -894,9 +1066,10 @@ describe('neo todo runner follow-ups', () => {
     expect(continued.ok && continued.todo).toMatchObject({ state: 'doing', report: null });
     expect(calls.at(-1)).toMatchObject({ name: 'work.send', input: { ref } });
     expect(String(calls.at(-1)?.input.message)).toContain('Now add tests.');
-    expect(await runner.retry(todo.id)).toEqual({
-      ok: false,
-      reason: 'not_retryable: only a failed todo with a worker target can be retried.',
+    expect(await runner.retry(todo.id)).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'doing' },
+      records: [expect.stringContaining('not_retryable:')],
     });
   });
 });
@@ -1134,7 +1307,19 @@ describe('planNeoTodoCheck', () => {
 });
 
 describe('neoTodoNote', () => {
-  test('passes on the report of a doing todo nothing checks, asking Neo to tick it', () => {
+  test('an unverified closure is disclosed instead of described as done or blocked', () => {
+    const note = neoTodoNote({
+      title: 'T',
+      state: 'closed_unverified',
+      reason: 'Outcome not checked',
+    } as NeoTodo);
+    expect(note).toContain('closed unverified');
+    expect(note).toContain('Outcome not checked');
+    expect(note).not.toContain('is done');
+    expect(note).not.toContain('is blocked');
+  });
+
+  test('passes on the report without promising Done for an unchecked close', () => {
     expect(
       neoTodoNote({
         title: 'T',
@@ -1144,7 +1329,7 @@ describe('neoTodoNote', () => {
         report: 'Waiting on CI',
       } as NeoTodo)
     ).toBe(
-      'Todo "T" reported, and nothing checks it: tick it done with evidence once "Lane merged" holds, or let it go on.\nIts report:\nWaiting on CI'
+      'Todo "T" reported, and nothing checks it: record evidence for "Lane merged"; closing it without a passed outcome check is closed unverified, never done.\nIts report:\nWaiting on CI'
     );
   });
 
@@ -1776,8 +1961,14 @@ describe('current explicit removal behavior before recompute', () => {
         await runner.refresh(() => {});
         await runner.refresh(() => {});
         expect(await runner.start(todo.id)).toMatchObject({ ok: false });
-        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({ ok: false });
-        expect(await runner.retry(todo.id)).toMatchObject({ ok: false });
+        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_started:')],
+        });
+        expect(await runner.retry(todo.id)).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_retryable:')],
+        });
         expect(store.getTodo(todo.id)).toEqual(removed);
         expect(store.getTodo(todo.id)?.report).toBe(report);
         expect(store.getTodo(sibling.id)?.state).toBe('doing');
