@@ -55,6 +55,9 @@ let refuse = false;
 let startError = false;
 let serverStartError = false;
 let queueFault = '';
+let collide = false;
+const collisionRequests: { request: { id: unknown; params: { clientUserMessageId: string; input: { text: string }[] } }; reply: (result: unknown) => void }[] = [];
+const collisions: unknown[] = [];
 const calls: unknown[] = [];
 const logs: unknown[] = [];
 const replies: unknown[] = [];
@@ -101,6 +104,19 @@ const server = new WebSocketServer({ server: http });
 server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
+  if (request.method === 'thread/queue/add' && collide) {
+    collisionRequests.push({ request, reply: result => socket.send(JSON.stringify({ id: request.id, result })) });
+    if (collisionRequests.length === 2) {
+      const first = collisionRequests[0].request.params, timestamp = new Date().toISOString();
+      appendFileSync(rollout, [
+        { type: 'response_item', timestamp, payload: { type: 'message', role: 'user', id: first.clientUserMessageId, content: [{ type: 'input_text', text: first.input[0].text }] } },
+        { type: 'response_item', timestamp, payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'First concurrent reply only.' }] } },
+        { type: 'event_msg', timestamp, payload: { type: 'task_complete', last_agent_message: 'First concurrent reply only.' } },
+      ].map(entry => JSON.stringify(entry)).join('\n') + '\n');
+      collisionRequests.forEach((entry, index) => entry.reply({ queuedSubmission: { id: `collision-${index}` } }));
+    }
+    return;
+  }
   if (request.method === 'thread/queue/add' && queueFault) {
     if (queueFault === 'refused') socket.send(JSON.stringify({ id: request.id, error: { code: -32600, message: 'thread synthetic already has an active writer' } }));
     else socket.close();
@@ -124,16 +140,17 @@ try {
   await app.spaceRuntimeService.ready();
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
-  const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }) => new Promise<any>((done, fail) => {
+  const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }, message = 'synthetic marker') => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
-    ws!.onmessage = (event) => {
+    const listener = (event: MessageEvent) => {
       const reply = JSON.parse(String(event.data));
       if (reply.id !== id && reply.requestId !== id) return;
-      clearTimeout(timer); replies.push(reply);
+      clearTimeout(timer); ws!.removeEventListener('message', listener); replies.push(reply);
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.addEventListener('message', listener);
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message, ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   await startCodexDesktopTurn(join(home, 'ipc/ipc.sock'), spawnProcess, 'new-handoff-control', { threadId: 'new-handoff-control', input: [{ type: 'text', text: 'synthetic opening turn', text_elements: [] }] });
   assert(calls.some(call => {
@@ -168,6 +185,20 @@ try {
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
+  for (const identical of [false, true]) {
+    collide = true; collisionRequests.length = 0;
+    const prefix = 'same prefix '.repeat(20), firstText = `${prefix} first`;
+    const secondText = `${prefix} ${identical ? 'first' : 'second'}`;
+    const [first, second] = await Promise.all([send(undefined, false, false, undefined, firstText), send(undefined, false, false, undefined, secondText)]);
+    collisions.push({ identical, first, second });
+    const receipt = { executionId: 'synthetic', inputId: collisionRequests[0].request.params.clientUserMessageId };
+    assert.deepEqual(first.value, { delivered: true, queuedSubmissionId: 'collision-0', receipt });
+    assert.deepEqual(second.value, { delivered: false, queuedSubmissionId: 'collision-1' }, 'The unconsumed submission must not borrow another input receipt');
+    const observed = await send(undefined, false, false, receipt);
+    assert.equal(observed.value.inputEvidence.state, 'observed');
+    assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'agent' && entry.text === 'First concurrent reply only.'));
+    writeFileSync(rollout, ''); collide = false;
+  }
   for (const fault of ['refused', 'lost-reply']) {
     queueFault = fault;
     const before = calls.length;
@@ -188,7 +219,7 @@ try {
   assert.equal(opens.length, 1, 'Only new-thread creation opens Desktop');
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
 } finally {
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings, collisions }, null, 2));
   ws?.close(); await app.cleanup(); unsubscribe();
   for (const socket of server.clients) socket.terminate();
   await new Promise<void>((done) => server.close(() => done()));

@@ -475,10 +475,12 @@ describe('codex-desktop adapter status and send', () => {
       close: () => {},
     }),
     worktreesDir = '/codex/worktrees',
-    stdout = ''
+    stdout = '',
+    overrides: { newId?: () => string; onSpawn?: () => void } = {}
   ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
+      overrides.onSpawn?.();
       return {
         stdout: new Response(stdout).body,
         stderr: new Response(stderr).body,
@@ -504,7 +506,7 @@ describe('codex-desktop adapter status and send', () => {
       makeFolder: () => {},
       homeDir: '/Users/test',
       gitCheckout: async () => null,
-      newId: () => 'abcd1234-0000',
+      newId: overrides.newId ?? (() => 'abcd1234-0000'),
     });
   }
 
@@ -1171,6 +1173,83 @@ describe('codex-desktop adapter status and send', () => {
       expect(spawned).toEqual([['codex', 'queue', '--thread=busy', '--message=later']]);
     }
   );
+
+  test.each([false, true])(
+    'concurrent sends never share the first consumed input receipt (identical messages: %s)',
+    async (identical) => {
+      const requests: Array<{
+        params: Record<string, unknown>;
+        resolve: (reply: unknown) => void;
+      }> = [];
+      let next = 0;
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method, params) => {
+            expect(method).toBe('thread/queue/add');
+            return new Promise((resolve) => {
+              requests.push({ params, resolve });
+              if (requests.length !== 2) return;
+              const first = requests[0].params;
+              const text = (first.input as { text: string }[])[0].text;
+              appendFileSync(
+                join(dir, 'finished.jsonl'),
+                `\n${heardAs(String(first.clientUserMessageId), text)}\n${saidAt('First reply only.')}`
+              );
+              requests.forEach((request, index) =>
+                request.resolve({ queuedSubmission: { id: `queue-${index}` } })
+              );
+            });
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { newId: () => `client-${next++}` }
+      );
+      const prefix = 'same prefix '.repeat(20);
+      const messages = [`${prefix} first`, `${prefix} ${identical ? 'first' : 'second'}`];
+      const [first, second] = await Promise.all(
+        messages.map((message) => driver.send!(ref('idle'), message, user))
+      );
+      const receipt = { executionId: 'idle', inputId: 'client-0' };
+      expect(first).toEqual({
+        ok: true,
+        value: { delivered: true, queuedSubmissionId: 'queue-0', receipt },
+      });
+      expect(second).toEqual({
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'queue-1' },
+      });
+      expect(await driver.status!(ref('idle'), undefined, receipt)).toMatchObject({
+        ok: true,
+        value: {
+          inputEvidence: {
+            state: 'observed',
+            exchange: [
+              { role: 'user', text: messages[0] },
+              { role: 'agent', text: 'First reply only.' },
+            ],
+          },
+        },
+      });
+    }
+  );
+
+  test('CLI queue never attributes a concurrent matching input to an unrelated queue id', async () => {
+    const driver = adapter(0, '', undefined, undefined, 'cli-queue', {
+      onSpawn: () =>
+        appendFileSync(
+          join(dir, 'finished.jsonl'),
+          `\n${heardAs('another-input', 'next task')}\n${saidAt('Another sender reply.')}`
+        ),
+    });
+    expect(await driver.send!(ref('idle'), 'next task', user)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'cli-queue' },
+    });
+  });
 
   test('native queue preserves a fresh delivered input receipt for later evidence reads', async () => {
     appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('older', 'next step')}`);
