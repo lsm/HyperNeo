@@ -8,6 +8,8 @@ import {
   requireNeoAskSession,
 } from '../../../../src/lib/neo/ask-record-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -68,7 +70,7 @@ function setup() {
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { store, goals, sessions, call, started, stopped, refuse, stopFails, onStop };
+  return { store, goals, sessions, call, started, stopped, refuse, stopFails, onStop, ops };
 }
 
 const opening = {
@@ -88,6 +90,23 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('worker roles discover ask opening in the default operation list', () => {
+    const { ops } = setup();
+    const registry = createOperationRegistry(Object.values(ops));
+    for (const role of ['workflow_worker', 'direct_task_worker', 'long_term_agent'] as const)
+      expect(
+        listOperationSummaries(registry, { source: 'mcp', sessionId: 'worker-1', role }).map(
+          (item) => item.name
+        )
+      ).toContain('neo.ask.open');
+    expect(
+      listOperationSummaries(registry, {
+        source: 'mcp',
+        sessionId: 'worker-1',
+        role: 'universal_read',
+      }).map((item) => item.name)
+    ).not.toContain('neo.ask.outcome');
+  });
   test('settling an ask preserves an unverified close instead of treating it as unfinished', async () => {
     const h = setup();
     const opened = await h.call(
