@@ -102,6 +102,9 @@ describe('Neo home save remote sync', () => {
     const result = await call('neo.home.save', { ...input, message });
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('content_refused');
+    expect(result.reason).toContain(await git(root, 'rev-parse', 'HEAD'));
+    expect(result.reason).toContain('local commit');
+    expect(result.reason).toContain('rewrite');
     expect(await git(root, 'log', '-1', '--format=%B')).toBe(message);
     expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
   });

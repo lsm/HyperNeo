@@ -396,6 +396,58 @@ describe('Ignored human files during conflict application', () => {
 });
 
 describe('Conflict choice application', () => {
+  test.each(['Keep local', 'Use remote'])(
+    'applies the recorded %s bytes after both conflicting versions change',
+    async (answer) => {
+      const { question } = await conflict();
+      await approve(question.id, [answer]);
+      await version(root, 'notes.md', 'Later local bytes\n');
+      await version(peer, 'notes.md', 'Later remote bytes\n');
+      await git(peer, 'push', 'origin', 'main');
+      const local = await git(root, 'rev-parse', 'HEAD');
+      const remote = await git(peer, 'rev-parse', 'HEAD');
+      const before = await state();
+      const substituted = await call('neo.home.save', {
+        path: 'notes.md',
+        content: answer === 'Keep local' ? 'Later local bytes\n' : 'Later remote bytes\n',
+        message: 'Substitute unseen bytes',
+        conflictQuestionId: question.id,
+      });
+      expect(substituted.ok).toBe(false);
+      expect(await state()).toEqual(before);
+      const content = answer === 'Keep local' ? localText : remoteText;
+      const result = await call('neo.home.save', {
+        path: 'notes.md',
+        content,
+        message: 'Apply recorded bytes',
+        conflictQuestionId: question.id,
+      });
+      expect(result.ok).toBe(true);
+      expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(content);
+      await git(root, 'merge-base', '--is-ancestor', local, 'HEAD');
+      await git(root, 'merge-base', '--is-ancestor', remote, 'HEAD');
+      expect(await git(root, 'rev-parse', 'HEAD')).toBe(result.commit);
+    }
+  );
+  test('does not cite a recorded choice for a different conflicting path', async () => {
+    const { question } = await conflict();
+    await approve(question.id);
+    await git(root, 'merge', '-s', 'ours', '--no-edit', 'origin/main');
+    await git(root, 'push', 'origin', 'main');
+    await git(peer, 'pull', '--ff-only', 'origin', 'main');
+    await version(root, 'another.md', localText);
+    await version(peer, 'another.md', remoteText);
+    await git(peer, 'push', 'origin', 'main');
+    const before = await state();
+    const result = await call('neo.home.save', {
+      path: 'another.md',
+      content: remoteText,
+      message: 'Wrong question',
+      conflictQuestionId: question.id,
+    });
+    expect(result.ok).toBe(false);
+    expect(await state()).toEqual(before);
+  });
   test.each(['local', 'remote'])('applies a choice after an unrelated %s commit', async (side) => {
     const { question } = await conflict();
     await approve(question.id);
