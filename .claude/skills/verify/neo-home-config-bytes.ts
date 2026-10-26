@@ -8,7 +8,7 @@ import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/ind
 const run = process.argv.at(-1)!;
 const evidence = { runtime: Reflect.get(globalThis, 'Deno')?.version?.deno ?? process.versions.bun, cases: [] as unknown[] };
 await mkdir(join(run, 'evidence'), { recursive: true });
-for (const scope of ['global', 'system', 'local', 'command']) {
+for (const scope of ['global', 'system', 'local', 'command', 'command-file']) {
   const fixture = join(run, scope);
   const root = join(fixture, 'Neo');
   const marker = join(fixture, 'outside-marker');
@@ -42,6 +42,7 @@ for (const scope of ['global', 'system', 'local', 'command']) {
     if (scope === 'global') env.GIT_CONFIG_GLOBAL = profile;
     if (scope === 'system') Object.assign(env, { GIT_CONFIG_SYSTEM: profile, GIT_CONFIG_NOSYSTEM: '0' });
     if (scope === 'command') Object.assign(env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: name.toString('utf8') });
+    if (scope === 'command-file') Object.assign(env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'include.path', GIT_CONFIG_VALUE_0: profile });
     await writeFile(join(root, '.gitattributes'), Buffer.concat([Buffer.from('doc.md filter='), driverName, Buffer.from('\n')]));
     await writeFile(join(root, 'doc.md'), 'Exact document bytes.\n');
     const added = await git(['add', 'doc.md'], true);

@@ -74,7 +74,7 @@ afterEach(async () => {
 });
 
 describe('Neo home setup', () => {
-  test.each(['global', 'system', 'command'])(
+  test.each(['global', 'system', 'command', 'command-file'])(
     'preserves exact inherited %s identity bytes in commits',
     async (scope) => {
       await git('config', '--unset', 'user.name');
@@ -110,6 +110,11 @@ describe('Neo home setup', () => {
         process.env.GIT_CONFIG_COUNT = '1';
         process.env.GIT_CONFIG_KEY_0 = 'user.name';
         process.env.GIT_CONFIG_VALUE_0 = name.toString('utf8');
+      }
+      if (scope === 'command-file') {
+        process.env.GIT_CONFIG_COUNT = '1';
+        process.env.GIT_CONFIG_KEY_0 = 'include.path';
+        process.env.GIT_CONFIG_VALUE_0 = profile;
       }
       try {
         expect(await init()).toMatchObject({ ok: true });
