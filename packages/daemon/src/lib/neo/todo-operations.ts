@@ -73,9 +73,14 @@ export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
 const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
 
+export type NeoTodoPolicy = {
+  id: string;
+  todos?: Pick<NonNullable<NeoPack['todos']>, 'doneWhen' | 'addUrls' | 'refuse' | 'record'>;
+};
+
 export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'>>(
   draft: T,
-  packs: readonly NeoPack[],
+  packs: readonly NeoTodoPolicy[],
   peers: readonly NeoTodo[] = []
 ): Gate<T & { doneWhen: string; records?: string[] }> {
   const pack = draft.check && packs.find((item) => item.id === draft.check?.pack)?.todos;
