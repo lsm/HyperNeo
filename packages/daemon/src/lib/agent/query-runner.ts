@@ -11,6 +11,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SessionToolApplication } from '@hyperneo/shared/types/session-tool-choice';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import {
   isSDKAPIRetryMessage,
@@ -506,6 +507,40 @@ export class QueryRunner {
       );
     }
     return this.toolInventory.snapshot();
+  }
+
+  async applyToolChoice(): Promise<SessionToolApplication> {
+    const owner = this.toolInventoryOwner,
+      query = this.ctx.queryObject;
+    if (!query)
+      return this.ctx.queryPromise
+        ? { application: 'restart_required', reason: 'query_not_ready' }
+        : { application: 'next_query' };
+    if (!owner?.isLive() || this.toolInventory.snapshot().state !== 'observed')
+      return { application: 'restart_required', reason: 'query_not_ready' };
+    if (!query.setMcpServers)
+      return { application: 'restart_required', reason: 'live_mcp_unavailable' };
+    const owns = () =>
+      owner === this.toolInventoryOwner && owner.isLive() && query === this.ctx.queryObject;
+    try {
+      const result = await query.setMcpServers(
+        this.ctx.optionsBuilder.getEffectiveMcpServers() ?? {}
+      );
+      if (!owns()) return { application: 'unverified', reason: 'query_changed' };
+      if (Object.keys(result.errors ?? {}).length)
+        return { application: 'unverified', reason: 'application_failed' };
+      const read = ++this.toolStatusRead;
+      const status = await query.mcpServerStatus?.();
+      if (!owns()) return { application: 'unverified', reason: 'query_changed' };
+      const parsed = toolStatusSchema.safeParse(status);
+      if (!parsed.success || read !== this.toolStatusRead)
+        return { application: 'unverified', reason: 'status_unavailable' };
+      this.toolInventory.captureStatus(owner, parsed.data);
+      this.notifyToolInventory();
+      return { application: 'live' };
+    } catch {
+      return { application: 'unverified', reason: 'application_failed' };
+    }
   }
 
   private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;

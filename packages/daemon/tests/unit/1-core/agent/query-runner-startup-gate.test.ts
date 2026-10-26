@@ -381,6 +381,18 @@ describe('QueryRunner startup gate', () => {
       application: 'unverified',
       reason: 'application_failed',
     });
+    controlled.queryObject.setMcpServers = async () => ({ added: [], removed: [], errors: {} });
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'status_unavailable',
+    });
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'bad', status: 'connected', tools: [{ name: 42 }] },
+    ];
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'status_unavailable',
+    });
     expect(controlled.queryObject.interrupt).not.toHaveBeenCalled();
     await completeQuery(controlled, waitFor);
   });
