@@ -78,7 +78,7 @@ test('a missing token leaves gh unauthenticated in an isolated config directory'
     ENV: '/dev/null',
     GH_PROMPT_DISABLED: '1',
   });
-  expect(access.filesystem).not.toHaveProperty('denyWrite');
+  expect(access.filesystem).toHaveProperty('denyWrite', ['/synthetic/Neo/.git']);
   expect(access.filesystem.allowWrite).toContain('/synthetic/Neo');
 });
 

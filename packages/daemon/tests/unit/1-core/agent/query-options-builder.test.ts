@@ -2206,7 +2206,7 @@ describe('QueryOptionsBuilder', () => {
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
             expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
             expect(options.additionalDirectories).toEqual([]);
-            expect(options.sandbox?.filesystem?.denyWrite).toBeUndefined();
+            expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace/.git']);
             expect(options.sandbox?.filesystem?.allowWrite).toContain('/test/workspace');
             expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
@@ -2236,7 +2236,7 @@ describe('QueryOptionsBuilder', () => {
               });
               expect(enforced.sandbox?.filesystem?.allowWrite).toContain('/test/workspace');
               expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/');
-              expect(enforced.sandbox?.filesystem?.denyWrite).toBeUndefined();
+              expect(enforced.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace/.git']);
               for (const key of [
                 'allowAppleEvents',
                 'enableWeakerNestedSandbox',

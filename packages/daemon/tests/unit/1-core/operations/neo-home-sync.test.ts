@@ -96,6 +96,19 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test('saves with origin and an unrelated staged document while fetching peer progress', async () => {
+    await writeFile(join(root, 'staged.md'), 'Unrelated draft.\n');
+    await git(root, 'add', 'staged.md');
+    await commit(peer, 'peer-progress.md', 'Peer progress.\n');
+    await git(peer, 'push');
+    const result = await call('neo.home.save', input);
+    expect(result.ok).toBe(true);
+    expect(await git(root, 'diff', '--cached', '--name-only')).toBe('staged.md');
+    expect(await readFile(join(root, 'staged.md'), 'utf8')).toBe('Unrelated draft.\n');
+    expect(await readFile(join(root, 'peer-progress.md'), 'utf8')).toBe('Peer progress.\n');
+    expect(await git(remote, 'rev-parse', 'main')).toBe(await git(root, 'rev-parse', 'HEAD'));
+    expect(await git(root, 'ls-tree', '--name-only', 'HEAD', '--', 'staged.md')).toBe('');
+  });
   test('does not publish credential-like bytes in a commit message', async () => {
     const remoteHead = await git(remote, 'rev-parse', 'main');
     const message = 'Rotate ghp_' + 'synthetic'.repeat(5);
