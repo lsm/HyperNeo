@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -375,6 +376,7 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
         '?'
       )
     );
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
     let sends = 0;
     let message = '';
     let visible = false;
@@ -409,10 +411,14 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
             lastActivityAt: 9,
             recentInputs: recentWorkInputs(
               [
-                workInput(9, visible ? message : 'unrelated answer [worker-answer:other]')!,
                 ...Array.from(
                   { length: 60 },
-                  (_, index) => workInput(10 + index, `Later input ${index}`)!
+                  (_, index) => workInput(5 + index, `Before dispatch ${index}`)!
+                ),
+                workInput(101, visible ? message : 'unrelated answer [worker-answer:other]')!,
+                ...Array.from(
+                  { length: 60 },
+                  (_, index) => workInput(102 + index, `Later input ${index}`)!
                 ),
               ],
               input.since as number | undefined
@@ -456,6 +462,7 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
       expect(store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
       expect(sends).toBe(1);
     } finally {
+      clock.mockRestore();
       if (reopened) reopened.close();
       else f.db.close();
       rmSync(run, { recursive: true, force: true });

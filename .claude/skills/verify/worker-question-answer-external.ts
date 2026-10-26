@@ -105,9 +105,14 @@ try {
   const retried = await rpc('neo.question.get', { questionId: refusedQuestion.id });
   assert.equal(retried.answerDelivery[0].state, 'accepted');
   assert.equal(store.getTodo('target')?.state, 'doing');
-  loseReply = true;
+  await stopPeer(); stopPeer = undefined;
   const uncertainQuestion = await next('Choose the destination for this worker after the pending dependency is resolved'.padEnd(80, '?'));
   await rpc('neo.question.answer', { questionId: uncertainQuestion.id, answer: ['Staging'] });
+  for (let index = 0; index < 60; index++) record(`Before dispatch ${index}`);
+  await Bun.sleep(10);
+  loseReply = true; stopPeer = await startPeer();
+  await refresh();
+  const attempted = store.questionAnswers.list(uncertainQuestion.id)[0] as { attemptedAt?: number };
   const uncertain = await rpc('neo.question.get', { questionId: uncertainQuestion.id });
   assert.equal(uncertain.answerDelivery[0].state, 'pending');
   assert.equal(peerInputs.length, 3);
@@ -123,7 +128,7 @@ try {
   await refresh();
   const reconciled = await rpc('neo.question.get', { questionId: uncertainQuestion.id });
   const restartedStore = new NeoAskTodoRepository(app.db.getDatabase());
-  writeFileSync(join(run, 'evidence/reconciliation.json'), JSON.stringify({ reconciled, status: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' } }), statusSince: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, since: Math.max(0, uncertain.answerDelivery[0].answeredAt - 1) }), peerInputs }, null, 2));
+  writeFileSync(join(run, 'evidence/reconciliation.json'), JSON.stringify({ reconciled, status: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' } }), statusSince: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, since: Math.max(0, (attempted.attemptedAt ?? uncertain.answerDelivery[0].answeredAt) - 1) }), peerInputs }, null, 2));
   assert.equal(reconciled.answerDelivery[0].state, 'accepted');
   assert.equal(restartedStore.getTodo('target')?.state, 'doing');
   await refresh();
