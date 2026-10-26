@@ -731,6 +731,28 @@ describe('NeoAskTodos', () => {
     ).toEqual(long.map((option, index) => `${'ABC'[index]}${option}`));
   });
 
+  it('shows an unverified close with a warning instead of a done checkmark', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [
+            todo('unverified', {
+              state: 'closed_unverified',
+              status: 'Closed unverified',
+              statusCodes: [{ code: 'todo.closedUnverified', params: {} }],
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const row = app.container.querySelector('[data-todo-state="closed_unverified"]');
+    expect(row?.textContent).toContain('已关闭，未验证');
+    expect(row?.textContent).toContain('?');
+    expect(row?.textContent).not.toContain('✓');
+    expect(row?.textContent).not.toContain('做完了');
+  });
+
   it('draws each todo state with its line and opens a session', () => {
     const onOpen = vi.fn();
     const app = render(

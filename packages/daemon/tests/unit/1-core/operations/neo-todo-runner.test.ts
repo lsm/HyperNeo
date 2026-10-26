@@ -1134,7 +1134,19 @@ describe('planNeoTodoCheck', () => {
 });
 
 describe('neoTodoNote', () => {
-  test('passes on the report of a doing todo nothing checks, asking Neo to tick it', () => {
+  test('an unverified closure is disclosed instead of described as done or blocked', () => {
+    const note = neoTodoNote({
+      title: 'T',
+      state: 'closed_unverified',
+      reason: 'Outcome not checked',
+    } as NeoTodo);
+    expect(note).toContain('closed unverified');
+    expect(note).toContain('Outcome not checked');
+    expect(note).not.toContain('is done');
+    expect(note).not.toContain('is blocked');
+  });
+
+  test('passes on the report without promising Done for an unchecked close', () => {
     expect(
       neoTodoNote({
         title: 'T',
@@ -1144,7 +1156,7 @@ describe('neoTodoNote', () => {
         report: 'Waiting on CI',
       } as NeoTodo)
     ).toBe(
-      'Todo "T" reported, and nothing checks it: tick it done with evidence once "Lane merged" holds, or let it go on.\nIts report:\nWaiting on CI'
+      'Todo "T" reported, and nothing checks it: record evidence for "Lane merged"; closing it without a passed outcome check is closed unverified, never done.\nIts report:\nWaiting on CI'
     );
   });
 

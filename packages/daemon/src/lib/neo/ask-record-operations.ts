@@ -80,7 +80,9 @@ function requireNeoAskTodosFinished(
   todos: readonly NeoTodo[]
 ): Gate<NeoAsk> {
   const unfinished = todos.filter(
-    (todo) => todo.state !== 'done' && !(todo.state === 'removed' && todo.reason)
+    (todo) =>
+      !['done', 'closed_unverified'].includes(todo.state) &&
+      !(todo.state === 'removed' && todo.reason)
   );
   if (status !== 'done' || !unfinished.length) return { value: ask };
   const listed = unfinished.map((todo) => `"${todo.title}" (${todo.id}, ${todo.state})`);
@@ -357,7 +359,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'End an ask: done when its todos are done, dropped when the human drops it. Agent completion is refused while any todo is neither done nor removed with a reason; a local human may explicitly confirm done. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+        'End an ask: done when its todos are done or explicitly closed unverified, dropped when the human drops it. Unverified todos keep that label and never count as done. Agent completion is refused while a todo is still open or failed; a local human may explicitly confirm done. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
