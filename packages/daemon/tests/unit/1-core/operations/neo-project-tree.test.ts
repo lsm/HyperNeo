@@ -1,16 +1,16 @@
-import { requireNeoTreeAuthor } from '../../../../src/lib/neo/project-author.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
-import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
-import { runMigration368 } from '../../../../src/storage/schema/m368-neo-project-tree.ts';
-import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import {
   createNeoProjectTreeOperations,
   requireNeoEpic,
 } from '../../../../src/lib/neo/packs/coding/project-tree-operations.ts';
-import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
+import { requireNeoTreeAuthor } from '../../../../src/lib/neo/project-author.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
+import { runMigration368 } from '../../../../src/storage/schema/m368-neo-project-tree.ts';
+import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const local = { source: 'rpc' as const, principal: 'local' as const };
 const epicUrl = 'https://github.com/lsm/hyperneo/issues/6756';
@@ -161,7 +161,11 @@ describe('Neo project hierarchy', () => {
     repo.reserveBinding({ kind: 'worker', projectId: 'child', sessionId: 'holder' });
     const read = mock(async () => [epic]);
     const [move, section] = createNeoProjectTreeOperations(repo, read);
-    const caller = { source: 'mcp' as const, sessionId: 'holder' };
+    const caller = {
+      source: 'mcp' as const,
+      role: 'direct_task_worker' as const,
+      sessionId: 'holder',
+    };
     expect(
       await move.execute({ id: 'child', parentId: 'root', expectedRevision: 1 }, caller)
     ).toEqual({ ok: true });
