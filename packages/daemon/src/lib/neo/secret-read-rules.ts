@@ -1,15 +1,4 @@
-const SECRET_DIRS = [
-  '.ssh',
-  '.aws',
-  '.azure',
-  '.gcloud',
-  '.gnupg',
-  '.kube',
-  '.docker',
-  '.config',
-  '.claude/projects',
-  'Library',
-];
+const SECRET_DIRS = ['.ssh', '.aws', '.azure', '.gcloud', '.gnupg', '.kube', '.docker'];
 const SECRET_FILES = [
   '.claude/.credentials.json',
   '.claude/settings.json',
