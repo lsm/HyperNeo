@@ -73,6 +73,9 @@ export class NeoHomeRepository {
               )
             ),
             GIT_TERMINAL_PROMPT: '0',
+            GIT_CONFIG_COUNT: String(Number(process.env.GIT_CONFIG_COUNT ?? 0) + 1),
+            [`GIT_CONFIG_KEY_${Number(process.env.GIT_CONFIG_COUNT ?? 0)}`]: 'core.hooksPath',
+            [`GIT_CONFIG_VALUE_${Number(process.env.GIT_CONFIG_COUNT ?? 0)}`]: '/dev/null',
             GH_PROMPT_DISABLED: '1',
             GIT_ASKPASS: '/usr/bin/false',
             SSH_ASKPASS: '/usr/bin/false',
