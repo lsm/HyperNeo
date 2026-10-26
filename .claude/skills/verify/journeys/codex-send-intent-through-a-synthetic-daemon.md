@@ -31,3 +31,7 @@ It does not prove native Desktop queue consumption or rendering. After merge,
 read hyperneo build and confirm the served commit contains the squash commit.
 Never restart the live daemon. Neo must arrange any live disposable-thread
 consumption and human Desktop confirmation; do not use working threads.
+
+Also run the Codex IPC contract suite alongside the adapter, verbs and handoff
+suites. Its operation-schema check uses explicit mode steer; automatic sends
+must retain queue receipts with missing/stale IPC and refused/hung launchers.
