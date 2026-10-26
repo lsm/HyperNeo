@@ -1,3 +1,4 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -14,19 +15,24 @@ describe('Runtime runner commits before external effects', () => {
   let gateway: DbGateway;
   let effects: string[];
   let beforeWrite: () => void | Promise<void>;
+  let afterWrite: () => void | Promise<void>;
   let runner: ReturnType<typeof createNeoTodoRunner>;
   beforeEach(() => {
     db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     store = new NeoAskTodoRepository(db);
     sessions = new NeoTodoSessionRepository(db);
     gateway = new DbGateway(':memory:', db);
     effects = [];
     beforeWrite = () => {};
+    afterWrite = () => {};
     const write: RunDbOp = async (op, args) => {
       await beforeWrite();
-      return gateway.run(op, args);
+      const result = await gateway.run(op, args);
+      await afterWrite();
+      return result;
     };
     runner = createNeoTodoRunner({
       store,
@@ -140,6 +146,35 @@ describe('Runtime runner commits before external effects', () => {
       reason: expect.stringContaining('unsupported_target:'),
     });
     expect(effects).toEqual([]);
+  });
+
+  test('recovery cannot interrupt a start while its committed claim is returning', async () => {
+    let release!: () => void;
+    let committed!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      committed = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    afterWrite = async () => {
+      committed();
+      await gate;
+    };
+    const pending = runner.start('first');
+    await reached;
+    afterWrite = () => {};
+    try {
+      await runner.refresh((_message, error) => {
+        throw error;
+      });
+      expect(store.getTodo('first')?.state).toBe('doing');
+      expect(sessions.readStartInterrupted('first')).toBe(false);
+      expect(effects).toEqual([]);
+    } finally {
+      release();
+      await pending.catch(() => {});
+    }
   });
 
   test('a completion queued behind a changed check cannot advance the todo', async () => {
