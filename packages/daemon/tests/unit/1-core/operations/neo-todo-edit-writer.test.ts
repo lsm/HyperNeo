@@ -184,6 +184,17 @@ describe('Neo todo edit commits through its writer', () => {
     expect(started).toEqual([]);
   });
 
+  test('a new unmet PR requirement cannot leave a previously verified todo done', async () => {
+    const first = add('first', [url(1)]);
+    store.updateTodo(first, { state: 'done', evidence: 'First PR merged', finishedAt: 2 }, 2);
+    const result = await edit({ todoId: 'first', addUrls: [url(2)] });
+    expect(result).toMatchObject({
+      ok: true,
+      todo: { state: 'closed_unverified', check: { params: { urls: [url(1), url(2)] } } },
+    });
+    expect(store.getTodo('first')?.state).toBe('closed_unverified');
+  });
+
   test('completion observes an unanswered card added while checking', async () => {
     add('first', [url(1)]);
     check = async () => {
