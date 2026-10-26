@@ -77,9 +77,11 @@ export const NeoPublicationObject = z
   .strict();
 
 export function publicationTextRule(
-  value: { verbatim?: true; shortText?: string },
+  value: { verbatim?: true; shortText?: string; cardReply?: unknown },
   ctx: z.RefinementCtx
 ): void {
+  if (value.verbatim === true && value.cardReply !== undefined)
+    ctx.addIssue({ code: 'custom', message: 'verbatim rejects cardReply notices' });
   if (value.verbatim === true && value.shortText !== undefined)
     ctx.addIssue({
       code: 'custom',

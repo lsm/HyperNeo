@@ -150,7 +150,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. Use a new requestId per revision and reuse it only when retrying that operation.',
+        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. A verbatim reply stays verbatim: editing it with shortText is rejected as invalid_publication. Use a new requestId per revision and reuse it only when retrying that operation.',
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: NeoPublicationResultSchema,

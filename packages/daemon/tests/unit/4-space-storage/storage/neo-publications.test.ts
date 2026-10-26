@@ -101,9 +101,7 @@ describe('Neo publication ledger', () => {
       questionId: 'q1',
       mutationId: '30000000-0000-4000-8000-000000000001',
     };
-    expect(
-      repo.append({ ...next(90), cardReply, links: [] })
-    ).toMatchObject({ accepted: true });
+    expect(repo.append({ ...next(90), cardReply, links: [] })).toMatchObject({ accepted: true });
     expect(
       repo.append({
         ...next(91),
