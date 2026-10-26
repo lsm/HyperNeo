@@ -46,6 +46,7 @@ try {
     assert.equal(await card.getByText('Which synthetic option?').count(), 0);
     assert.equal(reads.length, 0);
     assert.equal(await card.getByText('Full synthetic worker report', { exact: true }).count(), 0);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
     await page.screenshot({ path: `${run}/evidence/summary-${width}.png` });
     await card.getByRole('button', { name: 'Show details: Preserve quote replies' }).click();
     if (width === 1280) {
@@ -59,7 +60,9 @@ try {
     }
     await card.getByText('Full synthetic worker report', { exact: true }).waitFor();
     await card.getByText('Full synthetic task instructions', { exact: true }).waitFor();
+    await card.getByText('Which synthetic option?', { exact: true }).waitFor();
     assert.equal(reads.length, 1);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
     await page.screenshot({ path: `${run}/evidence/detail-${width}.png` });
     await card.getByRole('button', { name: 'A Ship', exact: true }).waitFor();
     if (width === 1280) {
@@ -67,12 +70,15 @@ try {
       await card.getByRole('button', { name: 'A Ship', exact: true }).waitFor({ state: 'hidden' });
       mode = 'fail';
       await page.reload();
-      await card.getByRole('button', { name: 'Show details: Preserve quote replies' }).click();
+      await card.getByText('Draft the iOS API client').waitFor();
+      const show = card.getByRole('button', { name: 'Show details: Preserve quote replies' });
+      if (await show.count()) await show.click();
       await card.getByText('Synthetic full card unavailable', { exact: true }).waitFor();
       const failedReads = reads.length;
       await page.getByRole('textbox', { name: 'Message Neo', exact: true }).fill('Another unsent draft');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       assert.equal(reads.length, failedReads, 'draft edits must not retry a failed read');
+      await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
       await page.screenshot({ path: `${run}/evidence/failed-read-${width}.png` });
     }
     observed.push({ width, detailReads: reads.length, todoCount: 22, questionAnswered: width === 1280, pendingAndFailedReadsStable: width === 1280 });
