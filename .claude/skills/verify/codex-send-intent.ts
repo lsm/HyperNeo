@@ -56,6 +56,7 @@ let startError = false;
 let serverStartError = false;
 let queueFault = '';
 let collide = false;
+let reverseCollision = false;
 const collisionRequests: { request: { id: unknown; params: { clientUserMessageId: string; input: { text: string }[] } }; reply: (result: unknown) => void }[] = [];
 const collisions: unknown[] = [];
 const calls: unknown[] = [];
@@ -107,6 +108,7 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
   if (request.method === 'thread/queue/add' && collide) {
     collisionRequests.push({ request, reply: result => socket.send(JSON.stringify({ id: request.id, result })) });
     if (collisionRequests.length === 2) {
+      if (reverseCollision) collisionRequests.reverse();
       const first = collisionRequests[0].request.params, timestamp = new Date().toISOString();
       appendFileSync(rollout, [
         { type: 'response_item', timestamp, payload: { type: 'message', role: 'user', id: first.clientUserMessageId, content: [{ type: 'input_text', text: first.input[0].text }] } },
@@ -186,12 +188,12 @@ try {
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
-  for (const identical of [false, true]) {
-    collide = true; collisionRequests.length = 0;
+  for (const { identical, reverse } of [false, true].flatMap(identical => [false, true].map(reverse => ({ identical, reverse })))) {
+    collide = true; reverseCollision = reverse; collisionRequests.length = 0;
     const prefix = 'same prefix '.repeat(20), firstText = `${prefix} first`;
     const secondText = `${prefix} ${identical ? 'first' : 'second'}`;
     const [first, second] = await Promise.all([send(undefined, false, false, undefined, firstText), send(undefined, false, false, undefined, secondText)]);
-    collisions.push({ identical, first, second });
+    collisions.push({ identical, reverse, first, second });
     const receipt = { executionId: 'synthetic', inputId: collisionRequests[0].request.params.clientUserMessageId };
     assert.deepEqual(first.value, { delivered: true, queuedSubmissionId: 'collision-0', receipt });
     assert.deepEqual(second.value, { delivered: false, queuedSubmissionId: 'collision-1' }, 'The unconsumed submission must not borrow another input receipt');

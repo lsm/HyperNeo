@@ -1189,9 +1189,11 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each([false, true])(
-    'concurrent sends never share the first consumed input receipt (identical messages: %s)',
-    async (identical) => {
+  test.each(
+    [false, true].flatMap((identical) => [false, true].map((reverse) => ({ identical, reverse })))
+  )(
+    'concurrent sends never share the first consumed input receipt (identical: $identical, reverse: $reverse)',
+    async ({ identical, reverse }) => {
       const requests: Array<{
         params: Record<string, unknown>;
         resolve: (reply: unknown) => void;
@@ -1206,6 +1208,7 @@ describe('codex-desktop adapter status and send', () => {
             return new Promise((resolve) => {
               requests.push({ params, resolve });
               if (requests.length !== 2) return;
+              if (reverse) requests.reverse();
               const first = requests[0].params;
               const text = (first.input as { text: string }[])[0].text;
               appendFileSync(
