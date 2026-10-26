@@ -57,7 +57,7 @@ export class CodingTodoPrRepository {
     const todos = store.listTodosForAsks(store.listOpenAsks().map((ask) => ask.id));
     for (const row of rows)
       for (const claim of planCodingIssuePrClaims(row.repo, row.number, row.body ?? '', todos))
-        this.claim(claim.todoId, [{ url: claim.url, claim: 'named' }], now, 'additive');
+        this.claim(claim.todoId, [{ url: claim.url, claim: 'branch' }], now, 'additive');
   }
 
   stages(todoId: string) {
