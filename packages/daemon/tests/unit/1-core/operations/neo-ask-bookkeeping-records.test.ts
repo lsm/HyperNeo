@@ -92,7 +92,7 @@ function setup() {
   );
   const call = async (name: string, input: unknown) => {
     const reply = await handler({ name, input });
-    expect(reply).not.toMatchObject({ isError: true });
+    if (reply.isError) throw new Error(reply.content[0].text);
     return JSON.parse(reply.content[0].text);
   };
   return { db, store, sessions, ask, todo, runner, calls, call, audits };
