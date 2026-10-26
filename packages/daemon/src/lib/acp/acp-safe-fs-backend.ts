@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { constants, fchmodSync, fstatSync, realpathSync, type Stats } from 'node:fs';
+import { constants, fstatSync, lstatSync, realpathSync, type Stats } from 'node:fs';
+import { constants as osConstants } from 'node:os';
+import { join } from 'node:path';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -10,6 +12,7 @@ const STAT_MODE_OFFSET = process.platform === 'darwin' ? 8 : process.arch === 'a
 let darwinStatModeOffset: number | undefined;
 
 interface BunFfiModule {
+  toArrayBuffer: (pointer: unknown, offset: number, length: number) => ArrayBuffer;
   dlopen: (
     path: string,
     symbols: Record<
@@ -27,6 +30,7 @@ interface BunFfiModule {
 
 interface LibcSymbols {
   close: (fd: number) => number;
+  fchmod: (fd: number, mode: number) => number;
   fchmodat: (fd: number, path: Buffer, mode: number, flags: number) => number;
   fstatat: (fd: number, path: Buffer, stat: Buffer, flags: number) => number;
   mkdirat: (fd: number, path: Buffer, mode: number) => number;
@@ -40,6 +44,7 @@ interface LibcSymbols {
 interface SafeFsBackend {
   atFdcwd: number;
   symbols: LibcSymbols;
+  errno: () => number;
 }
 
 export interface SafeFsReadOptions {
@@ -49,6 +54,7 @@ export interface SafeFsReadOptions {
 }
 
 export interface SafeFsBackendModule {
+  replaceFileWithinWorkspace: typeof replaceFileWithinWorkspace;
   withArtifactDescriptor: typeof withArtifactDescriptor;
   withStoredArtifactDescriptor: typeof withStoredArtifactDescriptor;
   readFileWithinWorkspace: (
@@ -70,8 +76,13 @@ function cString(value: string): Buffer {
   return Buffer.from(`${value}\0`);
 }
 
-function throwFsError(operation: string, path: string): never {
-  throw new Error(`Unable to ${operation} ACP filesystem path: ${path}`);
+function throwFsError(operation: string, path: string, backend?: SafeFsBackend): never {
+  const errno = backend?.errno();
+  const code = Object.entries(osConstants.errno).find(([, value]) => value === errno)?.[0];
+  throw Object.assign(
+    new Error(`${code ? `${code}: ` : ''}Unable to ${operation} ACP filesystem path: ${path}`),
+    { code, errno }
+  );
 }
 
 export function isSafeFsSupported(): boolean {
@@ -92,7 +103,7 @@ function platformLibraryCandidates(): string[] {
   ];
 }
 
-async function loadSafeFsBackend(): Promise<SafeFsBackend> {
+async function loadSafeFsBackend(allowDeno = false): Promise<SafeFsBackend> {
   const candidates = platformLibraryCandidates();
   if (candidates.length === 0) {
     throw new Error(`ACP safe filesystem operations are unavailable on ${process.platform}`);
@@ -100,9 +111,48 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
 
   try {
     const moduleName = ['bun', 'ffi'].join(':');
-    const ffi = (await import(moduleName)) as unknown as BunFfiModule;
+    const deno = Reflect.get(globalThis, 'Deno') as {
+      dlopen: (
+        path: string,
+        definitions: Record<string, { parameters: unknown[]; result: unknown }>
+      ) => { symbols: LibcSymbols };
+      UnsafePointerView: new (
+        pointer: unknown
+      ) => { getArrayBuffer: (length: number, offset: number) => ArrayBuffer };
+    };
+    const ffi: BunFfiModule =
+      allowDeno && deno
+        ? {
+            FFIType: {
+              i32: 'i32',
+              u32: 'u32',
+              u64: 'u64',
+              i64: 'i64',
+              cstring: 'buffer',
+              ptr: 'buffer',
+            },
+            dlopen: (path, definitions) =>
+              deno.dlopen(
+                path,
+                Object.fromEntries(
+                  Object.entries(definitions).map(([key, value]) => [
+                    key,
+                    {
+                      parameters: value.args,
+                      result: value.returns === 'buffer' ? 'pointer' : value.returns,
+                    },
+                  ])
+                )
+              ),
+            toArrayBuffer: (pointer, offset, length) =>
+              new deno.UnsafePointerView(pointer).getArrayBuffer(length, offset),
+          }
+        : ((await import(moduleName)) as unknown as BunFfiModule);
+    const errnoSymbol = process.platform === 'darwin' ? '__error' : '__errno_location';
     const definitions = {
+      [errnoSymbol]: { args: [], returns: ffi.FFIType.ptr },
       close: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
+      fchmod: { args: [ffi.FFIType.i32, ffi.FFIType.u32], returns: ffi.FFIType.i32 },
       fchmodat: {
         args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.u32, ffi.FFIType.i32],
         returns: ffi.FFIType.i32,
@@ -139,9 +189,18 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
 
     for (const candidate of candidates) {
       try {
+        const symbols = ffi.dlopen(candidate, definitions).symbols;
         return {
           atFdcwd: process.platform === 'darwin' ? -2 : -100,
-          symbols: ffi.dlopen(candidate, definitions).symbols,
+          symbols,
+          errno: () =>
+            new DataView(
+              ffi.toArrayBuffer(
+                (symbols as unknown as Record<string, () => unknown>)[errnoSymbol](),
+                0,
+                4
+              )
+            ).getInt32(0, true),
         };
       } catch {}
     }
@@ -153,6 +212,12 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
 function getSafeFsBackend(): Promise<SafeFsBackend> {
   backendPromise ??= loadSafeFsBackend();
   return backendPromise;
+}
+
+let writerBackend: Promise<SafeFsBackend> | undefined;
+function getWriterBackend() {
+  writerBackend ??= loadSafeFsBackend(true);
+  return writerBackend;
 }
 
 function validateSegments(segments: string[]): void {
@@ -262,10 +327,11 @@ function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: st
 async function openWorkspacePath(
   workspace: string,
   segments: string[],
-  createParents: boolean
+  createParents: boolean,
+  backend?: SafeFsBackend
 ): Promise<{ symbols: LibcSymbols; directoryFd: number; fileName: string }> {
   validateSegments(segments);
-  const { atFdcwd, symbols } = await getSafeFsBackend();
+  const { atFdcwd, symbols } = backend ?? (await getSafeFsBackend());
   let workspaceRoot = workspace;
   try {
     workspaceRoot = realpathSync(workspace);
@@ -273,7 +339,7 @@ async function openWorkspacePath(
     throwFsError('open', workspace);
   }
   let directoryFd = openRootDirectory(symbols, atFdcwd, workspaceRoot);
-  if (directoryFd < 0) throwFsError('open', workspace);
+  if (directoryFd < 0) throwFsError('open', workspace, backend);
 
   try {
     for (const segment of segments.slice(0, -1)) {
@@ -283,18 +349,22 @@ async function openWorkspacePath(
         nextFd = openDirectory(symbols, directoryFd, segment);
         if (created && nextFd >= 0) {
           try {
-            fchmodSync(nextFd, DIRECTORY_MODE);
+            if (symbols.fchmod(nextFd, DIRECTORY_MODE) !== 0)
+              throwFsError('chmod', segment, backend);
           } catch (error) {
             closeFile(symbols, nextFd);
             throw error;
           }
         } else if (created) {
-          if (symbols.fchmodat(directoryFd, cString(segment), DIRECTORY_MODE, 0) === 0) {
+          if (
+            symbols.fchmodat(directoryFd, cString(segment), DIRECTORY_MODE, AT_SYMLINK_NOFOLLOW) ===
+            0
+          ) {
             nextFd = openDirectory(symbols, directoryFd, segment);
           }
         }
       }
-      if (nextFd < 0) throwFsError('open', segment);
+      if (nextFd < 0) throwFsError('open', segment, backend);
       closeFile(symbols, directoryFd);
       directoryFd = nextFd;
     }
@@ -402,13 +472,56 @@ export async function writeFileWithinWorkspace(
   if (data.length > MAX_WRITE_BYTES) {
     throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
   }
-  const { symbols, directoryFd, fileName } = await openWorkspacePath(workspace, segments, true);
+  return replaceWorkspaceFile(workspace, segments, data, await getSafeFsBackend(), signal);
+}
+
+export async function replaceFileWithinWorkspace(
+  workspace: string,
+  segments: string[],
+  data: Uint8Array | null,
+  signal?: AbortSignal
+) {
+  return replaceWorkspaceFile(
+    workspace,
+    segments,
+    data === null ? null : Buffer.from(data),
+    await getWriterBackend(),
+    signal
+  );
+}
+
+async function replaceWorkspaceFile(
+  workspace: string,
+  segments: string[],
+  data: Buffer | null,
+  backend: SafeFsBackend,
+  signal?: AbortSignal
+) {
+  if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
+  const { symbols, directoryFd, fileName } = await openWorkspacePath(
+    workspace,
+    segments,
+    data !== null,
+    backend
+  );
   const temporaryName = `.acp-${randomUUID()}`;
   let temporaryExists = false;
 
   try {
-    const mode = replacementMode(symbols, directoryFd, fileName);
-    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    if (data === null) {
+      if (symbols.unlinkat(directoryFd, cString(fileName), 0) !== 0)
+        throwFsError('remove', fileName, backend);
+      return;
+    }
+    const prior = process.versions.bun
+      ? null
+      : lstatSync(join(workspace, ...segments), { throwIfNoEntry: false });
+    const mode = process.versions.bun
+      ? replacementMode(symbols, directoryFd, fileName)
+      : prior?.isFile()
+        ? prior.mode & 0o777
+        : FILE_MODE;
+    if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
     const fileFd = symbols.openat(
       directoryFd,
       cString(temporaryName),
@@ -419,30 +532,29 @@ export async function writeFileWithinWorkspace(
         constants.O_NOFOLLOW,
       FILE_MODE
     );
-    if (fileFd < 0) throwFsError('open', fileName);
+    if (fileFd < 0) throwFsError('open', fileName, backend);
     temporaryExists = true;
 
     let closed = -1;
     try {
-      if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
       let offset = 0;
       while (offset < data.length) {
-        if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+        if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
         const written = Number(symbols.write(fileFd, data.subarray(offset), data.length - offset));
-        if (written <= 0) throwFsError('write', fileName);
+        if (written <= 0) throwFsError('write', fileName, backend);
         offset += written;
       }
-      fchmodSync(fileFd, mode);
+      if (symbols.fchmod(fileFd, mode) !== 0) throwFsError('chmod', fileName, backend);
     } finally {
       closed = symbols.close(fileFd);
     }
-    if (closed !== 0) throwFsError('write', fileName);
+    if (closed !== 0) throwFsError('write', fileName, backend);
 
-    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
     if (
       symbols.renameat(directoryFd, cString(temporaryName), directoryFd, cString(fileName)) !== 0
     ) {
-      throwFsError('replace', fileName);
+      throwFsError('replace', fileName, backend);
     }
     temporaryExists = false;
   } finally {
