@@ -432,10 +432,13 @@ export class JobQueueRepository {
     );
   }
 
-  reschedulePending(jobId: string, runAt: number): boolean {
+  reschedulePending(jobId: string, runAt: number, claimToken?: string | null): boolean {
     const res = this.db
-      .prepare(`UPDATE job_queue SET run_at = ? WHERE id = ? AND status = 'pending'`)
-      .run(runAt, jobId);
+      .prepare(
+        `UPDATE job_queue SET run_at = ? WHERE id = ? AND status = 'pending'
+          AND (? = 0 OR json_extract(payload, '$.__claimToken') IS ?)`
+      )
+      .run(runAt, jobId, claimToken === undefined ? 0 : 1, claimToken ?? null);
     return res.changes > 0;
   }
 
