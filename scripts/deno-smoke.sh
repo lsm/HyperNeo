@@ -668,4 +668,10 @@ env -i HOME="$TODO_RUNNER_STATE_RUN/home" PATH="$PATH" TMPDIR="$TODO_RUNNER_STAT
 	HYPERNEO_DATA_DIR="$TODO_RUNNER_STATE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-runner-state.ts" verify "$TODO_RUNNER_STATE_RUN"
 
+TODO_RUNNER_ACTIVATION_RUN="$WORK_DIR/todo-runner-activation"
+mkdir -p "$TODO_RUNNER_ACTIVATION_RUN/home" "$TODO_RUNNER_ACTIVATION_RUN/tmp"
+env -i HOME="$TODO_RUNNER_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_RUNNER_ACTIVATION_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_RUNNER_ACTIVATION_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-runner-activation.ts" verify "$TODO_RUNNER_ACTIVATION_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

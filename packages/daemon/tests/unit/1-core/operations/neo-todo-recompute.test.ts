@@ -1,3 +1,5 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,6 +57,7 @@ function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
     db = new Database(join(directory, 'plan.db'));
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     store = new NeoAskTodoRepository(db);
     sessions = new NeoTodoSessionRepository(db);
     if (!store.getAsk('ask'))
@@ -68,6 +71,7 @@ function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
         createdAt: 1,
       });
     return createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       packs: () => [legacyCheck ? { ...pack, readFacts: undefined, judge: undefined } : pack],

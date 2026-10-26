@@ -1,3 +1,5 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -15,6 +17,7 @@ function setup() {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db),
     sessions = new NeoTodoSessionRepository(db);
   const ask = store.openAsk({
@@ -40,6 +43,7 @@ function setup() {
   );
   const calls: string[] = [];
   const runner = createNeoTodoRunner({
+    write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
     packs: () => [],

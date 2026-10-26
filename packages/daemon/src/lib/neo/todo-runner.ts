@@ -1,3 +1,5 @@
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
+import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
@@ -47,6 +49,7 @@ type Startable = {
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
 export interface NeoTodoRunnerDeps {
+  write: RunDbOp;
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
   invoke(
@@ -261,12 +264,40 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
   const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
-  const recompute = async (
+  const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
+    .input(['todo', 'patch', 'now', 'judgement'])
+    .pipe(
+      (
+        todo: NeoTodo,
+        patch: NeoTodoPatch = {},
+        now = Date.now(),
+        judgement: NeoTodoJudgement = { state: 'no_opinion' }
+      ) =>
+        deps.write(neoTodoRunnerWrites, {
+          method: 'recompute',
+          args: [todo.id, todo.check, patch, now, judgement],
+        }),
+      ['todo', 'patch', 'now', 'judgement'],
+      'receipt'
+    )
+    .pipe(
+      async (
+        receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['recompute']>,
+        todo: NeoTodo
+      ) => {
+        if (receipt.changed) deps.changed();
+        if (receipt.startNext) await start(receipt.startNext);
+        return receipt.todo ?? todo;
+      },
+      ['receipt', 'todo'],
+      'todo'
+    )
+    .endAsync('todo') as (
     todo: NeoTodo,
-    patch: NeoTodoPatch = {},
-    now = Date.now(),
-    judgement: NeoTodoJudgement = { state: 'no_opinion' }
-  ) => store.recompute(todo, patch, now, judgement, (id) => start(id));
+    patch?: NeoTodoPatch,
+    now?: number,
+    judgement?: NeoTodoJudgement
+  ) => Promise<NeoTodo>;
   const finish = async (todo: NeoTodo, ask: NeoAsk, patch: NeoTodoPatch | null, now: number) => {
     if (!patch) return todo;
     const next = await recompute(todo, patch, now);
@@ -366,47 +397,42 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: committed.todo ?? todo };
   };
 
-  const start = (superpipe({})('neo.todo.start') as PipelineAPI)
+  const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
     .input(['todoId'])
     .pipe(
-      (todoId: string) => {
-        const todo = store.getTodo(todoId);
-        return {
-          todo,
-          ask: todo ? store.getAsk(todo.askId) : null,
-          target: todo ? sessions.get(todo.id) : null,
-        };
-      },
+      (todoId: string) =>
+        deps.write(neoTodoRunnerWrites, { method: 'claim', args: [todoId, Date.now()] }),
       'todoId',
-      'read'
+      'receipt'
     )
-    .pipe(requireNeoTodoStartable, 'read', 'result:outcome')
     .pipe(
-      (plan: Startable): Gate<Startable> => {
-        const claimed = store.claimStart(plan.todo, Date.now());
-        const todo = claimed && relocate(claimed.id);
-        return todo
-          ? { value: { ...plan, todo, ask: store.getAsk(todo.askId) ?? plan.ask } }
-          : fail('already_started: this todo started.');
+      (
+        receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>
+      ): Gate<Startable> => {
+        if (receipt.changed) deps.changed();
+        return !receipt.ok
+          ? fail(receipt.reason)
+          : receipt.ask && receipt.target
+            ? { value: { todo: receipt.todo, ask: receipt.ask, target: receipt.target } }
+            : { reason: { ok: true, todo: receipt.todo, records: receipt.records ?? [] } };
       },
-      'outcome',
+      'receipt',
       'result:outcome'
     )
-    .pipe(
-      async (plan: Startable) => {
-        starting.add(plan.todo.id);
-        try {
-          return await dispatch(plan);
-        } finally {
-          starting.delete(plan.todo.id);
-        }
-      },
-      'outcome',
-      'outcome'
-    )
+    .pipe(dispatch, 'outcome', 'outcome')
     .endAsync('outcome') as (
     todoId: string
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
+
+  const start = async (todoId: string) => {
+    const tracked = starting.has(todoId);
+    starting.add(todoId);
+    try {
+      return await claimAndDispatch(todoId);
+    } finally {
+      if (!tracked) starting.delete(todoId);
+    }
+  };
 
   const noteNeedsYou = async (
     todoId: string,
