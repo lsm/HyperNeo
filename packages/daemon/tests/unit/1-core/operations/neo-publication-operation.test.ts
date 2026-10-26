@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { createNeoPublisher } from '../../../../src/lib/neo/publication-operation.ts';
-import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
-import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
@@ -133,19 +133,21 @@ describe('Neo publication without runtime input attribution', () => {
     expect(ledger.list(conversationId)![0].producerInput).toBeUndefined();
   });
 
-  test('publishes a verbatim reply from one text field and stores no shortText', () => {
+  test('publishes a verbatim reply from one text field and stores it unaltered', () => {
+    const content = '> quoted line\n\n```ts\nconst draft = \"as written\";\n```';
     const receipt = publish(
-      { requestId: 'send-verbatim', verbatim: true, fullText: 'The whole reply, unchanged.' },
+      { requestId: 'send-verbatim', verbatim: true, fullText: content },
       caller
     );
     expect(receipt).toMatchObject({
       accepted: true,
       created: true,
-      publication: { verbatim: true, fullText: 'The whole reply, unchanged.' },
+      publication: { verbatim: true, fullText: content },
     });
     const stored = ledger.list(conversationId)![0];
     expect(stored).not.toHaveProperty('shortText');
-    expect(stored).toMatchObject({ verbatim: true, fullText: 'The whole reply, unchanged.' });
+    expect(stored).toMatchObject({ verbatim: true });
+    expect(stored.fullText).toBe(content);
   });
 
   test('rejects shortText when verbatim is set and requires it otherwise', () => {

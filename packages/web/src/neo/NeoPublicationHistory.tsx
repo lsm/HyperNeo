@@ -37,7 +37,7 @@ export function NeoPublicationHistory({
                 )}
               </div>
               <MarkdownRenderer
-                content={version.fullText || version.shortText}
+                content={version.fullText || version.shortText || ''}
                 class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
               />
             </li>

@@ -1,12 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import type { MessageHub } from '@hyperneo/shared';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   admitPublicationCursor,
   admitPublicationLifetime,
+  type PublicationPage,
   presentPublicationPage,
   readNeoPublications,
-  type PublicationPage,
 } from '../publication-client.ts';
 import { useNeo } from '../useNeo.ts';
 
@@ -107,8 +107,7 @@ describe('authored publication client', () => {
   });
 
   it('reads a verbatim reply with one text field and refuses a split reply without one', async () => {
-    const verbatim = item();
-    delete verbatim.shortText;
+    const { shortText: _dropped, ...verbatim } = item();
     const row = { ...verbatim, verbatim: true };
     expect(
       await readNeoPublications(
@@ -127,8 +126,12 @@ describe('authored publication client', () => {
     expect(
       await readNeoPublications(
         page,
-        transport({ ok: true, conversationId, items: [{ ...item(), verbatim: true }], nextAfter: 1 })
-          .getHub,
+        transport({
+          ok: true,
+          conversationId,
+          items: [{ ...item(), verbatim: true }],
+          nextAfter: 1,
+        }).getHub,
         current
       )
     ).toMatchObject({ state: 'unavailable' });

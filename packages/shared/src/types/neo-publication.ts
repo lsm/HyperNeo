@@ -17,7 +17,7 @@ export interface NeoPublicationLink {
 
 export interface NeoPublicationRevision {
   readonly revisionId: string;
-  readonly shortText: string;
+  readonly shortText?: string;
   readonly fullText: string;
   readonly createdAt: string;
   readonly producerInput?: NeoInputOrigin;
@@ -31,7 +31,8 @@ export interface NeoPublicationInput extends ArtifactProjection {
   readonly publicationId: string;
   readonly askOrigin?: NeoInputOrigin;
   readonly producerInput?: NeoInputOrigin;
-  readonly shortText: string;
+  readonly shortText?: string;
+  readonly verbatim?: true;
   readonly fullText: string;
   readonly links: readonly NeoPublicationLink[];
   readonly triggerId?: string;

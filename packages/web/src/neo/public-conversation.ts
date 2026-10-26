@@ -1,13 +1,12 @@
-import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
-import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
-import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import type { NeoCardReply, NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAskItem } from './conversation-ask-client.ts';
 import type { NeoAskState } from './useNeoConversationAsks.ts';
-import { publicationConversationId, type NeoPublicationState } from './useNeoPublications.ts';
+import { type NeoPublicationState, publicationConversationId } from './useNeoPublications.ts';
 
 export type NeoPublicEntry =
   | { kind: 'ask'; key: string; ask: NeoAskItem }
@@ -232,7 +231,10 @@ export const projectNeoPublicConversation = (
 export function neoCardReplyTitle(publication: NeoPublication, title?: string): string {
   return (
     title ??
-    publication.shortText.replace(/^(?:I replied · View card|我给你回了 · 查看卡片)\s*·?\s*/, '')
+    (publication.shortText ?? publication.fullText).replace(
+      /^(?:I replied · View card|我给你回了 · 查看卡片)\s*·?\s*/,
+      ''
+    )
   )
     .split('\n')[0]
     .slice(0, 120);
