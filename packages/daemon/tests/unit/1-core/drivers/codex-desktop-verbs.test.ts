@@ -674,13 +674,11 @@ describe('codex-desktop adapter status and send', () => {
           notSent: true,
           detail: expect.stringContaining('ownership endpoint is unavailable'),
         });
-        expect(queued).toMatchObject({
-          ok: false,
-          reason: 'busy',
-          notSent: true,
-          detail: expect.stringContaining('queued input cannot be added'),
+        expect(queued).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'queue-1' },
         });
-        expect(calls).toEqual([]);
+        expect(calls).toEqual(['thread/queue/add']);
       } else {
         expect(result).toEqual({
           ok: true,

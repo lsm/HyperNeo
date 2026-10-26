@@ -133,6 +133,32 @@ export async function steerCodexDesktopTurn(
     return { reason: reject('not_delivered', String(error), true) };
   }
   if (mode === 'queue') {
+    const owned = socketPath
+      ? await withCodexDesktopIpc(
+          socketPath,
+          async ({ call }) => {
+            const discovered = await discoverCodexDesktopOwner({ call }, threadId);
+            if (discovered?.resultType === 'success' && discovered.handledByClientId) return true;
+            if (
+              discovered &&
+              discovered.resultType !== 'success' &&
+              discovered.error !== 'no-client-found'
+            )
+              throw new Error(discovered.error ?? 'Codex Desktop ownership discovery failed.');
+            return false;
+          },
+          deadline
+        )
+      : false;
+    if (!owned) {
+      log.warn('work.send route', {
+        threadId,
+        messageId,
+        path: 'app-server',
+        reason: 'desktop_not_owner',
+      });
+      return { value: 'app-server' };
+    }
     log.warn('work.send route', {
       threadId,
       messageId,
