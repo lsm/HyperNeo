@@ -22,3 +22,8 @@ export interface ResolvedSessionToolChoice {
     | 'space-required'
     | 'policy-denied';
 }
+
+export interface SessionToolApplication {
+  application: 'live' | 'next_query' | 'restart_required' | 'unverified';
+  reason?: string;
+}

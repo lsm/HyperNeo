@@ -1,0 +1,20 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 384,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "createError": "MessageHubResponseError: skill validation admission SQL reached main connection",
+  "initial": [],
+  "mainSqlAttempts": 1
+}

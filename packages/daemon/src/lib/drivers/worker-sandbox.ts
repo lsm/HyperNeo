@@ -6,6 +6,15 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { WorkerSandboxMode } from '@hyperneo/shared';
+
+let readWorkerSandbox = (): WorkerSandboxMode => 'off';
+
+export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
+  readWorkerSandbox = read;
+}
+
+export const workerSandboxOn = () => readWorkerSandbox() === 'always';
 
 export function workerSandboxPaths(root: string) {
   const base = process.platform === 'darwin' ? '/tmp' : tmpdir();
@@ -82,6 +91,14 @@ export function codexWorkerSandbox(root: string) {
   return {
     sandbox: 'workspace-write',
     config: {
+      features: {
+        network_proxy: {
+          enabled: true,
+          domains: { '*': 'allow' },
+          dangerously_allow_all_unix_sockets: true,
+          allow_local_binding: true,
+        },
+      },
       sandbox_workspace_write: {
         writable_roots: writableRoots,
         exclude_slash_tmp: true,
@@ -101,5 +118,7 @@ export function codexWorkerSandbox(root: string) {
 }
 
 export async function resumeWorkerSandbox(root: string) {
-  if (existsSync(join(root, '.git/hyperneo-worker-sandbox'))) await prepareWorkerSandbox(root);
+  if (!existsSync(join(root, '.git/hyperneo-worker-sandbox'))) return null;
+  await prepareWorkerSandbox(root);
+  return codexWorkerSandbox(root);
 }

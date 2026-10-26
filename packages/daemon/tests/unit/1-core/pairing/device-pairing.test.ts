@@ -325,10 +325,7 @@ describe('device pairing', () => {
       },
       now: 2_000,
     });
-    expect(await call('device.unpaired.list', {}, human)).toEqual({
-      ok: false,
-      reason: NEEDS_PAIRED_HUMAN,
-    });
+    expect((await call('device.unpaired.list', {}, human)).ok).toBe(true);
     const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
     const seen = await call('device.unpaired.list', {}, pairedHuman(phone.body.deviceId));
     expect(seen).toEqual({
@@ -360,16 +357,28 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('the local human reads both diagnostics without a paired device; agents still cannot', async () => {
+    const { db, call } = setup();
+    expect(await call('device.unpaired.list', {}, human)).toEqual({ ok: true, connections: [] });
+    expect(await call('device.would_refuse.list', {}, human)).toEqual({ ok: true, requests: [] });
+    expect(await call('device.unpaired.list', {}, agent)).toEqual({
+      ok: false,
+      reason: 'This action needs the user.',
+    });
+    expect(await call('device.would_refuse.list', {}, agent)).toEqual({
+      ok: false,
+      reason: 'This action needs the user.',
+    });
+    db.close();
+  });
+
   test('a paired human or the CLI reads the requests Origin/Host checks would refuse', async () => {
     const { db, call, pair, repo } = setup();
     recordWouldRefuse.run(db, {
       seen: { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
       now: 5,
     });
-    expect(await call('device.would_refuse.list', {}, human)).toEqual({
-      ok: false,
-      reason: NEEDS_PAIRED_HUMAN,
-    });
+    expect((await call('device.would_refuse.list', {}, human)).ok).toBe(true);
     const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
     expect(await call('device.would_refuse.list', {}, pairedHuman(phone.body.deviceId))).toEqual({
       ok: true,

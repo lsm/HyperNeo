@@ -1,25 +1,20 @@
 ## Codex Desktop work.send journey
 
-First run `codex-send-intent-through-a-synthetic-daemon.md`. It proves that a
-running Desktop acquires ownership of an unloaded thread before auto/steer delivery,
-and refuses visibly if it cannot. App-server fallback is allowed only when the
-Desktop process is absent for these modes. Explicit queue retains the shared
-app-server queue API even while Desktop is running. A fallback turn's matching completion requests
+First run `codex-send-intent-through-a-synthetic-daemon.md`. It proves that
+automatic input routes by Desktop ownership: while Desktop is running it
+delivers through the owner client and never resumes the app-server writer;
+while Desktop is not running it uses the native app-server queue, resuming
+saved unloaded threads before settings or enqueue and never resuming loaded
+active threads. Explicit steer uses Desktop ownership when Desktop is running
+and the app-server otherwise. A fallback turn's matching completion requests
 `thread/unsubscribe`; its official idle grace can retain the thread for up to
 30 minutes. No archive/unarchive or app restart transfers ownership.
 
-After an approved deployment, save the RPC build readback and confirm it contains
-the merge commit. Prepare a clearly named disposable thread with one completed, tool-free turn in
-an owned bootstrap process, then confirm that process exited and owner discovery
-reports `no-client-found`. A never-started thread without its source rollout is
-not a valid history fixture. Record that the shared app-server loaded list omits
-the thread. Neo sends one harmless marker through normal `work.send`. Audit that
-same thread: Desktop owns it, its receipt-bound input/reply matches, and the
-shared loaded list still omits it. The human opens it and checks the message and
-absence of “open in another app”, without a restart. Keep visual acceptance
-unverified until the human replies. No GUI automation or human/OAP working
-threads. The controlled pre-fix reproduction remains local at
-`/Users/lsm/focus/verification/codex-unloaded-owner/repro-history/`.
+For this regression, the synthetic daemon journey is the acceptance surface. It
+checks unloaded-thread ordering, queue delivery and typed failures without any
+real threads, live daemon or Desktop GUI. Native Desktop rendering and ownership
+after a queued turn remain unverified; perform any later human-operated GUI
+check only with separate explicit authorization and a disposable thread.
 
 For new-thread acceptance, ask the human to dispatch one normal Neo task for a
 repo and open that thread in the already-running Codex Desktop. Record the exact

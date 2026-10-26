@@ -1,0 +1,35 @@
+{
+  "base": "31dacbe6fb3cc952c03ee07144f1d32db3fca6bc",
+  "redCommit": "99acfcdb409299991d1565df3d8867f2e39cebd5",
+  "productionChangedLines": 2,
+  "smokeRegistrationLines": 6,
+  "productionBudgetIncludingSmoke": 10,
+  "existingMethodLines": 118,
+  "methodMoved": false,
+  "baselineUnitFailures": 11,
+  "baselineRpcIncorrectChecks": 17,
+  "focusedTests": 422,
+  "fullRepositoryCheck": "passed",
+  "changedCallGraph": [
+    "message.sdkMessages awaits existing getSDKMessagePageAsync",
+    "readSDKMessagePage calls existing getSDKMessages within the reader snapshot",
+    "only _getSDKMessagesImpl timestamp-tie shutdown comparator changes: database id to rowid",
+    "before/since cursors, body hydration, child/background reads, callbacks and worker boundaries unchanged"
+  ],
+  "evidence": [
+    "cold and ten concurrent warm actual WebSocket history RPCs",
+    "deterministic IDs reverse insertion order; stale marker cannot consume limit and latest tail remains",
+    "rowid before/since cursors and terminal-user eligibility",
+    "nested and other-session isolation",
+    "cached main target SQL execution denied from before daemon startup",
+    "separate WAL writer demonstrably held: outside/inside 0/1 before and after",
+    "injected native reader failure rejects; health remains usable; later read recovers without main fallback",
+    "actor cache empty; complete split body text and persisted hashes preserved",
+    "Bun and Deno native workers pass; temporary daemon data removed after evidence saved"
+  ],
+  "unverified": [
+    "live served build and browser UI",
+    "production-scale histories",
+    "separate SQL-only and clone-only timing"
+  ]
+}

@@ -26,6 +26,7 @@ import {
   type ClaudeSubscriptionTokenResponse,
 } from './anthropic-subscription-oauth.js';
 import { Logger } from '../logger.js';
+import { PROVIDER_MODEL_LOAD_TIMEOUT_MS } from './discovery-refresh-pipeline.js';
 
 const logger = new Logger('anthropic-provider');
 
@@ -349,7 +350,9 @@ export class AnthropicProvider implements Provider {
     return models;
   }
 
-  private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
+  private async loadModelsFromSdk(
+    timeout: number = PROVIDER_MODEL_LOAD_TIMEOUT_MS
+  ): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const env: Record<string, string | undefined> = { ...this.env };
     for (const [key, value] of Object.entries(this.buildSdkConfig().envVars)) {

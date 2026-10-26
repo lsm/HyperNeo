@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
 import { connectionManager } from '../../lib/connection-manager.ts';
-import type { GetSessionToolInventoryResponse } from '@hyperneo/shared';
+import type {
+  GetSessionToolInventoryResponse,
+  Session,
+  SessionMcpListResponse,
+} from '@hyperneo/shared';
+import { skillsStore } from '../../lib/skills-store.ts';
+import { SessionToolChoices } from '../SessionToolChoices.tsx';
 import { computeObservedRuntimeState } from '../ToolsModal.utils.ts';
 
 const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
@@ -25,6 +31,9 @@ interface TaskToolsModalProps {
 export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskToolsModalProps) {
   const [inventory, setInventory] = useState<GetSessionToolInventoryResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [savedSession, setSavedSession] = useState<Session | null>(null);
+  const [catalog, setCatalog] = useState<SessionMcpListResponse['entries']>([]);
+  const [choiceError, setChoiceError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = useRef<(() => void) | null>(null);
   const servers = inventory?.mcpServers ?? [];
@@ -33,6 +42,8 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
     if (!isOpen || !sessionId) {
       setInventory(null);
       setError(null);
+      setSavedSession(null);
+      setChoiceError(null);
       return;
     }
 
@@ -40,6 +51,12 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
     let read = 0;
     let cleanups: Array<() => void> = [];
     setInventory(null);
+    setSavedSession(null);
+    setChoiceError(null);
+    const skillsReady = skillsStore.subscribe().then(
+      () => true,
+      () => false
+    );
     setLoading(true);
     setError(null);
 
@@ -49,6 +66,23 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
         if (cancelled) return;
         const reload = async () => {
           const current = ++read;
+          void Promise.all([
+            hub.request<{ session: Session | null }>('session.get', { sessionId }),
+            hub.request<SessionMcpListResponse>('session.mcp.list', { sessionId }),
+            skillsReady,
+          ])
+            .then(([saved, servers, definitionsReady]) => {
+              if (cancelled || current !== read) return;
+              if (!definitionsReady || !saved.session) throw new Error('Tool choices unavailable');
+              setSavedSession(saved.session);
+              setCatalog(servers.entries);
+              setChoiceError(null);
+            })
+            .catch(() => {
+              if (cancelled || current !== read) return;
+              setSavedSession(null);
+              setChoiceError('Could not load saved tool choices. Try Refresh or reopen Tools.');
+            });
           setLoading(true);
           setError(null);
           try {
@@ -73,6 +107,7 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
             else {
               read++;
               setInventory(null);
+              setSavedSession(null);
               setLoading(false);
               setError('Not connected. Running tools are unverified.');
             }
@@ -96,11 +131,12 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
       cancelled = true;
       refresh.current = null;
       cleanups.forEach((cleanup) => cleanup());
+      skillsStore.unsubscribe();
     };
   }, [isOpen, sessionId]);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`${agentLabel} Tools`} size="sm">
+    <Modal isOpen={isOpen} onClose={onClose} title={`${agentLabel} Tools`} size="md">
       <div class="space-y-3">
         {!sessionId && (
           <p class="text-sm text-fg-muted text-center py-4">
@@ -118,6 +154,22 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
         )}
 
         {sessionId && error && <p class="text-sm text-danger-soft text-center py-4">{error}</p>}
+
+        {sessionId && choiceError && (
+          <p role="status" class="text-sm text-danger-soft">
+            {choiceError}
+          </p>
+        )}
+        {isOpen && savedSession?.id === sessionId && savedSession && (
+          <SessionToolChoices
+            key={sessionId}
+            session={savedSession}
+            skills={skillsStore.skills.value}
+            servers={catalog}
+            inventory={error ? null : inventory}
+            onApplied={() => refresh.current?.()}
+          />
+        )}
 
         {sessionId && !loading && !error && servers.length === 0 && (
           <p class="text-sm text-fg-muted text-center py-4">

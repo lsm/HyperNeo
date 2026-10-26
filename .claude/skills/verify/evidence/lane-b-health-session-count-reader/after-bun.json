@@ -1,0 +1,55 @@
+{
+  "writerCounterBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldMs": 2.542416000000003,
+  "firstHealth": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 366,
+    "sessions": {
+      "active": 0,
+      "total": 3
+    }
+  },
+  "concurrentWarmMs": 0.6621670000000677,
+  "writerCounterAfter": {
+    "outside": 0,
+    "inside": 1
+  },
+  "concurrentWalWriter": true,
+  "committedCount": 4,
+  "workerFailure": "MessageHubResponseError: synthetic health count worker failure",
+  "otherRpcAfterFailure": {
+    "sdkMessages": [],
+    "hasMore": false,
+    "backgroundTaskMessages": []
+  },
+  "recoveredHealth": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 388,
+    "sessions": {
+      "active": 0,
+      "total": 4
+    }
+  },
+  "actorCacheStayedEmpty": true,
+  "readLaneRequests": 24,
+  "maxLoopLagMs": 1.2733329999999796,
+  "rpcLatencyUnder250ms": true,
+  "mainSqlAttempts": 0
+}

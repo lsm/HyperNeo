@@ -1,0 +1,397 @@
+{
+  "storedBodyHashBefore": "2255b56f01eef07051a5afdd648df8120e68804fd71825efc1e3c23874ceb6f9",
+  "writerBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldMs": 20.696916999999985,
+  "concurrentWarmMs": 4.420624999999973,
+  "replyHash": "92605109662cc4969cfe37a6783a97f4436b1a68ffb392a14335387fa74fe2c2",
+  "completeBodyMatched": true,
+  "beforeHasMore": true,
+  "healthMs": 1.6222910000000184,
+  "writerAfter": {
+    "outside": 0,
+    "inside": 1
+  },
+  "workerFailure": "MessageHubResponseError: SDK reader failed: synthetic shutdown page worker failure",
+  "actorCacheStayedEmpty": true,
+  "maxLoopLagMs": 0.6439169999999876,
+  "rpcLatencyUnder250ms": true,
+  "storedBodyHashAfter": "2255b56f01eef07051a5afdd648df8120e68804fd71825efc1e3c23874ceb6f9",
+  "rssBytes": 223003752,
+  "walBytes": 3184792,
+  "mainSqlAttempts": 0,
+  "checks": [
+    {
+      "name": "cold stale shutdown excluded before limit",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 0",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 1",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 2",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 3",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 4",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 5",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 6",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 7",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 8",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "warm stale page 9",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    },
+    {
+      "name": "actual shutdown tail retained",
+      "actual": [
+        "tail-z-older"
+      ],
+      "expected": [
+        "tail-z-older",
+        "tail-a-shutdown"
+      ],
+      "passed": false
+    },
+    {
+      "name": "only last tied shutdown retained",
+      "actual": [
+        "double-z-shutdown"
+      ],
+      "expected": [
+        "double-a-shutdown"
+      ],
+      "passed": false
+    },
+    {
+      "name": "queued user cannot supersede shutdown",
+      "actual": [
+        "queued-z-shutdown"
+      ],
+      "expected": [
+        "queued-z-shutdown"
+      ],
+      "passed": true
+    },
+    {
+      "name": "consumed tied user supersedes shutdown",
+      "actual": [
+        "consumed-z-shutdown",
+        "consumed-a-user"
+      ],
+      "expected": [
+        "consumed-a-user"
+      ],
+      "passed": false
+    },
+    {
+      "name": "failed tied user supersedes shutdown",
+      "actual": [
+        "failed-z-shutdown",
+        "failed-a-user"
+      ],
+      "expected": [
+        "failed-a-user"
+      ],
+      "passed": false
+    },
+    {
+      "name": "child and other session cannot supersede tail",
+      "actual": [
+        "nested-a-shutdown"
+      ],
+      "expected": [
+        "nested-a-shutdown"
+      ],
+      "passed": true
+    },
+    {
+      "name": "before rowid cursor",
+      "actual": [
+        "stale-older",
+        "stale-z-shutdown"
+      ],
+      "expected": [
+        "stale-older"
+      ],
+      "passed": false
+    },
+    {
+      "name": "since rowid cursor",
+      "actual": [
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-a-newer"
+      ],
+      "passed": true
+    },
+    {
+      "name": "reader recovers without main fallback",
+      "actual": [
+        "stale-z-shutdown",
+        "stale-a-newer"
+      ],
+      "expected": [
+        "stale-older",
+        "stale-a-newer"
+      ],
+      "passed": false
+    }
+  ],
+  "workerTimings": [
+    {
+      "workerMs": 2.8607499999999995,
+      "queueMs": 1,
+      "replyBytes": 35482,
+      "encodeMs": 0.04329099999995378,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.3709579999999981,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.030167000000005828,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.36870899999999907,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.07100000000002638,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.31404099999999957,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.03099999999994907,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.30079100000000025,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.027207999999973254,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.27787500000000165,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.02654199999994944,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.26229199999999864,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.026291999999898508,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.24558299999999988,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.024625000000014552,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.3671250000000015,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.028957999999988715,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.3376249999999992,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.02837499999998272,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.341584000000001,
+      "queueMs": 0,
+      "replyBytes": 35482,
+      "encodeMs": 0.02687500000001819,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.2547080000000008,
+      "queueMs": 0,
+      "replyBytes": 35275,
+      "encodeMs": 0.02633400000001984,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.19208400000000125,
+      "queueMs": 0,
+      "replyBytes": 269,
+      "encodeMs": 0.0009169999999585343,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.17087499999999878,
+      "queueMs": 0,
+      "replyBytes": 269,
+      "encodeMs": 0.0007080000000314612,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.24620900000000034,
+      "queueMs": 0,
+      "replyBytes": 35519,
+      "encodeMs": 0.022790999999983796,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.2254170000000002,
+      "queueMs": 0,
+      "replyBytes": 35504,
+      "encodeMs": 0.029832999999939602,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.21287500000000037,
+      "queueMs": 0,
+      "replyBytes": 270,
+      "encodeMs": 0.0008340000000544023,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.28595799999999727,
+      "queueMs": 0,
+      "replyBytes": 35478,
+      "encodeMs": 0.025666999999998552,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 0.294042000000001,
+      "queueMs": 0,
+      "replyBytes": 35278,
+      "encodeMs": 0.021458999999936168,
+      "deliveryMs": 0
+    },
+    {
+      "workerMs": 2.6125420000000013,
+      "queueMs": 1,
+      "replyBytes": 35482,
+      "encodeMs": 0.034374999999954525,
+      "deliveryMs": 1
+    }
+  ]
+}

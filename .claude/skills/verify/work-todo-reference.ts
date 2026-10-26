@@ -48,11 +48,11 @@ try {
     receipts.push({ name, input, result });
     return result;
   };
-  const failures = [];
+  const untracked = [];
   for (const extra of [{}, { todoId: 'unknown' }, { todoId: 'closed-todo' }, { todoId: 'foreign-todo' }, { message: 'todoId open-todo appears only in text', source: 'internal' }]) {
-    failures.push(await call('work.send', { ref, message: 'Synthetic new work', ...extra }));
+    untracked.push(await call('work.send', { ref, message: 'Synthetic new work', ...extra }));
   }
-  failures.push(await call('work.queue', { ref, message: 'Untracked next-turn work' }));
+  untracked.push(await call('work.queue', { ref, message: 'Untracked next-turn work' }));
   const start = await call('work.start', { adapter: 'hyperneo', place: { machine: 'fixture', folder: join(run, 'workspace'), name: 'Synthetic' }, title: 'Synthetic new work', message: 'Synthetic work' });
   const followUp = await call('work.send', { ref, message: 'More context for the existing todo', todoId: 'open-todo' });
   const runner = await call('neo.todo.add', { askId: 'open', title: 'Synthetic runner work', doneWhen: 'Tracked dispatch', instruction: 'Synthetic opening task', target: { verb: 'send', ref }, start: true });
@@ -61,9 +61,10 @@ try {
   evidence.receipts = receipts;
   evidence.internal = internal;
   evidence.mailboxes = db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").all();
-  evidence.failures = failures;
-  assert(failures.every(result => result.ok === false && result.reason === 'todo_required'), 'Neo MCP work without an open-ask todo must be refused');
-  assert.equal(start.reason, 'todo_required');
+  evidence.untracked = untracked;
+  assert(untracked.every(result => result.ok === true && result.records?.some((record: string) => record.startsWith('todo_required:'))), 'Untracked Neo work must be accepted with a visible bookkeeping record');
+  assert.equal(start.ok, true, JSON.stringify(start));
+  assert(start.records?.some((record: string) => record.startsWith('todo_required:')));
   assert.equal(followUp.ok, true, JSON.stringify(followUp));
   assert.equal(runner.todo?.state, 'doing', JSON.stringify(runner));
   assert.equal(continued.ok, true, JSON.stringify(continued));

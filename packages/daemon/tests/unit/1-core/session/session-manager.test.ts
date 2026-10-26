@@ -13,6 +13,11 @@ import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Database } from '../../../../src/storage/database';
 import type { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { JobQueueRepository as TitleJobRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { sessionTitleEnqueueWrites } from '../../../../src/storage/repositories/session-title-enqueue-write';
+import type { Database as SQLiteDatabase } from '../../../../src/storage/sqlite-compat';
+import { createMailboxTestDb } from '../../../helpers/mailbox-test-db';
 
 function markWorkerOperations(session: AgentSession): void {
   const data = session.getSessionData();
@@ -103,9 +108,17 @@ describe('SessionManager', () => {
     } as unknown as InternalEventBus<any>;
 
     mockJobQueue = {
+      db: {} as SQLiteDatabase,
       enqueue: mock(() => ({ id: 'job-id', queue: 'session.title_generation' })),
       listJobs: mock(() => []),
     } as unknown as JobQueueRepository;
+    bindGateway(mockJobQueue.db, {
+      call: async (op, method, input) => {
+        expect(op).toBe(sessionTitleEnqueueWrites);
+        expect(method).toBe('enqueue');
+        return mockJobQueue.enqueue(input);
+      },
+    } as DbGateway);
 
     mockJobProcessor = {
       register: mock(() => {}),
@@ -2397,6 +2410,105 @@ describe('SessionManager', () => {
           maxRetries: 2,
         });
       });
+
+      it('waits for the title receipt before clearing the input draft', async () => {
+        let release!: () => void;
+        let entered!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const requested = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        bindGateway(mockJobQueue.db, {
+          call: async () => {
+            entered();
+            await gate;
+            return { id: 'title-job' };
+          },
+        } as unknown as DbGateway);
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: 'test message' },
+        });
+        let settled = false;
+        const result = Promise.resolve(
+          eventHandlers.get('message.persisted')?.({
+            sessionId: 'test-id',
+            userMessageText: 'test message',
+            needsWorkspaceInit: true,
+            hasDraftToClear: true,
+          })
+        ).then(() => {
+          settled = true;
+        });
+        await requested;
+        try {
+          expect(settled).toBe(false);
+          expect(mockDb.updateSession).not.toHaveBeenCalled();
+        } finally {
+          release();
+        }
+        await result;
+        expect(mockDb.updateSession).toHaveBeenCalledWith(
+          'test-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ inputDraft: null }),
+          })
+        );
+      });
+
+      for (const failure of ['unavailable', 'rejected', 'receipt-loading', 'lost-after-commit']) {
+        it(`preserves the draft without main replay when title admission is ${failure}`, async () => {
+          const fixture = createMailboxTestDb();
+          const inline = new DbGateway(':memory:', fixture.db);
+          const getJob =
+            failure === 'receipt-loading'
+              ? spyOn(TitleJobRepository.prototype, 'getJob').mockImplementation(() => {
+                  throw new Error('receipt loading failed');
+                })
+              : undefined;
+          mockJobQueue.db = fixture.db;
+          if (failure === 'rejected')
+            fixture.db.exec(
+              "CREATE TRIGGER reject_title BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'title rejected'); END"
+            );
+          bindGateway(fixture.db, {
+            call: async (...args) => {
+              if (failure === 'unavailable') throw new Error('writer unavailable');
+              const receipt = await Reflect.apply(inline.call, inline, args);
+              if (failure === 'lost-after-commit') throw new Error('receipt lost');
+              return receipt;
+            },
+          } as DbGateway);
+          (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+            id: 'test-id',
+            metadata: { inputDraft: 'test message' },
+          });
+          try {
+            await eventHandlers.get('message.persisted')?.({
+              sessionId: 'test-id',
+              userMessageText: 'test message',
+              needsWorkspaceInit: true,
+              hasDraftToClear: true,
+            });
+            expect(mockDb.updateSession).not.toHaveBeenCalled();
+            expect(mockJobQueue.enqueue).not.toHaveBeenCalled();
+            const rows = fixture.jobsByQueue('session.title_generation');
+            expect(rows).toHaveLength(failure === 'lost-after-commit' ? 1 : 0);
+            if (failure === 'lost-after-commit') {
+              expect(JSON.parse(rows[0].payload)).toEqual({
+                sessionId: 'test-id',
+                userMessageText: 'test message',
+              });
+              expect(rows[0].max_retries).toBe(2);
+            }
+          } finally {
+            getJob?.mockRestore();
+            fixture.close();
+          }
+        });
+      }
 
       it('clears the draft on a direct match and keeps a staged transcript', async () => {
         const handler = eventHandlers.get('message.persisted');

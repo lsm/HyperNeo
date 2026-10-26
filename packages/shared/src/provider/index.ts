@@ -59,3 +59,6 @@ export {
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
 } from './error-taxonomy.js';
+
+export const PROVIDER_MODEL_LOAD_TIMEOUT_MS = 30_000;
+export const MODEL_LIST_REQUEST_TIMEOUT_MS = PROVIDER_MODEL_LOAD_TIMEOUT_MS * 2 + 5_000;

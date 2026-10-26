@@ -1,0 +1,8 @@
+{
+  "ciRunnerPasses": 1,
+  "ciRunnerFailures": 0,
+  "queueIdentityOverride": "synthetic.renamed.github.poll",
+  "admissionFollowsRegisteredQueue": true,
+  "disableDeletesOnlyRegisteredQueue": true,
+  "legacyQueuePreserved": true
+}

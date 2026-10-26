@@ -1,3 +1,4 @@
+import { createSessionToolActivationOperation } from '../tools/session-tool-activation.ts';
 import {
   createSessionToolPreferenceWriter,
   type SessionToolPreferenceWriter,
@@ -190,6 +191,7 @@ import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts'
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
 import { setupLiveQueryHandlers } from './live-query-handlers.ts';
+import { readLiveSessionList } from '../../storage/repositories/session-list-live-read.ts';
 import { setupReferenceHandlers } from './reference-handlers.ts';
 import { FileIndex } from '../file-index.ts';
 import { LiveQueryEngine } from '../../storage/live-query.ts';
@@ -435,9 +437,9 @@ export async function setupRPCHandlers(
         )?.refreshToolsContextUsage();
     })(id, request, tools);
   const preferenceWrites = new Map<string, Promise<unknown>>();
-  const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) => {
+  const exclusiveToolPreferences = <T>(id: string, write: () => Promise<T>): Promise<T> => {
     const previous = preferenceWrites.get(id) ?? Promise.resolve();
-    const next = previous.catch(() => {}).then(() => persistToolPreferences(id, request, tools));
+    const next = previous.catch(() => {}).then(write);
     preferenceWrites.set(id, next);
     void next
       .finally(() => {
@@ -446,6 +448,8 @@ export async function setupRPCHandlers(
       .catch(() => {});
     return next;
   };
+  const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
+    exclusiveToolPreferences(id, () => persistToolPreferences(id, request, tools));
   const pendingInactivityRunNow = new Set<Promise<void>>();
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
@@ -512,7 +516,8 @@ export async function setupRPCHandlers(
     deps.messageHub,
     deps.liveQueries,
     deps.db.getDatabase(),
-    (args) => deps.db.getMessageFeedAsync(args)
+    (args) => deps.db.getMessageFeedAsync(args),
+    (includeArchived) => deps.db.gateway.call(readLiveSessionList, 'read', includeArchived)
   );
 
   registerAppMcpHandlers(deps.messageHub, {
@@ -1557,6 +1562,12 @@ export async function setupRPCHandlers(
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
   const familyOperations = [
+    createSessionToolActivationOperation({
+      write: persistToolPreferences,
+      exclusive: exclusiveToolPreferences,
+      getLiveSession: (id) =>
+        taskAgentManager?.getCachedAgentSessionById(id) ?? deps.sessionManager.getCachedSession(id),
+    }),
     ...collectFamilyOperations({
       ...familyContext,
       goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),

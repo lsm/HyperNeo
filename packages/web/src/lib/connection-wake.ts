@@ -35,10 +35,10 @@ export function decideConnectionWake(
     case 'hidden_settled':
       return state.hidden ? 'suspend' : 'none';
     case 'visible':
-      if (state.suspended) return state.reachable ? 'resume' : 'none';
+      if (state.suspended) return 'resume';
       return state.resumeWaiting ? 'none' : 'validate';
     case 'pageshow':
-      return !state.hidden && state.reachable && state.suspended ? 'resume' : 'none';
+      return !state.hidden && state.suspended ? 'resume' : 'none';
     case 'network':
       return state.reachable ? 'schedule_online' : 'suspend_now';
     case 'online_settled':
