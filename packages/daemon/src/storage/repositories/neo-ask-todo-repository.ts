@@ -403,7 +403,7 @@ export class NeoAskTodoRepository {
           todo,
           {
             state: 'closed_unverified',
-            reason: `Ask closed without verifying: ${todo.doneWhen}`,
+            reason: `Ask closed without verifying: ${todo.doneWhen}${todo.reason ? `\n${todo.reason}` : ''}`,
             finishedAt: now,
           },
           now

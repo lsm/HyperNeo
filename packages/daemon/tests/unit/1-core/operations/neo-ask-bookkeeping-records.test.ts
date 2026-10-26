@@ -108,16 +108,9 @@ describe('todo and ask bookkeeping records through MCP', () => {
         status: 'done',
         outcome: 'Closed without a verified outcome',
       });
-      expect(result).toMatchObject({
-        ok: true,
-        todos: [
-          {
-            state: 'closed_unverified',
-            reason: expect.stringContaining('check_failed: build exited 7'),
-          },
-        ],
-      });
       expect(result.todos[0].reason).toContain('Ask closed without verifying: Result observed');
+      expect(result.todos[0].reason).toContain('check_failed: build exited 7');
+      expect(result).toMatchObject({ ok: true, todos: [{ state: 'closed_unverified' }] });
       expect(h.calls).toEqual([]);
     } finally {
       h.db.close();
