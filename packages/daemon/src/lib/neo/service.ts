@@ -351,8 +351,8 @@ export class NeoService {
     const config = { ...session.config, autoCompactPercent: percent };
     const metadata = { ...session.metadata, pendingAutoCompactPercent: undefined };
     const live = await this.sessions.getSessionForControl(sessionId);
-    if (live) live.updateMetadata({ config, metadata });
-    else this.db.updateSession(sessionId, { config, metadata });
+    if (live) await live.updateMetadata({ config, metadata });
+    else await this.db.updateSession(sessionId, { config, metadata });
     await this.events.publish('session.updated', {
       sessionId,
       source: 'update',

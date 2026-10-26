@@ -220,7 +220,7 @@ describe('neo.preferences.set', () => {
           lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
         }),
         updateMetadata: (updates: Partial<Session>) => {
-          db.updateSession(sessionId, updates);
+          return db.updateSession(sessionId, updates);
         },
         requestModelSwitch: async (model: string, provider: string) => {
           switched.push([sessionId, model, provider]);
@@ -233,6 +233,14 @@ describe('neo.preferences.set', () => {
               model: db.getSession(sessionId)?.config.model,
               error: 'Synthetic unavailable primary',
             };
+          if (busy) {
+            await events.publish('session.updated', {
+              sessionId,
+              source: 'model-switch-pending',
+              session: { metadata: { pendingModelSwitch: { model, provider, requestedAt: 1 } } },
+            });
+            return { success: true, model, pending: { model, provider, requestedAt: 1 } };
+          }
           await db.updateSession(sessionId, {
             config: {
               ...db.getSession(sessionId)!.config,
@@ -559,6 +567,38 @@ describe('neo.preferences.set', () => {
     expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(undefined);
     expect(db.getSession('neo:root')?.metadata.pendingAutoCompactPercent).toBe(undefined);
     busy = false;
+  });
+
+  test('a busy percent edit stays deferred while a switch is merely pending', async () => {
+    await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      autoCompactPercent: 35,
+      fallbacks: [{ model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' }],
+    });
+    busy = true;
+    await invoke('neo.preferences.set', {
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
+      thinkingLevel: 'off',
+      fallbacks: [
+        {
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'off',
+          autoCompactPercent: 50,
+        },
+      ],
+    });
+    expect(db.getSession('neo:root')?.config.model).toBe('claude-opus');
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(35);
+    busy = false;
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      processingState: { status: 'idle' },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(50);
   });
 
   test('a mid-run switch to a fallback gives the Neo session that model percentage', async () => {
