@@ -2,6 +2,7 @@ import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
 import type { NeoSessionMessage } from './neo-session-message.ts';
 import type { NeoConversationWake } from './neo-wake.ts';
+import type { NeoRuleSource } from './settings';
 import type { NeoModelPreference } from './settings.ts';
 import type { WorkerIdentity } from './worker-identity.ts';
 
@@ -193,6 +194,7 @@ export interface NeoSnapshot {
   wakes?: NeoConversationWake[];
   mutedSessions?: string[];
   standingRules?: string[];
+  standingRuleSources?: Record<string, NeoRuleSource>;
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];

@@ -7,16 +7,18 @@ export function keepNeoOwnedSettings(
   if (!updates.neo) return updates;
   const {
     standingRules: _rules,
+    standingRuleSources: _sources,
     preferences: _preferences,
     mutedSessions: _muted,
     ...neo
   } = updates.neo;
-  const { standingRules, preferences, mutedSessions } = current.neo ?? {};
+  const { standingRules, standingRuleSources, preferences, mutedSessions } = current.neo ?? {};
   return {
     ...updates,
     neo: {
       ...neo,
       ...(standingRules ? { standingRules } : {}),
+      ...(standingRuleSources ? { standingRuleSources } : {}),
       ...(preferences ? { preferences } : {}),
       ...(mutedSessions ? { mutedSessions } : {}),
     },

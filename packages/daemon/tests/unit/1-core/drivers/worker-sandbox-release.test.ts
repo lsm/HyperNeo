@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import {
   chmodSync,
   existsSync,
@@ -16,6 +16,40 @@ import {
   prepareWorkerSandbox,
   releaseWorkerSandbox,
 } from '../../../../src/lib/drivers/worker-sandbox';
+
+let dataDir: string;
+beforeEach(() => {
+  dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = dataDir;
+});
+afterEach(() => {
+  rmSync(dataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
+test('release removes only one worker scratch root and keeps evidence locations', async () => {
+  const first = mkdtempSync(join(tmpdir(), 'worker-sibling-a-'));
+  const second = mkdtempSync(join(tmpdir(), 'worker-sibling-b-'));
+  mkdirSync(join(first, '.git'));
+  mkdirSync(join(second, '.git'));
+  try {
+    const a = (await prepareWorkerSandbox(first)) as Record<string, string>;
+    const b = (await prepareWorkerSandbox(second)) as Record<string, string>;
+    writeFileSync(join(b.TMPDIR, 'sibling'), 'kept');
+    await releaseWorkerSandbox(first);
+    expect(existsSync(a.TMPDIR)).toBe(false);
+    expect(existsSync(join(b.TMPDIR, 'sibling'))).toBe(true);
+    expect(existsSync(join(dataDir, 'work', 'scratch'))).toBe(true);
+    expect(existsSync(a.HYPERNEO_EVIDENCE)).toBe(true);
+    expect(existsSync(a.HYPERNEO_BUILDS)).toBe(true);
+    await releaseWorkerSandbox(second);
+  } finally {
+    await releaseWorkerSandbox(first);
+    await releaseWorkerSandbox(second);
+    rmSync(first, { recursive: true, force: true });
+    rmSync(second, { recursive: true, force: true });
+  }
+});
 
 test.skipIf(process.platform === 'win32')(
   'releases nonempty chmod-000 runtime directories without touching symlink targets',
@@ -80,7 +114,7 @@ test.skipIf(process.platform !== 'darwin')(
         spawnSync('/usr/bin/chflags', ['-h', 'nouchg,nouappnd', locked]);
         chmodSync(locked, 0o700);
       }
-      spawnSync('/usr/bin/chflags', ['-RP', 'nouchg,nouappnd', join(env.TMPDIR, '..')]);
+      spawnSync('/usr/bin/chflags', ['-RP', 'nouchg,nouappnd', env.TMPDIR]);
       spawnSync('/usr/bin/chflags', ['-h', 'nouchg,nouappnd', outside]);
       await releaseWorkerSandbox(root);
       rmSync(root, { recursive: true, force: true });

@@ -183,7 +183,10 @@ The worker-question-answer-routes helper does this in finally, including failure
 
 Await session creation through the daemon DB facade before inserting dependent
 synthetic SDK or task records. Session writes use the asynchronous DB writer;
-an unawaited creation can race a foreign-key insert.
+an unawaited creation can race a foreign-key insert. When a metadata helper mixes
+WebSocket writes with synchronous in-process operation transactions, await a
+DB-facade session write before invoking the next transaction, so earlier writer
+work has committed. `neo-rule-answers.ts` uses this barrier.
 
 When a journey specifies an ephemeral model mock, omit the 8000/8001 preflight.
 That helper must bind its model listener to port 0 and redirect both session and

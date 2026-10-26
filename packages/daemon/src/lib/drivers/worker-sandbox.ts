@@ -1,12 +1,11 @@
-import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
-import { collectWithMaxBuffer } from '../utils/script-utils.ts';
-import { spawnProcess } from '../runtime-spawn/index.ts';
-import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { WorkerSandboxMode } from '@hyperneo/shared';
+import { spawnProcess } from '../runtime-spawn/index.ts';
+import { collectWithMaxBuffer } from '../utils/script-utils.ts';
+import { workerWorkLocations } from '../work-locations.ts';
+import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 
 let readWorkerSandbox = (): WorkerSandboxMode => 'off';
 
@@ -14,23 +13,33 @@ export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
   readWorkerSandbox = read;
 }
 
-export const workerSandboxOn = () => readWorkerSandbox() === 'always';
+export function workerSandboxOn(requested?: boolean) {
+  const mode = readWorkerSandbox();
+  return mode === 'always' || (mode === 'on-demand' && requested === true);
+}
+
+export function workerWritableRoots(root: string) {
+  const locations = workerWorkLocations(root);
+  return [locations.evidence, locations.builds, locations.scratch, locations.cache];
+}
 
 export function workerSandboxPaths(root: string) {
-  const base = process.platform === 'darwin' ? '/tmp' : tmpdir();
-  const runtime = join(base, `hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`);
+  const locations = workerWorkLocations(root);
   return {
-    TMPDIR: join(runtime, 'tmp'),
-    TMP: join(runtime, 'tmp'),
-    TEMP: join(runtime, 'tmp'),
-    CLAUDE_CODE_TMPDIR: join(runtime, 'tmp'),
-    XDG_CACHE_HOME: join(runtime, 'cache'),
+    HYPERNEO_WORKTREES: locations.worktrees,
+    HYPERNEO_EVIDENCE: locations.evidence,
+    HYPERNEO_BUILDS: locations.builds,
+    TMPDIR: locations.scratch,
+    TMP: locations.scratch,
+    TEMP: locations.scratch,
+    CLAUDE_CODE_TMPDIR: locations.scratch,
+    XDG_CACHE_HOME: locations.cache,
   };
 }
 
 export async function releaseWorkerSandbox(root: string | null | undefined) {
   if (!root) return;
-  const runtime = join(workerSandboxPaths(root).TMPDIR, '..');
+  const runtime = workerWorkLocations(root).scratch;
   try {
     const entry = await lstat(runtime);
     if (!entry.isDirectory()) {
@@ -72,9 +81,10 @@ export async function releaseWorkerSandbox(root: string | null | undefined) {
 
 export async function prepareWorkerSandbox(root: string) {
   const env = workerSandboxPaths(root);
-  const runtime = join(env.TMPDIR, '..');
+  const runtime = workerWorkLocations(root).scratch;
   for (const path of new Set([runtime, ...Object.values(env)])) {
     await mkdir(path, { recursive: true, mode: 0o700 });
+    if (path !== runtime && path !== env.XDG_CACHE_HOME) continue;
     const entry = await lstat(path);
     const owner = process.platform === 'win32' ? entry.uid : (process.getuid?.() ?? entry.uid);
     const mode = process.platform === 'win32' ? 0 : entry.mode;
@@ -87,7 +97,7 @@ export async function prepareWorkerSandbox(root: string) {
 
 export function codexWorkerSandbox(root: string) {
   const env = workerSandboxPaths(root);
-  const writableRoots = [root, join(root, '.git'), ...new Set(Object.values(env))];
+  const writableRoots = [root, join(root, '.git'), ...new Set(workerWritableRoots(root))];
   return {
     sandbox: 'workspace-write',
     config: {

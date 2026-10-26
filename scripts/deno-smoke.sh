@@ -643,5 +643,17 @@ env -i HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRI
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-shutdown-order.ts" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN"
 
+TODO_MUTATION_PLANNING_RUN="$WORK_DIR/todo-mutation-planning"
+mkdir -p "$TODO_MUTATION_PLANNING_RUN/home" "$TODO_MUTATION_PLANNING_RUN/tmp"
+env -i HOME="$TODO_MUTATION_PLANNING_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_PLANNING_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_MUTATION_PLANNING_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-planning.ts" verify "$TODO_MUTATION_PLANNING_RUN"
+
 env -i HOME="$WORK_DIR/single-message-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/single-message-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-single-message-reader.ts" "$WORK_DIR/single-message-reader"
+TODO_MUTATION_COMMIT_RUN="$WORK_DIR/todo-mutation-commit"
+mkdir -p "$TODO_MUTATION_COMMIT_RUN/home" "$TODO_MUTATION_COMMIT_RUN/tmp"
+env -i HOME="$TODO_MUTATION_COMMIT_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_COMMIT_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_MUTATION_COMMIT_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-commit.ts" verify "$TODO_MUTATION_COMMIT_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
