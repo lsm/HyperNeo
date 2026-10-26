@@ -182,6 +182,10 @@ describe('issue todo PR owner delivery', () => {
         expect(f.claims.prs(pinned.id)).toEqual([
           expect.objectContaining({ url, state: 'MERGED' }),
         ]);
+        f.store.updateTodo(pinned, { state: 'removed' }, Date.now());
+        f.store.updateTodo(issue, { state: 'doing' }, Date.now());
+        await f.cycle('Closes synthetic/MixedCase#7', 'SUCCESS', Date.now());
+        expect(f.ledger.snapshot(null, Date.now())[0].ownerId).toBe(owner.id);
       } finally {
         f.db.close();
       }
