@@ -54,6 +54,7 @@ let uncertain = false;
 let refuse = false;
 let startError = false;
 let serverStartError = false;
+let queueFault = '';
 const calls: unknown[] = [];
 const logs: unknown[] = [];
 const replies: unknown[] = [];
@@ -100,6 +101,11 @@ const server = new WebSocketServer({ server: http });
 server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
+  if (request.method === 'thread/queue/add' && queueFault) {
+    if (queueFault === 'refused') socket.send(JSON.stringify({ id: request.id, error: { code: -32600, message: 'thread synthetic already has an active writer' } }));
+    else socket.close();
+    return;
+  }
   if (request.method === 'thread/resume' && !resumeError) loaded = true;
   if (request.method === 'thread/queue/add') pendingText = request.params.input[0].text;
   const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
@@ -162,6 +168,16 @@ try {
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
+  for (const fault of ['refused', 'lost-reply']) {
+    queueFault = fault;
+    const before = calls.length;
+    const result = await send();
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'not_delivered');
+    assert.equal(result.notSent, fault === 'refused' ? true : undefined, 'Only a definite refusal permits automatic retry');
+    assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
+  }
+  queueFault = '';
   owner = 'owned';
   assert.equal((await send('steer')).value.steeredIntoTurnId, 'desktop-active');
   refuse = true;
