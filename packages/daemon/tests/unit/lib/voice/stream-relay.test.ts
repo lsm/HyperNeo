@@ -15,6 +15,7 @@ import {
   type VoiceStreamText,
 } from '../../../../src/lib/voice/stream-relay';
 import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
+import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
 import type { VoiceTranscribeOutcome } from '../../../../src/lib/voice/transcribe-pipeline';
 import recorded from './fixtures/wlk-deepgram.json';
 
@@ -97,6 +98,13 @@ describe('voice stream settings', () => {
     expect(monologue.match(/Tomorrow/g)).toHaveLength(1);
     expect(finalsOf(recorded.zh).startsWith('请帮我检查一下')).toBe(true);
     expect(finalsOf(recorded.zh).endsWith('iPhone上。')).toBe(true);
+  });
+
+  test('voicePeerReasonBytes counts reason bytes whether the runtime passes a Buffer or a string', () => {
+    expect(voicePeerReasonBytes(Buffer.from('PRIVATE'))).toBe(7);
+    expect(voicePeerReasonBytes('PRIVATE')).toBe(7);
+    expect(voicePeerReasonBytes('请')).toBe(3);
+    expect(voicePeerReasonBytes(undefined)).toBe(0);
   });
 
   test('pcm16Wav wraps PCM in a 16 kHz mono WAV header', () => {
