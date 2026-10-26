@@ -172,8 +172,10 @@ export function neoQuoteExcerpt(text: string): string {
   return chars.length > 500 ? `${chars.slice(0, 500).join('')}…` : chars.join('');
 }
 
-export function neoPublicationQuoteExcerpt(publication: Pick<NeoPublication, 'shortText'>): string {
-  return neoReplyExcerpt(publication.shortText);
+export function neoPublicationQuoteExcerpt(
+  publication: Pick<NeoPublication, 'shortText' | 'fullText'>
+): string {
+  return neoReplyExcerpt(publication.shortText ?? publication.fullText);
 }
 
 export function neoDraftPayload(submission: Submission, thumbnails: readonly NeoThumbnail[] = []) {

@@ -694,7 +694,8 @@ describe('claude-desktop start', () => {
     const prepared = join(dir, 'prepared');
     mkdirSync(join(prepared, '.claude'));
     const settings = join(prepared, '.claude/settings.local.json');
-    writeFileSync(settings, '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}');
+    mkdirSync(settings);
+    writeFileSync(join(settings, 'sentinel'), 'do not overwrite');
     const result = await adapter({
       prepareExecution: async () => ({
         ok: true,
@@ -711,9 +712,7 @@ describe('claude-desktop start', () => {
       reason: 'preparation_failed',
       detail: expect.stringContaining('native write policy'),
     });
-    expect(readFileSync(settings, 'utf8')).toBe(
-      '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}'
-    );
+    expect(readFileSync(join(settings, 'sentinel'), 'utf8')).toBe('do not overwrite');
     expect(spawned).toEqual([]);
     expect(released).toBe(1);
   });

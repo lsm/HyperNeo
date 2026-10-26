@@ -1,5 +1,4 @@
-import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
-import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -8,19 +7,20 @@ import type {
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
+import { type WorkRef, WorkRefSchema } from '../drivers/types.ts';
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './pack-contract.ts';
-import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
+import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { planNeoTodoAwaitingStart } from './todo-runner.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
-import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -75,7 +75,10 @@ const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
 
 export type NeoTodoPolicy = {
   id: string;
-  todos?: Pick<NonNullable<NeoPack['todos']>, 'doneWhen' | 'addUrls' | 'refuse' | 'record'>;
+  todos?: Pick<
+    NonNullable<NeoPack['todos']>,
+    'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'
+  >;
 };
 
 export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'>>(
@@ -193,6 +196,7 @@ const Edit = z.object({
   title: Text.optional(),
   addUrls: z.array(Text).min(1).optional(),
   check: TodoCheck.optional(),
+  doneWhen: Text.optional(),
   done: z.enum(['met', 'reported']).optional(),
   evidence: Text.optional(),
   artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
@@ -268,6 +272,7 @@ export function planNeoTodoEdit(
       todo,
       patch: {
         ...(input.title ? { title: input.title } : {}),
+        ...(input.doneWhen ? { doneWhen: input.doneWhen } : {}),
         ...(input.done ? { state: 'done', finishedAt: now } : {}),
         ...(input.done === 'met' ? { evidence: input.evidence } : {}),
         ...(input.done === 'reported' ? { report: input.evidence } : {}),
@@ -387,6 +392,11 @@ export function createNeoTodoOperations(
       ...(input.addUrls && !appended
         ? [
             `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
+          ]
+        : []),
+      ...(input.doneWhen
+        ? [
+            `done_when_regenerated: doneWhen supplied with a check edit was replaced by the check's wording.`,
           ]
         : []),
     ];
@@ -586,7 +596,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

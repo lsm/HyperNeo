@@ -300,7 +300,7 @@ export class NeoPublicationRepository {
         answerInput: input,
         answerOrigin,
       });
-      if ('reason' in next) return { accepted: false, reason: 'publication_conflict' };
+      if ('reason' in next) return { accepted: false, reason: 'invalid_publication' };
       this.db
         .prepare(
           'UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?'

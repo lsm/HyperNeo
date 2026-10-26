@@ -19,13 +19,15 @@ The public-conversation record retains the human's original content. Retries,
 including pre-id stored messages, retain the same prompt and do not rerun it;
 changed-content retries are refused.
 
-The installed SDK sees the id and invokes `neo.rule.save` citing that id plus
-an exact complete text part from the human message. The actual daemon persists the rule
-without a holder/turn object. Each directly added or removed rule must appear
-verbatim in the cited text part; an unrelated greeting authorizes no rule edit.
-Paraphrases use the existing question-bound confirmation path. Focused operations contracts refuse unknown,
-foreign, non-human, unconsumed and non-conversation ids, as well as a quote not
-in that human input or a fragment of an otherwise valid text part. Client-originated local human edits and question-bound
+The installed SDK sees the id and invokes `neo.rule.save` citing the approving
+human message's id. The daemon verifies that the message is a consumed human
+input received in this conversation and answers an immutable rule proposal with
+`yes` for the exact edit, then retains its session/message reference with the saved rule. Paraphrases do not require a matching quote; immutable
+question-bound confirmation remains the preferred path when approval is needed.
+Focused operation contracts refuse unknown, foreign, non-human, unconsumed and
+non-conversation ids. See [human-approved standing-rule edits](human-approved-standing-rule-edits.md)
+for the direct-save reference, settings-update preservation and restart proof.
+Client-originated local human edits and question-bound
 consent continue to work. Message ids identify received input; they do not
 create a new delivery lane or infer an answered input.
 

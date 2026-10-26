@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -103,4 +103,26 @@ test('resuming a pre-upgrade worker adopts the data-root runtime env', async () 
   expect(resumed?.env.XDG_CACHE_HOME.startsWith(resumed!.env.TMPDIR)).toBe(true);
   expect(resumed?.env.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
   expect(settings().env).toEqual(resumed?.env);
+});
+
+test('reinstall replaces a settings symlink without changing its target', async () => {
+  const outside = join(fixture, 'outside.json');
+  writeFileSync(outside, '{"sentinel":true}');
+  mkdirSync(join(root, '.claude'));
+  symlinkSync(outside, join(root, '.claude/settings.local.json'));
+  await installClaudeNativeWrites(root, [join(root, 'source')]);
+  expect(settings().sandbox.enabled).toBe(true);
+  expect(readFileSync(outside, 'utf8')).toBe('{"sentinel":true}');
+});
+
+test('reinstall uses the current protected roots for policy and marker', async () => {
+  await installClaudeNativeWrites(root, [join(root, 'old-source')]);
+  const source = join(root, 'new-source');
+  await installClaudeNativeWrites(root, [source]);
+  expect(settings().permissions.deny).toContain(`Edit(/${source}/**)`);
+  const persisted = JSON.parse(
+    readFileSync(join(root, '.git/hyperneo-native-writes.json'), 'utf8')
+  );
+  expect(persisted.roots).toEqual([source]);
+  expect(await readClaudeWorkerSandbox(root)).toEqual(settings());
 });

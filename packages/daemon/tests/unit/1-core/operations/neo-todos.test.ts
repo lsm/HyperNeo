@@ -456,7 +456,26 @@ describe('a pack owns its check', () => {
   const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
   const check = { pack: 'gauge', kind: 'level', params: { target: 5 } };
 
-  test("writes the todo's done-when, and Neo cannot edit it", async () => {
+  test('rewords a check-derived done-when like any other wording', async () => {
+    const { call } = setup([gauge]);
+    const added = await call('neo.todo.add', {
+      askId: 'ask',
+      title: 'Fill it',
+      doneWhen: 'Full enough',
+      check,
+      instruction: 'Fill the tank.',
+      target,
+    });
+    if (!added.ok) throw new Error(added.reason);
+    const edited = await call('neo.todo.edit', {
+      todoId: added.todo.id,
+      doneWhen: 'gauge level reads 6',
+    });
+    expect(edited.ok && edited.todo.doneWhen).toBe('gauge level reads 6');
+    expect(edited.ok && edited.todo.check).toEqual(check);
+  });
+
+  test("writes the todo's done-when from its check, and rewords it on request", async () => {
     const { call } = setup([gauge]);
     const added = await call('neo.todo.add', {
       askId: 'ask',
@@ -468,11 +487,13 @@ describe('a pack owns its check', () => {
     });
     if (!added.ok) throw new Error(added.reason);
     expect(added.todo.doneWhen).toBe('gauge level reads 5');
-    const edited = await call('neo.todo.edit', { todoId: added.todo.id, doneWhen: 'Half' });
-    expect(edited.ok && edited.todo.doneWhen).toBe('gauge level reads 5');
+    expect(await call('neo.todo.edit', { todoId: added.todo.id, doneWhen: 'Half' })).toMatchObject({
+      ok: true,
+      todo: { doneWhen: 'Half' },
+    });
   });
 
-  test('a legacy completion sentence is preserved until its check changes', async () => {
+  test('a legacy completion sentence is reworded like any other wording', async () => {
     const { repo, call } = setup([gauge]);
     const old = repo.addTodo(
       'old',
@@ -481,7 +502,7 @@ describe('a pack owns its check', () => {
       1
     );
     const edited = await call('neo.todo.edit', { todoId: old.id, doneWhen: 'Half full' });
-    expect(edited.ok && edited.todo.doneWhen).toBe('Full enough');
+    expect(edited.ok && edited.todo.doneWhen).toBe('Half full');
   });
 
   test('refuses a check its pack refuses, and adds nothing', async () => {

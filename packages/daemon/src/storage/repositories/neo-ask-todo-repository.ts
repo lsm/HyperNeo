@@ -277,7 +277,8 @@ export class NeoAskTodoRepository {
   constructor(
     private readonly db: Database,
     private readonly changed: () => void = () => {},
-    private readonly rulesChanged: () => void = () => {}
+    private readonly rulesChanged: () => void = () => {},
+    private readonly questionsPruned?: () => void
   ) {}
 
   cardReplyQuestion(conversationId: string, mutationId: string): NeoQuestion | null {
@@ -883,7 +884,8 @@ export class NeoAskTodoRepository {
     question: NeoQuestion,
     answer: NeoQuestionAnswer,
     by: 'button' | 'chat',
-    now: number
+    now: number,
+    approval?: { sessionId: string; messageId: string }
   ): NeoQuestion | null {
     let rulesChanged = false;
     const changed = this.db.transaction(() => {
@@ -896,7 +898,7 @@ export class NeoAskTodoRepository {
         this.releaseStartTodos(question.id, now);
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
-          const rules = applyNeoRuleAnswer(this.db, question.id);
+          const rules = applyNeoRuleAnswer(this.db, question.id, approval);
           rulesChanged = rules.ok && rules.changed;
         }
       }
@@ -958,7 +960,8 @@ export class NeoAskTodoRepository {
           (todo) => todo.id === question.todoId && !['done', 'removed'].includes(todo.state)
         )
       ) {
-        this.retireQuestion(question, 'todo no longer active', null, now);
+        if (this.retireQuestion(question, 'todo no longer active', null, now))
+          this.questionsPruned?.();
         continue;
       }
       if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
@@ -981,6 +984,7 @@ export class NeoAskTodoRepository {
             ),
             question.id
           );
+      this.questionsPruned?.();
     }
   }
 

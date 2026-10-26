@@ -19,7 +19,7 @@ export function neoReadTools() {
   const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
   return {
     sdkToolsPreset: tools,
-    allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`, 'Bash(sleep:*)'],
+    allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`, 'mcp__fetch-mcp'],
     permissionMode: 'dontAsk' as const,
     coordinatorMode: false,
     settingSources: [],

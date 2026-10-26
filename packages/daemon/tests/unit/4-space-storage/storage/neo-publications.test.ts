@@ -8,6 +8,7 @@ import { Database as DaemonDatabase } from '../../../../src/storage/database.ts'
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { admitNeoPublication } from '../../../../src/lib/neo/publication.ts';
 import { getAccessibleTableNames, getExcludedTableNames } from '../../../helpers/db-query-scope.ts';
@@ -86,6 +87,71 @@ describe('Neo publication ledger', () => {
     expect(first.accepted && repo.list(input.conversationId)).toEqual(
       first.accepted ? [first.publication] : false
     );
+  });
+
+  test('a verbatim reply cannot rewrite a card-reply notice into an undecodable row', () => {
+    runMigration387(db);
+    db.prepare(
+      `INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, created_at)
+       VALUES ('q1', 'ask-1', 'Keep or change?', 'choice', '[]', 1)`
+    ).run();
+    const cardReply = {
+      sourceMessageIds: [input.conversationId],
+      askId: 'ask-1',
+      questionId: 'q1',
+      mutationId: '30000000-0000-4000-8000-000000000001',
+    };
+    expect(repo.append({ ...next(90), cardReply, links: [] })).toMatchObject({ accepted: true });
+    expect(
+      repo.append({
+        ...next(91),
+        shortText: undefined,
+        verbatim: true,
+        fullText: 'The deliverable, unchanged.',
+        cardReply,
+        links: [],
+      })
+    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    expect(() => repo.list(input.conversationId)).not.toThrow();
+    expect(repo.list(input.conversationId)![0].fullText).toBe(input.fullText);
+  });
+
+  test('editing a verbatim reply rejects a split rewrite instead of a conflict', () => {
+    runMigration387(db);
+    const created = repo.append({
+      ...next(92),
+      shortText: undefined,
+      verbatim: true,
+      fullText: 'The deliverable, unchanged.',
+      links: [],
+    });
+    expect(created).toMatchObject({ accepted: true });
+    const id = (created as { publication: { publicationId: string } }).publication.publicationId;
+    expect(
+      repo.edit(
+        input.conversationId,
+        id,
+        { shortText: 'New preview' },
+        '2026-10-26T00:00:00.000Z',
+        'avatar',
+        undefined,
+        '40000000-0000-4000-8000-000000000001'
+      )
+    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    expect(
+      repo.edit(
+        input.conversationId,
+        id,
+        { fullText: 'The deliverable, revised.' },
+        '2026-10-26T00:00:01.000Z',
+        'avatar',
+        undefined,
+        '40000000-0000-4000-8000-000000000002'
+      )
+    ).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: 'The deliverable, revised.' },
+    });
   });
 
   test.each([

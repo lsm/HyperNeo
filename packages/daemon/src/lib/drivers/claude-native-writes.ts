@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
@@ -75,10 +75,14 @@ function policy(root: string, roots: string[], siblings: string[]) {
   };
 }
 
-async function writePolicy(root: string, value: ReturnType<typeof policy>) {
-  const temporary = `${settingsPath(root)}.${crypto.randomUUID()}.tmp`;
+async function writeAtomic(path: string, value: unknown) {
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
-  await rename(temporary, settingsPath(root));
+  try {
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 async function install(root: string, roots: string[]) {
@@ -87,6 +91,7 @@ async function install(root: string, roots: string[]) {
     .map((entry) => join(dirname(root), entry.name));
   const workers: { root: string; roots: string[] }[] = [];
   for (const sibling of siblings) {
+    if (sibling === root) continue;
     try {
       workers.push({
         root: sibling,
@@ -100,12 +105,9 @@ async function install(root: string, roots: string[]) {
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');
-  await writeFile(settingsPath(root), JSON.stringify(policy(root, roots, siblings)), {
-    flag: 'wx',
-    mode: 0o600,
-  });
+  await writeAtomic(settingsPath(root), policy(root, roots, siblings));
   await excludeWorkerConfig(root, '/.claude/settings.local.json');
-  await writeFile(markerPath(root), JSON.stringify({ roots }), { flag: 'wx', mode: 0o600 });
+  await writeAtomic(markerPath(root), { roots });
   for (const worker of workers) {
     if (!(await lstat(join(worker.root, '.claude'))).isDirectory())
       throw new Error('Native write policy requires an in-clone .claude directory');
@@ -113,7 +115,7 @@ async function install(root: string, roots: string[]) {
     const existing = await readFile(settingsPath(worker.root), 'utf8')
       .then(JSON.parse)
       .catch(() => computed);
-    await writePolicy(worker.root, withSecretDenials(computed, existing));
+    await writeAtomic(settingsPath(worker.root), withSecretDenials(computed, existing));
   }
 }
 
@@ -181,6 +183,6 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
   }
   const upgraded = withSecretDenials(computed, existing);
-  if (before !== JSON.stringify(upgraded)) await writePolicy(directory, upgraded);
+  if (before !== JSON.stringify(upgraded)) await writeAtomic(settingsPath(directory), upgraded);
   return upgraded;
 }

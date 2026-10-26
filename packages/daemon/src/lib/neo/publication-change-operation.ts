@@ -1,5 +1,4 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import { neoKnownIds } from './known-ids.ts';
 import type {
   NeoPublication,
   NeoPublicationChangeResult,
@@ -9,7 +8,8 @@ import { z } from 'zod';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { NeoPublicationSchema, NeoPublicationResultSchema } from './publication.ts';
+import { neoKnownIds } from './known-ids.ts';
+import { NeoPublicationObject, NeoPublicationResultSchema } from './publication.ts';
 import { requirePublicationLifetime, requirePublicationProducer } from './publication-operation.ts';
 
 type Producer = Extract<ReturnType<typeof requirePublicationProducer>, { value: unknown }>['value'];
@@ -20,8 +20,8 @@ const EditInput = z
   .object({
     requestId: z.string().min(1).max(160),
     publicationId: z.string().uuid(),
-    shortText: NeoPublicationSchema.shape.shortText.optional(),
-    fullText: NeoPublicationSchema.shape.fullText.optional(),
+    shortText: NeoPublicationObject.shape.shortText.optional(),
+    fullText: NeoPublicationObject.shape.fullText.optional(),
   })
   .strict()
   .refine((input) => input.shortText !== undefined || input.fullText !== undefined, {
@@ -48,7 +48,10 @@ export function requireConversationPublication(
           reason: 'not_found',
           detail: `No Neo reply in this conversation has that publicationId. ${neoKnownIds(
             'recent replies',
-            recent.map((item) => ({ id: item.publicationId, title: item.shortText }))
+            recent.map((item) => ({
+              id: item.publicationId,
+              title: item.shortText ?? item.fullText,
+            }))
           )}`,
         },
       };
@@ -147,7 +150,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. Use a new requestId per revision and reuse it only when retrying that operation.',
+        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. A verbatim reply stays verbatim: editing it with shortText is rejected as invalid_publication. Use a new requestId per revision and reuse it only when retrying that operation.',
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: NeoPublicationResultSchema,
