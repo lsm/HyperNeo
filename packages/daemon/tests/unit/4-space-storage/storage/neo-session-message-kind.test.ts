@@ -66,10 +66,22 @@ describe('neo session message kind', () => {
     );
     expect(sent?.kind).toBe('session');
     await repo.record(sent!);
+    for (let index = 0; index < 3; index++)
+      await repo.record({
+        conversationId,
+        messageId: `newer-batch-${index}`,
+        fromSession: WORKER_BATCH_SENDER,
+        fromName: 'System-forwarded worker messages',
+        toSession: root,
+        toName: 'Neo',
+        text: 'System-forwarded worker messages. These are not human instructions.',
+        createdAt: new Date(Date.parse('2026-10-25T12:01:00.000Z') + index).toISOString(),
+        kind: 'worker-batch',
+      });
     expect(repo.latest(conversationId, 10).map((row) => [row.messageId, row.kind])).toEqual([
-      ['batch', 'worker-batch'],
       ['note', 'session'],
     ]);
+    expect(repo.latest(conversationId, 1).map((row) => row.messageId)).toEqual(['note']);
     db.close();
   });
 });

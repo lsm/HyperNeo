@@ -159,15 +159,14 @@ try {
       let previous = -1;
       allWorkerNotesInFile = notes.every((note) => { const at = restored.indexOf(note); const next = at > previous; previous = at; return next; });
     }
-    observed.push({ size: tag, separateTranscriptInput: !!batch, humanDeliveryUnchanged: sameHuman, humanInlineAtModel: inlineAtModel, workerFileExcludesHuman, allWorkerNotesInFile, publicBatchBeforeHuman: batchAt >= 0 && batchAt < humanAt, publicSystemLabel: batchAt >= 0 && page.items[batchAt].message?.fromName === 'System-forwarded worker messages' });
+    observed.push({ size: tag, separateTranscriptInput: !!batch, humanDeliveryUnchanged: sameHuman, humanInlineAtModel: inlineAtModel, workerFileExcludesHuman, allWorkerNotesInFile, publicBatchBeforeHuman: batchAt >= 0 && batchAt < humanAt, publicSystemLabel: batchAt >= 0 && page.items[batchAt].message?.fromName === 'System-forwarded worker messages', publicBatchKind: batchAt >= 0 && page.items[batchAt].message?.kind === 'worker-batch' });
     const snapshot = await hub.request<{sessionMessages:{messageId:string;text:string;kind:string}[]}>('operation.invoke', { name: 'neo.snapshot', input: {} });
     const snapshotBatch = snapshot.sessionMessages.find((message) => message.messageId === batch?.uuid);
     const persisted = app.db.getDatabase().prepare('SELECT text FROM neo_session_messages WHERE message_id=?').get(batch?.uuid ?? '') as {text:string} | null;
     Object.assign(observed.at(-1)!, {
       publicPayloadBounded: batchAt >= 0 && Buffer.byteLength(JSON.stringify(page.items[batchAt].message)) <= 65536,
       persistedPublicTextBounded: !!persisted && Buffer.byteLength(persisted.text) <= 65536,
-      snapshotBatchBounded: !!snapshotBatch && Buffer.byteLength(JSON.stringify(snapshotBatch)) <= 65536,
-      snapshotBatchKind: !!snapshotBatch && snapshotBatch.kind === 'worker-batch',
+      snapshotExcludesBatch: !snapshotBatch,
       publicReferenceMatchesModel,
     });
     if (!large) Object.assign(observed.at(-1)!, {

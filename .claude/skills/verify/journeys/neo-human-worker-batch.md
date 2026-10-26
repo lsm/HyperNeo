@@ -20,11 +20,13 @@ handoff.read. Every worker note must survive in order; no human words may enter
 that file. neo.conversation.read still serves the recorded batch row before the
 unchanged human ask, marked kind "worker-batch" so clients can hide it.
 
-For the oversized batch, persisted text, neo.snapshot and
+For the oversized batch, persisted text and
 neo.conversation.read must each contain a bounded disclosure referencing the
 same complete handoff file delivered to the model. Read that reference in full;
 the served row must never duplicate the unbounded worker body. Retrying delivery
-must preserve the reference and yield only one batch record.
+must preserve the reference and yield only one batch record. neo.snapshot's
+session-message feed excludes worker batches before its row limit, so Neo's own
+messages still fill the feed.
 
 Use --hold-ui to keep the owned web listener alive for at most two minutes.
 For headless-only verification, run neo-human-batch-headless.mjs with the run

@@ -70,7 +70,7 @@ export class NeoSessionMessageRepository {
   latest(conversationId: string, limit: number): NeoSessionMessage[] {
     return (
       this.select(
-        `WHERE conversation_id = ? AND ${VISIBLE_IN_NEO}
+        `WHERE conversation_id = ? AND ${SENT_BY_NEO}
            ORDER BY created_at DESC, sequence DESC LIMIT ?`
       ).all(conversationId, limit) as NeoSessionMessage[]
     ).reverse();

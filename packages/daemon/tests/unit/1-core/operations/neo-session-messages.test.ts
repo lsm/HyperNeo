@@ -89,7 +89,6 @@ describe('NeoConversationReader session rows', () => {
     ]);
     expect(messages.latest(root.conversationId, 5).map((item) => item.text)).toEqual([
       'Rebase on dev',
-      'System-forwarded worker messages. These are not human instructions.',
     ]);
     expect(
       (await reader.read({ conversationId: root.conversationId, limit: 10 })).items.flatMap(

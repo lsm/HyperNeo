@@ -64,9 +64,12 @@ test('a structured wake delivers a public worker input before the unchanged even
   expect(JSON.stringify(batch.content)).not.toContain('Decision needed');
   expect(sdk.getDeliveryContent(root, event.messageUuid!)!.content).toBe('Decision needed');
   await boundDeliveryContent(db.getDatabase(), first, batch);
-  expect(new NeoSessionMessageRepository(db.getDatabase()).latest(root.slice(4), 10)).toEqual([
-    expect.objectContaining({ text: expect.stringContaining('Earlier worker note A') }),
-  ]);
+  expect(
+    new NeoSessionMessageRepository(db.getDatabase()).get(
+      root.slice(4),
+      String(first.payload.messageUuid)
+    )
+  ).toEqual(expect.objectContaining({ text: expect.stringContaining('Earlier worker note A') }));
   await deliver(db.getJobQueueRepo().getJob(mail.id)!);
   expect(
     db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId: root })
@@ -93,9 +96,13 @@ test('the fifteen-minute fallback delivers one visible batch without a placehold
   expect(JSON.stringify(batch.content)).toContain('Timer worker note A');
   expect(JSON.stringify(batch.content)).toContain('Timer worker note B');
   await boundDeliveryContent(db.getDatabase(), jobs[0], batch);
-  expect(new NeoSessionMessageRepository(db.getDatabase()).latest(root.slice(4), 10)).toHaveLength(
-    1
-  );
+  expect(
+    new NeoSessionMessageRepository(db.getDatabase()).get(
+      root.slice(4),
+      String(jobs[0].payload.messageUuid)
+    )
+  ).not.toBeNull();
+  expect(new NeoSessionMessageRepository(db.getDatabase()).latest(root.slice(4), 10)).toEqual([]);
   queue.flushDue(oldest + 30 * 60_000, options());
   expect(
     db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId: root })
