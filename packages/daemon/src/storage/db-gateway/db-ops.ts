@@ -100,6 +100,7 @@ import {
 import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
 import { nativeFeedEnqueueWrites } from '../repositories/native-feed-enqueue-write.ts';
 import { sessionTitleEnqueueWrites } from '../repositories/session-title-enqueue-write.ts';
+import { skillValidationEnqueueWrites } from '../repositories/skill-validation-enqueue-write.ts';
 import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
@@ -184,6 +185,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     githubPollSuccessorWrites,
     nativeFeedEnqueueWrites,
     sessionTitleEnqueueWrites,
+    skillValidationEnqueueWrites,
     githubPollRefreshWrites,
   ].map((op) => [op.name, op])
 );
