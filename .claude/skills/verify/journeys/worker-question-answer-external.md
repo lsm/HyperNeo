@@ -38,6 +38,17 @@ work.status view intentionally omits the marker; reconciliation.json also keeps
 the bounded since view that contains it. Missing retained peer history remains
 uncertain; elapsed time never authorizes a resend or hold release.
 
+Known limits tracked outside this journey's current proof:
+
+- [#8874](https://github.com/lsm/HyperNeo/issues/8874): the local attempt-time
+  bound is not robust to peer clock skew or histories beyond the bounded view.
+  Recovery needs an exact owning-peer marker or input-ID lookup, with proofs for
+  clocks ahead and behind, restart, and more than 8/50 intervening inputs.
+- [#8888](https://github.com/lsm/HyperNeo/issues/8888): a slow external send can
+  outlast the card client's reply timeout after the answer is stored. This
+  journey does not prove prompt acknowledgement with a slow peer; that follow-up
+  must preserve durable delivery without duplicating the worker input.
+
 The complete marker must survive the adapter's actual 160-character recentInputs
 projection. External answer markers go first; HyperNeo's existing message payload
 stays stable for durable idempotency receipts. Keep reconciliation.json with the
