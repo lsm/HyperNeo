@@ -1,21 +1,21 @@
-import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  subscribeToStructuredLogs,
   type StructuredLogEvent,
+  subscribeToStructuredLogs,
   type VoiceSettings,
 } from '@hyperneo/shared';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { vi } from 'vitest';
+import { type WebSocket, WebSocketServer } from 'ws';
+import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
+import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
 import {
-  VoiceStream,
   pcm16Wav,
+  VoiceStream,
+  type VoiceStreamText,
   voiceMode,
   voiceStreamRoute,
   voiceStreamTls,
-  type VoiceStreamText,
 } from '../../../../src/lib/voice/stream-relay';
-import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
-import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
 import type { VoiceTranscribeOutcome } from '../../../../src/lib/voice/transcribe-pipeline';
 import recorded from './fixtures/wlk-deepgram.json';
 
@@ -61,9 +61,31 @@ describe('voice stream settings', () => {
   });
 
   test('voiceStreamRoute needs a ws or wss endpoint and a supported protocol', () => {
-    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })).toBeNull();
+    expect(
+      voiceStreamRoute({ ...voice, endpoint: 'not a url', streamEndpoint: undefined })
+    ).toBeNull();
     expect(voiceStreamRoute({ ...voice, streamEndpoint: 'https://ai0:8011/v1/listen' })).toBeNull();
     expect(voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })).toBeNull();
+  });
+
+  test('voiceStreamRoute derives the live listen URL from one link', () => {
+    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })?.url.toString()).toBe(
+      'wss://ai0:8011/v1/listen?encoding=linear16&sample_rate=16000&channels=1&interim_results=true&endpointing=700'
+    );
+    expect(
+      voiceStreamRoute({
+        ...voice,
+        endpoint: 'https://ai0:8011/speech/v1',
+        streamEndpoint: undefined,
+      })?.url.pathname
+    ).toBe('/speech/v1/listen');
+    expect(
+      voiceStreamRoute({
+        ...voice,
+        endpoint: 'http://ai0:8011/speech/v1',
+        streamEndpoint: undefined,
+      })?.url.protocol
+    ).toBe('ws:');
   });
 
   test('voiceStreamTls pins a configured CA and never turns verification off by default', () => {

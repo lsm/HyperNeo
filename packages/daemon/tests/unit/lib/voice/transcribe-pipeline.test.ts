@@ -1,8 +1,8 @@
 /// <reference types="bun" />
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { fetchTranscriptionWithRedirects } from '../../../../src/lib/voice/transcribe-fetch.ts';
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager.ts';
+import { fetchTranscriptionWithRedirects } from '../../../../src/lib/voice/transcribe-fetch.ts';
 import {
   createVoiceTranscribeLimiters,
   runVoiceTranscribe,
@@ -147,6 +147,18 @@ describe('voice transcribe pipeline', () => {
       action: 'denied',
       message: 'Voice transcription is already in progress for this client',
     });
+  });
+
+  it('derives the batch transcription URL from a service base link', async () => {
+    let requested: string | undefined;
+    globalThis.fetch = mock(async (url: string | URL | Request, requestInit?: RequestInit) => {
+      requested = String(url);
+      return new Response(JSON.stringify({ text: 'hello world' }), { status: 200 });
+    }) as typeof fetch;
+    await expect(
+      transcribe(createDeps({ endpoint: 'https://ai0:8090/speech/v1' }))
+    ).resolves.toEqual({ action: 'transcribed', text: 'hello world' });
+    expect(requested).toBe('https://ai0:8090/speech/v1/audio/transcriptions');
   });
 
   it('denies invalid voice settings with byte-identical messages', async () => {
