@@ -31,3 +31,19 @@ Inspect screenshots for readable text, a heavier mic glyph, capsule proportions
 and no overflow. Native iOS parity needs separate inspection of its implementation.
 A browser launch failure is not a layout pass: retain its error, say screenshots
 are unverified and leave browser proof pending. Do not bypass host restrictions.
+
+For session Stop and attention-state regressions, build the web first and run:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/attention-evidence \
+  .claude/skills/verify/composer-attention.ts <chromium-executable> <playwright-package>
+```
+
+This helper owns an ephemeral isolated daemon and static frontend. A synthetic
+worker opens in the actual Neo session pane. Production state events supply
+working, waiting and error states; a synthetic interrupt RPC peer records Stop
+activation without running a model. At 390/1280px, Stop must remain visible and
+clickable with an empty, unfocused composer. Waiting/error text uses the expanded
+layout with normal padding, then idle returns to the 48px capsule. Inspect the
+six screenshots, attention.json and cleanup.json. Real SDK interruption is not
+claimed by this frontend regression proof.

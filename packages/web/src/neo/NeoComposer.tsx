@@ -84,7 +84,8 @@ export function NeoComposer({
   const currentPreview = useRef(boundPreview);
   currentPreview.current = boundPreview;
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
-  const collapsed = !focused && !draft && !needsDraft;
+  const attention = !!store.error.value || store.agentState.value.status === 'waiting_for_input';
+  const collapsed = !focused && !draft && !needsDraft && !attention;
   const draftContext = t(
     boundPreview
       ? 'composer.previewContext'
@@ -460,7 +461,7 @@ export function NeoComposer({
             onError={onError}
             onPhase={setVoicePhase}
           />
-          {!collapsed && onStop && store.isWorking.value && !voiceBusy && (
+          {onStop && store.isWorking.value && !voiceBusy && (
             <button
               type="button"
               aria-label={t('composer.stop')}
