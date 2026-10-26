@@ -1,3 +1,4 @@
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import {
@@ -243,6 +244,7 @@ describe('neo.question operations', () => {
           sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
         });
         const draft = NeoTodoDraftSchema.parse({
+          check: pendingTodoCheck,
           title: 'Additional work',
           doneWhen: 'Merged',
           instruction: 'Do the additional work',
@@ -256,7 +258,7 @@ describe('neo.question operations', () => {
             async () => ({ ok: false, reason: 'not started' }),
             store.getAsk('ask')!,
             draft,
-            []
+            createTodoCheckPacks(db)
           );
           if (!result.ok) throw new Error(result.reason);
           joinedId = result.todo.id;
@@ -270,7 +272,12 @@ describe('neo.question operations', () => {
             request: 'Other work',
             createdAt: 1,
           });
-          const todo = store.addTodo('moved', 'other', draft, 1);
+          const todo = store.addTodo(
+            'moved',
+            'other',
+            { ...draft, doneWhen: 'Observed result' },
+            1
+          );
           joinedId = store.moveTodo(todo, 'ask', '', 2).id;
         }
         expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({

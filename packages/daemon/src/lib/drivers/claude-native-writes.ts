@@ -1,7 +1,7 @@
 import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { prepareWorkerSandbox, workerSandboxPaths } from './worker-sandbox.ts';
+import { prepareWorkerSandbox, workerSandboxPaths, workerUnixSockets } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
@@ -31,7 +31,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       },
       network: {
         allowedDomains: ['*'],
-        allowUnixSockets: [],
+        allowUnixSockets: workerUnixSockets(),
         allowAllUnixSockets: false,
         allowLocalBinding: true,
       },
@@ -121,5 +121,9 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
     await writePolicy(directory, { ...computed, ...existing });
   }
-  return { ...computed, ...existing } as typeof computed;
+  const updated = { ...computed, ...existing } as typeof computed;
+  updated.sandbox.network.allowUnixSockets = computed.sandbox.network.allowUnixSockets;
+  updated.sandbox.network.allowAllUnixSockets = false;
+  await writePolicy(directory, updated);
+  return updated;
 }

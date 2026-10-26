@@ -28,7 +28,7 @@ export function neoTodoDetail(todo: NeoTodoEntry): string[] {
   const status = neoTodoStatus(todo).trim();
   return [
     ...new Set(
-      [todo.report, todo.evidence]
+      [todo.instruction, todo.report, todo.evidence]
         .map((text) => text?.trim())
         .filter((text): text is string => !!text && text !== status)
     ),

@@ -49,8 +49,7 @@ export interface NeoTodoControls {
 
 const TodoDraft = z.object({
   title: Text,
-  doneWhen: Text,
-  check: TodoCheck.nullable().default(null),
+  check: TodoCheck,
   instruction: Text.nullable().default(null),
   target: NeoTodoTargetSchema.optional(),
   named: z.record(z.string(), z.unknown()).nullable().default(null),
@@ -74,36 +73,26 @@ export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
 const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
 
-export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction' | 'doneWhen'>>(
+export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'>>(
   draft: T,
   packs: readonly NeoPack[],
   peers: readonly NeoTodo[] = []
-): Gate<T & { records?: string[] }> {
+): Gate<T & { doneWhen: string; records?: string[] }> {
   const pack = draft.check && packs.find((item) => item.id === draft.check?.pack)?.todos;
+  if (!draft.check || !pack)
+    return fail('check_required: use a completion check from an installed pack.');
   const refused = pack?.refuse?.(draft, peers);
   if (refused) return fail(`check_refused: ${refused}`);
   const recorded = pack?.record?.(draft, peers);
-  const doneWhen = draft.check && pack?.doneWhen?.(draft.check);
+  const doneWhen = pack.doneWhen?.(draft.check);
+  if (!doneWhen) return fail(`check_unsupported: ${draft.check.pack}.${draft.check.kind}.`);
   return {
     value: {
       ...draft,
-      ...(doneWhen ? { doneWhen } : {}),
+      doneWhen,
       ...(recorded ? { records: [recorded] } : {}),
     },
   };
-}
-
-export function requireNeoDoneWhenEditable(
-  todo: NeoTodo,
-  input: { doneWhen?: string },
-  packs: readonly NeoPack[]
-): Gate<NeoTodo> {
-  const pack = todo.check && packs.find((item) => item.id === todo.check?.pack)?.todos;
-  return input.doneWhen && todo.check && pack?.doneWhen?.(todo.check) === todo.doneWhen
-    ? fail(
-        "done_when_from_check: this todo's done-when comes from its check; change the check instead."
-      )
-    : { value: todo };
 }
 
 export async function addNeoTodo(
@@ -198,7 +187,7 @@ const Edit = z.object({
   todoId: Text,
   title: Text.optional(),
   addUrls: z.array(Text).min(1).optional(),
-  doneWhen: Text.optional(),
+  check: TodoCheck.optional(),
   done: z.enum(['met', 'reported']).optional(),
   evidence: Text.optional(),
   artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
@@ -274,7 +263,6 @@ export function planNeoTodoEdit(
       todo,
       patch: {
         ...(input.title ? { title: input.title } : {}),
-        ...(input.doneWhen ? { doneWhen: input.doneWhen } : {}),
         ...(input.done ? { state: 'done', finishedAt: now } : {}),
         ...(input.done === 'met' ? { evidence: input.evidence } : {}),
         ...(input.done === 'reported' ? { report: input.evidence } : {}),
@@ -368,16 +356,18 @@ export function createNeoTodoOperations(
   const completion = (plan: TodoPlan) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
   const cards = (plan: { todo: NeoTodo }) => todos.listQuestions(plan.todo.askId);
-  const withUrls = (plan: TodoPlan, input: z.infer<typeof Edit>): Gate<TodoPlan> => {
-    if (!input.addUrls) return { value: plan };
-    const pack = packs().find((pack) => pack.id === plan.todo.check?.pack)?.todos;
-    const check = pack?.addUrls?.(plan.todo, input.addUrls);
+  const withCheck = (plan: TodoPlan, input: z.infer<typeof Edit>): Gate<TodoPlan> => {
+    if (!input.addUrls && !input.check) return { value: plan };
+    const requested = { ...plan.todo, check: input.check ?? plan.todo.check };
+    const pack = packs().find((pack) => pack.id === requested.check?.pack)?.todos;
+    const appended = input.addUrls ? pack?.addUrls?.(requested, input.addUrls) : null;
+    const check = appended ?? input.check;
     if (!check)
       return {
         value: {
           ...plan,
           records: [
-            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
+            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls?.join(', ')}`,
           ],
         },
       };
@@ -387,11 +377,19 @@ export function createNeoTodoOperations(
       todos.listTodos(plan.todo.askId)
     );
     if ('reason' in accepted) return accepted;
+    const records = [
+      ...(accepted.value.records ?? []),
+      ...(input.addUrls && !appended
+        ? [
+            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
+          ]
+        : []),
+    ];
     return {
       value: {
         todo: accepted.value,
         patch: { ...plan.patch, check, doneWhen: accepted.value.doneWhen },
-        ...(accepted.value.records ? { records: accepted.value.records } : {}),
+        ...(records.length ? { records } : {}),
       },
     };
   };
@@ -400,22 +398,22 @@ export function createNeoTodoOperations(
     input?: z.infer<typeof Edit>
   ): Promise<TodoReceipt | Rejection> => {
     const checked = plan.todo;
-    if (input?.addUrls) {
+    if (input?.addUrls || input?.check) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
       const edited = planNeoTodoEdit(latest.value, input);
       if ('reason' in edited) return edited.reason;
-      const rebased = withUrls(edited.value, input);
+      const rebased = withCheck(edited.value, input);
       if ('reason' in rebased) return rebased.reason;
       plan = rebased.value;
     }
     if (['done', 'closed_unverified'].includes(plan.patch.state ?? '')) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
-      if (!sameNeoTodoCheck(checked, input?.addUrls ? plan.todo : latest.value))
+      if (!sameNeoTodoCheck(checked, input?.addUrls || input?.check ? plan.todo : latest.value))
         return {
           ok: false,
-          reason: 'todo_changed: PR URLs changed during completion; retry with the current check.',
+          reason: 'todo_changed: completion check changed; retry with the current check.',
         };
       const answered = requireNeoTodoCardsAnswered(plan, cards(plan));
       if ('reason' in answered) return answered.reason;
@@ -500,12 +498,6 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
-    .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Edit>) =>
-        requireNeoDoneWhenEditable(todo, input, packs()),
-      ['outcome', 'input'],
-      'result:outcome'
-    )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
     .pipe(
       (plan: { patch: NeoTodoPatch }, caller: OperationCaller) =>
@@ -514,7 +506,7 @@ export function createNeoTodoOperations(
       'registered'
     )
     .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
-    .pipe(withUrls, ['outcome', 'input'], 'result:outcome')
+    .pipe(withCheck, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
     .pipe(write, ['outcome', 'input'], 'outcome')
@@ -571,7 +563,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it; a pack may reject malformed checks, record bookkeeping conditions, or write doneWhen from the check. Workers are long-lived sessions: name them with the project and a number, such as neo-ios dev 1 or HyperNeo dev 3, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}); non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place; use target {verb: bind, ref} to bind already running work immediately without dispatch, with no instruction or start flag needed; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
+        'Add a todo to an open ask you own. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {artifact: registered artifact ID} or {path: absolute file path}, or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them with the project and a number, such as neo-ios dev 1 or HyperNeo dev 3, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}); non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place; use target {verb: bind, ref} to bind already running work immediately without dispatch, with no instruction or start flag needed; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -589,7 +581,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its PR-merge check and updates doneWhen. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

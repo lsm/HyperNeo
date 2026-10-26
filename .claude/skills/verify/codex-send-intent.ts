@@ -10,6 +10,8 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { startCodexDesktopTurn, steerCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
+import { mock } from 'bun:test';
+import { codexWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 
 const [action, portText, runText] = process.argv.slice(2);
 const port = Number(portText);
@@ -43,12 +45,22 @@ CREATE TABLE project_roots (project_id TEXT, path TEXT);
 INSERT INTO threads VALUES ('synthetic', 'Synthetic', '', '', '/tmp/synthetic', 'desktop', 0, 1, '/missing-synthetic.jsonl');`);
 db.prepare('UPDATE threads SET rollout_path = ?').run(rollout);
 db.close();
+const worker = join(run, 'worker');
+mkdirSync(join(worker, '.git'), { recursive: true });
+let prepared = true;
+mock.module('../../../packages/daemon/src/lib/drivers/worker-sandbox.ts', () => ({
+  resumeWorkerSandbox: async () => prepared ? codexWorkerSandbox(worker) : null,
+}));
+const workerDb = new Database(join(home, 'state_5.sqlite'));
+workerDb.prepare('UPDATE threads SET cwd=?').run(worker);
+workerDb.close();
 let owner = 'missing';
 let ownerReadyAt = 0;
 let openedReadyAt = 0;
 let active = true;
 let loaded = true;
 let resumeError = '';
+let failedStep = '';
 let pendingText = '';
 let uncertain = false;
 let refuse = false;
@@ -105,6 +117,18 @@ const server = new WebSocketServer({ server: http });
 server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
+  if (request.method === failedStep) {
+    socket.close();
+    return;
+  }
+  if (request.method === 'thread/loaded/list') {
+    socket.send(JSON.stringify({ id: request.id, result: { data: loaded ? ['synthetic'] : [], nextCursor: null } }));
+    return;
+  }
+  if (!loaded && ['thread/settings/update', 'thread/queue/add'].includes(request.method)) {
+    socket.send(JSON.stringify({ id: request.id, error: { code: -32600, message: 'thread not found: synthetic' } }));
+    return;
+  }
   if (request.method === 'thread/queue/add' && collide) {
     collisionRequests.push({ request, reply: result => socket.send(JSON.stringify({ id: request.id, result })) });
     if (collisionRequests.length === 2) {
@@ -162,6 +186,7 @@ try {
   }), 'New-thread control must open and hand off its first turn');
   for (const turnActive of [true, false]) {
     active = turnActive;
+    loaded = turnActive;
     owner = 'missing';
     const before = calls.length;
     const pending = await send();
@@ -170,7 +195,9 @@ try {
     assert.equal(pending.value.delivered, false);
     assert.equal(pending.value.receipt, undefined);
     assert(!calls.slice(before).some(call => (call as { desktop?: string }).desktop));
-    assert(!calls.slice(before).some(call => ['thread/resume', 'turn/start', 'turn/steer'].includes((call as { server?: string }).server ?? '')));
+    assert(!calls.slice(before).some(call => ['turn/start', 'turn/steer'].includes((call as { server?: string }).server ?? '')));
+    assert.equal(loaded, true, 'Saved idle thread must be loaded before enqueue');
+    assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/resume').length, turnActive ? 0 : 1);
     active = false;
     const text = pendingText;
     const timestamp = new Date().toISOString();
@@ -188,6 +215,17 @@ try {
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
+  for (const step of ['thread/loaded/list', 'thread/resume', 'thread/settings/update']) {
+    loaded = false; failedStep = step;
+    const before = calls.length;
+    const failure = await send();
+    assert.equal(failure.ok, false);
+    assert.equal(failure.reason, 'not_delivered');
+    assert.equal(failure.notSent, true);
+    assert(failure.detail.includes(step), JSON.stringify(failure));
+    assert(!calls.slice(before).some(call => (call as { server?: string }).server === 'thread/queue/add'));
+  }
+  failedStep = ''; loaded = true;
   for (const { identical, reverse } of [false, true].flatMap(identical => [false, true].map(reverse => ({ identical, reverse })))) {
     collide = true; reverseCollision = reverse; collisionRequests.length = 0;
     const prefix = 'same prefix '.repeat(20), firstText = `${prefix} first`;
@@ -206,6 +244,7 @@ try {
     writeFileSync(rollout, ''); collide = false;
   }
   writeFileSync(join(bin, 'codex'), `#!${process.execPath}\nimport { appendFileSync } from 'node:fs';\nconst args=process.argv.slice(2);\nif(args[0]!=='queue'||!args[1]?.startsWith('--thread=')||!args[2]?.startsWith('--message='))process.exit(2);\nconst timestamp=new Date().toISOString();\nappendFileSync(${JSON.stringify(rollout)},JSON.stringify({type:'response_item',timestamp,payload:{type:'message',role:'user',id:'foreign-cli-input',content:[{type:'input_text',text:args[2].slice('--message='.length)}]}})+'\\n');\nawait Bun.write(Bun.stdout,'cli-accepted\\n');\n`, { mode: 0o700 });
+  prepared = false;
   queueFault = 'unsupported';
   const cli = await send();
   assert.deepEqual(cli.value, { delivered: false, queuedSubmissionId: 'cli-accepted' }, 'CLI queue acceptance cannot borrow a concurrent transcript receipt');
@@ -232,6 +271,7 @@ try {
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings, collisions }, null, 2));
   ws?.close(); await app.cleanup(); unsubscribe();
+  prepared = false;
   for (const socket of server.clients) socket.terminate();
   await new Promise<void>((done) => server.close(() => done()));
   await new Promise<void>((done) => http.close(() => done()));

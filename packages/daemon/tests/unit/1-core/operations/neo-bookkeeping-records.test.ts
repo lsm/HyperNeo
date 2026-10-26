@@ -1,3 +1,4 @@
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -54,7 +55,7 @@ function setup() {
       store,
       sessions,
       runner,
-      () => [],
+      () => createTodoCheckPacks(db),
       () => null
     ),
     ...createNeoAskRecordOperations(
@@ -127,6 +128,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       const before = h.store.listTodos(h.ask.id);
       expect(
         await h.call(name, {
+          check: pendingTodoCheck,
           askId: h.ask.id,
           todoId: h.todo.id,
           title: 'Extra',

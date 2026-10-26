@@ -18,7 +18,12 @@ assert(!existsSync(join(run, 'data')));
 for (const dir of ['home', 'workspace', 'bin', 'evidence']) mkdirSync(join(run, dir), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), `#!/bin/sh
 printf 'CALL %s\\n' "$*" >> '${run}/evidence/gh.log'
-if [ "$1" = api ] && [ "$2" = graphql ]; then cat '${run}/response.json'; exit 0; fi
+if [ "$1" = api ] && [ "$2" = user ]; then
+  printf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n{"login":"synthetic"}'; exit 0
+fi
+if [ "$1" = api ] && { [ "$2" = 'repos/chosen/repo/pulls?state=open&sort=updated&direction=desc&per_page=100' ] || [ "$2" = 'repos/chosen/repo/pulls?state=closed&sort=updated&direction=desc&per_page=50' ]; }; then
+  printf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n[]'; exit 0
+fi
 exit 1
 `, { mode: 0o755 });
 writeFileSync(join(run, 'response.json'), JSON.stringify({ data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: 'chosen/repo', open: { pageInfo: { hasNextPage: false }, nodes: [] }, done: { nodes: [] } } } }));
@@ -55,12 +60,13 @@ try {
   await save(['chosen/repo']);
   await service!.pack('coding')!.observeSessions!([facts('foreign/repo'), facts('chosen/repo')], Date.now());
   await service!.pack('coding')!.sweep!(Date.now());
-  assert.equal((gh().match(/^CALL /gm) ?? []).length, 1);
-  assert(gh().includes('o=chosen') && gh().includes('n=repo'));
-  assert(!gh().includes('o=foreign'));
+  assert.equal((gh().match(/^CALL /gm) ?? []).length, 3);
+  assert(gh().includes('CALL api user --include'));
+  assert(gh().includes('repos/chosen/repo/pulls?'));
+  assert(!gh().includes('foreign/repo'));
   const rows = app!.db.getDatabase().prepare('SELECT repos FROM pack_coding_session_facts').all();
   assert.deepEqual(rows, [{ repos: '["chosen/repo"]' }]);
-  evidence.chosen = { watchList: await watched(), githubCalls: 1, facts: rows };
+  evidence.chosen = { watchList: await watched(), githubCalls: 3, facts: rows };
   await close(); await open();
   assert.deepEqual(await watched(), ['chosen/repo']);
   await save([]); const before = gh();
@@ -75,15 +81,28 @@ try {
   const legacy = new Database(join(run, 'data/daemon.db'));
   try {
     legacy.prepare("DELETE FROM neo_pack_preferences WHERE pack = 'coding' AND key = 'watchedRepos'").run();
+    legacy.exec(`INSERT INTO pack_coding_pr_ledger
+      (repo, number, title, branch, head, state, state_since, read_at)
+      VALUES ('foreign/repo', 1, 'Old PR', 'work', 'old', 'unreviewed', 1, 1);
+      INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
+      VALUES ('old-ask', 'old-session', 'Old work', 'Old work', 1, 1);
+      INSERT INTO neo_todos (id, ask_id, position, title, done_when, repo, created_at, updated_at)
+      VALUES ('old-todo', 'old-ask', 0, 'Old work', 'Done', 'other/repo', 1, 1);
+      INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at)
+      VALUES ('old-todo', '["https://github.com/other/repo/pull/2"]', 1);`);
     legacy.prepare("INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('legacy','Synthetic legacy project','','',1,1,1)").run();
     legacy.prepare("INSERT INTO neo_project_workspaces (alias,project_id) VALUES ('repository:github.com/chosen/repo','legacy')").run();
   } finally { legacy.close(); }
   await open();
-  assert.deepEqual(await watched(), ['chosen/repo']);
+  assert.deepEqual(await watched(), []);
+  const beforeUpgradeSweep = gh();
+  await service!.pack('coding')!.sweep!(Date.now());
+  assert.equal(gh(), beforeUpgradeSweep);
+  evidence.upgrade = { watchList: await watched(), additionalGithubCalls: 0, ledgerRows: app!.db.getDatabase().prepare('SELECT repo FROM pack_coding_pr_ledger').all(), todoPrRows: app!.db.getDatabase().prepare('SELECT prs_json FROM pack_coding_todo_prs').all() };
   app!.db.getDatabase().prepare("INSERT INTO neo_project_workspaces (alias,project_id) VALUES ('repository:github.com/foreign/repo','legacy')").run();
   await close(); await open();
-  assert.deepEqual(await watched(), ['chosen/repo']);
-  evidence.legacy = { watchList: ['chosen/repo'], laterProjectNotEnrolled: true };
+  assert.deepEqual(await watched(), []);
+  evidence.legacy = { watchList: [], laterProjectNotEnrolled: true };
   assert.deepEqual(await call('neo.project.forget', { projectId: 'legacy' }), { ok: true, repos: ['chosen/repo', 'foreign/repo'] });
   assert.deepEqual(await watched(), []);
   const beforeForgetSweep = gh();

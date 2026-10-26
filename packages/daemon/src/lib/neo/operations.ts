@@ -1,4 +1,5 @@
 import { readNeoReply } from './intake.ts';
+import { workerSocketOperation } from './worker-sockets.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
@@ -85,6 +86,7 @@ import {
   NeoAskEntrySchema,
   neoSnapshotAskEntries,
   projectNeoAskEntries,
+  summarizeNeoAskEntry,
 } from './ask-entries.ts';
 import {
   createPackPreferenceOperations,
@@ -462,7 +464,7 @@ export function createNeoOperations(service: NeoService) {
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
       packPreferences: listPackPreferences(service.db.getDatabase()),
-      todoAsks: entries,
+      todoAsks: detailed ? entries.map(summarizeNeoAskEntry) : entries,
       ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
       packRows: service.packs().flatMap((pack) => {
         const rows = pack.snapshotRows?.(
@@ -727,6 +729,9 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     ...createNeoRuleQuestions(service),
+    workerSocketOperation(service, (caller) =>
+      admitNeoCaller(service, caller, 'neo.workerSocket.ask')
+    ),
     ...createPackPreferenceQuestions(
       service.db.getDatabase(),
       service.todos,
@@ -871,7 +876,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. todoAsks holds each ask with its todos (state, report, evidence), ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. RPC todoAsks are summaries with counts, todo states and one-line statuses; instructions, reports and question text load through neo.ask.read when the card is opened. MCP todoAsks retain full todo details, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

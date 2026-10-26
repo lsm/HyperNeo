@@ -325,6 +325,78 @@ describe('QueryRunner startup gate', () => {
     await completeQuery(controlled, waitFor);
   });
 
+  it('applies MCP choices to the owning query and refreshes observed status without interruption', async () => {
+    const { runner, controlled, ctx } = await startObservedRunner('activate-tools');
+    const servers = { selected: { command: 'synthetic-not-executed' } };
+    ctx.optionsBuilder.getEffectiveMcpServers = () => servers;
+    controlled.queryObject.setMcpServers = mock(async () => ({
+      added: ['selected'],
+      removed: [],
+      errors: {},
+    }));
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'selected', status: 'connected', tools: [{ name: 'navigate' }] },
+    ];
+    expect(await runner.applyToolChoice()).toEqual({ application: 'live' });
+    expect(controlled.queryObject.setMcpServers).toHaveBeenCalledWith(servers);
+    expect(controlled.queryObject.interrupt).not.toHaveBeenCalled();
+    expect(controlled.closeCount).toBe(0);
+    expect((await runner.getToolInventory()).mcpServers).toEqual([
+      { name: 'selected', status: 'connected', tools: ['navigate'] },
+    ]);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('does not certify an MCP application after its query owner is invalidated', async () => {
+    const { runner, controlled } = await startObservedRunner('late-activation');
+    const applied = defer<{ added: string[]; removed: string[]; errors: Record<string, string> }>();
+    controlled.queryObject.setMcpServers = () => applied.promise;
+    const pending = runner.applyToolChoice();
+    runner.invalidateAttemptTokens();
+    applied.resolve({ added: ['stale'], removed: [], errors: {} });
+    expect(await pending).toEqual({ application: 'unverified', reason: 'query_changed' });
+    expect((await runner.getToolInventory()).state).toBe('not_running');
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('discloses unsupported live application and SDK failures without leaking errors', async () => {
+    const { runner, controlled } = await startObservedRunner('unsupported-activation');
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'restart_required',
+      reason: 'live_mcp_unavailable',
+    });
+    controlled.queryObject.setMcpServers = async () => ({
+      added: [],
+      removed: [],
+      errors: { selected: 'private endpoint credential' },
+    });
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'application_failed',
+    });
+    controlled.queryObject.setMcpServers = async () => {
+      throw new Error('private error');
+    };
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'application_failed',
+    });
+    controlled.queryObject.setMcpServers = async () => ({ added: [], removed: [], errors: {} });
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'status_unavailable',
+    });
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'bad', status: 'connected', tools: [{ name: 42 }] },
+    ];
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'status_unavailable',
+    });
+    expect(controlled.queryObject.interrupt).not.toHaveBeenCalled();
+    await completeQuery(controlled, waitFor);
+  });
+
   it('reports not running without creating a query', async () => {
     const { runner } = createRunner('stopped-tools');
     expect((await runner.getToolInventory()).state).toBe('not_running');
@@ -366,7 +438,10 @@ describe('QueryRunner startup gate', () => {
     };
     const failed = await runner.getToolInventory();
     expect(failed.mcpServers).toEqual([{ name: 'browser', status: 'unverified', tools: null }]);
+    expect(failed.tools).toEqual(['Read', 'mcp__browser__navigate']);
     expect(JSON.stringify(failed)).not.toContain('secret');
+    controlled.queryObject.mcpServerStatus = undefined;
+    expect((await runner.getToolInventory()).tools).toEqual(['Read', 'mcp__browser__navigate']);
     controlled.queryObject.mcpServerStatus = async () => [
       { name: 'browser', status: 'connected', tools: [] },
     ];
@@ -387,9 +462,9 @@ describe('QueryRunner startup gate', () => {
     controlled.queryObject.mcpServerStatus = async () => [
       { name: 'browser', status: 'connected', tools: [{ name: 42 }] },
     ];
-    expect((await runner.getToolInventory()).mcpServers).toEqual([
-      { name: 'browser', status: 'unverified', tools: null },
-    ]);
+    const malformed = await runner.getToolInventory();
+    expect(malformed.mcpServers).toEqual([{ name: 'browser', status: 'unverified', tools: null }]);
+    expect(malformed.tools).toEqual(['Read', 'mcp__browser__navigate']);
     await completeQuery(controlled, waitFor);
   });
 
