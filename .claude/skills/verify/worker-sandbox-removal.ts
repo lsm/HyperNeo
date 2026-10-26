@@ -25,7 +25,7 @@ export async function verifyConcurrentRuntimeRemoval(run: string) {
         ? { ok: true }
         : { ok: false, code: result.reason?.code, error: String(result.reason) }),
         tempReleased: !existsSync(env.TMPDIR), cacheReleased: !existsSync(env.XDG_CACHE_HOME), cloneRetained: existsSync(root) });
-      await rm(join(env.TMPDIR, '..'), { recursive: true, force: true });
+      await rm(env.TMPDIR, { recursive: true, force: true });
     }
     await writeFile(join(run, 'evidence/concurrent-runtime-removal.json'), JSON.stringify(observations, null, 2));
     assert(observations.every(wave => wave.results.every(result => result.ok) && wave.tempReleased && wave.cacheReleased && wave.cloneRetained), 'Concurrent filesystem removal must not fail worker runtime release');

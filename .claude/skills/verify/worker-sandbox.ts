@@ -25,6 +25,24 @@ function git(cwd: string, ...args: string[]) {
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
+const dataRoot = process.env.HYPERNEO_DATA_DIR ?? '';
+const workLocations: Record<string, Record<string, string>> = {};
+function assertWorkLocations(env: Record<string, string>, route: string) {
+  assert(env.HYPERNEO_WORKTREES === join(dataRoot, 'worktrees'), `${route} HYPERNEO_WORKTREES must be the data-root worktrees dir`);
+  assert(env.HYPERNEO_EVIDENCE?.startsWith(join(dataRoot, 'work', 'evidence')), `${route} HYPERNEO_EVIDENCE must sit under the data root`);
+  assert(env.HYPERNEO_BUILDS?.startsWith(join(dataRoot, 'work', 'builds')), `${route} HYPERNEO_BUILDS must sit under the data root`);
+  assert(env.TMPDIR?.startsWith(join(dataRoot, 'work', 'scratch')), `${route} TMPDIR must be the per-session scratch dir`);
+  for (const path of [env.HYPERNEO_WORKTREES, env.HYPERNEO_EVIDENCE, env.HYPERNEO_BUILDS, env.TMPDIR, env.XDG_CACHE_HOME])
+    assert(existsSync(path), `${route} work location must be created on demand: ${path}`);
+  workLocations[route] = {
+    HYPERNEO_WORKTREES: env.HYPERNEO_WORKTREES,
+    HYPERNEO_EVIDENCE: env.HYPERNEO_EVIDENCE,
+    HYPERNEO_BUILDS: env.HYPERNEO_BUILDS,
+    TMPDIR: env.TMPDIR,
+    XDG_CACHE_HOME: env.XDG_CACHE_HOME,
+  };
+  writeFileSync(join(run, 'evidence/work-locations.json'), JSON.stringify(workLocations, null, 2));
+}
 const remote = join(run, 'remote');
 const source = join(run, 'source');
 git(run, 'init', '--initial-branch=dev', remote);
@@ -58,7 +76,7 @@ let sdkBaseUrl = '';
 QueryOptionsBuilder.prototype.build = async function (...args) {
   const options = await buildOptions.apply(this, args);
   assert(sdkBaseUrl, 'SDK model endpoint must be loopback');
-  writeFileSync(join(run, 'evidence/sdk-options.json'), JSON.stringify({ cwd: options.cwd, sandbox: options.sandbox, temp: options.env?.TMPDIR }, null, 2));
+  writeFileSync(join(run, 'evidence/sdk-options.json'), JSON.stringify({ cwd: options.cwd, sandbox: options.sandbox, temp: options.env?.TMPDIR, env: options.env }, null, 2));
   return { ...options, spawnClaudeCodeProcess: (child) => spawn(child.command, child.args, { cwd: child.cwd, env: { ...child.env, ANTHROPIC_BASE_URL: sdkBaseUrl }, stdio: ['pipe', 'pipe', 'pipe'], signal: child.signal }) };
 };
 try {
@@ -103,7 +121,12 @@ try {
   evidence.push({ stdout: proof.stdout, stderr: proof.stderr, status: proof.status });
   assert.equal(proof.status, 0, proof.stdout + proof.stderr);
   const originalPolicy = JSON.parse(readFileSync(join(worker, '.claude/settings.local.json'), 'utf8'));
-  const runtime = join(originalPolicy.env.TMPDIR, '..');
+  assertWorkLocations(originalPolicy.env, 'claude');
+  assert(
+    !originalPolicy.sandbox.filesystem.allowWrite.includes(originalPolicy.env.HYPERNEO_WORKTREES),
+    'The shared worktrees root must stay outside worker writable roots'
+  );
+  const runtime = originalPolicy.env.TMPDIR;
   await releaseWorkerSandbox(worker);
   const next = await rpc('work.start', { ...request, title: 'Sibling after runtime release' }) as Result<WorkStarted>;
   assert(next.ok, JSON.stringify(next));
@@ -145,6 +168,14 @@ try {
   });
   const codexResult = await codex.start!(request, { from: 'synthetic', caller: { source: 'rpc' } });
   assert(codexResult.ok, JSON.stringify(codexResult));
+  const codexLaunch = JSON.parse(readFileSync(join(run, 'evidence/codex-launch.json'), 'utf8'));
+  assertWorkLocations(codexLaunch.config?.shell_environment_policy?.set ?? {}, 'codex');
+  assert(
+    !codexLaunch.config.sandbox_workspace_write.writable_roots.includes(
+      codexLaunch.config.shell_environment_policy.set.HYPERNEO_WORKTREES
+    ),
+    'Codex writable roots must exclude the shared worktrees tree'
+  );
   await app.jobProcessor.stop();
   const registry = await rpc('rpc:mcp.registry.list', {}) as { servers: { id: string }[] };
   for (const server of registry.servers) await rpc('rpc:mcp.registry.setEnabled', { id: server.id, enabled: false });
@@ -170,6 +201,7 @@ try {
   await wait(() => existsSync(join(sdkWorker, 'network-sdk.txt')) && readFileSync(join(sdkWorker, 'network-sdk.txt'), 'utf8') === 'synthetic-network-ok');
   await wait(() => existsSync(join(run, 'evidence/sdk-requests.json')) && /Operation not permitted|Permission denied/.test(readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8')) && readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8').includes('outside-status=1'));
   const sdkSettings = JSON.parse(readFileSync(join(sdkWorker, '.claude/settings.local.json'), 'utf8'));
+  assertWorkLocations(sdkSettings.env, 'sdk');
   const sdkTemp = readFileSync(join(sdkWorker, 'observed-temp-sdk.txt'), 'utf8');
   const observed = {
     insideAllowed: readFileSync(join(sdkWorker, 'inside-sdk.txt'), 'utf8') === 'inside',

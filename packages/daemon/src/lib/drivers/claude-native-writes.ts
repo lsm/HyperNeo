@@ -1,9 +1,21 @@
-import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { prepareWorkerSandbox, workerSandboxPaths } from './worker-sandbox.ts';
+import { prepareWorkerSandbox, workerSandboxPaths, workerWritableRoots } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
+const RUNTIME_MANAGED_ENV_KEYS = [
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'CLAUDE_CODE_TMPDIR',
+  'XDG_CACHE_HOME',
+  'HYPERNEO_WORKTREES',
+  'HYPERNEO_EVIDENCE',
+  'HYPERNEO_BUILDS',
+] as const;
+const managedEnv = (env: Record<string, string>) =>
+  Object.fromEntries(RUNTIME_MANAGED_ENV_KEYS.map((key) => [key, env[key]]));
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
 const settingsPath = (root: string) => join(root, '.claude/settings.local.json');
 const editRule = (path: string, tree = false) =>
@@ -20,7 +32,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       allowUnsandboxedCommands: false,
       excludedCommands: [],
       filesystem: {
-        allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
+        allowWrite: [root, join(root, '.git'), ...workerWritableRoots(root)],
         denyWrite: [
           ...roots,
           ...siblings.filter((sibling) => sibling !== root),
@@ -87,7 +99,12 @@ async function install(root: string, roots: string[]) {
     const existing = await readFile(settingsPath(worker.root), 'utf8')
       .then(JSON.parse)
       .catch(() => computed);
-    await writePolicy(worker.root, { ...computed, ...existing, permissions: computed.permissions });
+    await writePolicy(worker.root, {
+      ...computed,
+      ...existing,
+      permissions: computed.permissions,
+      env: { ...(existing.env ?? computed.env), ...managedEnv(computed.env) },
+    });
   }
 }
 
@@ -121,6 +138,8 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     await writePolicy(directory, { ...computed, ...existing });
   }
   const updated = { ...computed, ...existing } as typeof computed;
+  updated.env = { ...(existing.env ?? computed.env), ...managedEnv(computed.env) };
+  updated.sandbox.filesystem = computed.sandbox.filesystem;
   updated.sandbox.network.allowAllUnixSockets = true;
   await writePolicy(directory, updated);
   return updated;

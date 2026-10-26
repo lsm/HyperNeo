@@ -64,6 +64,16 @@ const saidAt = (text: string, at = '2026-10-04T11:00:05.000Z') =>
     payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
   });
 
+let workerDataDir: string;
+beforeEach(() => {
+  workerDataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = workerDataDir;
+});
+afterEach(() => {
+  rmSync(workerDataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
 describe('codexQueueDelivery', () => {
   test('a queued message is receipted by the user message id it appended, not an older copy', () => {
     const before = [heardAs('msg_old', 'next step')];
@@ -1121,7 +1131,7 @@ describe('codex-desktop adapter status and send', () => {
       const root = join(dir, 'prepared');
       mkdirSync(join(root, '.git'), { recursive: true });
       const env = workerSandboxPaths(root);
-      const runtime = join(env.TMPDIR, '..');
+      const runtime = env.TMPDIR;
       const readyAtDispatch: boolean[] = [];
       const observe = () => readyAtDispatch.push(Object.values(env).every(existsSync));
       try {
