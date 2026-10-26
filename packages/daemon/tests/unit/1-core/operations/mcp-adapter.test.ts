@@ -25,6 +25,46 @@ function fixture() {
 }
 
 describe('generic operation MCP adapter', () => {
+  test.each(['sync', 'async'])(
+    'a %s audit failure preserves a completed mutation and later audit attempts',
+    async (failure) => {
+      const value = {
+        ok: true as const,
+        todoId: 'created-once',
+        records: ['first note', 'second note'],
+      };
+      const execute = mock(async () => value);
+      const definition = defineOperation({
+        name: 'example',
+        description: 'Recorded mutation',
+        inputSchema: z.object({}),
+        resultSchema: z.object({
+          ok: z.literal(true),
+          todoId: z.string(),
+          records: z.array(z.string()),
+        }),
+        execute,
+      });
+      const attempts: string[] = [];
+      const handler = createOperationMcpHandler(
+        createOperationRegistry([definition]),
+        () => ({ sessionId: 'trusted-sender' }),
+        (record) => {
+          attempts.push(record.reason);
+          if (record.reason === 'first note') {
+            if (failure === 'sync') throw new Error('Audit unavailable');
+            return Promise.reject(new Error('Audit unavailable'));
+          }
+        }
+      );
+      const result = await handler({ name: 'example', input: {} });
+      expect(result.isError).not.toBe(true);
+      expect(JSON.parse(result.content[0].text)).toEqual(value);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(attempts).toEqual(value.records);
+    }
+  );
+
   test('upgrading retains prior audit entries as refusals', () => {
     const db = new Database(':memory:');
     try {
