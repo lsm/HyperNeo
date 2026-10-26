@@ -22,3 +22,18 @@ baseline Claude must lack the local-server receipt and report an OS binding deni
 The wrapper saves failures separately, releases private runtime roots and removes
 the disposable workers. This proves native CLI enforcement on the current host;
 native Desktop UI, Linux and Windows behavior require separate verification.
+
+## Unit fixture isolation
+
+```sh
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/fixture-evidence \
+  .claude/skills/verify/worker-loopback-fixture.ts
+```
+
+This runs the real written-settings tests with a private simulated system temp
+directory containing an unrelated stale worker marker. Before nesting the fixture
+worker under its own parent, installation scans that marker and fails on the
+unrelated missing settings directory. After the fix all settings tests pass and
+`fixture-isolation.json` records the stale marker unchanged with no policy written
+there. The simulated shared directory belongs entirely to the proof; the host's
+shared temp entries are never seeded or changed.
