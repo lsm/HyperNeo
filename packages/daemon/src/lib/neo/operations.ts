@@ -1,5 +1,4 @@
 import { readNeoReply } from './intake.ts';
-import { workerSocketOperation } from './worker-sockets.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
@@ -288,7 +287,7 @@ function admitNeoCaller(
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || binding?.kind !== 'neo')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (['neo.open', 'neo.restart', 'neo.session.track'].includes(name))
+  if (['neo.restart', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   return { value: caller };
 }
@@ -733,9 +732,6 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     ...createNeoRuleQuestions(service),
-    workerSocketOperation(service, (caller) =>
-      admitNeoCaller(service, caller, 'neo.workerSocket.ask')
-    ),
     ...createPackPreferenceQuestions(
       service.db.getDatabase(),
       service.todos,
@@ -820,10 +816,10 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.open',
       description:
-        'Open the one Neo conversation; a projectId is checked and opens the same session.',
+        'Open the one Neo conversation; a projectId is checked and opens the same session. The bound Neo session may open itself.',
       inputSchema: Scope,
       resultSchema: Snapshot,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: open,
     }),
     defineOperation({

@@ -807,9 +807,23 @@ async function withCodexMessageServer<Value>(
 export async function queueCodexMessage(
   detail: CodexThreadDetail,
   message: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  mode: 'auto' | 'queue' = 'auto'
 ): Promise<Result<WorkDelivery>> {
   const sandbox = await resumeWorkerSandbox(detail.thread.folder);
+  const owner = await steerCodexDesktopTurn(
+    deps.desktopSocketPath,
+    deps.spawn,
+    detail.thread.id,
+    message,
+    deps.newId(),
+    mode,
+    deps.desktopRunning
+  );
+  if ('reason' in owner) {
+    sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: owner.reason });
+    return owner.reason;
+  }
   sendLog.warn('work.send route', {
     threadId: detail.thread.id,
     path: 'queue',
@@ -1051,14 +1065,15 @@ const runCodexRename = (superpipe({})('codex-rename-work') as PipelineAPI)
 ) => Promise<Result<{ renamed: true; title: string }>>;
 
 const runCodexQueue = (superpipe({})('codex-queue-work') as PipelineAPI)
-  .input(['ref', 'message', 'deps'])
+  .input(['ref', 'message', 'deps', 'mode'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
-  .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
+  .pipe(queueCodexMessage, ['outcome', 'message', 'deps', 'mode'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  mode: 'auto' | 'queue'
 ) => Promise<Result<WorkDelivery>>;
 
 const runCodexWithdraw = (superpipe({})('codex-withdraw-work') as PipelineAPI)
@@ -1334,7 +1349,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       runCodexQueue(
         ref,
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps
+        deps,
+        'auto'
       ),
     steer: (ref, message, context) =>
       runCodexSend(
@@ -1347,7 +1363,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       runCodexQueue(
         ref,
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps
+        deps,
+        'queue'
       ),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
     status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt, readOpenedPrs),
