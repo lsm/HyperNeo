@@ -22,6 +22,11 @@ describe('VoiceSettings language selector', () => {
     const request = vi.fn(async () => ({ streamId: 'stub', via: 'streaming', text: 'heard' }));
     const hub = { request, onEvent: () => () => {} } as unknown as MessageHub;
     let view = render(<VoiceSettings />);
+    expect(
+      screen.getByText(
+        'Saved in this browser. Applies to the next live ASR connection only, excluding batch transcription and fallback. Auto keeps server defaults.'
+      )
+    ).toBeTruthy();
     expect((screen.getByLabelText('Live transcription language') as HTMLSelectElement).value).toBe(
       'auto'
     );
