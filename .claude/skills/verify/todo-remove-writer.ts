@@ -97,7 +97,7 @@ try {
     const receipts = [];
     for (const kind of ['remove'] as const) {
       const result = await finish(kind, kind);
-      assert(result.ok && result.todo.state === (kind === 'close' ? 'removed' : 'removed'));
+      assert(result.ok && result.todo.state === 'removed');
       assert(result.todo.report === text, 'removal receipt must retain the complete report');
       assert.equal((await visible(kind)).state, 'removed');
       const detail = await hub.request<{ ok: boolean; entry: { todos: NeoTodo[] } }>('operation.invoke', { name: 'neo.ask.read', input: { todoId: kind } });

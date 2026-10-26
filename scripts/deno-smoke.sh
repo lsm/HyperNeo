@@ -660,4 +660,10 @@ env -i HOME="$TODO_CLOSE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_CLOSE_WRITE
 	HYPERNEO_DATA_DIR="$TODO_CLOSE_WRITER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-close-writer.ts" verify "$TODO_CLOSE_WRITER_RUN"
 
+TODO_REMOVE_WRITER_RUN="$WORK_DIR/todo-remove-writer"
+mkdir -p "$TODO_REMOVE_WRITER_RUN/home" "$TODO_REMOVE_WRITER_RUN/tmp"
+env -i HOME="$TODO_REMOVE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_REMOVE_WRITER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_REMOVE_WRITER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-remove-writer.ts" verify "$TODO_REMOVE_WRITER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

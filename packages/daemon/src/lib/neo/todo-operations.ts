@@ -11,7 +11,7 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './pack-contract.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
-import { readNeoTodoCompletion, sameNeoTodoCheck } from './todo-completion.ts';
+import { readNeoTodoCompletion } from './todo-completion.ts';
 import { planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
@@ -324,7 +324,9 @@ export function planNeoTodoRemove(
 const Continue = z.object({ todoId: Text, message: Text });
 const Retry = z.object({ todoId: Text });
 const Close = z.object({ todoId: Text, reason: Text });
-type CloseInput = { kind: 'close' } & z.infer<typeof Close>;
+type FinalizeInput =
+  | ({ kind: 'close' } & z.infer<typeof Close>)
+  | ({ kind: 'remove' } & z.infer<typeof Remove>);
 
 export function planNeoTodoClose(
   todo: NeoTodo,
@@ -353,87 +355,6 @@ export function createNeoTodoOperations(
   };
   const completion = (plan: TodoPlan) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
-  const cards = (plan: { todo: NeoTodo }) => todos.listQuestions(plan.todo.askId);
-  const withCheck = (plan: TodoPlan, input: z.infer<typeof Edit>): Gate<TodoPlan> => {
-    if (!input.addUrls && !input.check) return { value: plan };
-    const requested = { ...plan.todo, check: input.check ?? plan.todo.check };
-    const pack = packs().find((pack) => pack.id === requested.check?.pack)?.todos;
-    const appended = input.addUrls ? pack?.addUrls?.(requested, input.addUrls) : null;
-    const check = appended ?? input.check;
-    if (!check)
-      return {
-        value: {
-          ...plan,
-          records: [
-            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls?.join(', ')}`,
-          ],
-        },
-      };
-    const accepted = planNeoTodoDraft(
-      { ...plan.todo, check },
-      packs(),
-      todos.listTodos(plan.todo.askId)
-    );
-    if ('reason' in accepted) return accepted;
-    const records = [
-      ...(accepted.value.records ?? []),
-      ...(input.addUrls && !appended
-        ? [
-            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
-          ]
-        : []),
-    ];
-    return {
-      value: {
-        todo: accepted.value,
-        patch: { ...plan.patch, check, doneWhen: accepted.value.doneWhen },
-        ...(records.length ? { records } : {}),
-      },
-    };
-  };
-  const write = async (
-    plan: TodoPlan,
-    input?: z.infer<typeof Edit>
-  ): Promise<TodoReceipt | Rejection> => {
-    const checked = plan.todo;
-    if (input?.addUrls || input?.check) {
-      const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
-      if ('reason' in latest) return latest.reason;
-      const edited = planNeoTodoEdit(latest.value, input);
-      if ('reason' in edited) return edited.reason;
-      const rebased = withCheck(edited.value, input);
-      if ('reason' in rebased) return rebased.reason;
-      plan = rebased.value;
-    }
-    if (['done', 'closed_unverified'].includes(plan.patch.state ?? '')) {
-      const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
-      if ('reason' in latest) return latest.reason;
-      if (!sameNeoTodoCheck(checked, input?.addUrls || input?.check ? plan.todo : latest.value))
-        return {
-          ok: false,
-          reason: 'todo_changed: completion check changed; retry with the current check.',
-        };
-      const answered = requireNeoTodoCardsAnswered(plan, cards(plan));
-      if ('reason' in answered) return answered.reason;
-    }
-    if (plan.patch.check) {
-      const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));
-      if ('reason' in accepted) return accepted.reason;
-    }
-    const todo = await controls.recompute(plan.todo, plan.patch);
-    return {
-      ok: true,
-      todo,
-      todos: todos.listTodos(todo.askId),
-      ...(plan.records ? { records: plan.records } : {}),
-    };
-  };
-  const stopAndWrite = async (plan: TodoPlan): Promise<TodoReceipt | Rejection> => {
-    const failed = await controls.stop(plan.todo);
-    return failed
-      ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
-      : write(plan);
-  };
   const ran = async (
     result: Awaited<ReturnType<typeof addNeoTodo>>
   ): Promise<TodoReceipt | Rejection> =>
@@ -542,19 +463,6 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  const remove = owned(superpipe({})('neo.todo.remove') as PipelineAPI)
-    .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Remove>) =>
-        planNeoTodoRemove(todo, todos.listTodos(todo.askId), input),
-      ['outcome', 'input'],
-      'result:outcome'
-    )
-    .pipe(stopAndWrite, 'outcome', 'outcome')
-    .endAsync('outcome') as (
-    input: z.infer<typeof Remove>,
-    caller: OperationCaller
-  ) => Promise<TodoReceipt | Rejection>;
-
   const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
     .pipe(
       (todo: NeoTodo, input: z.infer<typeof Continue>) =>
@@ -577,7 +485,7 @@ export function createNeoTodoOperations(
   const finalize = (superpipe({})('neo.todo.finalize') as PipelineAPI)
     .input(['input'])
     .pipe(
-      async (input: CloseInput) => {
+      async (input: FinalizeInput) => {
         const facts = await todos.read('askFacts', { todoId: input.todoId });
         const todo = facts.todos.find((todo) => todo.id === input.todoId);
         return todo ? admit(facts.ask, todo, facts.todos) : requireNeoOpenTodo(null, facts.ask);
@@ -586,7 +494,7 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(
-      async (input: CloseInput) => {
+      async (input: FinalizeInput) => {
         const prepared = await todos.prepareMutation(input, Date.now());
         return prepared.ok ? { value: prepared } : { reason: prepared };
       },
@@ -618,12 +526,12 @@ export function createNeoTodoOperations(
     .pipe(
       async (
         plan: TodoPlan,
-        input: CloseInput,
+        input: FinalizeInput,
         completion: Awaited<ReturnType<typeof readNeoTodoCompletion>>
       ) => {
         const result = await todos.mutateTodo(
           input,
-          { check: plan.todo.check, result: completion },
+          input.kind === 'close' ? { check: plan.todo.check, result: completion } : undefined,
           Date.now()
         );
         if (!result.ok) return result;
@@ -634,7 +542,7 @@ export function createNeoTodoOperations(
       ['outcome', 'input', 'completion'],
       'outcome'
     )
-    .endAsync('outcome') as (input: CloseInput) => Promise<TodoReceipt | Rejection>;
+    .endAsync('outcome') as (input: FinalizeInput) => Promise<TodoReceipt | Rejection>;
 
   return [
     defineOperation({
@@ -671,7 +579,7 @@ export function createNeoTodoOperations(
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => present(await remove(input, caller)),
+      execute: async (input) => present(await finalize({ kind: 'remove', ...input })),
     }),
     defineOperation({
       name: 'neo.todo.continue',

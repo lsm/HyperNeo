@@ -1,0 +1,25 @@
+{
+  "mode": "before",
+  "surface": "real remove RPC and neo.snapshot",
+  "refused": [
+    {
+      "kind": "remove",
+      "error": "MessageHubResponseError: synthetic finalization refusal",
+      "observed": {
+        "state": "removed",
+        "card": "retired",
+        "visibleState": "removed"
+      }
+    }
+  ],
+  "rollbackNotifications": {
+    "websocket": 0,
+    "internal": 0
+  },
+  "baselineReproduced": true,
+  "notificationCounts": {
+    "websocket": 0,
+    "internal": 0
+  },
+  "mainSql": 15
+}
