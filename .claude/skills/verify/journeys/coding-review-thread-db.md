@@ -65,3 +65,10 @@ bun --no-install --no-env-file .claude/skills/verify/coding-review-thread-proof-
 The audit verifies ancestry, unchanged application trees/helper blobs, both
 successful runtime proof receipts and the full post-proof change list. A source,
 test or helper change requires a new committed proof head and fresh runs.
+
+
+After a base-registration conflict, retain both lanes' imports and entries and
+commit the merge before refreshing proofs. The latest proof binding and runtime
+folders identify that committed merged application. Prior proof bindings and
+measurements remain in the evidence history. Re-run focused tests and the full
+check, then keep the final post-proof commit limited to evidence and this journey.
