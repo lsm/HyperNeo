@@ -99,6 +99,10 @@ For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
 `node --import tsx` with the same isolated environment and cleanup. This tests
 the Deno/Node adapter seam; Node remains unsupported as a daemon runtime.
 
+The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
+`journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
+competing writer when fixtures overlap the booted daemon.
+
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
 
