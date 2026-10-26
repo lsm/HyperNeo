@@ -434,6 +434,21 @@ describe('sleepCommandVerdict / createSleepBoundHook', () => {
     expect(sleepCommandVerdict('X=1 sleep 30 && sleep 40')).toBe('allowed');
   });
 
+  test('sleeps hidden behind wrapper commands are vetoed', () => {
+    expect(sleepCommandVerdict("bash -c 'sleep 999'")).toBe('denied');
+    expect(sleepCommandVerdict('sh -c "sleep 30"')).toBe('denied');
+    expect(sleepCommandVerdict('busybox sleep 999')).toBe('denied');
+    expect(sleepCommandVerdict('timeout 900 sleep 900')).toBe('denied');
+    expect(sleepCommandVerdict('echo 999 | xargs sleep')).toBe('denied');
+    expect(sleepCommandVerdict('nohup sleep 30')).toBe('denied');
+    expect(sleepCommandVerdict('env FOO=1 sleep 30')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 30 && bash -c "sleep 999"')).toBe('denied');
+    expect(sleepCommandVerdict('xargs echo')).toBe('none');
+    expect(sleepCommandVerdict('bash -c ls')).toBe('none');
+    expect(sleepCommandVerdict('timeout 10 ./run')).toBe('none');
+    expect(sleepCommandVerdict('backup-sleep 5')).toBe('none');
+  });
+
   test('commands without sleeps are neutral', () => {
     expect(sleepCommandVerdict('echo done')).toBe('none');
     expect(sleepCommandVerdict('echo "sleep 999"')).toBe('none');

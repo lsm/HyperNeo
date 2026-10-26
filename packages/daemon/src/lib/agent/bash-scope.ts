@@ -460,6 +460,29 @@ function checkCommandText(text: string, visit: (segment: string) => boolean): bo
 
 export const NEO_SLEEP_MAX_SECONDS = 300;
 
+const SLEEP_WRAPPER_HEADS = new Set([
+  'bash',
+  'sh',
+  'dash',
+  'zsh',
+  'ksh',
+  'busybox',
+  'xargs',
+  'timeout',
+  'env',
+  'nohup',
+  'nice',
+  'ionice',
+  'sudo',
+  'doas',
+  'command',
+  'exec',
+  'setsid',
+  'stdbuf',
+  'time',
+  'watch',
+]);
+
 type SleepVerdict = 'none' | 'allowed' | 'denied';
 
 function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
@@ -474,7 +497,13 @@ function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
   if (stripped === null) return /(?:^|[ \t])(?:\S*\/)?sleep[ \t]/.test(s) ? 'invalid' : 'none';
   if (!stripped) return 'none';
   const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
-  if (!head || basename(head) !== 'sleep') return 'none';
+  if (!head) return 'none';
+  const headName = basename(head);
+  if (SLEEP_WRAPPER_HEADS.has(headName)) {
+    const rest = stripped.slice(stripped.indexOf(head) + head.length);
+    return /(?:^|[\s'"`(;|&])(?:\S*\/)*sleep(?:[\s]|$)/.test(rest) ? 'invalid' : 'none';
+  }
+  if (headName !== 'sleep') return 'none';
   if (args.length === 0) return 'invalid';
   let total = 0;
   for (const arg of args) {
