@@ -17,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
+import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../acp/acp-safe-fs.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
@@ -480,15 +481,6 @@ export class NeoHomeRepository {
     };
   }
 
-  private async writeWithinHome(path: string, bytes: Buffer): Promise<void> {
-    const target = join(this.root, path);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, bytes, {
-      flag:
-        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0),
-    });
-  }
-
   private async write(input: HomeSavePlan): Promise<HomeSaveResult> {
     const paths = [input.path];
     if (input.confirmation) paths.push(join(dirname(input.path), 'decisions.md'));
@@ -555,20 +547,25 @@ export class NeoHomeRepository {
       const message = input.confirmation
         ? `${input.message}\n\nNeo-Confirmed-By: question ${input.confirmation.questionId}`
         : input.message;
+      const replace = (path: string, bytes: Buffer | null) =>
+        isSafeFsSupported()
+          ? replaceFileWithinWorkspace(this.root, path.split('/'), bytes)
+          : bytes === null
+            ? rm(join(this.root, path), { force: true })
+            : writeFile(join(this.root, path), bytes);
       try {
-        for (const path of paths)
-          if (await this.hasSymbolicLink(path))
-            return { ok: false, reason: 'invalid_path: symbolic link.' };
-        for (const [path, bytes] of writes) await this.writeWithinHome(path, bytes);
+        for (const [path, bytes] of writes) {
+          if (!isSafeFsSupported())
+            await mkdir(dirname(join(this.root, path)), { recursive: true });
+          await replace(path, bytes);
+        }
         await this.isolatedGit(['add', '--', ...paths]);
         await this.isolatedGit(['commit', '--only', '-m', message, '--', ...paths]);
       } catch (error) {
         await this.git(['reset', '--', ...paths]).catch(() => {});
-        for (const [path, before] of originals)
-          await (before === null
-            ? rm(join(this.root, path), { force: true })
-            : this.writeWithinHome(path, before)
-          ).catch(() => {});
+        for (const [path, before] of originals) await replace(path, before).catch(() => {});
+        if (['ELOOP', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+          return { ok: false, reason: 'invalid_path: home path changed during save.' };
         throw error;
       }
     }

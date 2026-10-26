@@ -125,9 +125,10 @@ describe('Neo home save', () => {
         `#!/bin/sh
 set -eu
 for arg do
- if [ "$arg" = 'HEAD:${path}' ] && [ ! -e '${join(fixture, 'raced')}' ]; then
+ if [ "$arg" = add ] && [ ! -e '${join(fixture, 'raced')}' ]; then
   touch '${join(fixture, 'raced')}'
   ${action}
+  exit 9
  fi
 done
 exec /usr/bin/git "$@"
@@ -139,6 +140,46 @@ exec /usr/bin/git "$@"
       try {
         await save({ path, content: 'Requested new document.' }).catch(() => null);
         expect(await readFile(join(fixture, 'raced'), 'utf8')).toBe('');
+        expect(await readFile(join(outside, 'raced.md'), 'utf8')).toBe('Outside sentinel.');
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    }
+  );
+  test.each(['file', 'parent'])(
+    'does not write outside home after a %s symlink swap during the committed read',
+    async (state) => {
+      const path = 'validated/raced.md';
+      await save({ path, content: 'Previous document.' });
+      const outside = join(fixture, 'outside-validated');
+      await mkdir(outside);
+      await writeFile(join(outside, 'raced.md'), 'Outside sentinel.');
+      const bin = join(fixture, 'bin-validated');
+      await mkdir(bin);
+      const action =
+        state === 'file'
+          ? `rm '${join(root, path)}'; ln -s '${join(outside, 'raced.md')}' '${join(root, path)}'`
+          : `mv '${join(root, 'validated')}' '${join(root, 'preserved-validated')}'; ln -s '${outside}' '${join(root, 'validated')}'`;
+      await writeFile(
+        join(bin, 'git'),
+        `#!/bin/sh
+set -eu
+for arg do
+ if [ "$arg" = 'HEAD:${path}' ] && [ ! -e '${join(fixture, 'validated-raced')}' ]; then
+  touch '${join(fixture, 'validated-raced')}'
+  ${action}
+ fi
+done
+exec /usr/bin/git "$@"
+`,
+        { mode: 0o755 }
+      );
+      const previous = process.env.PATH;
+      process.env.PATH = `${bin}:${previous}`;
+      try {
+        await save({ path, content: 'Requested new document.' }).catch(() => null);
+        expect(await readFile(join(fixture, 'validated-raced'), 'utf8')).toBe('');
         expect(await readFile(join(outside, 'raced.md'), 'utf8')).toBe('Outside sentinel.');
       } finally {
         if (previous === undefined) delete process.env.PATH;

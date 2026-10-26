@@ -114,6 +114,10 @@ For a metadata-only Bun helper taking `[arguments] <run>`, use:
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory "$PROOF" verify
 ```
 
+For a dual-runtime native-filesystem helper, repeat with `VERIFY_PROOF_RUNTIME=deno`
+and the pinned Deno on PATH. The wrapper uses `deno run -A` and keeps its cache
+inside the disposable run; the default remains Bun.
+
 The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
 the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
