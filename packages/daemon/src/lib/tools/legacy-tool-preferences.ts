@@ -11,6 +11,7 @@ import {
 } from './session-tool-choice.ts';
 
 export type LegacyToolPreference =
+  | { kind: 'choice'; key: SessionToolChoiceKey; selected: boolean }
   | { kind: 'skills'; disabledSkills: readonly string[] }
   | { kind: 'mcp'; serverId: string; enabled: boolean | null };
 type Failure = {
@@ -35,6 +36,8 @@ function translate(
   request: LegacyToolPreference,
   defaults: SessionToolSelection | undefined
 ): LegacyToolPreferenceResult {
+  if (request.kind === 'choice')
+    return { ok: true, changes: [{ key: request.key, selected: request.selected }] };
   if (request.kind === 'mcp') {
     if (!catalog.registry.some((server) => server.id === request.serverId))
       return { ok: false, reason: 'missing-definition' };
