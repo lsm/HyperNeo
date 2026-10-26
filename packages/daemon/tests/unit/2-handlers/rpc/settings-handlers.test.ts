@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub, type GlobalSettings, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import {
   applyProviderModelAllowlistsToEnv,
+  keepNeoOwnedSettings,
   publishGlobalSettings,
   registerSettingsHandlers,
 } from '../../../../src/lib/rpc-handlers/settings-handlers';
@@ -105,6 +106,13 @@ function createMockSettingsManager(): {
   return {
     settingsManager: {
       ...mocks,
+      updateGlobalSettingsAsync: (updates: Partial<GlobalSettings>) => {
+        const before = mocks.getGlobalSettings();
+        const settings = mocks.updateGlobalSettings(keepNeoOwnedSettings(updates, before));
+        return { settings, before, after: settings };
+      },
+      rollbackGlobalSettingsAsync: ({ before }: { before: Partial<GlobalSettings> }) =>
+        mocks.saveGlobalSettings(before),
     } as unknown as SettingsManager,
     mocks,
   };
