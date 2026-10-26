@@ -4,6 +4,11 @@ import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
+import {
+  getVoiceLanguage,
+  setVoiceLanguage,
+  type VoiceLanguage,
+} from '../../lib/voice/voice-language.ts';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 import { SettingsGroup, SettingsRow, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 
@@ -29,6 +34,7 @@ const PRESETS = {
 };
 
 export function VoiceSettings() {
+  const [language, updateLanguage] = useState(getVoiceLanguage);
   const settings = globalSettings.value?.voice ?? DEFAULT_VOICE;
   const [draft, setDraft] = useState<VoiceSettingsConfig>(settings);
   const [saving, setSaving] = useState(false);
@@ -130,6 +136,30 @@ export function VoiceSettings() {
             onChange={(enabled) => patch({ enabled })}
             disabled={saving}
           />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Live transcription language"
+          description="Saved in this browser. Applies to the next recording; Auto lets the server detect the language."
+        >
+          <select
+            aria-label="Live transcription language"
+            value={language}
+            onChange={(event) => {
+              const next = event.currentTarget.value as VoiceLanguage;
+              try {
+                setVoiceLanguage(next);
+                updateLanguage(next);
+              } catch {
+                toast.error('Could not save voice language in this browser');
+              }
+            }}
+            class={FORM_CONTROL_CLASS}
+          >
+            <option value="auto">Auto</option>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
         </SettingsRow>
 
         <SettingsRow label="Preset" description="Prefill endpoint and model for common backends.">
