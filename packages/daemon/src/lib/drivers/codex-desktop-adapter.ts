@@ -953,7 +953,7 @@ async function tryServerCodexSend(
         z
           .object({
             code: z.literal(-32600),
-            message: z.literal(`thread ${detail.thread.id} already has an active writer`),
+            message: z.string().includes(`thread ${detail.thread.id} already has an active writer`),
           })
           .safeParse(error.rejection).success
       )

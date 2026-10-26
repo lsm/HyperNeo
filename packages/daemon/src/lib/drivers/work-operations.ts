@@ -324,7 +324,7 @@ export async function forwardWork<Result>(
 }
 
 export function annotateUnreachable(rejected: Rejected, hint: string): Rejected {
-  return rejected.reason === 'unreachable'
+  return rejected.reason === 'unreachable' && !rejected.notSent
     ? { ...rejected, detail: `${rejected.detail} ${hint}` }
     : rejected;
 }
