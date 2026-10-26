@@ -291,6 +291,9 @@ function QuestionBox({
           <button
             type="button"
             class={neoSecondaryClass}
+            aria-label={t('question.openSessionTitle', {
+              name: question.sourceSession.name ?? question.sourceSession.id,
+            })}
             onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
           >
             {t('question.open')}

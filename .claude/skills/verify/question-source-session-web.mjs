@@ -24,14 +24,14 @@ try {
       assert.equal(await header.locator('svg').count(), 0);
       const joined = page.locator(`[data-ask-question="${saved.start.question.id}"]:visible`);
       assert.equal(await joined.locator('[data-question-source]').innerText(), 'Open');
-      await joined.getByRole('button', { name: 'Open', exact: true }).click();
+      await joined.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
       await page.locator('.neo-session-pane').getByRole('heading', { name: 'HyperNeo · Review worker', exact: true }).waitFor();
       await page.locator('.neo-session-pane').getByRole('button', { name: 'Back to Neo', exact: true }).click();
       const linkless = page.locator('[data-ask-question="linkless-source"]:visible');
       assert.equal(await linkless.locator('[data-question-source]').count(), 0);
-      assert.equal(await linkless.getByRole('button', { name: 'Open', exact: true }).count(), 0);
+      assert.equal(await linkless.getByRole('button', { name: /^Open session:/ }).count(), 0);
       const ordinary = page.locator(`[data-ask-question="${saved.ordinary.question.id}"]:visible`);
-      assert.equal(await ordinary.getByRole('button', { name: 'Open', exact: true }).count(), 0);
+      assert.equal(await ordinary.getByRole('button', { name: /^Open session:/ }).count(), 0);
       await page.waitForFunction(({ id, width }) => {
         const element = document.querySelector(`[data-ask-question="${id}"] [data-question-source]`);
         if (!element) return false;
@@ -42,7 +42,7 @@ try {
       assert(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
       await page.waitForTimeout(500);
       await page.screenshot({ path: `${run}/evidence/question-source-${width}.png`, fullPage: true });
-      await question.getByRole('button', { name: 'Open', exact: true }).click();
+      await question.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
       const pane = page.locator('.neo-session-pane');
       await pane.getByRole('heading', { name: 'HyperNeo · Review worker', exact: true }).waitFor();
       await page.screenshot({ path: `${run}/evidence/question-source-open-${width}.png`, fullPage: true });
