@@ -13,6 +13,13 @@ older healthy target must run first. The empty target then exhausts its own core
 bucket while the healthy target's distinct account still reports CI failure.
 The public snapshot RPC must show that failure, the healthy target must retain
 complete coverage, and no PR row may be invented for the empty target.
+Account scope is learned through the non-secret CLI `user` response, cached for
+one five-minute sweep. Unknown identity is never assumed to share a bucket.
+Actual response resource, remaining/reset and Retry-After determine the scoped
+cooldown; a separate quota overview cannot override contradictory response headers.
+The companion health-wire journey recreates its reader across daemon restart
+and verifies persisted same-account/core cooldown and recovery. Unit checks
+also cover credential changes, core versus GraphQL resources and unknown identity.
 Inspect `fairness.json` and `requests.jsonl`; the wrapper saves evidence and
 removes all disposable daemon data. No live daemon, real GitHub, model turn,
 credentials or protected checkout is used. The helper refuses direct HTTP.

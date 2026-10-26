@@ -12,6 +12,14 @@ import {
 import type { ConnectorOutcome } from './connectors/connector.ts';
 
 export const DEFAULT_GH_LOOKUP_TIMEOUT_MS = 30_000;
+export type GhResponseQuota = {
+  status: number;
+  resource: string | null;
+  remaining: number | null;
+  resetAt: number | null;
+  retryAfterMs: number | null;
+  requestId: string | null;
+};
 
 const BASIC_ENV_KEYS = new Set([
   'PATH',
@@ -161,6 +169,7 @@ export async function runGhJson(
     resourceHint?: 'core' | 'graphql';
     stripGHRepo?: boolean;
     maxBufferBytes?: number;
+    onResponse?: (quota: GhResponseQuota) => void;
   }
 ): Promise<ConnectorOutcome> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GH_LOOKUP_TIMEOUT_MS;
@@ -208,6 +217,21 @@ export async function runGhJson(
     : Number.isFinite(retryDate)
       ? Math.max(0, retryDate - Date.now())
       : null;
+  const numberHeader = (name: string) => {
+    const value = response?.headers.get(name);
+    return value !== null && value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+  };
+  const remaining = numberHeader('x-ratelimit-remaining');
+  const reset = numberHeader('x-ratelimit-reset');
+  if (response)
+    options?.onResponse?.({
+      status: response.status,
+      resource: response.headers.get('x-ratelimit-resource'),
+      remaining,
+      resetAt: reset === null ? null : reset * 1000,
+      retryAfterMs,
+      requestId: response.headers.get('x-github-request-id'),
+    });
 
   if (exitCode !== 0) {
     const stderrText = stderrResult.text.trim();
@@ -221,13 +245,18 @@ export async function runGhJson(
           retryAfterMs: retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
         };
       }
-      const resetEpoch = await fetchRateLimitResetEpoch(
-        cwd,
-        spawnImpl,
-        Math.min(timeoutMs, 5_000),
-        options?.hostHint,
-        options?.resourceHint
-      );
+      const resetEpoch =
+        remaining !== null
+          ? remaining === 0
+            ? reset
+            : null
+          : await fetchRateLimitResetEpoch(
+              cwd,
+              spawnImpl,
+              Math.min(timeoutMs, 5_000),
+              options?.hostHint,
+              options?.resourceHint
+            );
       return {
         ok: false,
         error: errorText,

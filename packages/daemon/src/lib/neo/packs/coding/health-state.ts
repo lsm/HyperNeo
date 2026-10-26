@@ -1,10 +1,12 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import type { LedgerQuota } from './ledger-quota.ts';
 
 export type RepoHealthCycle = {
   at: number;
   outcome: 'complete' | 'partial' | 'failed' | 'not_reached' | 'cooldown';
   retryAt?: number;
+  quota?: LedgerQuota;
 };
 export type HealthNotice = { key: string; text: string; acceptedAt: number | null };
 type Health = {
@@ -17,6 +19,7 @@ type Health = {
   reason: RepoHealthCycle['outcome'];
   nextRetryAt: number | null;
   incident: { key: string; raisedAt: number; resolvedAt: number | null } | null;
+  quota?: LedgerQuota;
 };
 
 function admitCycle(before: Health | null, cycle: RepoHealthCycle) {
@@ -54,6 +57,7 @@ function projectHealth(repo: string, before: Health | null, cycle: RepoHealthCyc
     reason: cycle.outcome,
     nextRetryAt: cycle.retryAt ?? null,
     incident,
+    ...(cycle.quota ? { quota: cycle.quota } : {}),
   };
 }
 
