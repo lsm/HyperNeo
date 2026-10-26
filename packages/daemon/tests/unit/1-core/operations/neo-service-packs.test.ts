@@ -130,6 +130,14 @@ test('installed builtins keep identity and settings select without rebuilding th
       doneWhen: 'Merged',
       checkKind: null,
     })
+  ).toContain(NEO_WORK_GOAL_MERGE);
+  expect(
+    service.installedPacks()[0].workGoal?.('Ship', {
+      workId: 'todo',
+      goal: null,
+      doneWhen: 'Runs in the simulator',
+      checkKind: null,
+    })
   ).not.toContain(NEO_WORK_GOAL_MERGE);
 });
 
