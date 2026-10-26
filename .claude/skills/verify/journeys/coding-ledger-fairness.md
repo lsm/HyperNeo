@@ -13,6 +13,10 @@ older healthy target must run first. The empty target then exhausts its own core
 bucket while the healthy target's distinct account still reports CI failure.
 The public snapshot RPC must show that failure, the healthy target must retain
 complete coverage, and no PR row may be invented for the empty target.
+Then recreate the limited reader and scan the limited target first. Its persisted
+account/core cooldown must still apply without another eligible miss, while the
+following healthy account's CI recovery appears through snapshot RPC. This
+separately proves quota isolation rather than relying only on scan ordering.
 Account scope is learned through the non-secret CLI `user` response, cached for
 one five-minute sweep. Unknown identity is never assumed to share a bucket.
 Actual response resource, remaining/reset and Retry-After determine the scoped

@@ -18,7 +18,7 @@ const root=${JSON.stringify(run)},args=process.argv.slice(2),c=JSON.parse(readFi
 if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
 const user=args[1]==='user', graphql=args[1]==='graphql', empty=c.repo==='synthetic/empty';
 if(!user&&!graphql&&!args[1].startsWith('repos/'+c.repo+'/pulls?'))process.exit(2);
-const denied=c.phase==='limited'&&empty&&!user;
+const denied=['limited','recovery'].includes(c.phase)&&empty&&!user;
 appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase:c.phase,repo:c.repo,user,graphql,denied})+'\n');
 process.stdout.write('HTTP/2.0 '+(denied?'403 Forbidden':'200 OK')+'\r\nx-ratelimit-resource: '+(graphql?'graphql':'core')+'\r\nx-ratelimit-remaining: '+(denied?0:4000)+'\r\nx-ratelimit-reset: '+Math.floor((c.base+7200000)/1000)+'\r\n\r\n');
 let data;
@@ -66,8 +66,19 @@ try {
   assert.deepEqual(order,['synthetic/healthy','synthetic/empty']);
   assert.equal(ledger.health.read('synthetic/healthy')?.reason,'complete');
   assert.equal(ledger.list().filter(row=>row.repo==='synthetic/empty').length,0);
+  phase = 'recovery'; order.length = 0;
+  readers.set('synthetic/empty', createCodingLedgerReader());
+  Date.now = () => base + 36*60000;
+  await reconcileCodingPrLedger(ledger, repos, read, Date.now());
+  Date.now = clock;
+  const recovered = await rpc('neo.snapshot'); evidence.recoverySnapshot = recovered;
+  const recoveredRows = (recovered.packRows as {pack:string;rows:{pr:string;state:string}[]}[]).find(row=>row.pack==='coding')!.rows;
+  assert.deepEqual(order,['synthetic/empty','synthetic/healthy']);
+  assert.equal(recoveredRows.find(row=>row.pr==='synthetic/healthy#7')?.state,'waiting_human','An earlier target cooldown must not hide another account CI recovery');
+  assert.equal(ledger.health.read('synthetic/empty')?.reason,'cooldown');
+  assert.equal(ledger.health.read('synthetic/empty')?.misses,1);
   evidence.health = repos.map(repo=>({repo,health:ledger.health.read(repo)})); evidence.verified = true;
-  console.log(JSON.stringify({verified:true,order,healthyState:'failing',inventedEmptyPRs:0}));
+  console.log(JSON.stringify({verified:true,order,healthyFailureAndRecovery:true,scopedCooldownSurvivesReaderRecreation:true,inventedEmptyPRs:0}));
 } finally {
   Date.now=clock;ws?.close();await app?.cleanup();globalThis.fetch=network;
   writeFileSync(join(run,'evidence/fairness.json'),JSON.stringify(evidence,null,2));
