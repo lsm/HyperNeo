@@ -7,7 +7,7 @@ import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/sch
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
-type Request = Parameters<typeof neoTodoMutations.run>[1];
+type Commit = InstanceType<typeof neoTodoMutations.Repository>['commit'];
 const url = (number: number) => `https://github.com/example/repo/pull/${number}`;
 
 describe('Neo todo mutation writer admission', () => {
@@ -50,8 +50,8 @@ describe('Neo todo mutation writer admission', () => {
       },
       1
     );
-  const commit = (input: Request['input'], checked?: Request['checked']) =>
-    gateway.run(neoTodoMutations, structuredClone({ input, checked, now: 10 }));
+  const commit = (input: Parameters<Commit>[0], checked?: Parameters<Commit>[1]) =>
+    gateway.call(neoTodoMutations, 'commit', structuredClone(input), structuredClone(checked), 10);
   const question = () =>
     todos.askQuestion(
       'pending',
@@ -85,23 +85,25 @@ describe('Neo todo mutation writer admission', () => {
     expect(todos.getTodo('second')?.state).toBe('todo');
   });
 
-  test('two serialized edit commands cannot both admit the same PR', async () => {
+  test('serialized duplicate edits retain the current ownership record without blocking', async () => {
     todo('first');
     todo('second');
     const results = await Promise.all(
       ['first', 'second'].map((todoId) => commit({ kind: 'edit', todoId, addUrls: [url(2)] }))
     );
-    expect(results.filter((result) => result.ok)).toHaveLength(1);
-    expect(results.find((result) => !result.ok)).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('pr_already_tracked'),
-    });
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(
+      results.filter(
+        (result) =>
+          result.ok && result.records?.some((record) => record.startsWith('pr_already_tracked:'))
+      )
+    ).toHaveLength(1);
     expect(
       todos.listTodos('ask').filter((row) => {
         const urls = row.check?.params.urls;
         return Array.isArray(urls) && urls.includes(url(2));
       })
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   test('simultaneous additions to one todo retain every required URL', async () => {
@@ -112,15 +114,15 @@ describe('Neo todo mutation writer admission', () => {
     expect(todos.getTodo('first')?.check?.params.urls).toEqual([url(1), url(2), url(3)]);
   });
 
-  test('recorded ownership admitted after a caller snapshot still refuses a duplicate', async () => {
+  test('recorded ownership committed after a caller snapshot is retained without blocking', async () => {
     todo('first', [url(1)]);
     todo('owner');
     prs.claim('owner', [{ url: url(2), claim: 'branch' }], 2);
     expect(await commit({ kind: 'edit', todoId: 'first', addUrls: [url(2)] })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('todo owner'),
+      ok: true,
+      records: [expect.stringContaining('todo owner')],
     });
-    expect(todos.getTodo('first')?.check?.params.urls).toEqual([url(1)]);
+    expect(todos.getTodo('first')?.check?.params.urls).toEqual([url(1), url(2)]);
   });
 
   test.each(['done', 'closed_unverified', 'failed', 'removed'] as const)(
