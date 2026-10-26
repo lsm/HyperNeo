@@ -188,9 +188,12 @@ Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
 They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
 Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
-sends use the native app-server queue; their proofs must show no Desktop ownership
-probe, open or turn/start. Check the loaded list and resume saved unloaded threads
-before settings or enqueue; already loaded threads must not be resumed.
+sends route by Desktop ownership: while the stubbed probe reports Desktop running
+they deliver through owner discovery plus follower steer or turn start, and their
+proofs must show no app-server `thread/resume` or native queue call; while it
+reports Desktop not running they use the native app-server queue, checking the
+loaded list and resuming saved unloaded threads before settings or enqueue, with
+already loaded threads never resumed.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"
