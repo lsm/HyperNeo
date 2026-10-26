@@ -68,9 +68,11 @@ test('core checks stay installed with only life-admin enabled and read actual ou
   expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
   service.todos.answerQuestion(question, 'no', 'button', 2);
   expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
-  service.todos.answerQuestion(service.todos.getQuestion(question.id)!, 'yes', 'chat', 3);
-  expect(await core!.todos!.check(todo)).toMatchObject({ done: true });
-  expect(await core!.todos!.check({ ...todo, askId: 'foreign' })).toEqual({
+  const yes = service.todos.askQuestion('yes', 'ask', question, 3);
+  service.todos.answerQuestion(yes, 'yes', 'chat', 4);
+  const confirmed = { ...todo, check: { ...todo.check!, params: { questionId: yes.id } } };
+  expect(await core!.todos!.check(confirmed)).toMatchObject({ done: true });
+  expect(await core!.todos!.check({ ...confirmed, askId: 'foreign' })).toEqual({
     done: false,
     evidence: null,
   });
@@ -99,7 +101,7 @@ test('core checks stay installed with only life-admin enabled and read actual ou
 
 test('installed builtins keep identity and settings select without rebuilding them', () => {
   const installed = service.installedPacks();
-  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin']);
+  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin', 'core']);
   expect(service.packs()).toEqual([installed[0]]);
   db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
   expect(service.packs()).toEqual([installed[1]]);
