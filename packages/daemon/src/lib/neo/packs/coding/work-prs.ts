@@ -257,31 +257,30 @@ function gh(args: string[], spawnImpl: SpawnFn, resourceHint: 'core' | 'graphql'
   return runGhJson(args, homedir(), spawnImpl, { resourceHint });
 }
 
-const CheckRunsSchema = z.array(
-  z.object({
-    check_runs: z.array(
-      z.object({
-        name: z.string().nullish(),
-        status: z.string().nullish(),
-        conclusion: z.string().nullish(),
-        app: z.object({ id: z.number().nullish() }).nullish(),
-      })
-    ),
-  })
-);
-const CombinedStatusSchema = z.array(
-  z.object({
-    statuses: z.array(
-      z.object({
-        state: z.string(),
-        context: z.string().nullish(),
-        creator: z.object({ id: z.number().nullish() }).nullish(),
-      })
-    ),
-  })
-);
+const CheckRunsSchema = z.object({
+  check_runs: z.array(
+    z.object({
+      name: z.string().nullish(),
+      status: z.string().nullish(),
+      conclusion: z.string().nullish(),
+      app_id: z.number().nullish(),
+    })
+  ),
+});
+const CombinedStatusSchema = z.object({
+  statuses: z.array(
+    z.object({
+      state: z.string(),
+      context: z.string().nullish(),
+      creator_id: z.number().nullish(),
+    })
+  ),
+});
 
 const REST_PAGE_SIZE = 100;
+const REST_MAX_PAGES = 10;
+const CHECK_RUNS_FIELDS = '{check_runs:[.check_runs[]|{name,status,conclusion,app_id:.app.id}]}';
+const STATUS_FIELDS = '{statuses:[.statuses[]|{state,context,creator_id:.creator.id}]}';
 
 async function readCheckRollup(
   url: string,
@@ -293,57 +292,62 @@ async function readCheckRollup(
   if (!meta || typeof raw.headRefOid !== 'string' || !raw.headRefOid) return null;
   const base = `repos/${meta.owner}/${meta.repo}/commits/${raw.headRefOid}`;
   const rollup: GhCheck[] = [];
-  const runs = await gh(
-    [
-      'gh',
-      'api',
-      '--hostname',
-      meta.host,
-      '--paginate',
-      '--slurp',
-      `${base}/check-runs?per_page=${REST_PAGE_SIZE}`,
-    ],
-    spawnImpl,
-    'core'
-  );
-  const parsedRuns = runs.ok ? CheckRunsSchema.safeParse(runs.data) : null;
-  if (parsedRuns?.success) {
-    for (const page of parsedRuns.data)
-      for (const run of page.check_runs)
-        rollup.push({
-          status: run.status ? run.status.toUpperCase() : null,
-          conclusion: run.conclusion ? run.conclusion.toUpperCase() : null,
-        });
-  }
-  const statuses = await gh(
-    [
-      'gh',
-      'api',
-      '--hostname',
-      meta.host,
-      '--paginate',
-      '--slurp',
-      `${base}/status?per_page=${REST_PAGE_SIZE}`,
-    ],
-    spawnImpl,
-    'core'
-  );
-  const parsedStatuses = statuses.ok ? CombinedStatusSchema.safeParse(statuses.data) : null;
-  if (parsedStatuses?.success)
-    for (const page of parsedStatuses.data)
-      for (const status of page.statuses) rollup.push({ state: status.state.toUpperCase() });
-  if (!parsedRuns?.success || !parsedStatuses?.success) return null;
+  const runs: (typeof rollup)[number][] = [];
+  const statuses: (typeof rollup)[number][] = [];
   const covered = new Map<string, Set<number | null>>();
   const cover = (context: string, provider: number | null | undefined) => {
     const providers = covered.get(context.toUpperCase()) ?? new Set<number | null>();
     providers.add(provider ?? null);
     covered.set(context.toUpperCase(), providers);
   };
-  for (const page of parsedRuns?.data ?? [])
-    for (const run of page.check_runs) if (run.name) cover(run.name, run.app?.id ?? null);
-  for (const page of parsedStatuses?.data ?? [])
-    for (const status of page.statuses)
-      if (status.context) cover(status.context, status.creator?.id ?? null);
+  for (let page = 1; page <= REST_MAX_PAGES; page++) {
+    const outcome = await gh(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `${base}/check-runs?per_page=${REST_PAGE_SIZE}&page=${page}`,
+        '--jq',
+        CHECK_RUNS_FIELDS,
+      ],
+      spawnImpl,
+      'core'
+    );
+    const parsed = outcome.ok ? CheckRunsSchema.safeParse(outcome.data) : null;
+    if (!parsed?.success) return null;
+    for (const run of parsed.data.check_runs) {
+      runs.push({
+        status: run.status ? run.status.toUpperCase() : null,
+        conclusion: run.conclusion ? run.conclusion.toUpperCase() : null,
+      });
+      if (run.name) cover(run.name, run.app_id ?? null);
+    }
+    if (parsed.data.check_runs.length < REST_PAGE_SIZE) break;
+  }
+  for (let page = 1; page <= REST_MAX_PAGES; page++) {
+    const outcome = await gh(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `${base}/status?per_page=${REST_PAGE_SIZE}&page=${page}`,
+        '--jq',
+        STATUS_FIELDS,
+      ],
+      spawnImpl,
+      'core'
+    );
+    const parsed = outcome.ok ? CombinedStatusSchema.safeParse(outcome.data) : null;
+    if (!parsed?.success) return null;
+    for (const status of parsed.data.statuses) {
+      statuses.push({ state: status.state.toUpperCase() });
+      if (status.context) cover(status.context, status.creator_id ?? null);
+    }
+    if (parsed.data.statuses.length < REST_PAGE_SIZE) break;
+  }
+  rollup.push(...runs, ...statuses);
   if (typeof raw.baseRefName === 'string' && raw.baseRefName) {
     const rules = await fetchBranchRules(
       `${meta.owner}/${meta.repo}`,

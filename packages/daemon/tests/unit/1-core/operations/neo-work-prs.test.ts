@@ -163,8 +163,8 @@ describe('readGithubPrs', () => {
       const api =
         args[1] === 'api'
           ? String(args.find((arg) => arg.startsWith('repos/')) ?? '').includes('check-runs')
-            ? [{ check_runs: [] }]
-            : [{ statuses: [] }]
+            ? { check_runs: [] }
+            : { statuses: [] }
           : null;
       return {
         stdout: new Response(ok ? JSON.stringify(ghPr()) : api ? JSON.stringify(api) : '').body,
@@ -199,10 +199,10 @@ describe('readGithubPrs', () => {
       };
     };
     await readGithubPrs(['https://ghe.example.com/lsm/HyperNeo/pull/42'], spawn as never);
-    expect(asked.map((args) => args[1])).toEqual(['pr', 'api', 'api', 'api']);
+    expect(asked.map((args) => args[1])).toEqual(['pr', 'api']);
     asked.length = 0;
     await readGithubPrs(['https://github.com/lsm/Rules/pull/42'], spawn as never);
-    expect(asked.map((args) => args[1])).toEqual(['pr', 'api', 'api', 'api', 'api']);
+    expect(asked.map((args) => args[1])).toEqual(['pr', 'api']);
   });
 });
 
@@ -231,15 +231,13 @@ describe('readGithubPrs REST check rollup', () => {
   test('asks for CI on REST check-runs and combined status, not GraphQL statusCheckRollup', async () => {
     const { spawn, asked } = rollupSpawn(ghPr(), (path) =>
       path.includes('check-runs')
-        ? [
-            {
-              check_runs: [
-                { status: 'completed', conclusion: 'success' },
-                { status: 'completed', conclusion: 'skipped' },
-              ],
-            },
-          ]
-        : [{ statuses: [{ state: 'success' }] }]
+        ? {
+            check_runs: [
+              { status: 'completed', conclusion: 'success' },
+              { status: 'completed', conclusion: 'skipped' },
+            ],
+          }
+        : { statuses: [{ state: 'success' }] }
     );
     const read = await readGithubPrs([url], spawn as never);
     expect(read?.[0]?.checks).toBe('passing');
@@ -259,8 +257,8 @@ describe('readGithubPrs REST check rollup', () => {
   test('maps a failed check run and an errored status to failing', async () => {
     const { spawn } = rollupSpawn(ghPr(), (path) =>
       path.includes('check-runs')
-        ? [{ check_runs: [{ status: 'completed', conclusion: 'failure' }] }]
-        : [{ statuses: [{ state: 'error' }] }]
+        ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
+        : { statuses: [{ state: 'error' }] }
     );
     expect((await readGithubPrs([url], spawn as never))?.[0]?.checks).toBe('failing');
   });
@@ -286,7 +284,7 @@ describe('readGithubPrs REST check rollup', () => {
 
   test('fails the read when only one REST source answers, instead of half a verdict', async () => {
     const { spawn } = rollupSpawn(ghPr(), (path) =>
-      path.includes('check-runs') ? null : [{ statuses: [{ state: 'success' }] }]
+      path.includes('check-runs') ? null : { statuses: [{ state: 'success' }] }
     );
     const read = await readGithubPrs([url], spawn as never);
     expect(read).toBe(null);
@@ -297,7 +295,7 @@ describe('readGithubPrs REST check rollup', () => {
       ghPr({ url: 'https://github.com/lsm/RequiredA/pull/9', baseRefName: 'dev' }),
       (path) =>
         path.includes('check-runs')
-          ? [{ check_runs: [] }]
+          ? { check_runs: [] }
           : path.includes('/rules/branches/')
             ? [
                 {
@@ -305,7 +303,7 @@ describe('readGithubPrs REST check rollup', () => {
                   parameters: { required_status_checks: [{ context: 'All Tests Pass' }] },
                 },
               ]
-            : [{ statuses: [] }]
+            : { statuses: [] }
     );
     const read = await readGithubPrs(['https://github.com/lsm/RequiredA/pull/9'], spawn as never);
     expect(read?.[0]?.checks).toBe('pending');
@@ -316,10 +314,10 @@ describe('readGithubPrs REST check rollup', () => {
       ghPr({ url: 'https://github.com/lsm/RequiredC/pull/9', baseRefName: 'dev' }),
       (path) =>
         path.includes('check-runs')
-          ? [{ check_runs: [] }]
+          ? { check_runs: [] }
           : path.includes('/rules/branches/')
             ? null
-            : [{ statuses: [] }]
+            : { statuses: [] }
     );
     const read = await readGithubPrs(['https://github.com/lsm/RequiredC/pull/9'], spawn as never);
     expect(read).toBe(null);
@@ -330,13 +328,9 @@ describe('readGithubPrs REST check rollup', () => {
       ghPr({ url: 'https://github.com/lsm/RequiredB/pull/9', baseRefName: 'dev' }),
       (path) =>
         path.includes('check-runs')
-          ? [
-              {
-                check_runs: [
-                  { name: 'All Tests Pass', status: 'completed', conclusion: 'success' },
-                ],
-              },
-            ]
+          ? {
+              check_runs: [{ name: 'All Tests Pass', status: 'completed', conclusion: 'success' }],
+            }
           : path.includes('/rules/branches/')
             ? [
                 {
@@ -344,7 +338,7 @@ describe('readGithubPrs REST check rollup', () => {
                   parameters: { contexts: ['All Tests Pass'] },
                 },
               ]
-            : [{ statuses: [] }]
+            : { statuses: [] }
     );
     const read = await readGithubPrs(['https://github.com/lsm/RequiredB/pull/9'], spawn as never);
     expect(read?.[0]?.checks).toBe('passing');
@@ -354,10 +348,10 @@ describe('readGithubPrs REST check rollup', () => {
     const ghe = 'https://ghe.example.com/lsm/RequiredF/pull/9';
     const { spawn, asked } = rollupSpawn(ghPr({ url: ghe, baseRefName: 'dev' }), (path) =>
       path.includes('check-runs')
-        ? [{ check_runs: [] }]
+        ? { check_runs: [] }
         : path.includes('/rules/branches/')
           ? [{ type: 'pull_request', parameters: {} }]
-          : [{ statuses: [] }]
+          : { statuses: [] }
     );
     const read = await readGithubPrs([ghe], spawn as never);
     expect(read?.[0]?.state).toBe('OPEN');
@@ -372,13 +366,11 @@ describe('readGithubPrs REST check rollup', () => {
       ghPr({ url: 'https://github.com/lsm/RequiredD/pull/9', baseRefName: 'dev' }),
       (path) =>
         path.includes('check-runs')
-          ? [
-              {
-                check_runs: [
-                  { name: 'gate', status: 'completed', conclusion: 'success', app: { id: 999 } },
-                ],
-              },
-            ]
+          ? {
+              check_runs: [
+                { name: 'gate', status: 'completed', conclusion: 'success', app_id: 999 },
+              ],
+            }
           : path.includes('/rules/branches/')
             ? [
                 {
@@ -388,7 +380,7 @@ describe('readGithubPrs REST check rollup', () => {
                   },
                 },
               ]
-            : [{ statuses: [] }]
+            : { statuses: [] }
     );
     const read = await readGithubPrs(['https://github.com/lsm/RequiredD/pull/9'], spawn as never);
     expect(read?.[0]?.checks).toBe('pending');
@@ -399,13 +391,11 @@ describe('readGithubPrs REST check rollup', () => {
       ghPr({ url: 'https://github.com/lsm/RequiredG/pull/9', baseRefName: 'dev' }),
       (path) =>
         path.includes('check-runs')
-          ? [
-              {
-                check_runs: [
-                  { name: 'gate', status: 'completed', conclusion: 'success', app: { id: 123 } },
-                ],
-              },
-            ]
+          ? {
+              check_runs: [
+                { name: 'gate', status: 'completed', conclusion: 'success', app_id: 123 },
+              ],
+            }
           : path.includes('/rules/branches/')
             ? [
                 {
@@ -415,7 +405,7 @@ describe('readGithubPrs REST check rollup', () => {
                   },
                 },
               ]
-            : [{ statuses: [] }]
+            : { statuses: [] }
     );
     const read = await readGithubPrs(['https://github.com/lsm/RequiredG/pull/9'], spawn as never);
     expect(read?.[0]?.checks).toBe('passing');
@@ -426,13 +416,11 @@ describe('readGithubPrs REST check rollup', () => {
       ghPr({ url: 'https://github.com/lsm/RequiredE/pull/9', baseRefName: 'dev' }),
       (path) =>
         path.includes('check-runs')
-          ? [
-              {
-                check_runs: [
-                  { name: 'gate', status: 'completed', conclusion: 'success', app: { id: 123 } },
-                ],
-              },
-            ]
+          ? {
+              check_runs: [
+                { name: 'gate', status: 'completed', conclusion: 'success', app_id: 123 },
+              ],
+            }
           : path.includes('/rules/branches/')
             ? [
                 {
@@ -442,7 +430,7 @@ describe('readGithubPrs REST check rollup', () => {
                   },
                 },
               ]
-            : [{ statuses: [] }]
+            : { statuses: [] }
     );
     const read = await readGithubPrs(['https://github.com/lsm/RequiredE/pull/9'], spawn as never);
     expect(read?.[0]?.checks).toBe('passing');
@@ -455,15 +443,18 @@ describe('readGithubPrs REST check rollup', () => {
     }));
     const { spawn, asked } = rollupSpawn(ghPr(), (path) => {
       if (path.includes('check-runs'))
-        return [
-          { check_runs: fullPage },
-          { check_runs: [{ status: 'completed', conclusion: 'failure' }] },
-        ];
-      return [{ statuses: [] }];
+        return path.includes('page=2')
+          ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
+          : { check_runs: fullPage };
+      return { statuses: [] };
     });
     const read = await readGithubPrs([url], spawn as never);
     expect(read?.[0]?.checks).toBe('failing');
-    expect(asked.find((args) => args.includes('--paginate'))).toBeTruthy();
+    expect(
+      asked
+        .filter((args) => args.some((arg) => typeof arg === 'string' && arg.includes('check-runs')))
+        .every((args) => args.includes('--jq'))
+    ).toBe(true);
   });
 
   test('targets the pull request host for REST lookups', async () => {
@@ -601,8 +592,8 @@ describe('readGithubPrs blockers', () => {
           headRefOid: '1bad987',
         });
       const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
-      if (path.includes('/check-runs')) return [{ check_runs: [] }];
-      if (path.includes('/status?')) return [{ statuses: [] }];
+      if (path.includes('/check-runs')) return { check_runs: [] };
+      if (path.includes('/status?')) return { statuses: [] };
       if (args[2] === 'graphql')
         return {
           data: {
