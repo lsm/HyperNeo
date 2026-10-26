@@ -43,6 +43,7 @@ const model = 'claude-haiku-4-5-20251001';
 const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(req) {
   const path = new URL(req.url).pathname;
   if (path.endsWith('/models')) return Response.json({ data: [{ id: model, type: 'model', display_name: 'Release fixture Haiku', created_at: '2025-10-01T00:00:00Z' }], has_more: false });
+  if (req.method === 'HEAD') return new Response(null, { status: 200 });
   const body = await req.json() as { stream?: boolean; tools?: { name: string }[]; messages?: unknown[] };
   if (path.endsWith('/count_tokens')) return Response.json({ input_tokens: 50 });
   const invoke = body.tools?.find(tool => tool.name.endsWith('hyperneo-operations__invoke'));
@@ -129,6 +130,10 @@ try {
     credentials: { apiKey: 'sk-devproxy-test-key' },
   });
   assert.equal(created.success, true);
+  const catalog = await rpc('models.list', { forceRefresh: true });
+  const lifeModel = catalog.models.find((entry: { provider: string; id: string }) => entry.provider === 'anthropic' && entry.id.includes('haiku'));
+  assert(lifeModel, 'fresh model catalog has an Anthropic Haiku model');
+  evidence.availableModel = { id: lifeModel.id, provider: lifeModel.provider }; save();
   const registry = await rpc('mcp.registry.list');
   for (const server of registry.servers) await rpc('mcp.registry.setEnabled', { id: server.id, enabled: false });
   const opened = await op('neo.open'); assert(opened.sessionId);
@@ -137,7 +142,7 @@ try {
   assert.equal(sent.ok, true);
   await wait('Neo visible reply', async () => JSON.stringify(await op('neo.publication.read', { conversationId: opened.sessionId.slice(4) })).includes(neoReply), 180000);
   steps.neoChat = { pass: true, received: sent.ok, visibleReply: neoReply, transport: 'real downloaded Claude SDK, loopback scripted model, real publication operation' }; save();
-  const life = await op('work.start', { adapter: 'hyperneo', title: 'RC life admin', message: 'Make a synthetic grocery list for a quiet weekend. Do not contact anyone.', place: { machine: hostname(), folder: join(run, 'home/HyperNeo'), name: 'Life admin' }, model });
+  const life = await op('work.start', { adapter: 'hyperneo', title: 'RC life admin', message: 'Make a synthetic grocery list for a quiet weekend. Do not contact anyone.', place: { machine: hostname(), folder: join(run, 'home/HyperNeo'), name: 'Life admin' }, model: lifeModel.id });
   evidence.lifeReceipt = life; save();
   assert.equal(life.ok, true);
   const db = new Database(join(run, 'data/daemon.db'), { readonly: true });
@@ -146,6 +151,8 @@ try {
     const rows = db.prepare("SELECT id,title,workspace_path FROM sessions WHERE id != ?").all(opened.sessionId);
     steps.lifeAdmin = { pass: true, sessions: rows, assistantObserved: true }; save();
   } finally { db.close(); }
+  await wait('embedding worker load', () => logs.includes('Embeddings ready'), 360000);
+  steps.embeddings = { pass: true, excerpts: logs.split('\n').filter(line => line.includes('Embeddings ready') || line.includes('Embedding asset checksum verified')) }; save();
   if (process.env.VERIFY_NODE) {
     execFileSync(process.env.VERIFY_NODE, ['.claude/skills/verify/release-candidate-web.mjs', String(port), run], {
       env: { PATH: process.env.PATH, NODE_PATH: process.env.NODE_PATH, VERIFY_BROWSER: process.env.VERIFY_BROWSER },

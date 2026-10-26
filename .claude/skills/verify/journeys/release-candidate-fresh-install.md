@@ -26,8 +26,10 @@ real downloaded SDK publishes the scripted visible reply, and work.start creatin
 a life-admin session which gets an assistant response. The model is scripted; this
 is transport/publication proof, not a test of generative model judgment.
 
-Embedding inference is a separate sequential job because test mode skips eager
-embedding warmup. Run compiled-embedding-load.ts with a fresh path and the same
+The actual candidate must also report Embeddings ready after fresh asset download.
+Some compiled background guards are build-folded despite explicit test startup;
+the proof checks the observed worker load rather than assuming an eager warmup.
+Numerical embedding inference is a separate sequential job. Run compiled-embedding-load.ts with a fresh path and the same
 Bun target (see compiled-embedding-load.md); require a normalized 384-dimensional
 vector on both architectures, using Rosetta for x64. It compiles a production
 embedding fixture with the release flags; do not claim it is an inference through
