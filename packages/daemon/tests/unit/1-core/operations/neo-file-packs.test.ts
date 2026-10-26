@@ -132,7 +132,7 @@ describe('loadNeoFilePacks', () => {
       warn: (id, error) => warned.push([id, error]),
     });
     expect(packs).toEqual([]);
-    expect(warned.map(([id]) => id)).toEqual(['coding', 'life-admin', 'core']);
+    expect(warned.map(([id]) => id)).toEqual(['coding', 'core', 'life-admin']);
     expect((warned[0][1] as Error).message).toContain('reserved by a built-in pack');
   });
 

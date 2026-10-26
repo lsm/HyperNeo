@@ -23,3 +23,8 @@ never query GitHub or run a deployment script. Unit tests separately cover forei
 ask/artifact contexts, malformed checks, regular files and pure judgement replay.
 The helper saves RPC receipts, final state and stub calls. The wrapper saves
 evidence outside the disposable run and removes its data after cleanup.
+
+The synthetic data directory also contains a file pack named core. Startup must
+warn that the ID is reserved instead of silently discarding its instructions.
+The baseline fails on the missing warning; core check RPCs must still work after
+the loader refuses that colliding file pack.

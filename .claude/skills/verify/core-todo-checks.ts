@@ -36,7 +36,10 @@ const unsubscribe = subscribeToStructuredLogs((event) => {
   if (event.message.includes('Neo file pack core was not loaded')) packWarnings.push(event.message);
 });
 mkdirSync(join(run, 'data/neo-packs/core'), { recursive: true });
-writeFileSync(join(run, 'data/neo-packs/core/SKILL.md'), '---\nname: core\ndescription: Synthetic collision\n---\nInstructions that must not be silently lost.\n');
+writeFileSync(
+  join(run, 'data/neo-packs/core/SKILL.md'),
+  '---\nname: core\ndescription: Synthetic collision\n---\nInstructions that must not be silently lost.\n'
+);
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 async function rpc(name: string, input: unknown) {
@@ -75,7 +78,11 @@ try {
   });
   assert(app.server.port > 0 && app.server.port !== 8399);
   receipts.push({ packWarnings });
-  assert.equal(packWarnings.length, 1, 'a core file pack collision must produce a reservation warning');
+  assert.equal(
+    packWarnings.length,
+    1,
+    'a core file pack collision must produce a reservation warning'
+  );
   await app.jobProcessor.stop();
   await app.spaceRuntimeService.ready();
   const db = app.db.getDatabase();
