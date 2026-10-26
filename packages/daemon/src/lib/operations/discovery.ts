@@ -59,6 +59,7 @@ export function listOperationSummaries(
     .filter(
       (entry) =>
         isOperationAdmitted(entry, caller) &&
+        (caller.source !== 'mcp' || isAdvertisedToProfile(entry.name, caller.profile)) &&
         (all || isOperationListed(entry, caller)) &&
         matchesOperationQuery(entry, query)
     )
