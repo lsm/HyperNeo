@@ -123,12 +123,16 @@ describe('loadNeoFilePacks', () => {
     const warned: [string, unknown][] = [];
     const packs = loadNeoFilePacks({
       root: '/packs',
-      read: folders({ coding: skill('coding'), 'life-admin': skill('life-admin') }),
-      list: () => ['coding', 'life-admin'],
+      read: folders({
+        coding: skill('coding'),
+        'life-admin': skill('life-admin'),
+        core: skill('core'),
+      }),
+      list: () => ['coding', 'life-admin', 'core'],
       warn: (id, error) => warned.push([id, error]),
     });
     expect(packs).toEqual([]);
-    expect(warned.map(([id]) => id)).toEqual(['coding', 'life-admin']);
+    expect(warned.map(([id]) => id)).toEqual(['coding', 'life-admin', 'core']);
     expect((warned[0][1] as Error).message).toContain('reserved by a built-in pack');
   });
 

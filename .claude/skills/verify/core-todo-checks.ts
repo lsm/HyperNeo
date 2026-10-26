@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -30,6 +31,12 @@ esac
 );
 const owner = 'neo:10000000-0000-4000-8000-000000008969';
 const receipts: unknown[] = [];
+const packWarnings: string[] = [];
+const unsubscribe = subscribeToStructuredLogs((event) => {
+  if (event.message.includes('Neo file pack core was not loaded')) packWarnings.push(event.message);
+});
+mkdirSync(join(run, 'data/neo-packs/core'), { recursive: true });
+writeFileSync(join(run, 'data/neo-packs/core/SKILL.md'), '---\nname: core\ndescription: Synthetic collision\n---\nInstructions that must not be silently lost.\n');
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 async function rpc(name: string, input: unknown) {
@@ -67,6 +74,8 @@ try {
     verbose: false,
   });
   assert(app.server.port > 0 && app.server.port !== 8399);
+  receipts.push({ packWarnings });
+  assert.equal(packWarnings.length, 1, 'a core file pack collision must produce a reservation warning');
   await app.jobProcessor.stop();
   await app.spaceRuntimeService.ready();
   const db = app.db.getDatabase();
@@ -174,5 +183,6 @@ try {
 } finally {
   ws?.close();
   await app?.cleanup();
+  unsubscribe();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(receipts, null, 2));
 }
