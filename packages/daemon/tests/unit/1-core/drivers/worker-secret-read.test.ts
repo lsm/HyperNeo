@@ -27,6 +27,7 @@ beforeEach(() => {
   root = join(fixture, 'worker');
   mkdirSync(join(root, '.git/info'), { recursive: true });
   vi.stubEnv('HOME', join(fixture, 'home'));
+  vi.stubEnv('HYPERNEO_DATA_DIR', join(fixture, 'home/.hyperneo'));
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -54,11 +55,13 @@ test('Codex selected profile denies synthetic credentials and permits repository
 test('configured engine homes remain denied without denying the worker repo', async () => {
   vi.stubEnv('CODEX_HOME', join(fixture, 'codex-home'));
   vi.stubEnv('CLAUDE_CONFIG_DIR', join(fixture, 'claude-home'));
+  vi.stubEnv('HYPERNEO_DATA_DIR', join(fixture, 'daemon-home'));
   const fs = codexWorkerSandbox(root).config.permissions['hyperneo-worker'].filesystem as Record<
     string,
     string
   >;
   expect(fs[join(fixture, 'codex-home/auth.json')]).toBe('deny');
+  expect(fs[join(fixture, 'daemon-home/.provider-credential-key')]).toBe('deny');
   expect(fs[join(fixture, 'claude-home/.credentials.json')]).toBe('deny');
   await installClaudeNativeWrites(root, [join(fixture, 'source')]);
   expect(settings().sandbox.filesystem.denyRead).toContain(join(fixture, 'codex-home/auth.json'));
