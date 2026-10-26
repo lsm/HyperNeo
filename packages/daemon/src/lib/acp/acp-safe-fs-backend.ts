@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { constants, fstatSync, lstatSync, realpathSync, type Stats } from 'node:fs';
+import { constants, fstatSync, realpathSync, type Stats } from 'node:fs';
 import { constants as osConstants } from 'node:os';
-import { join } from 'node:path';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -292,13 +291,15 @@ export function decodeStatMode(statBuf: Buffer, modeOffset: number, modeWidth: 2
 }
 
 function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
-  let fileFd = symbols.openat(
-    directoryFd,
-    cString(fileName),
-    constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-    0
-  );
-  if (fileFd < 0) {
+  let fileFd = process.versions.bun
+    ? symbols.openat(
+        directoryFd,
+        cString(fileName),
+        constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+        0
+      )
+    : -1;
+  if (process.versions.bun && fileFd < 0) {
     fileFd = symbols.openat(
       directoryFd,
       cString(fileName),
@@ -321,7 +322,9 @@ function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: st
   }
   const modeOffset =
     process.platform === 'darwin'
-      ? getDarwinStatModeOffset(symbols, directoryFd)
+      ? process.versions.bun
+        ? getDarwinStatModeOffset(symbols, directoryFd)
+        : 4
       : STAT_MODE_OFFSET;
   const modeWidth = process.platform === 'darwin' ? 2 : 4;
   return decodeStatMode(statBuf, modeOffset, modeWidth);
@@ -516,14 +519,7 @@ async function replaceWorkspaceFile(
         throwFsError('remove', fileName, backend);
       return;
     }
-    const prior = process.versions.bun
-      ? null
-      : lstatSync(join(workspace, ...segments), { throwIfNoEntry: false });
-    const mode = process.versions.bun
-      ? replacementMode(symbols, directoryFd, fileName)
-      : prior?.isFile()
-        ? prior.mode & 0o777
-        : FILE_MODE;
+    const mode = replacementMode(symbols, directoryFd, fileName);
     if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
     const fileFd = symbols.openat(
       directoryFd,
