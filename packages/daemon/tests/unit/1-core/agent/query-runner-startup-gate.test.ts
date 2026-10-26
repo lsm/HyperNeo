@@ -438,7 +438,10 @@ describe('QueryRunner startup gate', () => {
     };
     const failed = await runner.getToolInventory();
     expect(failed.mcpServers).toEqual([{ name: 'browser', status: 'unverified', tools: null }]);
+    expect(failed.tools).toEqual(['Read', 'mcp__browser__navigate']);
     expect(JSON.stringify(failed)).not.toContain('secret');
+    controlled.queryObject.mcpServerStatus = undefined;
+    expect((await runner.getToolInventory()).tools).toEqual(['Read', 'mcp__browser__navigate']);
     controlled.queryObject.mcpServerStatus = async () => [
       { name: 'browser', status: 'connected', tools: [] },
     ];
@@ -459,9 +462,11 @@ describe('QueryRunner startup gate', () => {
     controlled.queryObject.mcpServerStatus = async () => [
       { name: 'browser', status: 'connected', tools: [{ name: 42 }] },
     ];
-    expect((await runner.getToolInventory()).mcpServers).toEqual([
+    const malformed = await runner.getToolInventory();
+    expect(malformed.mcpServers).toEqual([
       { name: 'browser', status: 'unverified', tools: null },
     ]);
+    expect(malformed.tools).toEqual(['Read', 'mcp__browser__navigate']);
     await completeQuery(controlled, waitFor);
   });
 

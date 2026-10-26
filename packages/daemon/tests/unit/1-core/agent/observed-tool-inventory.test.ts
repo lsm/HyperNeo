@@ -65,6 +65,25 @@ describe('ObservedToolInventory', () => {
     expect(inventory.snapshot().tools).toEqual(['Read']);
   });
 
+  it('preserves observed names while a server status or tool payload is unverified', () => {
+    for (const server of [
+      { name: 'browser', status: 'unverified' },
+      { name: 'browser', status: 'unverified', tools: [] },
+      { name: 'browser', status: 'connected' },
+      { name: 'browser', status: 'failed' },
+    ]) {
+      const inventory = new ObservedToolInventory();
+      const token = new QueryAttemptRegistry().allocate();
+      inventory.begin(token, 'sdk');
+      inventory.captureInit(token, init);
+      inventory.captureStatus(token, [server]);
+      expect(inventory.snapshot().tools).toEqual(['Read', 'mcp__browser__navigate']);
+      expect(inventory.snapshot().mcpServers[0].status).toBe(server.status);
+      inventory.captureStatus(token, [{ name: 'browser', status: 'connected', tools: [] }]);
+      expect(inventory.snapshot().tools).toEqual(['Read']);
+    }
+  });
+
   it('drops historical attachment immediately when the owning attempt is reaped', () => {
     const registry = new QueryAttemptRegistry();
     const inventory = new ObservedToolInventory();

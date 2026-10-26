@@ -27,6 +27,7 @@ const client = new Client({ name: 'scripted-sdk', version: '1' });
 const [a, b] = InMemoryTransport.createLinkedPair();
 await mcp.connect(a); await client.connect(b);
 let interrupts = 0;
+let statusFails = false;
 const applications: string[][] = [];
 const queries: Array<{ aliases: string[]; allNames: string[]; plugins: string[]; tools: unknown; finish: () => void }> = [];
 const sdk = await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
@@ -50,7 +51,10 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({ ...sdk, query: ({ prompt,
       aliases.splice(0, aliases.length, ...next); applications.push([...next]);
       return { added: next.filter(name => !prior.includes(name)), removed: prior.filter(name => !next.includes(name)), errors: {} };
     },
-    mcpServerStatus: async () => Promise.all(aliases.map(async name => ({ name, status: 'connected', tools: (await client.listTools()).tools }))),
+    mcpServerStatus: async () => {
+      if (statusFails) throw new Error('Synthetic status read failure');
+      return Promise.all(aliases.map(async name => ({ name, status: 'connected', tools: (await client.listTools()).tools })));
+    },
   };
 } }));
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
@@ -97,6 +101,14 @@ try {
   assert.deepEqual(observed.mcpServers.map(server => server.name), aliases);
   assert.deepEqual(observed.mcpServers[0].tools, ['navigate']);
   assert.deepEqual(observed.tools, ['Read', ...aliases.map(name => `mcp__${name}__navigate`)]);
+  statusFails = true;
+  const unavailable = await hub.request<{ mcpServers: Array<{ name: string; status: string; tools: string[] | null }>; tools: string[] }>('session.getToolInventory', { sessionId });
+  evidence.unavailable = unavailable;
+  assert.deepEqual(unavailable.mcpServers, aliases.map(name => ({ name, status: 'unverified', tools: null })));
+  assert.deepEqual(unavailable.tools, observed.tools);
+  statusFails = false;
+  const recovered = await hub.request<typeof observed>('session.getToolInventory', { sessionId });
+  assert.deepEqual(recovered, observed);
   const disabled = await choose(sessionId, `mcp:${server.id}`, false);
   assert.equal(disabled.application, 'live'); assert.deepEqual(queries[0].aliases, []);
   assert.deepEqual((await hub.request<{ tools: string[] }>('session.getToolInventory', { sessionId })).tools, ['Read']);
@@ -107,7 +119,7 @@ try {
   const { sessionId: coldId } = await hub.request<{ sessionId: string }>('session.create', { title: 'Synthetic tools', workspacePath: join(run, 'workspace'), config: { model: 'haiku', provider: 'anthropic' } });
   const cold = await choose(coldId, `mcp:${server.id}`, true);
   assert.equal(cold.application, 'next_query'); assert.equal(queries.length, 1); assert.equal(interrupts, 0);
-  evidence.results = { initialPlugins, enabled, disabled, instructions, cold, observed, applications, interrupts, queryCount: queries.length };
+  evidence.results = { initialPlugins, enabled, disabled, instructions, cold, observed, unavailable, recovered, applications, interrupts, queryCount: queries.length };
   evidence.pass = true; console.log('PASS: public tool activation applies live MCP choices and verifies observed tools; instructions disclose restart, cold choices wait, no automatic interrupt');
 } finally {
   for (const query of queries) query.finish();
