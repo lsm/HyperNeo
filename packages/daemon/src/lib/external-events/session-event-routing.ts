@@ -15,7 +15,6 @@ export type SessionEventRouteSkip = 'not_session_scope' | 'event_missing' | 'not
 
 export interface SessionEventRouteDeps extends SessionEventDeliveryDeps {
   removeSubscription(sessionId: string, topic: string): void;
-  isTopicCovered(sessionId: string, topic: string): boolean;
 }
 
 export interface SessionEventRoute {
@@ -30,24 +29,25 @@ function valueOr<T>(gate: { value: T } | { reason: unknown }, fallback: T): T {
 export function planSessionEventRoute(
   found: { record: ExternalEventRecord | null },
   subscribed: { subscriptions: readonly SessionEventSubscription[] },
-  isSessionBusy: (sessionId: string) => boolean,
-  isTopicCovered: (sessionId: string, topic: string) => boolean = () => false
+  isSessionBusy: (sessionId: string) => boolean
 ): { value: SessionEventRoute } | { reason: Exclude<SessionEventRouteSkip, 'not_session_scope'> } {
   const event = found.record?.event;
   if (!event) return { reason: 'event_missing' };
-  const feedback = requireSessionFeedbackEvent(event);
-  const uncovered = {
-    subscriptions: subscribed.subscriptions.filter(
-      (subscription) => !isTopicCovered(subscription.sessionId, event.topic)
-    ),
-  };
-  const deliveries =
-    'value' in feedback
-      ? valueOr(planSessionEventDeliveries(feedback.value, uncovered, isSessionBusy), [])
-      : [];
   const closed = requireClosedPrEvent(found);
   const ending =
     'value' in closed ? valueOr(planClosedPrUnsubscribes(closed.value, subscribed), []) : [];
+  const feedback =
+    'value' in closed ? { value: { event, urgent: true } } : requireSessionFeedbackEvent(event);
+  const recipients = {
+    subscriptions: [
+      ...subscribed.subscriptions,
+      ...ending.map((subscription) => ({ ...subscription, topic: event.topic })),
+    ],
+  };
+  const deliveries =
+    'value' in feedback
+      ? valueOr(planSessionEventDeliveries(feedback.value, recipients, isSessionBusy), [])
+      : [];
   return deliveries.length > 0 || ending.length > 0
     ? { value: { deliveries, ending } }
     : { reason: 'nothing_to_route' };
@@ -72,12 +72,7 @@ export const routeSessionExternalEvent = (
   )
   .pipe(
     (deps: SessionEventRouteDeps, found: { record: ExternalEventRecord | null }, subscribed) =>
-      planSessionEventRoute(
-        found,
-        subscribed,
-        (id) => deps.isSessionBusy(id),
-        (id, topic) => deps.isTopicCovered(id, topic)
-      ),
+      planSessionEventRoute(found, subscribed, (id) => deps.isSessionBusy(id)),
     ['deps', 'found', 'subscribed'],
     'result:routed'
   )

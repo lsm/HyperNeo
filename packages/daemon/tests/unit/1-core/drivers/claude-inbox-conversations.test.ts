@@ -33,7 +33,7 @@ const senders = new Map<string, string>([[`uds:${target.socketPath}`, target.ses
 function memoryRoutes(): ClaudeInboxRoutes {
   const rows = new Map<string, { returnTo: string; dir: string }>();
   return {
-    record: (sessionId, returnTo, dir) => void rows.set(sessionId, { returnTo, dir }),
+    record: async (sessionId, returnTo, dir) => void rows.set(sessionId, { returnTo, dir }),
     returnTo: (sessionId) => rows.get(sessionId)?.returnTo ?? null,
     inboxDirs: () => [...new Set([...rows.values()].map((row) => row.dir))],
   };

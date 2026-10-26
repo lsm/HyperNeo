@@ -229,6 +229,78 @@ describe('useInputDraft', () => {
   });
 
   describe('draft loading', () => {
+    it('publishes readiness when an empty initial load settles without a content change', async () => {
+      let release!: (value: unknown) => void;
+      mockHub.request.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          })
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      expect(result.current.loadState).toBe('loading');
+      await act(async () => {
+        release({ session: { metadata: { inputDraft: '' } } });
+      });
+      expect(result.current.content).toBe('');
+      expect(result.current.loadState).toBe('ready');
+    });
+    it('keeps a failed read distinct from an empty ready draft', async () => {
+      mockHub.request.mockRejectedValue(new Error('Synthetic load failure'));
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+      expect(result.current.loadState).toBe('failed');
+    });
+    it('does not let an older failed request replace a newer successful readiness', async () => {
+      let reject!: (error: Error) => void;
+      mockHub.request
+        .mockImplementationOnce(
+          () =>
+            new Promise((_resolve, fail) => {
+              reject = fail;
+            })
+        )
+        .mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      const event = mockHub.onEvent.mock.calls.find(([name]) => name === 'session.voiceLanded')![1];
+      await act(async () => {
+        event({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      expect(result.current.loadState).toBe('ready');
+      await act(async () => {
+        reject(new Error('Older synthetic failure'));
+      });
+      expect(result.current.loadState).toBe('ready');
+    });
+    it('does not publish a cancelled scope completion as ready for its replacement', async () => {
+      const releases = new Map<string, (value: unknown) => void>();
+      mockHub.request.mockImplementation(
+        (_method, input) =>
+          new Promise((resolve) => {
+            releases.set(input.sessionId, resolve);
+          })
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ id }) => useInputDraft(id), {
+        initialProps: { id: 'session-1' },
+      });
+      rerender({ id: 'session-2' });
+      await act(async () => {
+        releases.get('session-1')!({ session: { metadata: { inputDraft: 'Stale scope' } } });
+      });
+      expect(result.current.loadState).toBe('loading');
+      expect(result.current.content).toBe('');
+      await act(async () => {
+        releases.get('session-2')!({ session: { metadata: { inputDraft: '' } } });
+      });
+      expect(result.current.loadState).toBe('ready');
+    });
     it('should load draft from session when hub is connected', async () => {
       mockHub.request.mockResolvedValue({
         session: { metadata: { inputDraft: 'Saved draft' } },

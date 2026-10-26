@@ -81,7 +81,7 @@ try {
     ['active-worker', 'active'],
     ['archived-worker', 'archived'],
   ] as const)
-    app.db.createSession({
+    await app.db.createSession({
       id,
       title: 'Synthetic ' + id,
       workspacePath: join(run, 'home'),

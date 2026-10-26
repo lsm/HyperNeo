@@ -92,7 +92,7 @@ describe('question handlers — session routing', () => {
       const handler = mockHub.handlers.get('question.respond')!;
       await handler({ sessionId: 'lobby-session-1', toolUseId: 'tool-2', responses: [] });
 
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-1');
+      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-1', {}, false);
       expect(sessionManagerSession.handleQuestionResponse).toHaveBeenCalledWith('tool-2', []);
     });
 
@@ -105,7 +105,7 @@ describe('question handlers — session routing', () => {
       const handler = mockHub.handlers.get('question.respond')!;
       await handler({ sessionId: 'lobby-session-1', toolUseId: 'tool-3', responses: [] });
 
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-1');
+      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-1', {}, false);
       expect(sessionManagerSession.handleQuestionResponse).toHaveBeenCalledWith('tool-3', []);
     });
 
@@ -179,7 +179,7 @@ describe('question handlers — session routing', () => {
       const handler = mockHub.handlers.get('question.cancel')!;
       await handler({ sessionId: 'lobby-session-3', toolUseId: 'tool-cancel-2' });
 
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-3');
+      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-3', {}, false);
       expect(sessionManagerSession.handleQuestionCancel).toHaveBeenCalledWith('tool-cancel-2');
     });
   });

@@ -1,10 +1,14 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import { readNeoPreviewReference } from './neo-preview-context.ts';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import { neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
+import { neoIntakeSnapshots } from './neo-intake-snapshot.ts';
+import { createNeoIntakeStorage } from './neo-intake-storage.ts';
 export const NEO_SEND_TIMEOUT_MS = 90_000;
 
 export type NeoQuote = {
@@ -18,11 +22,18 @@ export type NeoDraft = {
   text: string;
   images?: readonly MessageImage[];
   quote?: NeoQuote;
+  previewContext?: NeoPreviewReference;
 };
 type Submission = NeoDraft & { requestId: string };
 type PendingSubmission = { submission: Submission; flight?: Promise<IntakeReceipt> };
 type IntakeReceipt =
-  | { ok: true; requestId: string; messageId: string; created: boolean }
+  | {
+      ok: true;
+      requestId: string;
+      messageId: string;
+      created: boolean;
+      previewContext?: NeoPreviewReference;
+    }
   | { ok: false; reason: string };
 type Rejection = Extract<IntakeReceipt, { ok: false }>;
 
@@ -31,7 +42,33 @@ export function admitNeoDraft<T extends NeoDraft>(
 ): { value: T } | { reason: Rejection } {
   if (!submission.sessionId || (!submission.text.trim() && !submission.images?.length))
     return { reason: { ok: false, reason: 'Add a message or attachment before sending.' } };
+  if (
+    submission.previewContext !== undefined &&
+    !readNeoPreviewReference(submission.previewContext)
+  )
+    return { reason: { ok: false, reason: 'This Preview reference is invalid.' } };
   return { value: submission };
+}
+
+function captureNeoDraft<T extends NeoDraft>(draft: T): T {
+  return {
+    ...draft,
+    images: draft.images?.map((image) => ({ ...image })),
+    ...(draft.quote
+      ? {
+          quote: {
+            ...draft.quote,
+            ...(draft.quote.replyTo ? { replyTo: { ...draft.quote.replyTo } } : {}),
+          },
+        }
+      : {}),
+    ...(draft.previewContext ? { previewContext: { ...draft.previewContext } } : {}),
+  };
+}
+
+const intakeSubmissions = new WeakSet<Submission>();
+function captureNeoSubmission(submission: Submission): Submission {
+  return intakeSubmissions.has(submission) ? submission : captureNeoDraft(submission);
 }
 
 type NeoThumbnail = {
@@ -155,6 +192,14 @@ export function neoDraftPayload(submission: Submission, thumbnails: readonly Neo
       : text,
     ...(images?.length && thumbnails.length ? { thumbnails: [...thumbnails] } : {}),
     ...(submission.quote?.replyTo ? { replyTo: submission.quote.replyTo } : {}),
+    ...(submission.previewContext
+      ? {
+          previewContext: {
+            artifactId: submission.previewContext.artifactId,
+            snapshot: submission.previewContext.snapshot,
+          },
+        }
+      : {}),
   };
 }
 
@@ -167,6 +212,12 @@ export function requireNeoReceipt(
   if (typeof response === 'object' && response !== null && 'ok' in response) {
     if (response.ok === false && 'reason' in response && typeof response.reason === 'string')
       return { reason: { ok: false, reason: response.reason } };
+    const rawContext = 'previewContext' in response ? response.previewContext : undefined;
+    const previewContext = readNeoPreviewReference(rawContext);
+    const matchingContext = submission.previewContext
+      ? previewContext?.artifactId === submission.previewContext.artifactId &&
+        previewContext?.snapshot === submission.previewContext.snapshot
+      : rawContext === undefined;
     if (
       response.ok === true &&
       'requestId' in response &&
@@ -174,7 +225,8 @@ export function requireNeoReceipt(
       'messageId' in response &&
       response.messageId === submission.requestId &&
       'created' in response &&
-      typeof response.created === 'boolean'
+      typeof response.created === 'boolean' &&
+      matchingContext
     )
       return {
         value: {
@@ -182,6 +234,7 @@ export function requireNeoReceipt(
           requestId: submission.requestId,
           messageId: submission.requestId,
           created: response.created,
+          ...(previewContext ? { previewContext } : {}),
         },
       };
   }
@@ -190,6 +243,7 @@ export function requireNeoReceipt(
 
 export const submitNeoDraft = (superpipe({})('neo-submit-draft') as PipelineAPI)
   .input(['submission', 'getHub'])
+  .pipe(captureNeoSubmission, 'submission', 'submission')
   .pipe(admitNeoDraft, 'submission', 'result:receipt')
   .pipe(neoDraftThumbnails, 'receipt', 'thumbnails')
   .pipe(neoDraftPayload, ['receipt', 'thumbnails'], 'payload')
@@ -212,9 +266,15 @@ function sameDraft(submission: Submission, draft: NeoDraft): boolean {
   return (
     submission.sessionId === draft.sessionId &&
     submission.text === draft.text &&
+    submission.previewContext?.artifactId === draft.previewContext?.artifactId &&
+    submission.previewContext?.snapshot === draft.previewContext?.snapshot &&
     submission.quote?.anchor === draft.quote?.anchor &&
     submission.quote?.text === draft.quote?.text &&
     submission.quote?.author === draft.quote?.author &&
+    submission.quote?.replyTo?.kind === draft.quote?.replyTo?.kind &&
+    submission.quote?.replyTo?.id === draft.quote?.replyTo?.id &&
+    submission.quote?.replyTo?.author === draft.quote?.replyTo?.author &&
+    submission.quote?.replyTo?.excerpt === draft.quote?.replyTo?.excerpt &&
     prior.length === current.length &&
     prior.every(
       (image, index) =>
@@ -229,10 +289,40 @@ export type NeoPendingAsk = {
   text: string;
   images: readonly MessageImage[];
   quote?: NeoQuote;
+  previewContext?: NeoPreviewReference;
   createdAt: string;
   state: 'sending' | 'accepted' | 'failed';
   reason?: string;
 };
+
+type IntakeSnapshot = Exclude<ReturnType<typeof neoIntakeSnapshots.decode>, { kind: string }>;
+type RestoreRefusal = { kind: 'invalid_snapshot' | 'intake_not_pristine' };
+
+function admitIntakeRestore(
+  raw: unknown,
+  pristine: boolean
+): { value: IntakeSnapshot } | { reason: RestoreRefusal } {
+  if (!pristine) return { reason: { kind: 'intake_not_pristine' } };
+  const snapshot = neoIntakeSnapshots.decode(raw);
+  return 'kind' in snapshot ? { reason: snapshot } : { value: snapshot };
+}
+
+const restoreIntake = (superpipe({})('neo-intake-restore') as PipelineAPI)
+  .input(['raw', 'pristine', 'install'])
+  .pipe(admitIntakeRestore, ['raw', 'pristine'], 'result:restored')
+  .pipe(
+    (snapshot: IntakeSnapshot, install: (snapshot: IntakeSnapshot) => void) => {
+      install(snapshot);
+      return { restored: snapshot.entries.length };
+    },
+    ['restored', 'install'],
+    'restored'
+  )
+  .end('restored') as (
+  raw: unknown,
+  pristine: boolean,
+  install: (snapshot: IntakeSnapshot) => void
+) => { restored: number } | RestoreRefusal;
 
 export function createNeoIntakeClient(
   getHub: () => Promise<MessageHub>,
@@ -240,13 +330,17 @@ export function createNeoIntakeClient(
 ) {
   const pending = new Map<string, Set<PendingSubmission>>();
   const shown = new Map<string, NeoPendingAsk>();
+  let pristine = true;
   function show(submission: Submission, state: NeoPendingAsk['state'], reason?: string) {
+    pristine = false;
+    const { sessionId, text, images, quote, previewContext } = captureNeoDraft(submission);
     shown.set(submission.requestId, {
       requestId: submission.requestId,
-      sessionId: submission.sessionId,
-      text: submission.text,
-      images: submission.images ?? [],
-      ...(submission.quote ? { quote: submission.quote } : {}),
+      sessionId,
+      text,
+      images: images ?? [],
+      ...(quote ? { quote } : {}),
+      ...(previewContext ? { previewContext } : {}),
       createdAt: shown.get(submission.requestId)?.createdAt ?? new Date().toISOString(),
       state,
       ...(reason ? { reason } : {}),
@@ -292,12 +386,11 @@ export function createNeoIntakeClient(
     if (!entry) {
       entry = {
         submission: {
-          ...draft,
-          ...(draft.quote ? { quote: { ...draft.quote } } : {}),
-          images: draft.images?.map((image) => ({ ...image })),
+          ...captureNeoDraft(draft),
           requestId: generateUUID(),
         },
       };
+      intakeSubmissions.add(entry.submission);
       entries.add(entry);
       pending.set(draft.sessionId, entries);
     }
@@ -313,8 +406,14 @@ export function createNeoIntakeClient(
     pending.get(entry.submission.sessionId)?.delete(entry);
     shown.delete(requestId);
     onPending([...shown.values()]);
-    const { sessionId, text, images, quote } = entry.submission;
-    return { sessionId, text, images, ...(quote ? { quote } : {}) };
+    const { sessionId, text, images, quote, previewContext } = entry.submission;
+    return {
+      sessionId,
+      text,
+      images,
+      ...(quote ? { quote } : {}),
+      ...(previewContext ? { previewContext } : {}),
+    };
   }
   function settle(delivered: ReadonlySet<string>) {
     let changed = false;
@@ -332,5 +431,42 @@ export function createNeoIntakeClient(
         .requestId ?? null
     );
   }
-  return { send, retry, discard, settle, requestIdFor };
+  function restore(raw: unknown) {
+    return restoreIntake(raw, pristine, (snapshot) => {
+      pristine = false;
+      for (const record of snapshot.entries) {
+        const { createdAt, state, reason, thumbnails, ...draft } = record;
+        const submission = captureNeoDraft(draft);
+        intakeSubmissions.add(submission);
+        thumbnailsMade.set(
+          submission,
+          Promise.resolve(thumbnails?.map((thumbnail) => ({ ...thumbnail })) ?? [])
+        );
+        if (state !== 'accepted') {
+          const entries = pending.get(submission.sessionId) ?? new Set<PendingSubmission>();
+          entries.add({ submission });
+          pending.set(submission.sessionId, entries);
+        }
+        shown.set(submission.requestId, {
+          ...captureNeoDraft(draft),
+          createdAt,
+          state: state === 'sending' ? 'failed' : state,
+          ...(state === 'sending'
+            ? { reason: NEO_UNCONFIRMED_RECEIPT }
+            : reason === undefined
+              ? {}
+              : { reason }),
+        });
+      }
+      onPending([...shown.values()]);
+    });
+  }
+  return {
+    send,
+    retry,
+    discard,
+    settle,
+    requestIdFor,
+    snapshots: { ...neoIntakeSnapshots, storage: createNeoIntakeStorage, restore },
+  };
 }

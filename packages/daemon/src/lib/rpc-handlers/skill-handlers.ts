@@ -30,7 +30,7 @@ export function registerSkillHandlers(
       throw new Error('params is required');
     }
 
-    const skill = skillsManager.addSkill(params);
+    const skill = await skillsManager.addSkill(params);
     emitChanged(internalEventBus);
     log.info(`skill.create: created "${skill.name}" (${skill.id})`);
     return { skill } satisfies { skill: AppSkill };
@@ -46,7 +46,7 @@ export function registerSkillHandlers(
       throw new Error('params is required');
     }
 
-    const skill = skillsManager.updateSkill(id, params);
+    const skill = await skillsManager.updateSkill(id, params);
     emitChanged(internalEventBus);
     log.info(`skill.update: updated "${skill.name}" (${id})`);
     return { skill } satisfies { skill: AppSkill };
@@ -59,7 +59,7 @@ export function registerSkillHandlers(
       throw new Error('id is required');
     }
 
-    const removed = skillsManager.removeSkill(id);
+    const removed = await skillsManager.removeSkill(id);
     if (!removed) {
       throw new Error(`Skill not found or cannot be removed: ${id}`);
     }
@@ -79,7 +79,7 @@ export function registerSkillHandlers(
       throw new Error('enabled must be a boolean');
     }
 
-    const skill = skillsManager.setSkillEnabled(id, enabled);
+    const skill = await skillsManager.setSkillEnabled(id, enabled);
     emitChanged(internalEventBus);
     log.info(`skill.setEnabled: set ${id} enabled=${enabled}`);
     return { skill } satisfies { skill: AppSkill };

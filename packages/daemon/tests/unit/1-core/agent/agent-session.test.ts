@@ -1,3 +1,7 @@
+import { attachDeliveryEnqueueWriter } from '../../../helpers/delivery-enqueue-writer';
+import { createMailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type {
   AgentProcessingState,
@@ -17,6 +21,7 @@ import {
   initializeProviders,
   markBuiltInProviderDisabled,
   markBuiltInProviderEnabled,
+  waitForOptionalProviderRegistration,
 } from '../../../../src/lib/providers/factory';
 import { AgentChildProcessRepository } from '../../../../src/storage/repositories/agent-child-process-repository';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
@@ -279,6 +284,7 @@ describe('AgentSession', () => {
       } as Session;
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -306,7 +312,7 @@ describe('AgentSession', () => {
       );
     }
 
-    it('records a tracked child so a crashed daemon can sweep it, and forgets it on exit', () => {
+    it('records a tracked child so a crashed daemon can sweep it, and forgets it on exit', async () => {
       const raw = new SqliteDatabase(':memory:');
       runMigration264(raw);
       const agentSession = createAgentSession(raw);
@@ -322,16 +328,18 @@ describe('AgentSession', () => {
       };
 
       agentSession.trackAgentProcess(proc as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const recorded = new AgentChildProcessRepository(raw).list();
       expect(recorded).toMatchObject([{ pid: 9911, command: '/usr/local/bin/claude' }]);
       expect(recorded[0].daemonPid).toBe(process.pid);
 
       fireExit?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(new AgentChildProcessRepository(raw).list()).toEqual([]);
       raw.close();
     });
 
-    it('a stale exit does not forget the record of the process that replaced it', () => {
+    it('a stale exit does not forget the record of the process that replaced it', async () => {
       const raw = new SqliteDatabase(':memory:');
       runMigration264(raw);
       const agentSession = createAgentSession(raw);
@@ -355,6 +363,7 @@ describe('AgentSession', () => {
       agentSession.trackAgentProcess(oldProc as never);
       agentSession.trackAgentProcess(replacement as never);
       fireOldExit?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(new AgentChildProcessRepository(raw).list()).toMatchObject([{ pid: 9913 }]);
       raw.close();
@@ -587,6 +596,7 @@ describe('AgentSession', () => {
       } as Session;
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -766,6 +776,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -901,6 +912,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getSDKMessages: mock(() => ({ messages: [{ id: 'msg1' }], hasMore: false })),
@@ -988,6 +1000,48 @@ describe('AgentSession', () => {
     let mockGetApiKey: () => Promise<string | null>;
     let agentSession: AgentSession;
 
+    function attachCancelWriter() {
+      const raw = {} as SqliteDatabase;
+      const commit = mock(
+        async (_input: {
+          sessionId: string;
+          episodeMessageUuid?: string;
+        }): Promise<string | null> => 'db-episode'
+      );
+      bindGateway(raw, {
+        call: async (op, method, sessionId, episodeMessageUuid) => {
+          expect(op.name).toBe('jobs.cancelRateLimitDelivery');
+          expect(method).toBe('cancel');
+          return commit({ sessionId, episodeMessageUuid });
+        },
+      } as unknown as DbGateway);
+      mockDb.getDatabase = () => raw;
+      return commit;
+    }
+
+    function attachRetryWriter(release: () => Promise<boolean> = async () => true) {
+      const raw = {} as SqliteDatabase;
+      const commit = mock(release);
+      bindGateway(raw, {
+        run: async (op, input) => {
+          expect(op.name).toBe('jobs.releaseRateLimitDeliveries');
+          expect(input).toEqual({ sessionId: 'test-session-id' });
+          return commit();
+        },
+      } as unknown as DbGateway);
+      mockDb.getDatabase = () => raw;
+      return commit;
+    }
+
+    function armRetry() {
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        resumePersistedCooldown: mock(() => {}),
+        retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
+        getPersistedEpisodeMessageUuid: () => 'msg-episode',
+      } as never;
+    }
+
     beforeEach(() => {
       mockSession = {
         id: 'test-session-id',
@@ -1012,6 +1066,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -1119,7 +1174,9 @@ describe('AgentSession', () => {
         getErrorTerminalResultSubtypeAfter: mock(() => null),
         recordDeliveryTurnEnd: mock(() => {}),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({ isProcessingDelivery: mock(() => true) }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({ isProcessingDelivery: mock(() => true) })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       const resent = mock(async () => 'started' as const);
       agentSession.lifecycleManager.startQueryAndEnqueue = resent as never;
@@ -1150,9 +1207,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryRetryableByUuid: retrySpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1190,9 +1249,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryRetryableByUuid: retrySpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1226,8 +1287,7 @@ describe('AgentSession', () => {
     });
 
     it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
-      const cancelDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         getState: mock(() => ({
@@ -1235,9 +1295,12 @@ describe('AgentSession', () => {
         })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
+      await agentSession.cancelRateLimitRetry();
 
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-episode',
+      });
     });
 
     it('a turn that ends without a network failure closes the outage clock', async () => {
@@ -1361,10 +1424,12 @@ describe('AgentSession', () => {
       const updateSession = mock(() => {});
       mockDb.updateSession = updateSession as never;
       const enqueue = mock(() => ({}));
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      })) as never;
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      ) as never;
       mockDb.getUserMessageIdsByStatus = mock(() => [
         { dbId: 'db-1', uuid: 'queued-uuid', timestamp: 1 },
       ]) as never;
@@ -1435,164 +1500,67 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
     });
 
-    it('retryNowAfterRateLimit releases the parked delivery for a persisted episode', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      const cancel = mock(() => {});
-      const retryNow = mock(() => true);
-      const capturedUuids: Array<string | null> = [];
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: cancel,
-        retryNow,
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => {
-          capturedUuids.push(cancel.mock.calls.length === 0 ? 'msg-persisted-episode' : null);
-          return capturedUuids[capturedUuids.length - 1] ?? null;
-        },
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(retryNow).not.toHaveBeenCalled();
-      expect(capturedUuids[0]).toBe('msg-persisted-episode');
-      expect(rescheduleDelivery).toHaveBeenCalledWith(
-        'test-session-id',
-        'msg-persisted-episode',
-        expect.any(Number)
-      );
-    });
-
-    it('retryNowAfterRateLimit releases the episode delivery directly', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(rescheduleDelivery).toHaveBeenCalledWith(
-        'test-session-id',
-        'msg-episode',
-        expect.any(Number)
-      );
+    it('retryNowAfterRateLimit commits the persisted episode release through the writer', async () => {
+      const commit = attachRetryWriter();
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(true);
+      expect(commit).toHaveBeenCalledTimes(1);
     });
 
     it('retryNowAfterRateLimit clears the persisted cooldown before releasing', async () => {
       const order: string[] = [];
-      const rescheduleDelivery = mock(() => {
-        order.push('reschedule');
+      const commit = attachRetryWriter(async () => {
+        order.push('release');
         return true;
       });
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      let processingState = JSON.stringify({
-        status: 'rate_limit_cooldown',
-        retryAt: Date.now() + 60_000,
-        messageId: 'msg-persisted-episode',
-      });
-      mockDb.getSession = mock(
-        () =>
-          ({
-            id: 'test-session-id',
-            get processingState() {
-              return processingState;
-            },
-          }) as never
-      );
-      const originalUpdateSession = mockDb.updateSession as ReturnType<typeof mock>;
-      (mockDb.updateSession as ReturnType<typeof mock>) = mock((...args: unknown[]) => {
+      let processingState = JSON.stringify({ status: 'rate_limit_cooldown' });
+      mockDb.getSession = mock(() => ({ processingState }) as never);
+      const update = mockDb.updateSession as ReturnType<typeof mock>;
+      mockDb.updateSession = mock((...args: unknown[]) => {
         order.push('persist-idle');
-        const result = originalUpdateSession(...args);
         processingState = JSON.stringify({ status: 'idle' });
-        return result;
-      });
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
-        processingState: JSON.stringify({ status: 'idle' }),
-      });
-      expect(order).toEqual(['persist-idle', 'reschedule']);
-    });
-
-    it('retryNowAfterRateLimit releases the active delivery for a legacy persisted cooldown', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            rescheduleDelivery,
-            getActiveDeliveryMessageUuid: mock(() => 'msg-active'),
-          }) as never
-      );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => null,
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(rescheduleDelivery).toHaveBeenCalledWith(
-        'test-session-id',
-        'msg-active',
-        expect.any(Number)
-      );
+        return update(...args);
+      }) as never;
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(true);
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['persist-idle', 'release']);
     });
 
     it('retryNowAfterRateLimit refuses to release when the cooldown row survives', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
+      const commit = attachRetryWriter();
       mockDb.getSession = mock(
         () =>
           ({
-            id: 'test-session-id',
-            processingState: JSON.stringify({
-              status: 'rate_limit_cooldown',
-              retryAt: Date.now() + 60_000,
-              messageId: 'msg-persisted-episode',
-            }),
+            processingState: JSON.stringify({ status: 'rate_limit_cooldown' }),
           }) as never
       );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(false);
-      expect(rescheduleDelivery).not.toHaveBeenCalled();
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(false);
+      expect(commit).not.toHaveBeenCalled();
     });
 
     it('retryNowAfterRateLimit reports failure when the parked delivery is gone', async () => {
-      const rescheduleDelivery = mock(() => false);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
+      const commit = attachRetryWriter(async () => false);
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(false);
+      expect(commit).toHaveBeenCalledTimes(1);
+    });
 
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(false);
+    it('retryNowAfterRateLimit rejects a writer fault without a main-connection release', async () => {
+      const commit = attachRetryWriter(async () => {
+        throw new Error('writer unavailable');
+      });
+      const inline = mock(() => {
+        throw new Error('main release forbidden');
+      });
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({ rescheduleSessionDeliveries: inline } as never)
+      );
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(false);
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(inline).not.toHaveBeenCalled();
     });
 
     it('startStreamingQuery refuses to start an archived session', async () => {
@@ -1614,8 +1582,7 @@ describe('AgentSession', () => {
     });
 
     it('cancelRateLimitRetry uses the restored episode id from the persisted arm', async () => {
-      const cancelDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         getState: mock(() => ({ lastUserMessage: null })),
@@ -1628,15 +1595,17 @@ describe('AgentSession', () => {
         messageId: 'msg-arm-episode',
       });
 
-      agentSession.cancelRateLimitRetry();
+      await agentSession.cancelRateLimitRetry();
 
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-arm-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-arm-episode',
+      });
       await agentSession.stateManager.setIdle();
     });
 
     it('cancelRateLimitRetry clears a persisted cooldown left by a restart', async () => {
-      const cancelDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      const commit = attachCancelWriter();
       mockDb.getSession = mock(
         () =>
           ({
@@ -1653,20 +1622,19 @@ describe('AgentSession', () => {
         getState: mock(() => ({ lastUserMessage: null })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.cancelRateLimitRetry();
 
       expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
         processingState: JSON.stringify({ status: 'idle' }),
       });
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-persisted-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-persisted-episode',
+      });
     });
 
     it('cancelRateLimitRetry cancels the episode delivery behind a persisted cooldown', async () => {
-      const cancelDelivery = mock(() => true);
-      const markDeliveryFailedByUuid = mock(() => 'db-episode');
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
-      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
+      const commit = attachCancelWriter();
       mockDb.getSession = mock(
         () =>
           ({
@@ -1683,28 +1651,19 @@ describe('AgentSession', () => {
         getState: mock(() => ({ lastUserMessage: null })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.cancelRateLimitRetry();
 
       expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
         processingState: JSON.stringify({ status: 'idle' }),
       });
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-episode',
+      });
     });
 
     it('cancelRateLimitRetry settles the episode message and reschedules the session', async () => {
-      const cancelDelivery = mock(() => true);
-      const rescheduleSessionDeliveries = mock(() => true);
-      const markDeliveryFailedByUuid = mock((uuid: string) => `db-${uuid}`);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            cancelDelivery,
-            rescheduleSessionDeliveries,
-          }) as never
-      );
-      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
+      const commit = attachCancelWriter();
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         getState: mock(() => ({
@@ -1712,59 +1671,29 @@ describe('AgentSession', () => {
         })),
       } as never;
 
-      agentSession.cancelRateLimitRetry();
+      await agentSession.cancelRateLimitRetry();
 
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-      expect(rescheduleSessionDeliveries).toHaveBeenCalledWith(
-        'test-session-id',
-        expect.any(Number)
-      );
+      expect(commit).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        episodeMessageUuid: 'msg-episode',
+      });
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-episode'],
+        status: 'failed',
+      });
     });
 
-    it('retryNowAfterRateLimit reports failure when the session-wide release misses', async () => {
-      const rescheduleSessionDeliveries = mock(() => false);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            rescheduleSessionDeliveries,
-          }) as never
-      );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(false);
-    });
-
-    it('retryNowAfterRateLimit releases every parked delivery for the session', async () => {
-      const rescheduleSessionDeliveries = mock(() => true);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            rescheduleSessionDeliveries,
-          }) as never
-      );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(rescheduleSessionDeliveries).toHaveBeenCalledWith(
-        'test-session-id',
-        expect.any(Number)
-      );
+    it('retryNowAfterRateLimit releases the session even without an episode UUID', async () => {
+      const commit = attachRetryWriter();
+      armRetry();
+      (
+        agentSession as unknown as {
+          rateLimitWatchdog: { getPersistedEpisodeMessageUuid: () => null };
+        }
+      ).rateLimitWatchdog.getPersistedEpisodeMessageUuid = () => null;
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(true);
+      expect(commit).toHaveBeenCalledTimes(1);
     });
 
     it('driveDeliveryTurn completes once a fresh admission acknowledgment resolves', async () => {
@@ -1783,9 +1712,11 @@ describe('AgentSession', () => {
         }),
         markDeliveryRetryableByUuid: mock(() => 'db-1'),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1830,9 +1761,11 @@ describe('AgentSession', () => {
         }),
         markDeliveryRetryableByUuid: mock(() => 'db-1'),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1870,9 +1803,11 @@ describe('AgentSession', () => {
         getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1921,9 +1856,11 @@ describe('AgentSession', () => {
         markDeliverySubmittedByUuids: markSubmittedSpy,
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -1971,7 +1908,7 @@ describe('AgentSession', () => {
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
       }));
-      mockDb.getJobQueueRepo = mock(() => ({}));
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter({}));
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -2008,9 +1945,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -2055,9 +1994,11 @@ describe('AgentSession', () => {
         recordDeliveryTurnEnd: mock(() => {}),
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          isProcessingDelivery: mock(() => true),
+        })
+      );
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
@@ -2101,7 +2042,9 @@ describe('AgentSession', () => {
 
     it('reconcileStrandedDeliveries skips processing, queued, and waiting_for_input', async () => {
       const activeDeliveryMessageUuids = mock(() => new Set<string>());
-      mockDb.getJobQueueRepo = mock(() => ({ activeDeliveryMessageUuids }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({ activeDeliveryMessageUuids })
+      );
 
       await agentSession.stateManager.setProcessing('msg-processing');
       expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
@@ -2119,10 +2062,12 @@ describe('AgentSession', () => {
     it('reconcileStrandedDeliveries skips both locked mutations when the idle owner goes stale while waiting for the lock', async () => {
       const enqueue = mock(() => ({}));
       const markDeliveryFailedByUuid = mock(() => null);
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      );
       mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
         status === 'enqueued'
           ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
@@ -2157,10 +2102,12 @@ describe('AgentSession', () => {
     it('reconcileStrandedDeliveries fences on the turn owner too — a successor delivery admission invalidates it', async () => {
       const enqueue = mock(() => ({}));
       const markDeliveryFailedByUuid = mock(() => null);
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      );
       mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
         status === 'enqueued'
           ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
@@ -2194,10 +2141,12 @@ describe('AgentSession', () => {
     it('reconcileStrandedDeliveries with a still-current owner re-enqueues and settles as before', async () => {
       const enqueue = mock(() => ({}));
       const markDeliveryFailedByUuid = mock(() => 'db-2');
-      mockDb.getJobQueueRepo = mock(() => ({
-        activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        enqueue,
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        })
+      );
       mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
         status === 'enqueued'
           ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
@@ -2234,6 +2183,7 @@ describe('AgentSession', () => {
         // biome-ignore lint: test mock access
         (agentSession as unknown as Record<string, unknown>).modelSwitchHandler = {
           switchModel,
+          canSwitchLive: async () => false,
           invalidModel: async (model: string) =>
             model === 'typo' ? 'Invalid model: typo. Use a valid model ID or alias.' : null,
         };
@@ -2263,6 +2213,17 @@ describe('AgentSession', () => {
         expect(switchModel).toHaveBeenCalledTimes(1);
         expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('drops a held switch when it is cancelled before the turn ends', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+
+        expect(await agentSession.cancelPendingModelSwitch()).toEqual({ cancelled: true });
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).not.toHaveBeenCalled();
+        expect(await agentSession.cancelPendingModelSwitch()).toEqual({ cancelled: false });
       });
 
       it('applies a switch at once right after Stop ends the turn', async () => {
@@ -2481,91 +2442,98 @@ describe('AgentSession', () => {
       expect(handleInterruptSpy).toHaveBeenCalled();
     });
 
-    it('revokePendingDelivery remove accepts deferred (next-turn) rows too (#3744105283)', async () => {
-      const deletePendingSpy = mock(() => ({
-        dbId: 'db-1',
-        uuid: 'uuid-1',
-        status: 'deferred' as const,
-      }));
-      const cancelDeliverySpy = mock(() => false);
-      mockDb.deletePendingUserMessage = deletePendingSpy;
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
-
-      const result = await agentSession.revokePendingDelivery('db-1', 'remove');
-
-      expect(result.changed).toBe(true);
-      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1');
-      expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
-    });
-
-    it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
-      const deletePendingSpy = mock(() => null);
-      const cancelDeliverySpy = mock(() => false);
-      mockDb.deletePendingUserMessage = deletePendingSpy;
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
-
-      expect(await agentSession.revokePendingDelivery('db-1', 'remove', 'deferred')).toEqual({
-        changed: false,
-      });
-      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1', 'deferred');
-      expect(cancelDeliverySpy).not.toHaveBeenCalled();
-    });
-
-    it('revokePendingDelivery commits a withdrawal before asynchronous cleanup', async () => {
-      let transactionActive = false;
-      let committed = false;
-      mockDb.getDatabase = mock(
-        () =>
-          ({
-            transaction: (effect: () => unknown) => () => {
-              transactionActive = true;
-              try {
-                return effect();
-              } finally {
-                transactionActive = false;
-              }
-            },
-          }) as never
+    function pendingRemovalFixture(status: 'enqueued' | 'deferred' = 'deferred') {
+      const fixture = createMailboxTestDb();
+      fixture.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(mockSession.id);
+      const id = fixture.sdkMessageRepo.saveUserMessage(
+        mockSession.id,
+        { type: 'user', uuid: 'uuid-1', message: { role: 'user', content: 'pending' } } as never,
+        status
       );
-      mockDb.deletePendingUserMessage = mock(() => ({
-        dbId: 'db-1',
-        uuid: 'uuid-1',
-        status: 'deferred' as const,
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: mock(() => false) }));
+      const delivery = fixture.jobQueue.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: mockSession.id, messageUuid: 'uuid-1' },
+      });
+      const gateway = new DbGateway(':memory:', fixture.db);
+      bindGateway(fixture.db, gateway);
+      gateway.onChanges = (changes) => {
+        for (const change of changes) mockDb.notifyChange?.(change.table, change.scope);
+      };
+      mockDb.getSDKMessageRepo = mock(() => fixture.sdkMessageRepo);
+      return {
+        fixture,
+        id,
+        delivery,
+        close: async () => {
+          await gateway.close();
+          fixture.close();
+        },
+      };
+    }
+    it('revokePendingDelivery removes deferred input and cancels its delivery through the op', async () => {
+      const testDb = pendingRemovalFixture();
+      try {
+        const result = await agentSession.revokePendingDelivery(testDb.id, 'remove');
+        expect(result.changed).toBe(true);
+        expect(testDb.fixture.sdkRows()).toEqual([]);
+        expect(testDb.fixture.jobQueue.getJob(testDb.delivery.id)).toBeNull();
+      } finally {
+        await testDb.close();
+      }
+    });
+    it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
+      const testDb = pendingRemovalFixture('enqueued');
+      try {
+        expect(await agentSession.revokePendingDelivery(testDb.id, 'remove', 'deferred')).toEqual({
+          changed: false,
+        });
+        expect(testDb.fixture.sdkRows()[0].send_status).toBe('enqueued');
+        expect(testDb.fixture.jobQueue.getJob(testDb.delivery.id)?.status).toBe('pending');
+      } finally {
+        await testDb.close();
+      }
+    });
+    it('revokePendingDelivery commits a withdrawal before asynchronous cleanup', async () => {
+      const testDb = pendingRemovalFixture();
+      const job = testDb.fixture.jobQueue.enqueue({ queue: 'mailbox', payload: {} });
+      testDb.fixture.db.prepare("UPDATE job_queue SET status='completed' WHERE id=?").run(job.id);
       agentSession.stateManager.clearQueuedIfOwnedBy = mock(async () => {
-        expect(committed).toBe(true);
+        expect(testDb.fixture.sdkRows()).toEqual([]);
+        expect(testDb.fixture.jobQueue.getJob(job.id)?.error).toBe('driver_input_withdrawn');
         throw new Error('cleanup interrupted');
       });
-      await expect(
-        agentSession.revokePendingDelivery('db-1', 'remove', 'deferred', () => {
-          expect(transactionActive).toBe(true);
-          committed = true;
-        })
-      ).rejects.toThrow('cleanup interrupted');
-      expect(committed).toBe(true);
-      expect(transactionActive).toBe(false);
+      try {
+        await expect(
+          agentSession.revokePendingDelivery(testDb.id, 'remove', 'deferred', job.id)
+        ).rejects.toThrow('cleanup interrupted');
+        expect(testDb.fixture.sdkRows()).toEqual([]);
+        expect(testDb.fixture.jobQueue.getJob(job.id)?.error).toBe('driver_input_withdrawn');
+      } finally {
+        await testDb.close();
+      }
     });
-
-    it('revokePendingDelivery notifies the delivery feeds after defer+cancel (#862 review P2)', async () => {
-      const deferSpy = mock(() => ({ dbId: 'db-1', uuid: 'uuid-1' }));
-      const cancelDeliverySpy = mock(() => true);
+    it('revokePendingDelivery replays the delivery feeds after defer and cancellation', async () => {
+      const testDb = pendingRemovalFixture('enqueued');
       const notifySpy = mock(() => {});
-      mockDb.deferEnqueuedUserMessage = deferSpy;
-      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
       mockDb.notifyChange = notifySpy;
-
-      await agentSession.revokePendingDelivery('db-1', 'defer');
-
-      expect(notifySpy).toHaveBeenCalledWith('sdk_messages', { sessionId: mockSession.id });
-      expect(notifySpy).toHaveBeenCalledWith('job_queue', { sessionId: mockSession.id });
+      try {
+        await agentSession.revokePendingDelivery(testDb.id, 'defer');
+        expect(testDb.fixture.sdkRows()[0].send_status).toBe('deferred');
+        expect(testDb.fixture.jobQueue.getJob(testDb.delivery.id)).toBeNull();
+        expect(notifySpy.mock.calls).toEqual([
+          ['sdk_messages', { sessionId: mockSession.id }],
+          ['job_queue', { sessionId: mockSession.id }],
+        ]);
+      } finally {
+        await testDb.close();
+      }
     });
 
     it('deliverChatMessage preserves a legacy-owned processing turn', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       const setQueuedIfIdle = mock(async () => false);
       agentSession.stateManager.setQueuedIfIdle = setQueuedIfIdle;
 
@@ -2575,11 +2543,43 @@ describe('AgentSession', () => {
       expect(agentSession.getProcessingState().status).not.toBe('queued');
     });
 
+    it('deliverChatMessage waits for insertion before publishing queued state', async () => {
+      let release!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let queued!: () => void;
+      const arrived = new Promise<void>((resolve) => {
+        queued = resolve;
+      });
+      const jobQueue = {
+        enqueue: mock(async () => {
+          queued();
+          await hold;
+          return { id: 'job' };
+        }),
+      };
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
+      const setQueued = mock(async () => true);
+      agentSession.stateManager.setQueuedIfIdle = setQueued;
+      const pending = agentSession.deliverChatMessage('held-ack');
+      try {
+        await arrived;
+        expect(setQueued).not.toHaveBeenCalled();
+        release();
+        await pending;
+        expect(setQueued).toHaveBeenCalledWith('held-ack');
+      } finally {
+        release();
+        await pending;
+      }
+    });
+
     it('deliverChatMessage treats queued publication failure as non-fatal after insertion', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       agentSession.stateManager.setQueuedIfIdle = mock(async () => {
         throw new Error('subscriber failed');
       });
@@ -2592,7 +2592,7 @@ describe('AgentSession', () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       const cancelSpy = mock(() => {});
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
@@ -2618,7 +2618,7 @@ describe('AgentSession', () => {
         enqueue: mock(() => ({ id: 'job' })),
         activeDeliveryMessageUuids: mock(() => new Set(['predecessor-msg'])),
       };
-      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      mockDb.getJobQueueRepo = mock(() => attachDeliveryEnqueueWriter(jobQueue));
       const cancelSpy = mock(() => {});
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
@@ -2654,11 +2654,13 @@ describe('AgentSession', () => {
     });
 
     it('deliverChatMessage publishes failed status when durable enqueue fails', async () => {
-      mockDb.getJobQueueRepo = mock(() => ({
-        enqueue: mock(() => {
-          throw new Error('delivery enqueue failure');
-        }),
-      }));
+      mockDb.getJobQueueRepo = mock(() =>
+        attachDeliveryEnqueueWriter({
+          enqueue: mock(() => {
+            throw new Error('delivery enqueue failure');
+          }),
+        })
+      );
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveryFailedByUuid: mock(() => 'db-2'),
       }));
@@ -2672,6 +2674,40 @@ describe('AgentSession', () => {
         messageIds: ['db-2'],
         status: 'failed',
       });
+    });
+
+    it('deliverChatMessage preserves queued input when the enqueue reply is lost after commit', async () => {
+      const fixture = createMailboxTestDb();
+      const gateway = new DbGateway(':memory:', fixture.db);
+      bindGateway(fixture.db, gateway);
+      const uuid = 'synthetic-lost-enqueue-reply';
+      fixture.sdkMessageRepo.saveUserMessage(
+        mockSession.id,
+        { type: 'user', uuid, message: { role: 'user', content: 'synthetic input' } },
+        'enqueued'
+      );
+      mockDb.getJobQueueRepo = mock(() => fixture.jobQueue);
+      mockDb.getSDKMessageRepo = mock(() => fixture.sdkMessageRepo);
+      const run = gateway.run.bind(gateway);
+      gateway.run = async (op, input) => {
+        await run(op, input);
+        throw new Error('synthetic lost commit reply');
+      };
+      try {
+        await expect(agentSession.deliverChatMessage(uuid)).rejects.toThrow(
+          'synthetic lost commit reply'
+        );
+        expect(fixture.jobQueue.listJobs({ queue: 'message_delivery', limit: 10 })).toHaveLength(1);
+        expect(fixture.sdkMessageRepo.getUserSendStatus(mockSession.id, uuid)).toBe('enqueued');
+        expect(mockInternalEventBus.publish).not.toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: mockSession.id,
+          messageIds: expect.any(Array),
+          status: 'failed',
+        });
+      } finally {
+        await gateway.close();
+        fixture.close();
+      }
     });
 
     it('resetQuery should delegate to lifecycleManager', async () => {
@@ -2750,14 +2786,14 @@ describe('AgentSession', () => {
       expect(updateConfigSpy).toHaveBeenCalledWith({ maxTokens: 4096 });
     });
 
-    it('updateMetadata should delegate to sessionConfigHandler', () => {
+    it('updateMetadata should delegate to sessionConfigHandler', async () => {
       const updateMetadataSpy = mock(() => {});
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).sessionConfigHandler = {
         updateMetadata: updateMetadataSpy,
       };
 
-      agentSession.updateMetadata({ title: 'New Title' });
+      await agentSession.updateMetadata({ title: 'New Title' });
 
       expect(updateMetadataSpy).toHaveBeenCalledWith({ title: 'New Title' });
     });
@@ -2919,6 +2955,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -2941,6 +2978,39 @@ describe('AgentSession', () => {
         mockInternalEventBus,
         mockGetApiKey
       );
+    });
+
+    describe('tool activation disclosure', () => {
+      it('leaves ACP attachment unverified without touching its query', async () => {
+        mockSession.config.provider = 'acp';
+        const setMcpServers = mock(async () => ({ added: [], removed: [], errors: {} }));
+        const interrupt = mock(async () => undefined);
+        agentSession.queryObject = {
+          setMcpServers,
+          interrupt,
+        } as unknown as AgentSession['queryObject'];
+        expect(await agentSession.applyToolChoice('mcp:browser')).toEqual({
+          application: 'restart_required',
+          reason: 'provider_unverified',
+        });
+        expect(setMcpServers).not.toHaveBeenCalled();
+        expect(interrupt).not.toHaveBeenCalled();
+      });
+      it('requires explicit restart for live instruction changes', async () => {
+        const interrupt = mock(async () => undefined);
+        agentSession.queryObject = { interrupt } as unknown as AgentSession['queryObject'];
+        expect(await agentSession.applyToolChoice('skill:guide')).toEqual({
+          application: 'restart_required',
+          reason: 'instructions_reload_unavailable',
+        });
+        expect(interrupt).not.toHaveBeenCalled();
+      });
+      it('keeps cold instruction choices for the next query without starting it', async () => {
+        expect(await agentSession.applyToolChoice('skill:guide')).toEqual({
+          application: 'next_query',
+        });
+        expect(agentSession.queryObject).toBeNull();
+      });
     });
 
     it('should start with generation 0', () => {
@@ -3000,6 +3070,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessages: mock(() => []),
@@ -3134,6 +3205,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getDatabase: mock(() => ({ prepare: mock(() => ({ get: mock(() => null) })) })),
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
@@ -3204,6 +3276,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3273,6 +3346,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3503,6 +3577,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3572,6 +3647,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3700,6 +3776,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3769,6 +3846,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -3910,6 +3988,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4056,6 +4135,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4127,6 +4207,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4196,6 +4277,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -4419,7 +4501,7 @@ describe('AgentSession', () => {
   });
 
   describe('fromInit', () => {
-    it('should merge mcpServers into session config at runtime for query options builder', () => {
+    it('should merge mcpServers into session config at runtime for query options builder', async () => {
       const mockMcpServer = {
         type: 'sdk' as const,
         name: 'test-tools',
@@ -4438,6 +4520,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4452,7 +4535,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,
@@ -4471,7 +4554,7 @@ describe('AgentSession', () => {
       expect(persistedSession.config.mcpServers).toBeUndefined();
     });
 
-    it('should apply updated child-agent policy to an existing worker session', () => {
+    it('should apply updated child-agent policy to an existing worker session', async () => {
       const existingSession = {
         id: 'space:worker:test',
         title: 'Worker',
@@ -4498,6 +4581,7 @@ describe('AgentSession', () => {
         },
       };
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4509,7 +4593,7 @@ describe('AgentSession', () => {
         subscribe: mock((_: string, __: Function, ___: object) => () => {}),
       } as unknown as InternalEventBus<any>;
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         {
           sessionId: existingSession.id,
           workspacePath: existingSession.workspacePath,
@@ -4534,7 +4618,7 @@ describe('AgentSession', () => {
       ]);
     });
 
-    it('should update workspacePath for existing init sessions', () => {
+    it('should update workspacePath for existing init sessions', async () => {
       const existingSession = {
         id: 'room:test',
         title: 'Room Agent',
@@ -4567,6 +4651,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4581,7 +4666,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,
@@ -4597,7 +4682,7 @@ describe('AgentSession', () => {
       expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
     });
 
-    it('should clear stale thinking level when init omits override', () => {
+    it('should clear stale thinking level when init omits override', async () => {
       const existingSession = {
         id: 'space:agent:test',
         title: 'Space Agent',
@@ -4630,6 +4715,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4644,7 +4730,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,
@@ -4665,7 +4751,7 @@ describe('AgentSession', () => {
       ]);
     });
 
-    it('should clear stale worktree when loading existing room session', () => {
+    it('should clear stale worktree when loading existing room session', async () => {
       const existingSession = {
         id: 'room:test',
         title: 'Room Agent',
@@ -4704,6 +4790,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4718,7 +4805,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,
@@ -4771,6 +4858,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4830,6 +4918,7 @@ describe('AgentSession', () => {
       };
 
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4885,6 +4974,7 @@ describe('AgentSession', () => {
 
     const makeMocks = () => {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({})),
         getSession: mock(() => null),
         createSession: mock(() => {}),
@@ -5210,6 +5300,7 @@ describe('AgentSession', () => {
 
     const makeMocks = () => {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -5366,6 +5457,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
@@ -5434,6 +5526,7 @@ describe('AgentSession', () => {
 
     const makeMocks = () => {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -5762,6 +5855,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({})),
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
@@ -5816,7 +5910,7 @@ describe('AgentSession', () => {
     beforeEach(async () => {
       db = await createTestDb();
       const session = createTestSession(sessionId);
-      db.createSession(session);
+      await db.createSession(session);
       agentSession = new AgentSession(
         session,
         db,
@@ -5928,7 +6022,7 @@ describe('AgentSession', () => {
         );
         repo.markDeliverySubmittedByUuids(sessionId, [uuid]);
       }
-      deliverMessage(db.getJobQueueRepo(), sessionId, activeUuid, { origin: 'chat' });
+      await deliverMessage(db.getJobQueueRepo(), sessionId, activeUuid, { origin: 'chat' });
 
       expect(await agentSession.reconcileStrandedDeliveries()).toBe(1);
 
@@ -5949,7 +6043,7 @@ describe('AgentSession', () => {
     }): Promise<void> {
       db = await createTestDb();
       const session = createTestSession(sessionId);
-      db.createSession(session);
+      await db.createSession(session);
       const repo = db.getSDKMessageRepo();
       repo.saveUserMessage(
         sessionId,
@@ -6068,7 +6162,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
       session.config.provider = row.provider ?? 'anthropic';
-      db.createSession(session);
+      await db.createSession(session);
       const repo = db.getSDKMessageRepo();
       if (row.delivery !== 'missing') {
         repo.saveUserMessage(
@@ -6277,8 +6371,8 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
-        db.updateSession(sessionId, { status: 'archived' });
+        await db.createSession(session);
+        await db.updateSession(sessionId, { status: 'archived' });
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6318,7 +6412,7 @@ describe('AgentSession', () => {
           ...session.config,
           provider: 'custom:removed' as Session['config']['provider'],
         };
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6359,13 +6453,18 @@ describe('AgentSession', () => {
     it('fails each delivery once and tells the user every time when an unpinned session has no registered provider', async () => {
       const db = await createTestDb();
       const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+      const copilot = registry.get('anthropic-copilot');
+      const copilotAvailability = copilot
+        ? spyOn(copilot, 'isAvailable').mockImplementation(async () => false)
+        : undefined;
       const anthropic = registry.get('anthropic');
       markBuiltInProviderDisabled('anthropic');
       registry.unregister('anthropic');
       try {
         const session = createTestSession(sessionId);
         session.config = { ...session.config, model: 'model-no-provider-owns' };
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6411,6 +6510,7 @@ describe('AgentSession', () => {
           )
         );
       } finally {
+        copilotAvailability?.mockRestore();
         markBuiltInProviderEnabled('anthropic');
         if (anthropic) registry.register(anthropic);
         db.close();
@@ -6421,7 +6521,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6466,7 +6566,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6530,7 +6630,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6584,7 +6684,7 @@ describe('AgentSession', () => {
       try {
         const session = createTestSession(sessionId);
         session.config.provider = 'acp';
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6650,7 +6750,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6706,7 +6806,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6769,7 +6869,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6834,7 +6934,7 @@ describe('AgentSession', () => {
       if (opts?.provider) {
         session.config.provider = opts.provider;
       }
-      db.createSession(session);
+      await db.createSession(session);
       db.getSDKMessageRepo().saveUserMessage(
         sessionId,
         {
@@ -7215,6 +7315,7 @@ describe('AgentSession', () => {
 
     function makeMocks() {
       const mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),

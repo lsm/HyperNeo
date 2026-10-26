@@ -18,6 +18,8 @@ import {
   readHandoff,
 } from '../../../../src/lib/handoffs/outbox.ts';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
+import { createRemoteSendForwarder } from '../../../../src/lib/remote-daemons/forward-send.ts';
+import type { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
@@ -61,6 +63,47 @@ describe('simple message.send worker handoff', () => {
     if (before === undefined) delete process.env.HYPERNEO_DATA_DIR;
     else process.env.HYPERNEO_DATA_DIR = before;
     rmSync(root, { recursive: true, force: true });
+  });
+
+  test.each(['done', 'blocked', 'question', 'failed'])(
+    'a structured %s report survives the mailbox boundary',
+    async (kind) => {
+      await accepted({ to: 'neo:root', text: 'Ordinary words.', kind });
+      expect(JSON.parse(mailbox.rows()[0].payload).message.workerReportKind).toBe(kind);
+    }
+  );
+
+  test.each(['blocked', 'question'])(
+    'a remote %s report retains its structured kind',
+    async (kind) => {
+      const remote = registry();
+      const forwarder = createRemoteSendForwarder(
+        {
+          invoke: async (_daemon: string, name: string, input: unknown) => {
+            const result = await invokeOperation(remote, name, input, { source: 'rpc' });
+            if (result.kind !== 'completed') throw new Error(JSON.stringify(result));
+            return result.value;
+          },
+        } as unknown as RemoteDaemonRegistry,
+        'sender'
+      );
+      const local = createOperationRegistry([
+        createSendMessageOperation(mailbox.jobQueue, () => 'active', forwarder),
+      ]);
+      await accepted(
+        { to: 'daemon:other::session:neo:root', text: 'Ordinary words.', kind },
+        local
+      );
+      expect(JSON.parse(mailbox.rows()[0].payload).message.workerReportKind).toBe(kind);
+    }
+  );
+
+  test('unknown report kinds are refused rather than silently becoming free text', async () => {
+    expect(await send({ to: 'neo:root', text: 'Done.', kind: 'progress' })).not.toMatchObject({
+      kind: 'completed',
+      value: { kind: 'accepted' },
+    });
+    expect(mailbox.rows()).toHaveLength(0);
   });
 
   test.each(['neo:root', 'ordinary-target'])(

@@ -75,9 +75,7 @@ export function createDatabaseOperationCatalog(
           taskId
         ),
       createTask: (input, creatorSessionId) =>
-        createStandaloneTask(db.getDatabase(), input, creatorSessionId, () =>
-          db.notifyChange('space_tasks')
-        ),
+        db.runSpaceTaskOp(createStandaloneTask, { input, creatorSessionId }),
       listTasks: (input, caller) =>
         listScopedTasks(
           caller,
@@ -86,13 +84,11 @@ export function createDatabaseOperationCatalog(
           input
         ),
       editTask: (input, caller) =>
-        createStandaloneTaskMetadataEditor(db.getDatabase(), () => db.notifyChange('space_tasks'))(
-          input,
-          caller
-        ),
-      transitionTask: (input) =>
-        transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
+        createStandaloneTaskMetadataEditor(db.getDatabase(), db.runSpaceTaskOp)(input, caller),
+      transitionTask: (input) => db.runSpaceTaskOp(transitionStandaloneTask, input),
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
+      isNeo: (sessionId) =>
+        new NeoRepository(db.getDatabase()).getBindingBySession(sessionId)?.kind === 'neo',
       sessionTitle: async (id) => {
         const title = readSessionField(db, 'title', id);
         return title !== null
@@ -103,7 +99,7 @@ export function createDatabaseOperationCatalog(
               )
             ).label;
       },
-      sessionSent: (sent) => {
+      sessionSent: async (sent) => {
         const neo = new NeoRepository(db.getDatabase());
         const sessionId = neo.defaultBinding()?.sessionId;
         const conversationId = neo.conversationId();
@@ -112,10 +108,7 @@ export function createDatabaseOperationCatalog(
           sessionId && conversationId ? { sessionId, conversationId } : null,
           (id) => readSessionField(db, 'title', id)
         );
-        if (message)
-          new NeoSessionMessageRepository(db.getDatabase(), () =>
-            db.notifyChange('neo_session_messages')
-          ).record(message);
+        if (message) await new NeoSessionMessageRepository(db.getDatabase()).record(message);
       },
       ...(ensureAgentSession
         ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
@@ -142,8 +135,18 @@ export function createDatabaseOperationCatalog(
       }),
       createResolveAgentOperation(agentLookups),
       createMessageStatusOperation({
-        readSendStatus: (sessionId, messageId) =>
-          db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus ?? null,
+        readSendStatus: (sessionId, messageId) => {
+          const note = jobQueue.getLatestByPayload('neo_notes', {
+            'to.sessionId': sessionId,
+            messageUuid: messageId,
+          });
+          if (note && !note.payload.neoBatchUuid) return 'enqueued';
+          const id = note ? String(note.payload.neoBatchUuid) : messageId;
+          return (
+            db.getSDKMessageRepo().getDeliveryContent(sessionId, id)?.sendStatus ??
+            (note ? 'enqueued' : null)
+          );
+        },
         readMailboxAdmission: (sessionId, messageId) =>
           jobQueue.getLatestByPayload(MAILBOX_LANE, {
             'to.sessionId': sessionId,

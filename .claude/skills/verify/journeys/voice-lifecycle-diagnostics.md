@@ -29,6 +29,14 @@ PCM bytes count excludes the WAV header; audioDurationMs assumes 16-kHz mono
 PCM16. durationMs is elapsed stream lifetime; stopDurationMs is stop latency.
 Client disconnect also records stream-close metadata before releasing buffers.
 
+Every ASR socket close also persists one `voice.stream.end` line naming who
+closed (client, server or relay), the close code and classified reason, the
+peer reason byte count (a string under Bun's `ws`, a Buffer under Node — count
+bytes from either), the stream duration, ms since the last audio frame sent and
+the last result received, and ping/pong timing when keepalive frames were seen.
+The proof asserts that line for the forced 1011 (server), the normal
+CloseStream close (server) and the client disconnect (client).
+
 This slice changes observability only: a dropped client still loses its stream,
 a dropped ASR still falls back to the whole buffered recording, and batch retry
 idempotency/resume are separate changes. It does not prove operation on the

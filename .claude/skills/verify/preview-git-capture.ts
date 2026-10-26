@@ -77,7 +77,7 @@ const small = await createArtifactCaptureStore(join(root, 'small-store'), { reta
 const outcomes = await Promise.all([small.capture(Buffer.alloc(16)), small.capture(Buffer.alloc(16))]); assert.equal(outcomes.filter((result) => result.accepted).length, 1); assert(outcomes.some((result) => !result.accepted && result.reason === 'quota_full')); assert.equal((await small.inspect()).reservedBytes, 0);
 db.prepare(`UPDATE sdk_message_bodies SET sdk_message = ? WHERE seq=(SELECT rowid FROM sdk_messages WHERE id='source')`).run(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `https://github.com/lsm/HyperNeo/blob/${sha}/docs/report.md` }] } }));
 const operation = createArtifactReferenceResolve(() => db, data, join(root, 'home'));
-const result = await operation.execute(operation.inputSchema.parse({ sourceMessageOrCard: { kind: 'message', id: 'source' }, reference: `https://github.com/lsm/HyperNeo/blob/${sha}/docs/report.md` }), { source: 'rpc', principal: 'local' });
+const result = await operation.execute(operation.inputSchema.parse({ requestId: '11111111-1111-4111-8111-111111111111', sourceMessageOrCard: { kind: 'message', id: 'source' }, reference: `https://github.com/lsm/HyperNeo/blob/${sha}/docs/report.md` }), { source: 'rpc', principal: 'local' });
 assert.equal((result as { accepted: boolean }).accepted, true);
 assert.equal((db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n, 2);
 db.close(); db = new Database(join(data, 'daemon.db'));

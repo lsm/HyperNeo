@@ -1,14 +1,29 @@
+import { handoffDraftDirectory } from '../../../../src/lib/handoffs/outbox';
+import { installClaudeNativeWrites } from '../../../../src/lib/drivers/claude-native-writes';
+import {
+  workerSandboxPaths,
+  releaseWorkerSandbox,
+} from '../../../../src/lib/drivers/worker-sandbox';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { vi } from 'vitest';
-import type { Session } from '@hyperneo/shared';
+import type { AppMcpServer, AppSkill, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir, tmpdir } from 'os';
-import { mkdtempSync, mkdirSync, rmSync, statSync, realpathSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  realpathSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   buildProviderSettings,
   ensureAgentTools,
+  liveThinkingUpdate,
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder';
@@ -114,6 +129,47 @@ describe('QueryOptionsBuilder', () => {
   afterEach(() => {});
 
   describe('build', () => {
+    it('prepared SDK workers honor a persisted local binding opt-out', async () => {
+      const root = join(handoffDataDir, 'local-binding-opt-out');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
+      const path = join(root, '.claude/settings.local.json');
+      const settings = JSON.parse(readFileSync(path, 'utf8'));
+      settings.sandbox.network.allowLocalBinding = false;
+      writeFileSync(path, JSON.stringify(settings));
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.sandbox?.network?.allowLocalBinding).toBe(false);
+        expect(JSON.parse(readFileSync(path, 'utf8')).sandbox.network.allowLocalBinding).toBe(
+          false
+        );
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    });
+
+    it('prepared workers retain sandbox enforcement and recreate purged temp roots', async () => {
+      const root = join(handoffDataDir, 'prepared');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
+      mockSession.workspacePath = root;
+      mockSession.config.sandbox = { enabled: false };
+      await releaseWorkerSandbox(root);
+      const options = await builder.build();
+      expect(options.sandbox).toMatchObject({
+        enabled: true,
+        allowUnsandboxedCommands: false,
+        excludedCommands: [],
+      });
+      const draft = handoffDraftDirectory(handoffDataDir, mockSession.id);
+      expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(draft);
+      expect(options.sandbox?.filesystem?.allowWrite).toContain(draft);
+      expect(options.env?.TMPDIR).toBe(workerSandboxPaths(root).TMPDIR);
+      expect(statSync(options.env!.TMPDIR!).isDirectory()).toBe(true);
+      await releaseWorkerSandbox(root);
+    });
+
     it('should build basic query options', async () => {
       const options = await builder.build();
 
@@ -137,8 +193,7 @@ describe('QueryOptionsBuilder', () => {
     it('should set allowDangerouslySkipPermissions when bypassPermissions', async () => {
       mockSession.config.permissionMode = 'bypassPermissions';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
@@ -1466,7 +1521,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
     });
 
-    it('keeps ordinary effort behavior for Neo when the provider has no effort catalog', () => {
+    it('sends a GLM level as its effort for Neo and ordinary sessions alike', () => {
       const sqlite = new BunDatabase(':memory:');
       try {
         createNeoTables(sqlite);
@@ -1497,9 +1552,9 @@ describe('QueryOptionsBuilder', () => {
             }),
           },
         });
-        expect(configured.addSessionStateOptions({}).effort).toBeUndefined();
+        expect(configured.addSessionStateOptions({}).effort).toBe('low');
         mockSession.id = generateUUID();
-        expect(builder.addSessionStateOptions({}).effort).toBeUndefined();
+        expect(builder.addSessionStateOptions({}).effort).toBe('low');
       } finally {
         sqlite.close();
       }
@@ -1540,6 +1595,18 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(options);
 
       expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
+    });
+
+    it('drops the thinking-off env once a level is chosen', async () => {
+      mockSession.config.thinkingLevel = 'think16k';
+      const options = await builder.build();
+      const result = builder.addSessionStateOptions({
+        ...options,
+        env: { ...options.env, CLAUDE_CODE_DISABLE_THINKING: '1' },
+      });
+
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBeUndefined();
     });
 
     it('prefers the persisted thinkingLevel over a stale in-memory config', async () => {
@@ -1581,7 +1648,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
     });
 
-    it('omits thinking config for kimi K3 when level is off', async () => {
+    it('turns thinking off for kimi K3 when level is off', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'off';
@@ -1589,7 +1656,8 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toBeUndefined();
+      expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
     });
 
     it('forces thinking enabled for kimi-k2.7-code-highspeed when level is off', async () => {
@@ -1625,7 +1693,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toBeUndefined();
     });
 
-    it('emits a granular thinking budget for kimi K3 when a level is selected', async () => {
+    it('emits adaptive thinking with the level effort for kimi K3 when a level is selected', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'think8k';
@@ -1633,10 +1701,11 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('low');
     });
 
-    it('emits a granular thinking budget for k3-256k when a level is selected', async () => {
+    it('emits adaptive thinking with the level effort for k3-256k when a level is selected', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'k3-256k';
       mockSession.config.thinkingLevel = 'think32k';
@@ -1644,10 +1713,11 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 31999 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('xhigh');
     });
 
-    it('emits a granular thinking budget for moonshot-k3 prefix aliases when a level is selected', async () => {
+    it('emits adaptive thinking with the level effort for moonshot-k3 prefix aliases when a level is selected', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'moonshot-k3-preview';
       mockSession.config.thinkingLevel = 'think8k';
@@ -1655,7 +1725,8 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('low');
     });
 
     it('should omit thinking config for providers with thinkingModes=off even when level is off', async () => {
@@ -1755,7 +1826,7 @@ describe('QueryOptionsBuilder', () => {
         const result = builder.addSessionStateOptions(
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
-        expect(result.thinking).toBeUndefined();
+        expect(result.thinking).toEqual({ type: 'disabled' });
       } finally {
         getProviderRegistry().setCuratedModels('kimi', undefined);
       }
@@ -1776,7 +1847,7 @@ describe('QueryOptionsBuilder', () => {
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
 
-        expect(result.thinking).toBeUndefined();
+        expect(result.thinking).toEqual({ type: 'disabled' });
       } finally {
         process.env.KIMI_API_KEY = '';
         process.env.KIMI_BASE_URL = '';
@@ -1820,7 +1891,7 @@ describe('QueryOptionsBuilder', () => {
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
 
-        expect(result.thinking).toBeUndefined();
+        expect(result.thinking).toEqual({ type: 'disabled' });
       } finally {
         process.env.KIMI_API_KEY = '';
         process.env.KIMI_BASE_URL = '';
@@ -1849,7 +1920,27 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('low');
+    });
+
+    it('sends Off to GLM as disabled thinking with its lowest effort', () => {
+      mockSession.config.provider = 'glm';
+      mockSession.config.model = 'glm-5';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions({});
+      expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.effort).toBe('low');
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
+    });
+
+    it('maps DeepSeek levels onto its effort scale', () => {
+      mockSession.config.provider = 'deepseek';
+      mockSession.config.model = 'deepseek-v4-pro';
+      mockSession.config.thinkingLevel = 'think48k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('max');
+      mockSession.config.thinkingLevel = 'think16k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('medium');
     });
 
     it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {
@@ -2418,6 +2509,23 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('permission mode', () => {
+    it('starts prepared SDK workers outside auto while retaining their bypass restriction', async () => {
+      const root = join(handoffDataDir, 'permission-worker');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'protected')]);
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.permissionMode).toBe('default');
+        expect(options.allowDangerouslySkipPermissions).toBe(false);
+        expect(options.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
+        mockSession.config.permissionMode = 'plan';
+        expect((await builder.build()).permissionMode).toBe('plan');
+      } finally {
+        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+      }
+    });
+
     it('should use session config permission mode first', async () => {
       mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
@@ -2437,17 +2545,38 @@ describe('QueryOptionsBuilder', () => {
       expect(options.permissionMode).toBe('prompt');
     });
 
-    it('should default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it('should default to bypassPermissions at spawn', async () => {
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
 
-    it('should map default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it.each([
+      ['unset', undefined, 'bypassPermissions', true],
+      ['default', 'default', 'bypassPermissions', true],
+      ['bypassPermissions', 'bypassPermissions', 'bypassPermissions', true],
+      ['acceptEdits', 'acceptEdits', 'acceptEdits', false],
+      ['plan', 'plan', 'plan', false],
+      ['legacy delegate', 'delegate', 'delegate', false],
+    ])(
+      'a global %s permission mode keeps its SDK output',
+      async (_name, permissionMode, sent, skipsPermissions) => {
+        (mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue(
+          permissionMode ? { permissionMode } : {}
+        );
+        const built = new QueryOptionsBuilder({
+          session: mockSession,
+          settingsManager: mockSettingsManager,
+        });
+        const options = await built.build();
+        expect(options.permissionMode).toBe(sent);
+        expect(options.allowDangerouslySkipPermissions ?? false).toBe(skipsPermissions);
+      }
+    );
+
+    it('should map default to bypassPermissions at spawn', async () => {
       mockSession.config.permissionMode = 'default';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
   });
 
@@ -3311,6 +3440,183 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.enableFileCheckpointing = true;
       const options = await builder.build();
       expect('enableFileCheckpointing' in options).toBe(true);
+    });
+  });
+
+  describe('canonical frozen SDK tool inputs', () => {
+    function fixture() {
+      const server: AppMcpServer = {
+        id: 'canonical-browser',
+        name: 'registry-browser',
+        sourceType: 'stdio',
+        command: 'not-executed',
+        enabled: false,
+        source: 'user',
+      };
+      const skills: AppSkill[] = [
+        {
+          id: 'canonical-wrapper',
+          name: 'wrapper-browser',
+          displayName: 'Browser',
+          description: 'Synthetic',
+          sourceType: 'mcp_server',
+          config: { type: 'mcp_server', appMcpServerId: server.id },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+        {
+          id: 'canonical-guide',
+          name: 'fixture-guide',
+          displayName: 'Guide',
+          description: 'Synthetic',
+          sourceType: 'builtin',
+          config: { type: 'builtin', commandName: 'fixture-guide' },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+        {
+          id: 'canonical-plugin',
+          name: 'fixture-plugin',
+          displayName: 'Plugin',
+          description: 'Synthetic',
+          sourceType: 'plugin',
+          config: { type: 'plugin', pluginPath: join(handoffDataDir, 'fixture-plugin') },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+        {
+          id: 'canonical-space',
+          name: 'space-guide',
+          displayName: 'Space',
+          description: 'Synthetic',
+          sourceType: 'builtin',
+          config: { type: 'builtin', commandName: 'space-guide', spaceOnly: true },
+          enabled: false,
+          builtIn: false,
+          validationStatus: 'valid',
+          createdAt: 1,
+        },
+      ];
+      const on = {
+        version: 1 as const,
+        choices: {
+          'mcp:canonical-browser': { selected: true, aliases: ['frozen-browser'] },
+          'skill:canonical-guide': { selected: true },
+          'skill:canonical-plugin': { selected: true },
+          'skill:canonical-space': { selected: true },
+        },
+      };
+      const context: QueryOptionsBuilderContext = {
+        ...mockContext,
+        skillsManager: {
+          listSkills: () => skills,
+          getEnabledSkills: () => skills.filter((skill) => skill.enabled),
+        } as unknown as SkillsManager,
+        appMcpServerRepo: {
+          list: () => [server],
+          get: () => server,
+        } as unknown as AppMcpServerRepository,
+        skillOverrides: [],
+      };
+      mockSession.config.toolSelection = on;
+      mockSession.config.tools = { disabledSkills: skills.map((skill) => skill.id) };
+      mockSession.config.sdkToolsPreset = ['Read'];
+      return { server, skills, on, context, builder: new QueryOptionsBuilder(context) };
+    }
+
+    it('uses frozen choices despite old global and session preference flags', async () => {
+      const f = fixture();
+      const options = await f.builder.build();
+      expect(options.mcpServers).toEqual({
+        'frozen-browser': { command: 'not-executed', args: [] },
+      });
+      expect(options.plugins).toEqual(
+        expect.arrayContaining([
+          { type: 'local', path: join(handoffDataDir, 'fixture-plugin') },
+          { type: 'local', path: expect.stringContaining('/fixture-guide') },
+        ])
+      );
+      expect(options.plugins).toHaveLength(2);
+      expect(options.tools).toEqual(['Read']);
+      expect(options.strictMcpConfig).toBe(true);
+    });
+
+    it('applies changed slot vetoes on the next query without changing saved choices', async () => {
+      const f = fixture();
+      const selection = structuredClone(f.on);
+      expect((await f.builder.build()).plugins).toHaveLength(2);
+      Object.assign(f.context, {
+        skillOverrides: f.skills.map((skill) => ({ skillId: skill.id, enabled: false })),
+      });
+      const restricted = await f.builder.build();
+      expect(restricted.mcpServers ?? {}).toEqual({});
+      expect(restricted.plugins ?? []).toEqual([]);
+      expect(mockSession.config.toolSelection).toEqual(selection);
+      Object.assign(f.context, { skillOverrides: [] });
+      const restored = await f.builder.build();
+      expect(restored.mcpServers).toHaveProperty('frozen-browser');
+      expect(restored.plugins).toHaveLength(2);
+    });
+
+    it('keeps a saved off selection off when catalogs turn on', async () => {
+      const f = fixture();
+      f.server.enabled = true;
+      f.skills.forEach((skill) => {
+        skill.enabled = true;
+      });
+      mockSession.config.tools = {};
+      mockSession.config.toolSelection = { version: 1, choices: {} };
+      const options = await new QueryOptionsBuilder({ ...f.context, skillOverrides: [] }).build();
+      expect(options.mcpServers ?? {}).toEqual({});
+      expect(options.plugins ?? []).toEqual([]);
+    });
+
+    it('keeps frozen aliases when server and wrapper names change', () => {
+      const f = fixture();
+      f.server.name = 'renamed-registry';
+      f.skills[0].name = 'renamed-wrapper';
+      expect(f.builder.getEffectiveMcpServers()).toEqual({
+        'frozen-browser': { command: 'not-executed', args: [] },
+      });
+    });
+
+    it('still refuses an invalid selected transport', () => {
+      const f = fixture();
+      f.server.command = ' ';
+      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+    });
+
+    it('uses the supplied query snapshot instead of a later session selection', async () => {
+      const f = fixture();
+      const captured = structuredClone(mockSession);
+      mockSession.config.toolSelection = { version: 1, choices: {} };
+      const options = await f.builder.build({ session: captured });
+      expect(options.mcpServers).toHaveProperty('frozen-browser');
+      expect(options.plugins).toHaveLength(2);
+      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+    });
+
+    it('captures one selection before asynchronous settings preparation', async () => {
+      const f = fixture();
+      mockSettingsManager.prepareSDKOptions = mock(async () => {
+        mockSession.config.toolSelection = { version: 1, choices: {} };
+      });
+      const options = await f.builder.build();
+      expect(options.mcpServers).toHaveProperty('frozen-browser');
+      expect(options.plugins).toHaveLength(2);
+      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+    });
+
+    it('fails closed on an unsupported saved version', () => {
+      const f = fixture();
+      mockSession.config.toolSelection = { version: 2, choices: {} } as never;
+      expect(() => f.builder.getEffectiveMcpServers()).toThrow('selection_version_unsupported');
     });
   });
 
@@ -4905,6 +5211,37 @@ describe('QueryOptionsBuilder', () => {
 
       const coordinatorPrompt = (options.agents!['Coordinator'] as { prompt: string }).prompt;
       expect(coordinatorPrompt).not.toContain('Git Worktree Isolation');
+    });
+  });
+});
+
+describe('liveThinkingUpdate', () => {
+  it('turns a disabled config into a zero budget', () => {
+    expect(liveThinkingUpdate({ thinking: { type: 'disabled' } }, 'off')).toEqual({
+      maxThinkingTokens: 0,
+      effortLevel: undefined,
+      disableThinking: true,
+    });
+  });
+
+  it('keeps an explicit budget', () => {
+    expect(
+      liveThinkingUpdate({ thinking: { type: 'enabled', budgetTokens: 16000 } }, 'think16k')
+        .maxThinkingTokens
+    ).toBe(16000);
+  });
+
+  it('re-enables adaptive thinking with the level budget and passes effort through', () => {
+    expect(
+      liveThinkingUpdate({ thinking: { type: 'adaptive' }, effort: 'high' }, 'think24k')
+    ).toEqual({ maxThinkingTokens: 24000, effortLevel: 'high', disableThinking: false });
+  });
+
+  it('sends nothing when the provider omits thinking', () => {
+    expect(liveThinkingUpdate({}, 'think8k')).toEqual({
+      maxThinkingTokens: undefined,
+      effortLevel: undefined,
+      disableThinking: undefined,
     });
   });
 });

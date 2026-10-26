@@ -13,6 +13,7 @@ import {
   type SessionSentObserver,
   type SessionStatusRead,
   type SessionTitleRead,
+  type SessionReportHandler,
 } from '../messaging/message-send.ts';
 import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
 import {
@@ -51,6 +52,8 @@ export interface TaskOperationDependencies {
   sessionTitle?: SessionTitleRead;
   resolveMessageAgent?: AgentTargetResolver;
   sessionSent?: SessionSentObserver;
+  isNeo?: (sessionId: string) => boolean;
+  workerReport?: SessionReportHandler;
 }
 
 export function createDaemonOperationCatalog(
@@ -66,7 +69,9 @@ export function createDaemonOperationCatalog(
       createRemoteSendForwarder(remoteDaemons),
       tasks.resolveMessageAgent,
       tasks.sessionTitle,
-      tasks.sessionSent
+      tasks.sessionSent,
+      tasks.isNeo,
+      tasks.workerReport
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),

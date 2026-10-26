@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 import {
   prepareCodingExecution,
   requireVerifySkill,
@@ -137,6 +138,73 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
 });
 
 describe('prepareCodingExecution', () => {
+  test.each(['review', 'verify'] as const)(
+    'pins the PR head and prepares the full %s contract outside the diff',
+    async (role) => {
+      const f = fixture();
+      git(f.remote, 'checkout', '-b', 'candidate');
+      writeFileSync(join(f.remote, 'file'), 'candidate change');
+      git(f.remote, 'commit', '-am', 'candidate');
+      const head = git(f.remote, 'rev-parse', 'HEAD');
+      git(f.remote, 'update-ref', 'refs/pull/7/head', head);
+      git(f.remote, 'checkout', 'dev');
+      const prepared = await prepareCodingExecution(
+        { ...f.request, parameters: { pullRequest: 7, head, role } },
+        f.effects
+      );
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error(prepared.reason);
+      try {
+        expect(git(prepared.value.directory, 'rev-parse', 'HEAD')).toBe(head);
+        expect(readFileSync(join(prepared.value.directory, 'file'), 'utf8')).toBe(
+          'candidate change'
+        );
+        expect(git(prepared.value.directory, 'status', '--porcelain')).toBe('');
+        const contract = readFileSync(
+          join(prepared.value.directory, '.git/hyperneo-stage-contract.md'),
+          'utf8'
+        );
+        if (role === 'review') expect(contract).toBe(REVIEWER_SYSTEM_CONTRACT);
+        else {
+          expect(contract.startsWith(QA_SYSTEM_CONTRACT)).toBe(true);
+          expect(contract).toContain('## Coding-pack Verify override');
+          expect(contract).toContain(
+            "skip the shared contract's base-integration checkout and base-OID revalidation"
+          );
+          expect(contract).toContain('a rebase or any new head requires Verify again');
+        }
+        expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
+        expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+      } finally {
+        await prepared.value.release();
+      }
+      expect(existsSync(f.destination)).toBe(false);
+    }
+  );
+  test('a changed PR head refuses before creating a worker checkout', async () => {
+    const f = fixture();
+    git(f.remote, 'update-ref', 'refs/pull/7/head', f.latest);
+    const prepared = await prepareCodingExecution(
+      { ...f.request, parameters: { pullRequest: 7, head: f.before, role: 'verify' } },
+      f.effects
+    );
+    expect(prepared).toEqual({
+      ok: false,
+      reason: 'The PR head changed during checkout preparation.',
+    });
+    expect(existsSync(f.destination)).toBe(false);
+  });
+  test.each([
+    { pullRequest: '7;touch /tmp/unsafe', head: 'a'.repeat(40), role: 'verify' },
+    { pullRequest: -1, head: 'a'.repeat(40), role: 'review' },
+    { pullRequest: 7, role: 'verify' },
+    { pullRequest: 7, head: 'a'.repeat(40), role: 'writer' },
+  ])('refuses invalid actor preparation before git effects: %j', async (parameters) => {
+    const f = fixture();
+    const prepared = await prepareCodingExecution({ ...f.request, parameters }, f.effects);
+    expect(prepared).toEqual({ ok: false, reason: 'Invalid pinned coding actor configuration.' });
+    expect(f.calls).toEqual([]);
+  });
   test('private clones preserve repo-local commit identity and signing configuration only', async () => {
     const f = fixture();
     const settings = {
@@ -503,5 +571,32 @@ describe('requireVerifySkill', () => {
     const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
     const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };
     expect('value' in requireVerifySkill(undefined, listed, agents)).toBe(passes);
+  });
+});
+
+test.each([
+  ['.claude/skills/verify/SKILL.md', true],
+  ['.claude/skills/verify-ui/SKILL.md', true],
+  ['.claude/skills/verify/nested/SKILL.md', false],
+  ['docs/.claude/skills/verify/SKILL.md', false],
+  ['.claude/skills/Verify/SKILL.md', false],
+])('verify preflight recognizes tracked path %s: %s', (path, accepted) => {
+  const result = requireVerifySkill(undefined, { code: 0, stdout: `${path}\n`, stderr: '' }, null);
+  expect('value' in result).toBe(accepted);
+});
+
+test('verify create bypasses read failures, but every other mode requires a readable listing', () => {
+  const failed = { code: 1, stdout: '', stderr: '  unavailable \n' };
+  const agents = { code: 0, stdout: '## Verify\n', stderr: '' };
+  expect(requireVerifySkill('create', failed, null)).toEqual({ value: true });
+  for (const mode of [undefined, 'Create', 'skip', true]) {
+    expect(requireVerifySkill(mode, failed, agents)).toEqual({
+      reason: { ok: false, reason: 'verify_skill_unreadable: unavailable' },
+    });
+  }
+  expect(
+    requireVerifySkill(undefined, { ...failed, code: 0 }, { ...agents, code: 1 })
+  ).toMatchObject({
+    reason: { ok: false, reason: expect.stringContaining('verify_skill_missing:') },
   });
 });

@@ -1,0 +1,965 @@
+{
+  "scope": "Lane A row 25: merge and PR-state snapshots plus observation commands",
+  "regressionCommit": "7bb3531241dcfe70a630ec635d67d3c16ecc9a26",
+  "productionChangedLines": 169,
+  "focusedUnitTests": 23,
+  "focusedAssertions": 78,
+  "repositoryCheck": "passed",
+  "versions": {
+    "bun": "1.4.3",
+    "deno": "2.9.4"
+  },
+  "oneExistingCheckout": true,
+  "noNewInstall": true,
+  "heavyJobsRunSerially": true,
+  "noSimulator": true,
+  "runtimes": {
+    "bun": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 143,
+        "gatewayCommands": 0,
+        "mergeLookupCounts": {
+          "initial": 1,
+          "known": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "reopen": 0,
+          "closed": 1,
+          "known-negative": 0,
+          "task-known": 0,
+          "task-open": 1,
+          "task-merged": 2,
+          "no-commit": 2,
+          "task-failed": 1,
+          "task-partial": 1,
+          "task-recovered": 1
+        },
+        "maxLoopLagMs": 5.29300000000012,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 63,
+        "freeGiBBefore": 259.0074234008789,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 587.3499999999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 587.3024170000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 587.2930000000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 587.2818750000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 587.2760410000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 14.40475000000015
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 329.99350000000004
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 331.422417
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 341.93366700000024
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 73.18645900000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 329.2448750000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 15.69054099999994
+          }
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 47,
+        "mergeLookupCounts": {
+          "initial": 1,
+          "known": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "reopen": 0,
+          "closed": 1,
+          "known-negative": 0,
+          "task-known": 0,
+          "task-open": 1,
+          "task-merged": 2,
+          "no-commit": 2,
+          "task-failed": 1,
+          "task-partial": 1,
+          "task-recovered": 1
+        },
+        "maxLoopLagMs": 15.29800000000023,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 60,
+        "freeGiBBefore": 259.1821823120117,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 582.748
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 582.6642500000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 582.6511250000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 582.643208
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 582.6370829999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 32.908540999999786
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 335.4112919999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 340.5356670000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 343.53391599999986
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 98.30812500000002
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 339.7670000000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 20.351582999999664
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 22.271082999999635
+          },
+          {
+            "name": "system.health",
+            "durationMs": 0.5582500000000437
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 24.047375000000102
+          }
+        ],
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "merge": {
+            "status": "known",
+            "value": {
+              "state": "CLOSED",
+              "mergeCommit": null
+            },
+            "observedAt": 1792970230035,
+            "source": "synthetic-winner"
+          },
+          "loserAccepted": false
+        },
+        "contention": {
+          "healthMs": 0.5722500000001673,
+          "writeMs": 1208.1413749999992,
+          "affectedWriteUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.9610830000001442,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.7832499999999527,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.27870900000016263,
+            "argsBytes": 68,
+            "replyBytes": 245
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.14820800000006784,
+            "argsBytes": 68,
+            "replyBytes": 180
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.33204099999966274,
+            "argsBytes": 86,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.2596250000001419,
+            "argsBytes": 68,
+            "replyBytes": 181
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3584160000000338,
+            "argsBytes": 87,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.15158400000018446,
+            "argsBytes": 68,
+            "replyBytes": 182
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.25462500000003274,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.805667000000085,
+            "argsBytes": 68,
+            "replyBytes": 245
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.1696660000002339,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.8741250000002765,
+            "argsBytes": 142,
+            "replyBytes": 233
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.22070800000028612,
+            "argsBytes": 68,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.23150000000032378,
+            "argsBytes": 68,
+            "replyBytes": 245
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.20470800000020972,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.06704100000024482,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.4677910000000338,
+            "argsBytes": 140,
+            "replyBytes": 231
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.19437499999912689,
+            "argsBytes": 68,
+            "replyBytes": 205
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.14254200000050332,
+            "argsBytes": 68,
+            "replyBytes": 205
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.5168330000005881,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.3034159999997428,
+            "argsBytes": 68,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.162333000000217,
+            "argsBytes": 68,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.36141700000007404,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.21170900000015536,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.14279200000055425,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.36691700000028504,
+            "argsBytes": 143,
+            "replyBytes": 234
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.25679200000013225,
+            "argsBytes": 69,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.15274999999928696,
+            "argsBytes": 69,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3791670000000522,
+            "argsBytes": 143,
+            "replyBytes": 234
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.3071669999999358,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.15466699999979028,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.4873750000006112,
+            "argsBytes": 87,
+            "replyBytes": 181
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.3255410000001575,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.11625000000003638,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.4386670000003505,
+            "argsBytes": 88,
+            "replyBytes": 182
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.2593749999996362,
+            "argsBytes": 69,
+            "replyBytes": 156
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.12329200000021956,
+            "argsBytes": 69,
+            "replyBytes": 156
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.41208300000016607,
+            "argsBytes": 181,
+            "replyBytes": 272
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.26858400000037363,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.213249999999789,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.49666700000034325,
+            "argsBytes": 143,
+            "replyBytes": 234
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.2645840000004682,
+            "argsBytes": 181,
+            "replyBytes": 235
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.09087499999986903,
+            "argsBytes": 87,
+            "replyBytes": 235
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.25954099999944447,
+            "argsBytes": 69,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.2653330000002825,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 884.5573339999992,
+            "argsBytes": 181,
+            "replyBytes": 272
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.21641699999963748,
+            "argsBytes": 69,
+            "replyBytes": 246
+          }
+        ]
+      }
+    },
+    "deno": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 143,
+        "gatewayCommands": 0,
+        "mergeLookupCounts": {
+          "initial": 1,
+          "known": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "reopen": 0,
+          "closed": 1,
+          "known-negative": 0,
+          "task-known": 0,
+          "task-open": 1,
+          "task-merged": 2,
+          "no-commit": 2,
+          "task-failed": 1,
+          "task-partial": 1,
+          "task-recovered": 1
+        },
+        "maxLoopLagMs": 18.428999999999633,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 56,
+        "freeGiBBefore": 259.12846755981445,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 716.7300829999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 716.603666
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 716.5904580000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 716.5850829999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 716.5874159999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 20.7126659999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 342.4072080000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 340.42570799999976
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 340.3294169999999
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 185.23862499999996
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 339.27641700000004
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 19.949208
+          }
+        ]
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 47,
+        "mergeLookupCounts": {
+          "initial": 1,
+          "known": 0,
+          "failed": 1,
+          "partial": 1,
+          "recovered": 1,
+          "reopen": 0,
+          "closed": 1,
+          "known-negative": 0,
+          "task-known": 0,
+          "task-open": 1,
+          "task-merged": 2,
+          "no-commit": 2,
+          "task-failed": 1,
+          "task-partial": 1,
+          "task-recovered": 1
+        },
+        "maxLoopLagMs": 23.810707999999977,
+        "temporaryDaemonDataRemoved": true,
+        "freeMemoryPercentBefore": 61,
+        "freeGiBBefore": 258.67327880859375,
+        "exitCode": 0,
+        "rpcMetrics": [
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 901.7503750000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 901.6010840000004
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 901.5858330000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 901.5791670000003
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 901.5797079999998
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 24.554832999999235
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 342.83966599999985
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 336.5166250000002
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 333.0182500000001
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 176.21537500000068
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 341.5617919999995
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 17.687167000000045
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 15.109125000000859
+          },
+          {
+            "name": "system.health",
+            "durationMs": 0.5970409999990807
+          },
+          {
+            "name": "neo.coding.smoke",
+            "durationMs": 26.853291999999783
+          }
+        ],
+        "fence": {
+          "before": 0,
+          "after": 1,
+          "merge": {
+            "status": "known",
+            "value": {
+              "state": "CLOSED",
+              "mergeCommit": null
+            },
+            "observedAt": 1792970270186,
+            "source": "synthetic-winner"
+          },
+          "loserAccepted": false
+        },
+        "contention": {
+          "healthMs": 0.6080409999995027,
+          "writeMs": 1237.68325,
+          "affectedWriteUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 2.661750000000211,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.6148339999999735,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.6992079999999987,
+            "argsBytes": 68,
+            "replyBytes": 245
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.3296249999993961,
+            "argsBytes": 68,
+            "replyBytes": 180
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.6579579999997804,
+            "argsBytes": 86,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.27304199999980483,
+            "argsBytes": 68,
+            "replyBytes": 181
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3485420000006343,
+            "argsBytes": 87,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.16108400000030088,
+            "argsBytes": 68,
+            "replyBytes": 182
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3187920000000304,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.6632909999998446,
+            "argsBytes": 68,
+            "replyBytes": 245
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.34858299999996234,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 1.280999999999949,
+            "argsBytes": 142,
+            "replyBytes": 233
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.26670800000010786,
+            "argsBytes": 68,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.3086670000002414,
+            "argsBytes": 68,
+            "replyBytes": 245
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.34633300000041345,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.15266599999995378,
+            "argsBytes": 68,
+            "replyBytes": 127
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3638330000003407,
+            "argsBytes": 140,
+            "replyBytes": 231
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.24566700000013952,
+            "argsBytes": 68,
+            "replyBytes": 205
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.146708000000217,
+            "argsBytes": 68,
+            "replyBytes": 205
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3195420000001832,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.2189170000001468,
+            "argsBytes": 68,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.09095799999977316,
+            "argsBytes": 68,
+            "replyBytes": 207
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.4047499999996944,
+            "argsBytes": 180,
+            "replyBytes": 271
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.23770899999999529,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.08283299999948213,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.41095799999857263,
+            "argsBytes": 143,
+            "replyBytes": 234
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.2197919999998703,
+            "argsBytes": 69,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.0955420000009326,
+            "argsBytes": 69,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.2937500000007276,
+            "argsBytes": 143,
+            "replyBytes": 234
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.16462500000125146,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.10858299999927112,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3224160000008851,
+            "argsBytes": 87,
+            "replyBytes": 181
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.1516669999982696,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.16387500000018917,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3234169999996084,
+            "argsBytes": 88,
+            "replyBytes": 182
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.20083300000078452,
+            "argsBytes": 69,
+            "replyBytes": 156
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.09916700000030687,
+            "argsBytes": 69,
+            "replyBytes": 156
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.30679199999940465,
+            "argsBytes": 181,
+            "replyBytes": 272
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.1640000000006694,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.1001670000005106,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.3117920000004233,
+            "argsBytes": 143,
+            "replyBytes": 234
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.25887499999953434,
+            "argsBytes": 181,
+            "replyBytes": 235
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 0.09000000000014552,
+            "argsBytes": 87,
+            "replyBytes": 235
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.12704200000007404,
+            "argsBytes": 69,
+            "replyBytes": 208
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.24250000000029104,
+            "argsBytes": 69,
+            "replyBytes": 128
+          },
+          {
+            "operation": "coding.merge.observe",
+            "durationMs": 919.7641249999997,
+            "argsBytes": 181,
+            "replyBytes": 272
+          },
+          {
+            "operation": "coding.merge.snapshot",
+            "durationMs": 0.17604199999914272,
+            "argsBytes": 69,
+            "replyBytes": 246
+          }
+        ]
+      }
+    }
+  },
+  "limits": [
+    "The delayed 300 ms synthetic merge lookup and held 1.2-second writer exceed the 250 ms affected-operation target.",
+    "Gateway elapsed time and serialized sizes are recorded; queue, SQL and clone time are not separately attributed. MCP correctness is recorded without separate MCP adapter latency.",
+    "Other smoke and task-completion SQL, remaining lane-A rows and production deployment remain outside this slice. No UI/model/provider turn was exercised."
+  ]
+}

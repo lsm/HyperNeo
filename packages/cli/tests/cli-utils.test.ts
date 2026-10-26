@@ -123,6 +123,14 @@ describe('parseArgs', () => {
 });
 
 describe('getHelpText', () => {
+  test('lists the pairing and device-management commands', () => {
+    expect(getHelpText()).toContain('hyperneo pair');
+    expect(getHelpText()).toContain('hyperneo devices');
+  });
+  test('documents the loopback default', () => {
+    expect(getHelpText()).toContain('Host to bind to (default: 127.0.0.1)');
+  });
+
   test('returns help text containing usage information', () => {
     const helpText = getHelpText();
     expect(helpText).toContain('HyperNeo');
@@ -301,5 +309,15 @@ describe('findAvailablePort', () => {
       });
       server.on('error', reject);
     });
+  });
+});
+
+describe('getHelpText workspace contract', () => {
+  test('explains the Neo user-folder override and environment setting', () => {
+    const help = getHelpText();
+    expect(help).toContain('Neo user folder');
+    expect(help).toContain('file indexing');
+    expect(help).toContain('~/HyperNeo');
+    expect(help).toContain('HYPERNEO_WORKSPACE_PATH');
   });
 });

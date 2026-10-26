@@ -9,11 +9,12 @@ import {
   renameSync,
   rmSync,
   unlinkSync,
-  writeFileSync,
 } from 'node:fs';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
+import { readFile, writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { gunzipSync } from 'node:zlib';
+import { gunzip } from 'node:zlib';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -27,6 +28,8 @@ const logWarn = isVerbose ? console.warn : () => {};
 const logStartup = (...args: unknown[]) => console.log(...args);
 
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
+
+const gunzipAsync = promisify(gunzip);
 
 const SDK_CACHE_DIR = join(getDataDir(), 'sdk');
 
@@ -189,24 +192,28 @@ function resolveFromCache(): string | undefined {
   return undefined;
 }
 
-function sha512OfFile(filePath: string): string {
+function curl(args: string[], timeout: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('curl', args, { encoding: 'utf-8', timeout }, (err, stdout) =>
+      err ? reject(err) : resolve(String(stdout))
+    );
+  });
+}
+
+async function sha512OfFile(filePath: string): Promise<string> {
   const hash = createHash('sha512');
-  const data = readFileSync(filePath);
+  const data = await readFile(filePath);
   hash.update(data);
   return `sha512-${hash.digest('base64')}`;
 }
 
-function fetchNpmPackageMeta(
+async function fetchNpmPackageMeta(
   packageName: string,
   version: string
-): { tarballUrl: string; integrity: string } | undefined {
+): Promise<{ tarballUrl: string; integrity: string } | undefined> {
   const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${version}`;
   try {
-    const result = execFileSync('curl', ['-sf', url], {
-      encoding: 'utf-8',
-      timeout: 15_000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+    const result = (await curl(['-sf', url], 15_000)).trim();
     const meta = JSON.parse(result);
     const tarballUrl = meta?.dist?.tarball;
     const integrity = meta?.dist?.integrity;
@@ -223,12 +230,9 @@ function fetchNpmPackageMeta(
   }
 }
 
-function downloadTarball(url: string, destPath: string): string | undefined {
+async function downloadTarball(url: string, destPath: string): Promise<string | undefined> {
   try {
-    execFileSync('curl', ['-sfL', '-o', destPath, url], {
-      timeout: 120_000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    await curl(['-sfL', '-o', destPath, url], 120_000);
     if (existsSync(destPath)) return destPath;
     logWarn(`[sdk-cli-resolver] Download succeeded but file missing: ${destPath}`);
     return undefined;
@@ -238,14 +242,14 @@ function downloadTarball(url: string, destPath: string): string | undefined {
   }
 }
 
-function extractFileFromTarGz(
+async function extractFileFromTarGz(
   tarballPath: string,
   targetFileName: string,
   destPath: string
-): string | undefined {
+): Promise<string | undefined> {
   try {
-    const compressed = readFileSync(tarballPath);
-    const gunzipped = gunzipSync(compressed);
+    const compressed = await readFile(tarballPath);
+    const gunzipped = await gunzipAsync(compressed);
 
     const TAR_HEADER_SIZE = 512;
     let offset = 0;
@@ -274,7 +278,7 @@ function extractFileFromTarGz(
           offset + TAR_HEADER_SIZE,
           offset + TAR_HEADER_SIZE + fileSize
         );
-        writeFileSync(destPath, fileData);
+        await writeFile(destPath, fileData);
         return destPath;
       }
 
@@ -305,7 +309,7 @@ function safeMoveFile(src: string, dest: string): void {
   }
 }
 
-function downloadSdkBinary(): string | undefined {
+async function downloadSdkBinary(): Promise<string | undefined> {
   const platformPkg = getPlatformPackageName();
   if (!platformPkg) return undefined;
 
@@ -321,14 +325,14 @@ function downloadSdkBinary(): string | undefined {
     tmpDir = join(tmpdir(), `hyperneo-sdk-download-${process.pid}-${Date.now()}`);
     mkdirSync(tmpDir, { recursive: true });
 
-    const meta = fetchNpmPackageMeta(platformPkg, version);
+    const meta = await fetchNpmPackageMeta(platformPkg, version);
     if (!meta) return undefined;
 
     const tarballPath = join(tmpDir, `${platformPkg.replace(/\//g, '_')}-${version}.tgz`);
-    const downloaded = downloadTarball(meta.tarballUrl, tarballPath);
+    const downloaded = await downloadTarball(meta.tarballUrl, tarballPath);
     if (!downloaded) return undefined;
 
-    const actualIntegrity = sha512OfFile(tarballPath);
+    const actualIntegrity = await sha512OfFile(tarballPath);
     if (actualIntegrity !== meta.integrity) {
       logWarn(
         `[sdk-cli-resolver] Integrity mismatch for ${platformPkg}@${version}: expected ${meta.integrity}, got ${actualIntegrity}`
@@ -337,7 +341,7 @@ function downloadSdkBinary(): string | undefined {
     }
 
     const extractedPath = join(tmpDir, binaryName);
-    const extracted = extractFileFromTarGz(tarballPath, binaryName, extractedPath);
+    const extracted = await extractFileFromTarGz(tarballPath, binaryName, extractedPath);
     if (!extracted) return undefined;
 
     mkdirSync(cacheDir, { recursive: true });
@@ -417,10 +421,10 @@ export interface WarmupResult {
   error?: string;
 }
 
-let warmupInProgress = false;
+let warmupInFlight: Promise<WarmupResult> | undefined;
 
-export function warmupSDKCliBinary(): WarmupResult {
-  if (cachedCliPath && cachedCliPath !== '') {
+export async function warmupSDKCliBinary(): Promise<WarmupResult> {
+  if (cachedCliPath) {
     const source = resolveSource(cachedCliPath);
     return {
       status: 'ready',
@@ -431,19 +435,21 @@ export function warmupSDKCliBinary(): WarmupResult {
     };
   }
 
-  if (warmupInProgress) {
-    return { status: 'failed', error: 'Warmup already in progress' };
-  }
-
-  warmupInProgress = true;
-  try {
-    return doWarmup();
-  } finally {
-    warmupInProgress = false;
-  }
+  warmupInFlight ??= doWarmup().finally(() => {
+    warmupInFlight = undefined;
+  });
+  return warmupInFlight;
 }
 
-function doWarmup(): WarmupResult {
+export async function awaitSDKCliPath(): Promise<string | undefined> {
+  const local = resolveSDKCliPath();
+  if (local) return local;
+  const result = await warmupSDKCliBinary();
+  if (result.status === 'ready' || !result.packageName) return result.path;
+  throw new Error(`Claude Code binary unavailable: ${result.error}`);
+}
+
+async function doWarmup(): Promise<WarmupResult> {
   const platformPkg = getPlatformPackageName();
   const version = getSdkVersion();
 
@@ -488,7 +494,7 @@ function doWarmup(): WarmupResult {
   }
 
   logStartup(`[SDK] Downloading ${platformPkg}@${version}...`);
-  const downloadedPath = downloadSdkBinary();
+  const downloadedPath = await downloadSdkBinary();
   if (downloadedPath) {
     cachedCliPath = downloadedPath;
     const size = formatFileSize(getFileSize(downloadedPath));
@@ -533,11 +539,11 @@ function formatFileSize(bytes: number): string {
 /** @public */
 export function _resetForTesting(): void {
   cachedCliPath = undefined;
-  warmupInProgress = false;
+  warmupInFlight = undefined;
 }
 
+/** @public */
 export function resolveSDKCliPath(): string | undefined {
-  if (cachedCliPath === '') return undefined;
   if (cachedCliPath !== undefined) return cachedCliPath;
 
   const nodeModulesPath = resolveFromNodeModules();
@@ -552,13 +558,5 @@ export function resolveSDKCliPath(): string | undefined {
     return cachedCliPath;
   }
 
-  const downloadedPath = downloadSdkBinary();
-  if (downloadedPath) {
-    cachedCliPath = downloadedPath;
-    return cachedCliPath;
-  }
-
-  cachedCliPath = '';
-  logWarn('[sdk-cli-resolver] All resolution strategies failed — caching negative result');
   return undefined;
 }

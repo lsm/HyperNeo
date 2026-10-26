@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   DEFAULT_SDK_STARTUP_MAX_CONCURRENT,
+  DEFAULT_SDK_STARTUP_MAX_HOLD_MS,
+  getSdkStartupMaxHoldMs,
   getSdkStartupMaxConcurrent,
   SdkStartupConcurrencyGate,
   type SdkStartupPermit,
@@ -38,6 +40,24 @@ describe('getSdkStartupMaxConcurrent', () => {
   });
 });
 
+describe('getSdkStartupMaxHoldMs', () => {
+  it('defaults to the slow-start nudge threshold', () => {
+    expect(getSdkStartupMaxHoldMs({})).toBe(60_000);
+    expect(getSdkStartupMaxHoldMs({ HYPERNEO_SDK_STARTUP_MAX_HOLD_MS: '' })).toBe(
+      DEFAULT_SDK_STARTUP_MAX_HOLD_MS
+    );
+  });
+
+  it('parses positive overrides and rejects invalid durations', () => {
+    expect(getSdkStartupMaxHoldMs({ HYPERNEO_SDK_STARTUP_MAX_HOLD_MS: '120000' })).toBe(120_000);
+    for (const value of ['0', '-1', 'abc']) {
+      expect(getSdkStartupMaxHoldMs({ HYPERNEO_SDK_STARTUP_MAX_HOLD_MS: value })).toBe(
+        DEFAULT_SDK_STARTUP_MAX_HOLD_MS
+      );
+    }
+  });
+});
+
 describe('SdkStartupConcurrencyGate', () => {
   let gate: SdkStartupConcurrencyGate;
 
@@ -48,6 +68,7 @@ describe('SdkStartupConcurrencyGate', () => {
 
   afterEach(() => {
     delete process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
+    delete process.env.HYPERNEO_SDK_STARTUP_MAX_HOLD_MS;
   });
 
   it('admits up to the cap immediately and queues the rest', async () => {
@@ -145,8 +166,8 @@ describe('SdkStartupConcurrencyGate', () => {
 
   it('treats release() as idempotent', async () => {
     const a = await gate.acquire({ sessionId: 'a' });
-    a.release();
-    a.release();
+    expect(a.release()).toBe(true);
+    expect(a.release()).toBe(false);
     expect(gate.getStats()).toEqual({ active: 0, queued: 0, maxConcurrent: 2 });
 
     await gate.acquire({ sessionId: 'b' });
@@ -155,6 +176,28 @@ describe('SdkStartupConcurrencyGate', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(gate.getStats()).toEqual({ active: 2, queued: 1, maxConcurrent: 2 });
     void dPromise;
+  });
+
+  it('admits Neo when every startup hangs before its first message', async () => {
+    process.env.HYPERNEO_SDK_STARTUP_MAX_HOLD_MS = '20';
+    const bounded = new SdkStartupConcurrencyGate();
+    const first = await bounded.acquire({ sessionId: 'hung-provider' });
+    const second = await bounded.acquire({ sessionId: 'hung-sdk' });
+    second.setPhase('sdk_first_message');
+    const neoPromise = bounded.acquire({ sessionId: 'root-neo' });
+    expect(bounded.getStats().queued).toBe(1);
+    const neo = await Promise.race([
+      neoPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Neo starved by hung startups')), 500)
+      ),
+    ]);
+    expect(neo.sessionId).toBe('root-neo');
+    expect(first.release()).toBe(false);
+    second.release();
+    expect(bounded.getStats().active).toBe(1);
+    neo.release();
+    expect(bounded.getStats()).toEqual({ active: 0, queued: 0, maxConcurrent: 2 });
   });
 
   it('reports wait metadata on the permit', async () => {

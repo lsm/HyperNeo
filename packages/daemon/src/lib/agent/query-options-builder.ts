@@ -1,3 +1,4 @@
+import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';
 import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   CanUseTool,
@@ -46,6 +47,11 @@ import { neoReadSandbox, neoReadTools } from '../neo/session-config.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
+  prepareInitialSessionToolSelection,
+  projectSessionToolInputs,
+  type SessionToolInputs,
+} from '../tools/session-tool-inputs.ts';
+import {
   getProviderCatalogEpoch,
   getSessionModelCacheKey,
   isCuratedOutModel,
@@ -79,9 +85,10 @@ import {
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
-import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
+import { awaitSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import { handoffDraftDirectory } from '../handoffs/outbox.ts';
+import type { QuestionInputOriginSource } from './question-input-origin.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -259,7 +266,7 @@ export function buildProviderSettings(
 
 export interface QueryOptionsBuilderContext {
   getGithubToken?(): Promise<string | null>;
-  getOperationMcpServer?(): SdkMcpServerConfig;
+  getOperationMcpServer?(inputOrigin?: QuestionInputOriginSource): SdkMcpServerConfig;
   getSpaceBriefing?(): string | undefined;
   readonly session: Session;
   readonly settingsManager: SettingsManager;
@@ -272,6 +279,8 @@ export interface QueryOptionsBuilderContext {
   readonly skillOverrides?: SkillEnablementOverride[];
   readonly toolGuards?: DeclarativeToolGuard[];
 }
+
+type CanonicalToolInputs = Extract<SessionToolInputs, { ok: true }>;
 
 export interface BuiltFallbackIdentity {
   providerId: string;
@@ -293,9 +302,37 @@ export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity
   return builtFallbackBySession.get(session);
 }
 
+export const DISABLE_THINKING_ENV = 'CLAUDE_CODE_DISABLE_THINKING';
+
+export function offEffort(
+  providerId: string | undefined,
+  effortLevels: readonly ThinkingEffort[]
+): ThinkingEffort | undefined {
+  return providerId === 'anthropic' ? undefined : effortLevels[0];
+}
+
+export function liveThinkingUpdate(
+  resolved: { thinking?: ThinkingConfig; effort?: ThinkingEffort },
+  level: ThinkingLevel
+): { maxThinkingTokens?: number; effortLevel?: ThinkingEffort; disableThinking?: boolean } {
+  const { thinking, effort } = resolved;
+  const maxThinkingTokens = !thinking
+    ? undefined
+    : thinking.type === 'disabled'
+      ? 0
+      : thinking.type === 'enabled'
+        ? thinking.budgetTokens
+        : (THINKING_LEVEL_TOKENS[level] ?? THINKING_LEVEL_TOKENS.think8k);
+  return {
+    maxThinkingTokens,
+    effortLevel: effort,
+    disableThinking: thinking ? thinking.type === 'disabled' : undefined,
+  };
+}
+
 export class QueryOptionsBuilder {
+  private operationServer?: SdkMcpServerConfig;
   private askUserQuestionHook?: HookCallback;
-  private deferredPermissionMode?: PermissionMode;
   private effectiveFallbackCaptured = false;
   private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
@@ -308,10 +345,6 @@ export class QueryOptionsBuilder {
     this.askUserQuestionHook = hook;
   }
 
-  getDeferredPermissionMode(): PermissionMode | undefined {
-    return this.deferredPermissionMode;
-  }
-
   getCurrentPermissionMode(): PermissionMode {
     return this.getPermissionMode();
   }
@@ -320,12 +353,44 @@ export class QueryOptionsBuilder {
     return this.computeEffectiveMcpServers();
   }
 
-  private computeEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
+  private canonicalToolInputs(session = this.ctx.session): CanonicalToolInputs | null {
+    const selection = session.config.toolSelection;
+    if (!selection) return null;
+    const catalog = {
+      session,
+      skills: this.ctx.skillsManager?.listSkills() ?? [],
+      registry: this.ctx.appMcpServerRepo?.list() ?? [],
+      overrides: [],
+      skillOverrides: this.ctx.skillOverrides,
+    };
+    const restricted = prepareInitialSessionToolSelection(catalog, [], selection);
+    if (!restricted.ok) throw new Error(restricted.reason);
+    const inputs = projectSessionToolInputs(catalog, restricted.selection);
+    if (!inputs.ok) throw new Error(inputs.reason);
+    return inputs;
+  }
+
+  private canonicalMcpServers(inputs: CanonicalToolInputs): Record<string, McpServerConfig> {
+    const servers: Record<string, McpServerConfig> = {};
+    for (const { alias, server } of inputs.catalogServers) {
+      const validation = this.validateAppMcpServer(server);
+      if (!validation.valid) {
+        this.logger.warn(`Skipping selected MCP server "${alias}": ${validation.error}`);
+        continue;
+      }
+      servers[alias] = this.appMcpServerToSdkConfig(server);
+    }
+    return servers;
+  }
+
+  private computeEffectiveMcpServers(
+    inputs = this.canonicalToolInputs()
+  ): Record<string, SdkMcpServerConfig> | undefined {
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
-      registryServers: this.getMcpServersFromRegistry(),
-      skillServers: this.getMcpServersFromSkills(),
+      registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
+      skillServers: inputs ? {} : this.getMcpServersFromSkills(),
       runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
-      operationServer: this.ctx.getOperationMcpServer?.(),
+      operationServer: this.operationServer ?? this.ctx.getOperationMcpServer?.(),
     });
     for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
     const exa = this.exaWebToolsActivation;
@@ -347,10 +412,13 @@ export class QueryOptionsBuilder {
   async build(overrides?: {
     askUserQuestionHook?: HookCallback;
     canUseTool?: CanUseTool;
+    operationInputOrigin?: QuestionInputOriginSource;
     session?: import('@hyperneo/shared').Session;
   }): Promise<Options> {
     const session = overrides?.session ?? this.ctx.session;
     const config = this.admittedConfig(session);
+    const toolInputs = this.canonicalToolInputs(session);
+    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd());
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
@@ -436,11 +504,17 @@ export class QueryOptionsBuilder {
       ? undefined
       : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
     if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
+    if (handoffDirectory) workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
-    const permissionMode = this.getPermissionMode();
+    const requestedPermissionMode = this.getPermissionMode();
+    const permissionMode =
+      requestedPermissionMode === 'bypassPermissions' &&
+      workerSandbox?.permissions.disableBypassPermissionsMode === 'disable'
+        ? 'default'
+        : requestedPermissionMode;
     const pluginsFromSkills = [
-      ...this.buildPluginsFromSkills(),
-      ...this.buildPluginsFromBuiltinSkills(),
+      ...this.buildPluginsFromSkills(toolInputs),
+      ...this.buildPluginsFromBuiltinSkills(toolInputs),
     ];
     const providerSettings = buildProviderSettings(
       providerId,
@@ -464,9 +538,10 @@ export class QueryOptionsBuilder {
         : {}),
     };
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
-    const sdkCliPath = this.getSDKCliPath();
+    const sdkCliPath = await this.getSDKCliPath();
 
-    const mergedMcpServers = this.computeEffectiveMcpServers();
+    this.operationServer = this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
+    const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs);
 
     const queryOptions: Options = {
       model: sdkModelId,
@@ -493,7 +568,7 @@ export class QueryOptionsBuilder {
             ...neoReadSandbox(),
             filesystem: readAccess.filesystem,
           }
-        : (config.sandbox as Options['sandbox']),
+        : (workerSandbox?.sandbox ?? (config.sandbox as Options['sandbox'])),
 
       mcpServers: mergedMcpServers as Options['mcpServers'],
       strictMcpConfig: true,
@@ -510,6 +585,7 @@ export class QueryOptionsBuilder {
         ...mergedEnv,
         ...compactEnv,
         HYPERNEO_HANDOFF_DIR: handoffDirectory,
+        ...workerSandbox?.env,
         ...readAccess?.env,
       },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
@@ -600,11 +676,7 @@ export class QueryOptionsBuilder {
     );
 
     if (permissionMode === 'bypassPermissions') {
-      delete queryOptions.permissionMode;
       delete queryOptions.allowedTools;
-      this.deferredPermissionMode = 'bypassPermissions';
-    } else {
-      this.deferredPermissionMode = undefined;
     }
 
     const cleanedOptions = Object.fromEntries(
@@ -631,18 +703,7 @@ export class QueryOptionsBuilder {
     return { type: 'enabled', budgetTokens: tokens };
   }
 
-  addSessionStateOptions(options: Options): Options {
-    const result = { ...options } as Options & { thinking?: ThinkingConfig };
-
-    if (this.ctx.session.sdkSessionId) {
-      result.resume = this.ctx.session.sdkSessionId;
-    }
-
-    const resumeSessionAt = this.ctx.peekPendingResumeSessionAt?.();
-    if (resumeSessionAt && result.resume) {
-      result.resumeSessionAt = resumeSessionAt;
-    }
-
+  resolveThinkingOptions(): { thinking?: ThinkingConfig; effort?: ThinkingEffort } {
     const providerId = this.ctx.session.config.provider;
     let thinkingModes: 'off' | 'on' | 'granular' =
       PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
@@ -663,22 +724,18 @@ export class QueryOptionsBuilder {
     const thinkingLevel = this.getEffectiveThinkingLevel();
     const effort =
       thinkingModes === 'granular' && effortLevels?.length
-        ? effortForThinkingLevel(
-            thinkingLevel,
-            effortLevels?.length ? effortLevels : ['low', 'medium', 'high']
-          )
+        ? thinkingLevel === 'off'
+          ? offEffort(providerId, effortLevels)
+          : effortForThinkingLevel(thinkingLevel, effortLevels)
         : undefined;
-    let thinkingConfig: ThinkingConfig | undefined = effort
-      ? { type: 'adaptive' }
-      : this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+    let thinkingConfig: ThinkingConfig | undefined =
+      effort && thinkingLevel !== 'off'
+        ? { type: 'adaptive' }
+        : this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {
-      if (KimiProvider.isKimiK3Model(selectedModel)) {
-        if (thinkingConfig?.type === 'disabled') {
-          thinkingConfig = undefined;
-        }
-      } else if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
+      if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
         if (!thinkingConfig || thinkingConfig.type === 'disabled') {
           thinkingConfig = {
             type: 'enabled',
@@ -704,6 +761,27 @@ export class QueryOptionsBuilder {
         }
       }
     }
+
+    return { thinking: thinkingConfig, effort };
+  }
+
+  addSessionStateOptions(options: Options): Options {
+    const result = { ...options } as Options & { thinking?: ThinkingConfig };
+
+    if (this.ctx.session.sdkSessionId) {
+      result.resume = this.ctx.session.sdkSessionId;
+    }
+
+    const resumeSessionAt = this.ctx.peekPendingResumeSessionAt?.();
+    if (resumeSessionAt && result.resume) {
+      result.resumeSessionAt = resumeSessionAt;
+    }
+
+    const { thinking: thinkingConfig, effort } = this.resolveThinkingOptions();
+    const env = { ...(result.env ?? {}) };
+    delete env[DISABLE_THINKING_ENV];
+    if (thinkingConfig?.type === 'disabled') env[DISABLE_THINKING_ENV] = '1';
+    result.env = env;
 
     if (thinkingConfig) {
       result.thinking = thinkingConfig;
@@ -1099,19 +1177,14 @@ export class QueryOptionsBuilder {
       : config;
   }
 
-  private getSDKCliPath(): string | undefined {
+  private async getSDKCliPath(): Promise<string | undefined> {
     const config = this.admittedConfig();
 
     if (config.pathToClaudeCodeExecutable) {
       return config.pathToClaudeCodeExecutable;
     }
 
-    const resolvedPath = resolveSDKCliPath();
-    if (resolvedPath) {
-      return resolvedPath;
-    }
-
-    return undefined;
+    return awaitSDKCliPath();
   }
 
   private getOverrideDisabledSkillIds(): Set<string> {
@@ -1133,16 +1206,19 @@ export class QueryOptionsBuilder {
     return overrideDisabled.has(skillId) || sessionDisabled.has(skillId);
   }
 
-  private buildPluginsFromSkills(): Array<{ type: 'local'; path: string }> {
+  private buildPluginsFromSkills(
+    inputs = this.canonicalToolInputs()
+  ): Array<{ type: 'local'; path: string }> {
     if (!this.ctx.skillsManager) return [];
 
-    const skills = this.ctx.skillsManager.getEnabledSkills();
+    const skills = inputs?.instructionSkills ?? this.ctx.skillsManager.getEnabledSkills();
     const overrideDisabled = this.getOverrideDisabledSkillIds();
     const sessionDisabled = this.getSessionDisabledSkillIds();
     const plugins: Array<{ type: 'local'; path: string }> = [];
 
     for (const skill of skills) {
-      if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
+      if (!inputs && this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled))
+        continue;
       if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
         plugins.push({ type: 'local', path: skill.config.pluginPath });
       }
@@ -1151,19 +1227,23 @@ export class QueryOptionsBuilder {
     return plugins;
   }
 
-  private buildPluginsFromBuiltinSkills(): Array<{ type: 'local'; path: string }> {
+  private buildPluginsFromBuiltinSkills(
+    inputs = this.canonicalToolInputs()
+  ): Array<{ type: 'local'; path: string }> {
     if (!this.ctx.skillsManager) return [];
 
-    const skills = this.ctx.skillsManager.getEnabledSkills();
+    const skills = inputs?.instructionSkills ?? this.ctx.skillsManager.getEnabledSkills();
     const overrideDisabled = this.getOverrideDisabledSkillIds();
     const sessionDisabled = this.getSessionDisabledSkillIds();
     const plugins: Array<{ type: 'local'; path: string }> = [];
     const wrappersRoot = defaultBuiltinSkillPluginRoot();
 
     for (const skill of skills) {
-      if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
+      if (!inputs && this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled))
+        continue;
       if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
-        if (skill.config.spaceOnly === true && !this.ctx.session.context?.spaceId) continue;
+        if (!inputs && skill.config.spaceOnly === true && !this.ctx.session.context?.spaceId)
+          continue;
         const wrapperDir = builtinSkillPluginPath(wrappersRoot, skill.config.commandName);
         plugins.push({ type: 'local', path: wrapperDir });
       }

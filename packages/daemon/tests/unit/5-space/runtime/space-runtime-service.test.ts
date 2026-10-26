@@ -24,7 +24,7 @@ import type { Provider } from '@hyperneo/shared/provider';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
-import { persistPrompt } from '../../../../src/lib/agent/message-delivery-outbox';
+import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery.ts';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue.ts';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
@@ -173,7 +173,7 @@ function seedMailboxRow(
   uuid: string,
   text: string
 ): string {
-  const { dbMessageId } = persistPrompt({
+  const { dbMessageId } = ensurePrompt({
     db: h.db,
     sdkMessageRepo: h.sdkRepo,
     jobQueue: h.jobQueue,
@@ -883,6 +883,7 @@ describe('SpaceRuntimeService', () => {
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
         setAttachedCapabilities: mock(() => {}),
+        updateMetadata: mock(async () => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
         restart: mock(async () => {}),
@@ -2224,6 +2225,7 @@ describe('SpaceRuntimeService', () => {
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
         setAttachedCapabilities: mock(() => {}),
+        updateMetadata: mock(async () => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
         getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} }) as Session),
@@ -2489,6 +2491,7 @@ describe('SpaceRuntimeService', () => {
       const agentSession = {
         mergeRuntimeMcpServers: mock(() => {}),
         setAttachedCapabilities: mock(() => {}),
+        updateMetadata: mock(async () => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
@@ -2572,6 +2575,7 @@ describe('SpaceRuntimeService', () => {
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
         setAttachedCapabilities: mock(() => {}),
+        updateMetadata: mock(async () => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
@@ -3219,6 +3223,7 @@ describe('SpaceRuntimeService', () => {
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
         setAttachedCapabilities: mock(() => {}),
+        updateMetadata: mock(async () => {}),
       } as unknown as AgentSession;
     }
 
@@ -3481,6 +3486,7 @@ describe('SpaceRuntimeService', () => {
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
         setAttachedCapabilities: mock(() => {}),
+        updateMetadata: mock(async () => {}),
       } as unknown as AgentSession;
     }
 
@@ -3492,6 +3498,7 @@ describe('SpaceRuntimeService', () => {
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
         setAttachedCapabilities: mock(() => {}),
+        updateMetadata: mock(async () => {}),
       } as unknown as AgentSession;
     }
 

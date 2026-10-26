@@ -1,7 +1,8 @@
 import { signal } from '@preact/signals';
-import { cleanup, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { useEffect } from 'preact/hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ComponentProps } from 'preact';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import type { VoicePhase } from '../NeoVoice.tsx';
@@ -22,7 +23,10 @@ vi.mock('../../lib/state.ts', () => ({
 }));
 
 const onDraft = vi.fn();
-function composer(draft = 'Fictional draft about lunch') {
+function composer(
+  draft = 'Fictional draft about lunch',
+  props: Partial<ComponentProps<typeof NeoComposer>> = {}
+) {
   const store = {
     sdkMessages: signal([]),
     agentState: signal({ status: 'idle' }),
@@ -41,6 +45,7 @@ function composer(draft = 'Fictional draft about lunch') {
       onError={vi.fn()}
       onTranscript={vi.fn()}
       onSend={vi.fn()}
+      {...props}
     />
   );
 }
@@ -62,11 +67,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('keeps the ordinary worker composer outside Neo Preview binding', async () => {
+  const onSend = vi.fn().mockResolvedValue({ ok: true, created: true, messageId: 'worker-send' });
+  const reference = {
+    artifactId: 'registered-report',
+    snapshot: 'a'.repeat(64),
+    displayName: 'Neo-only report',
+    state: 'available' as const,
+  };
+  render(
+    composer('Worker-specific request', {
+      forSession: true,
+      previewContext: reference,
+      previewCandidate: { ...reference, artifactId: 'different-report' },
+      onSend,
+    })
+  );
+  expect(screen.queryByText(/Neo-only report/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Use current Preview' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+  expect(onSend.mock.calls[0][0]).not.toHaveProperty('previewContext');
+});
+
 describe('Neo composer draft while voice is active', () => {
   it.each<VoicePhase>(['recording', 'working', 'drafting', 'sending'])(
     'shows the draft read-only at the same height during %s, then editable and focused',
     (phase) => {
       const { rerender } = render(composer());
+      fireEvent.focus(textarea());
       const idleHeight = textarea().style.height;
       expect(idleHeight).not.toBe('');
 
@@ -105,12 +134,14 @@ describe('Neo composer draft while voice is active', () => {
   it('hands the attach and model controls over to the voice bar while voice is active', () => {
     voice.phase = 'recording';
     const { rerender } = render(composer());
-    const attach = screen.getByRole('button', { name: 'Attach photos or files' });
-    expect(attach.parentElement?.classList.contains('hidden')).toBe(true);
+    const attach = screen.getByRole('button', {
+      name: 'Attach photos or files',
+    }) as HTMLButtonElement;
+    expect(attach.disabled).toBe(true);
 
     voice.phase = 'idle';
     rerender(composer());
-    expect(attach.parentElement?.classList.contains('hidden')).toBe(false);
+    expect(attach.disabled).toBe(false);
   });
 
   it('tells an empty draft where the dictated words will appear', () => {
@@ -132,5 +163,51 @@ describe('Neo composer draft while voice is active', () => {
 
     rerender(composer(''));
     expect(screen.queryByText('Sending with your draft…')).toBeNull();
+  });
+});
+
+describe('Neo composer focus layout', () => {
+  it('expands an empty composer on focus and collapses again after blur', () => {
+    render(composer(''));
+    const textarea = () =>
+      screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
+    expect(textarea().getAttribute('rows')).toBe('1');
+    fireEvent.focus(textarea());
+    expect(textarea().getAttribute('rows')).toBe('2');
+    fireEvent.focusOut(textarea(), { relatedTarget: document.body });
+    expect(textarea().getAttribute('rows')).toBe('1');
+    expect(textarea().value).toBe('');
+  });
+
+  it('keeps the expanded layout while moving focus to a composer control', () => {
+    render(composer());
+    fireEvent.focus(textarea());
+    fireEvent.focusOut(textarea(), {
+      relatedTarget: screen.getByRole('button', { name: 'Send message' }),
+    });
+    expect(textarea().getAttribute('rows')).toBe('2');
+  });
+
+  it.each(['First line\nSecond line', ' '])(
+    'keeps an unfocused nonempty draft expanded: %j',
+    (draft) => {
+      render(composer(draft));
+      const input = screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
+      expect(input.getAttribute('rows')).toBe('2');
+      expect(input.value).toBe(draft);
+      fireEvent.focus(input);
+      expect(input.getAttribute('rows')).toBe('2');
+      fireEvent.focusOut(input, { relatedTarget: document.body });
+      expect(input.getAttribute('rows')).toBe('2');
+      expect(input.value).toBe(draft);
+    }
+  );
+
+  it('keeps recording send controls available with no text', () => {
+    voice.phase = 'recording';
+    render(composer(''));
+    expect(
+      screen.getByRole('button', { name: 'Stop recording and send the message' })
+    ).toBeTruthy();
   });
 });

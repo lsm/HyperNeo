@@ -1,3 +1,7 @@
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { NeoWakeQueueRepository } from './neo-wake-queue-repository.ts';
+import { sdkNeoIntake } from './sdk-message-transactions.ts';
 import type {
   NeoConversationAsk,
   NeoConversationAskAppendResult,
@@ -9,7 +13,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import { admitNeoConversationAsk } from '../../lib/neo/conversation-ask.ts';
 import {
-  ensurePrompt,
+  ensurePromptInTransaction,
   PromptContentConflictError,
   type PromptHold,
 } from '../../lib/agent/message-delivery-outbox.ts';
@@ -30,6 +34,7 @@ export type NeoConversationAskImageRow = {
 type IntakePrompt = SDKUserMessage & {
   inputKind?: unknown;
   replyTo?: NeoReplyTo;
+  previewContext?: NeoPreviewReference;
   humanContent?: SDKUserMessage['message']['content'];
 };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
@@ -113,10 +118,52 @@ export function prepareNeoIntakeAsk(conversationId: string, message: IntakePromp
     askOrigin: { sessionId: message.session_id, messageId: message.uuid },
     content: message.humanContent ?? message.message.content,
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.previewContext ? { previewContext: message.previewContext } : {}),
   });
   return 'value' in admitted
     ? admitted
     : { reason: { accepted: false as const, reason: 'invalid_ask' as const } };
+}
+
+export function persistNeoIntakeTransaction(
+  ask: NeoConversationAskInput,
+  message: IntakePrompt,
+  hold: PromptHold,
+  db: Database,
+  ledger: NeoConversationAskRepository,
+  sdkMessageRepo: SDKMessageRepository,
+  jobQueue: JobQueueRepository,
+  deferPostSaveSideEffects: (effect: () => void) => void
+): NeoConversationAskAppendResult {
+  return db.transaction(() => {
+    const stored = ledger.append(ask);
+    if (!stored.accepted) return stored;
+    if (
+      !stored.created &&
+      sdkMessageRepo.getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [ask.requestId])
+        .length === 0
+    )
+      return { ...stored, created: false };
+    if (stored.created)
+      new NeoWakeQueueRepository(db).release(ask.askOrigin.sessionId, {
+        at: Date.parse(stored.ask.createdAt) - 1,
+        sdkMessageRepo,
+        jobQueue,
+        hold,
+        deferPostSaveSideEffects,
+      });
+    const prompt = ensurePromptInTransaction({
+      db,
+      sdkMessageRepo,
+      jobQueue,
+      sessionId: ask.askOrigin.sessionId,
+      message,
+      hold,
+      delivery: { origin: 'chat', priority: NEO_HUMAN_DELIVERY_PRIORITY },
+      deferPostSaveSideEffects,
+    });
+    return { ...stored, created: prompt.created };
+  })();
 }
 
 function commitNeoIntake(
@@ -130,33 +177,24 @@ function commitNeoIntake(
 ): NeoConversationAskAppendResult {
   const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
   if (active) throw new Error('Public ask intake must own its commit boundary');
-  let publish = () => {};
-  const receipt = db.transaction(() => {
-    const stored = ledger.append(ask);
-    if (!stored.accepted) return stored;
-    if (
-      !stored.created &&
-      sdkMessageRepo.getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [ask.requestId])
-        .length === 0
-    )
-      return { ...stored, created: false };
-    const prompt = ensurePrompt({
-      db,
-      sdkMessageRepo,
-      jobQueue,
-      sessionId: ask.askOrigin.sessionId,
-      message,
-      hold,
-      delivery: { origin: 'chat', priority: NEO_HUMAN_DELIVERY_PRIORITY },
-      deferPostSaveSideEffects: (effect) => {
-        publish = effect;
-      },
-    });
-    return { ...stored, created: prompt.created };
-  })();
-  try {
-    publish();
-  } catch {}
+  const effects: (() => void)[] = [];
+  const receipt = persistNeoIntakeTransaction(
+    ask,
+    message,
+    hold,
+    db,
+    ledger,
+    sdkMessageRepo,
+    jobQueue,
+    (effect) => {
+      effects.push(effect);
+    }
+  );
+  for (const publish of effects) {
+    try {
+      publish();
+    } catch {}
+  }
   return receipt;
 }
 
@@ -264,7 +302,27 @@ export class NeoConversationAskRepository {
     return row ? decode(row) : null;
   }
 
-  acceptPrompt(
+  async acceptPrompt(
+    conversationId: string,
+    message: IntakePrompt,
+    hold: PromptHold,
+    _sdkMessageRepo: SDKMessageRepository,
+    _jobQueue: JobQueueRepository
+  ): Promise<NeoConversationAskAppendResult> {
+    const ask = prepareNeoIntakeAsk(conversationId, message);
+    if ('reason' in ask) return ask.reason;
+    if ('inTransaction' in this.db ? this.db.inTransaction : this.db.isTransaction)
+      throw new Error('Public ask intake must own its commit boundary');
+    try {
+      return await gatewayFor(this.db).run(sdkNeoIntake, { ask: ask.value, message, hold });
+    } catch (error) {
+      if (error instanceof Error && error.message.endsWith('already exists with different content'))
+        return { accepted: false, reason: 'ask_conflict' };
+      throw error;
+    }
+  }
+
+  acceptPromptSync(
     conversationId: string,
     message: IntakePrompt,
     hold: PromptHold,

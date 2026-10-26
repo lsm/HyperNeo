@@ -8,14 +8,15 @@
    `Todo "Fix the loader" is done: #8 merged`.
    Local human `neo.ask.settle` explicitly confirms done even with unfinished
    todos (#8292). Do not call it before observing this automatic-merge proof:
-   settling removes unfinished todos. Agent completion still requires finished
-   todos and otherwise returns `todos_unfinished`; the ask stays open.
+   settling done closes unfinished todos as `closed_unverified`, for human and
+   agent callers, and returns a `todos_unfinished` record. Those rows never count
+   as done. See ask-bookkeeping-actions.md for that separate settlement proof.
    To verify PR ownership and URL edits, run
    `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
    daemon. It seeds only this run's ask, URL-less session todo and coding ledger
    claim, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding
-   a duplicate refuses with the existing todo id/title; `addUrls` pins the PR on
-   that original; a competing edit refuses it. The helper marks the stub PR merged
+   a duplicate succeeds and records the existing todo id/title; `addUrls` pins the PR on
+   that original; a competing edit succeeds with a bookkeeping record. The helper marks the stub PR merged
    and waits up to 210 seconds for the coding pack to finish the original without
    a manual close. Evidence: `evidence/todo-pr-claims.json` includes RPC receipts,
    stored merged evidence and the Neo snapshot; `gh.log` shows stub-only lookups.

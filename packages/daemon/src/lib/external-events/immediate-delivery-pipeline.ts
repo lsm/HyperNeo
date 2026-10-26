@@ -206,7 +206,7 @@ export async function persistAndEnqueue(
   ctx: ImmediateEventDeliveryCtx
 ): Promise<ImmediateEventDeliveryCtx> {
   try {
-    const ensured = ensurePrompt({
+    const ensured = await ensurePrompt({
       db: ctx.deps.db,
       sdkMessageRepo: ctx.deps.messages,
       jobQueue: ctx.deps.jobQueue,

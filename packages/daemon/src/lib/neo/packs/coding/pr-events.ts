@@ -1,8 +1,9 @@
+import { codingRepoWatched } from './watched-repos.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import type { CodingPrTransition } from './pr-ledger.ts';
-import type { CodingSweepDeps } from './pr-sweep.ts';
+import { CodingPrLedgerRepository, type CodingPrTransition } from './pr-ledger.ts';
+import { CODING_MANUAL_MERGE_NEXT_STEP, type CodingSweepDeps } from './pr-sweep.ts';
 import {
   codingUnownedPrKey,
   planCodingUnownedNotice,
@@ -20,6 +21,8 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
     key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}`,
     text: `${pr(row)} ${text}`,
   });
+  if (row.state === 'merged') return owner(`was merged on head ${head(row)}.`);
+  if (row.state === 'closed') return owner(`was closed without merging on head ${head(row)}.`);
   if (row.state === 'failing')
     return owner(`has failing CI on head ${head(row)}. Fix it and push.`);
   if (row.state === 'changes_requested')
@@ -28,7 +31,7 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
     return owner('now conflicts with its base. Merge the base branch in and push.');
   if (row.state === 'approved_green')
     return owner(
-      `is approved and green on head ${head(row)}. Merge it now with a manual squash on this head.`
+      `has passing review and CI on head ${head(row)}. ${CODING_MANUAL_MERGE_NEXT_STEP}`
     );
   if (
     row.from === 'failing' &&
@@ -42,14 +45,56 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
 export class CodingPrEventRepository {
   constructor(private readonly db: Database) {}
 
+  private delivery: Promise<void> = Promise.resolve();
+
+  exclusive(deliver: () => Promise<void>): Promise<void> {
+    const run = this.delivery.then(deliver, deliver);
+    this.delivery = run.catch(() => {});
+    return run;
+  }
+
+  pendingEvents(): CodingPrTransition[] {
+    return (
+      this.db
+        .prepare(`SELECT terminal_event_json AS event FROM pack_coding_pr_ledger
+      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL
+      ORDER BY state_since, repo, number`)
+        .all() as { event: string }[]
+    )
+      .map((row) => JSON.parse(row.event) as CodingPrTransition)
+      .filter((row) => codingRepoWatched(this.db, row.repo));
+  }
+
+  acceptEvent(row: CodingPrTransition, owner: WorkRef): Promise<void> {
+    return new CodingPrLedgerRepository(this.db).write(
+      'acceptTerminalEvent',
+      row,
+      JSON.stringify(owner),
+      Date.now()
+    );
+  }
+
   pendingUnowned(now: number): CodingUnownedNotice | null {
     return this.db.transaction(() => {
       const pending = this.db
         .prepare(
-          'SELECT pending_key AS key, pending_text AS text FROM pack_coding_pr_unowned_state WHERE id = 1'
+          'SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1'
         )
-        .get() as CodingUnownedNotice;
-      if (pending.key) return pending;
+        .get() as CodingUnownedNotice & { rows: string | null };
+      if (pending.key && pending.rows) {
+        const remaining = (JSON.parse(pending.rows) as CodingUnownedPr[]).filter((row) =>
+          codingRepoWatched(this.db, row.repo)
+        );
+        const notice = planCodingUnownedNotice(remaining);
+        if (notice) {
+          this.db
+            .prepare(
+              'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1'
+            )
+            .run(notice.key, notice.text, JSON.stringify(remaining));
+          return notice;
+        }
+      }
       const rows = this.db
         .prepare(
           `SELECT l.repo, l.number, l.title FROM pack_coding_pr_ledger l
@@ -61,17 +106,18 @@ export class CodingPrEventRepository {
           ORDER BY l.repo, l.number`
         )
         .all(now) as CodingUnownedPr[];
-      const notice = planCodingUnownedNotice(rows);
+      const watchedRows = rows.filter((row) => codingRepoWatched(this.db, row.repo));
+      const notice = planCodingUnownedNotice(watchedRows);
       if (!notice) return null;
       const insert = this.db.prepare(
         'INSERT INTO pack_coding_pr_unowned (key, listed_at) VALUES (?, ?)'
       );
-      for (const row of rows) insert.run(codingUnownedPrKey(row), now);
+      for (const row of watchedRows) insert.run(codingUnownedPrKey(row), now);
       this.db
         .prepare(
-          'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ? WHERE id = 1'
+          'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1'
         )
-        .run(notice.key, notice.text);
+        .run(notice.key, notice.text, JSON.stringify(watchedRows));
       return notice;
     })();
   }
@@ -92,7 +138,10 @@ export class CodingPrEventRepository {
       )
       .get(row.repo, row.number) as { owner: string | null } | null;
     return {
-      owner: found?.owner ? (JSON.parse(found.owner) as WorkRef) : null,
+      owner:
+        codingRepoWatched(this.db, row.repo) && found?.owner
+          ? (JSON.parse(found.owner) as WorkRef)
+          : null,
     };
   }
 }
@@ -102,13 +151,22 @@ export async function deliverCodingPrEvents(
   transitions: readonly CodingPrTransition[],
   deps: CodingSweepDeps
 ): Promise<void> {
-  for (const row of transitions) {
-    const event = planCodingPrEvent(row);
-    const route = event ? repo.route(row) : null;
-    if (!event || !route?.owner) continue;
-    const told = await deps.tell(route.owner, event.key, event.text).catch(() => false);
-    log.warn(
-      `PR event ${event.key} to ${route.owner.adapter}:${route.owner.id}: ${told ? 'told' : 'not told'}`
-    );
-  }
+  return repo.exclusive(async () => {
+    for (const row of transitions) {
+      const event = planCodingPrEvent(row);
+      if (event && !repo.route(row).owner)
+        log.warn(`PR event ${event.key} skipped: ${row.repo}#${row.number} has no owner`);
+    }
+    for (const row of repo.pendingEvents()) {
+      const event = planCodingPrEvent(row);
+      const owner = repo.route(row).owner;
+      if (!owner) continue;
+      const told = event ? await deps.tell(owner, event.key, event.text).catch(() => false) : true;
+      if (told) await repo.acceptEvent(row, owner);
+      if (!event) continue;
+      log.warn(
+        `PR event ${event.key} to ${owner.adapter}:${owner.id}: ${told ? 'told' : 'not told'}`
+      );
+    }
+  });
 }

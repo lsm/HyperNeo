@@ -4,6 +4,7 @@ import type { ArtifactProjection } from './artifact-file.ts';
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
 export interface NeoAsk {
+  focusedSession?: NeoQuestionSource;
   id: string;
   goalId?: string | null;
   projectId: string | null;
@@ -26,9 +27,16 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
-export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'removed';
+export type NeoTodoState =
+  | 'todo'
+  | 'doing'
+  | 'blocked'
+  | 'done'
+  | 'closed_unverified'
+  | 'failed'
+  | 'removed';
 
-export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question';
+export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question' | 'needs-human';
 
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;
@@ -62,7 +70,13 @@ export type NeoQuestionState = 'open' | 'answered' | 'retired';
 
 export type NeoQuestionAnswer = string | string[];
 
-export interface NeoQuestion {
+export interface NeoQuestionSource extends WorkerIdentity {
+  provider: string;
+  link: string | null;
+}
+
+export interface NeoQuestion extends ArtifactProjection {
+  sourceSession?: NeoQuestionSource;
   todoId?: string | null;
   document?: string | null;
   replyTo?: string[];
@@ -153,6 +167,12 @@ export interface NeoQuestionEntry extends NeoQuestion {
 }
 
 export interface NeoAskEntry {
+  summary?: {
+    todoCount: number;
+    questionCount: number;
+    openQuestionCount: number;
+    questionRefs?: { id: string; replacedBy: string | null }[];
+  };
   ask: NeoAsk;
   state: NeoAskEntryState;
   todos: NeoTodoEntry[];

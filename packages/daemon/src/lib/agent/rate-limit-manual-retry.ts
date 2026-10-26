@@ -1,4 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { releaseRateLimitDeliveries } from '../../storage/repositories/rate-limit-retry-write.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
 
 export interface RateLimitManualRetryDb {
   getSession(sessionId: string): { processingState?: string | null } | null | undefined;
@@ -13,7 +16,7 @@ export interface RateLimitManualRetryDb {
 }
 
 export interface RateLimitManualRetryCtx {
-  db: RateLimitManualRetryDb;
+  db: RateLimitManualRetryDb & { getDatabase: () => Database };
   sessionId: string;
   episodeMessageUuid?: string;
   clearCooldown: () => Promise<void>;
@@ -41,15 +44,6 @@ export function readRateLimitPersistedCooldown(
   }
 }
 
-export function resolveRateLimitEpisodeDeliveryUuid(
-  db: RateLimitManualRetryDb,
-  sessionId: string,
-  episodeMessageId: string | undefined
-): string | undefined {
-  if (episodeMessageId !== undefined) return episodeMessageId;
-  return db.getJobQueueRepo?.()?.getActiveDeliveryMessageUuid?.(sessionId) ?? undefined;
-}
-
 async function clearPersistedCooldownStage(
   ctx: RateLimitManualRetryCtx
 ): Promise<RateLimitManualRetryCtx> {
@@ -68,25 +62,14 @@ async function releaseOwningDeliveryStage(
   if (!ctx.cleared) {
     return { ...ctx, released: false };
   }
-  const jobQueue = ctx.db.getJobQueueRepo?.();
-  if (jobQueue?.rescheduleSessionDeliveries) {
-    try {
-      const released = jobQueue.rescheduleSessionDeliveries(ctx.sessionId, Date.now());
-      return { ...ctx, released };
-    } catch {
-      return { ...ctx, released: false };
-    }
+  try {
+    const released = await gatewayFor(ctx.db.getDatabase()).run(releaseRateLimitDeliveries, {
+      sessionId: ctx.sessionId,
+    });
+    return { ...ctx, released };
+  } catch {
+    return { ...ctx, released: false };
   }
-  const owningTurnMessageId = resolveRateLimitEpisodeDeliveryUuid(
-    ctx.db,
-    ctx.sessionId,
-    ctx.episodeMessageUuid
-  );
-  if (!owningTurnMessageId) {
-    return { ...ctx, released: true };
-  }
-  const released = jobQueue?.rescheduleDelivery?.(ctx.sessionId, owningTurnMessageId, Date.now());
-  return { ...ctx, released: released !== false };
 }
 
 const rateLimitManualRetryPipeline = (

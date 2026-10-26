@@ -60,7 +60,9 @@ try {
  assert.equal((evidence.refused as {ok:boolean}).ok,false);
  assert.equal(store.getTodo(todo.id)?.state,'todo');
  let reads=0, upstream:'OPEN'|'MERGED'='MERGED';
- const pack=createCodingPack({readPrs:async urls=>{reads++;return urls.map(url=>({url,state:upstream,checks:'passing',review:'none'}))},todoPrs:new CodingTodoPrRepository(db),prLedger:new CodingPrLedgerRepository(db),prSweep:new CodingPrSweepRepository(db),prEvents:new CodingPrEventRepository(db),prSweepDeps:{tell:async()=>true,wake:async()=>{}},projectRepos:()=>[]});
+ const pack=createCodingPack({database: () => db,readPrs:async urls=>{reads++;return urls.map(url=>({url,state:upstream,checks:'passing',review:'none'}))},todoPrs:new CodingTodoPrRepository(db),prLedger:new CodingPrLedgerRepository(db),prSweep:new CodingPrSweepRepository(db),prEvents:new CodingPrEventRepository(db),prSweepDeps:{tell:async()=>true,wake:async()=>{}},projectRepos:()=>[]});
+ const file=pack.operations!.find(op=>op.name==='neo.coding.pr.file')!;
+ assert.deepEqual(await file.execute(file.inputSchema.parse({context:{kind:'ask',id:'facts-ask'},pr:'example/project#42',path:'report.md',headSha:'a'.repeat(40),requestId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}),{source:'mcp',role:'neo',sessionId:'wrong-owner'}),{accepted:false,reason:'unavailable'});
  const before=store.getTodo(todo.id), facts=await pack.readFacts!(before!);
  assert.deepEqual(store.getTodo(todo.id),before);
  upstream='OPEN'; const afterRead=reads;

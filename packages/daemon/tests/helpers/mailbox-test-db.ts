@@ -3,6 +3,7 @@ import { runMigration418 } from '../../src/storage/schema/m418-sdk-message-bodie
 import { JobQueueRepository } from '../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../src/storage/repositories/sdk-message-repository';
 import { Database } from '../../src/storage/sqlite-compat';
+import { createNeoContextTables } from '../../src/storage/schema/neo.ts';
 
 export type MailboxJobRow = {
   id: string;
@@ -44,6 +45,7 @@ export type MailboxTestDb = {
 
 export function createMailboxTestDb(): MailboxTestDb {
   const db = new Database(':memory:');
+  createNeoContextTables(db);
   db.exec(`
     CREATE TABLE direct_task_session_provenance (session_id TEXT PRIMARY KEY);
     CREATE TABLE job_queue (

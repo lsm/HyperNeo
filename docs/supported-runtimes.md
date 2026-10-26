@@ -56,10 +56,14 @@ Or grab the binary + `SHA256SUMS` from the GitHub Release assets. CLI flags:
 | Flag | Meaning | Default |
 | --- | --- | --- |
 | `-p, --port <port>` | Port to listen on | `9283` |
-| `--host <host>` | Host to bind to | `0.0.0.0` |
+| `--host <host>` | Host to bind to | `127.0.0.1` |
 | `--db-path <path>` | SQLite database file | `<data-dir>/data/daemon.db` |
 | `--data-dir <dir>` | Root for all daemon state (db, logs, skills, SDK cache) | `~/.hyperneo` (or `HYPERNEO_DATA_DIR`) |
-| `--workspace <path>` | Default workspace root for file indexing | — |
+| `--workspace <path>` | Neo user folder override; also file indexing root | — |
+
+Non-coding Neo work uses `~/HyperNeo` unless `--workspace` or
+`HYPERNEO_WORKSPACE_PATH` selects another exact folder (no suffix, created on first
+need). Coding retains repository places/worktrees; daemon state remains separate.
 
 `--data-dir` sets `HYPERNEO_DATA_DIR` before the daemon boots, so every subsystem that roots
 under `getDataDir()` (database default, logs, skills, worktrees, SDK CLI cache) follows it.

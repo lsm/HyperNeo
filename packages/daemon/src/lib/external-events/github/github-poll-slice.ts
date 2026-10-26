@@ -1,3 +1,5 @@
+import { parseRateLimitHeaders } from '../../github/poll-source.ts';
+
 export interface GitHubPollResume {
   stage: number;
   item?: string;
@@ -59,8 +61,7 @@ export class GitHubPollSlice {
 
   observe(response: Response): void {
     if (this.requests !== 1) return;
-    const raw = response.headers.get('X-RateLimit-Remaining');
-    const remaining = raw === null ? NaN : Number(raw);
+    const { remaining } = parseRateLimitHeaders(response);
     if (!Number.isFinite(remaining)) return;
     this.limit = Math.min(
       this.limit,

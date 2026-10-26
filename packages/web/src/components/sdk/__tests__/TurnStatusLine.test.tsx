@@ -25,7 +25,7 @@ describe('TurnStatusLine', () => {
     expect(getByTestId('turn-status-line').textContent).toContain(
       'Worked for 41s · 6 tool calls · 1 failed'
     );
-    fireEvent.click(getByRole('button', { name: 'more — Show steps' }));
+    fireEvent.click(getByRole('button', { name: 'Show steps' }));
     expect(onToggle).toHaveBeenCalled();
   });
 

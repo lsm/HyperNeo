@@ -98,8 +98,13 @@ describe('ancestry identity and revision contracts', () => {
     createCodingPackTables(db);
     try {
       const facts = new CodingAncestryFactsRepository(db);
-      facts.record({ repo: 'owner/repo', baseOid, headOid }, { status: 'ahead' }, 100, 0);
-      facts.record(
+      await facts.observeCurrent(
+        { repo: 'owner/repo', baseOid, headOid },
+        { status: 'ahead' },
+        100,
+        0
+      );
+      await facts.observeCurrent(
         { repo: 'ghe.example/owner/repo', baseOid, headOid },
         { status: 'behind' },
         100,
@@ -151,7 +156,10 @@ describe('ancestry identity and revision contracts', () => {
       await held;
       const facts = new CodingAncestryFactsRepository(db),
         subject = { repo: 'owner/repo', baseOid, headOid };
-      expect(facts.record(subject, { status: 'behind' }, 100, 0)).toBe(true);
+      expect(await facts.observeCurrent(subject, { status: 'behind' }, 100, 0)).toMatchObject({
+        observationRevision: 1,
+        ancestry: { status: 'known', comparison: 'behind', contains: false },
+      });
       finish(0);
       expect(await result).toBe(false);
       expect(facts.read(subject)).toMatchObject({

@@ -1,6 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
+  canSwitchModelLive,
   ModelSwitchHandler,
+  wireModelForLiveSwitch,
+  modelSwitchTiming,
   type ModelSwitchHandlerContext,
 } from '../../../../src/lib/agent/model-switch-handler';
 import type { Session, ModelInfo } from '@hyperneo/shared';
@@ -262,7 +265,7 @@ describe('ModelSwitchHandler', () => {
       errorManager: mockErrorManager,
       logger: mockLogger,
       lifecycleManager: mockLifecycleManager,
-      queryObject: { setModel: setModelSpy } as unknown as Query,
+      queryObject: {} as unknown as Query,
       queryPromise: null,
       messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
       disposeAcpSessions: mock(async () => {}) as typeof disposeAcpSessions,
@@ -687,6 +690,75 @@ describe('ModelSwitchHandler', () => {
       });
     });
 
+    describe('when the live query can switch models itself', () => {
+      it('switches a running Anthropic query to the 1M CLI model', async () => {
+        const id = 'claude-opus-5-5';
+        mockSession.config.model = 'claude-sonnet-5-5';
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                ...TEST_MODELS,
+                {
+                  ...TEST_MODELS[0],
+                  id: 'claude-sonnet-5-5',
+                  alias: 'claude-sonnet-5-5',
+                  contextWindow: 1_000_000,
+                },
+                { ...TEST_MODELS[0], id, alias: id, contextWindow: 1_000_000 },
+              ],
+            ],
+          ])
+        );
+        handler = createHandler({ queryObject: { setModel: setModelSpy } as unknown as Query });
+        const result = await handler.switchModel(id, 'anthropic');
+        expect(result.success).toBe(true);
+        expect(setModelSpy).toHaveBeenCalledWith(`${id}[1m]`);
+        expect(mockSession.config.model).toBe(id);
+      });
+
+      it('switches the running anthropic query in place instead of restarting', async () => {
+        const reevaluateSpy = mock(async () => {});
+        handler = createHandler({
+          queryObject: { setModel: setModelSpy } as unknown as Query,
+          reevaluateContextBudgetAfterModelSwitch: reevaluateSpy,
+        });
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(setModelSpy).toHaveBeenCalledWith(mockSession.config.model);
+        expect(restartSpy).not.toHaveBeenCalled();
+        expect(reevaluateSpy).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('when a third-party query switches models in place', () => {
+      it('switches live and refreshes the pinned model env once the session is idle', async () => {
+        const restartQuerySpy = mock(async () => {});
+        const glmModels = [
+          { id: 'glm-5.3', name: 'GLM 5.3', provider: 'glm', contextWindow: 200_000 },
+          { id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', provider: 'glm', contextWindow: 200_000 },
+        ] as ModelInfo[];
+        setModelsCache(new Map([['global', [...TEST_MODELS, ...glmModels]]]));
+        mockSession.config = { ...mockSession.config, model: 'glm-5.3', provider: 'glm' };
+        handler = createHandler({
+          queryObject: { setModel: setModelSpy } as unknown as Query,
+          lifecycleManager: {
+            restart: restartSpy,
+            restartWhenIdle: restartQuerySpy,
+          } as unknown as QueryLifecycleManager,
+        });
+
+        const result = await handler.switchModel('glm-5.3-flash', 'glm');
+
+        expect(result.success).toBe(true);
+        expect(setModelSpy).toHaveBeenCalledTimes(1);
+        expect(restartSpy).not.toHaveBeenCalled();
+        expect(restartQuerySpy).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe('when query is running', () => {
       it('should restart query when running', async () => {
         handler = createHandler();
@@ -1040,5 +1112,49 @@ describe('ModelSwitchHandler', () => {
         expect(mockSession.config.model).toBe('k3-256k');
       });
     });
+  });
+});
+
+describe('model switch timing', () => {
+  it('switches now while busy only when the live query can take the model', () => {
+    expect(modelSwitchTiming('processing', false)).toBe('next_turn');
+    expect(modelSwitchTiming('processing', true)).toBe('now');
+    expect(modelSwitchTiming('idle')).toBe('now');
+  });
+
+  const side = (provider: string, contextWindow = 200_000, effortLevels = ['low', 'high']) => ({
+    provider,
+    contextWindow,
+    effortLevels,
+  });
+
+  it('allows a live switch within one provider that runs through the SDK directly', () => {
+    expect(canSwitchModelLive(side('anthropic'), side('anthropic'))).toBe(true);
+    expect(canSwitchModelLive(side('glm'), side('glm'))).toBe(true);
+    expect(canSwitchModelLive(side('deepseek'), side('deepseek'))).toBe(true);
+    expect(canSwitchModelLive(side('kimi'), side('kimi'))).toBe(true);
+    expect(canSwitchModelLive(side('anthropic'), side('glm'))).toBe(false);
+    expect(canSwitchModelLive(side('opencode'), side('opencode'))).toBe(false);
+    expect(canSwitchModelLive(side('acp'), side('acp'))).toBe(false);
+  });
+
+  it('gives the CLI the id the provider actually routes to', () => {
+    expect(wireModelForLiveSwitch('glm-5.3-flash[1m]', 'default', 'glm-5.3-flash')).toBe(
+      'glm-5.3-flash'
+    );
+    expect(wireModelForLiveSwitch('deepseek-v4-flash', 'claude-sonnet-4-6[1m]', 'x')).toBe(
+      'claude-sonnet-4-6[1m]'
+    );
+    expect(wireModelForLiveSwitch('kimi-k3', 'kimi-k3', undefined)).toBe('kimi-k3');
+  });
+
+  it('keeps the restart when the context window changes, so the compact window is rebuilt', () => {
+    expect(canSwitchModelLive(side('anthropic'), side('anthropic', 1_000_000))).toBe(false);
+  });
+
+  it('keeps the restart when the models derive different thinking effort', () => {
+    expect(
+      canSwitchModelLive(side('anthropic'), side('anthropic', 200_000, ['low', 'medium', 'high']))
+    ).toBe(false);
   });
 });

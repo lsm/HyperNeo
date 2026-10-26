@@ -1,4 +1,4 @@
-import type { Session } from '@hyperneo/shared';
+import type { Session, ThinkingEffort } from '@hyperneo/shared';
 import type { QueryLike } from './query-like.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
@@ -6,6 +6,7 @@ import type { Logger } from '../logger.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { ContextTracker } from './context-tracker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
+import { DISABLE_THINKING_ENV } from './query-options-builder.ts';
 import { resolveSessionContextModelInfo } from '../model-service.ts';
 
 export interface SDKRuntimeConfigContext {
@@ -42,7 +43,7 @@ export class SDKRuntimeConfig {
     try {
       if (!queryObject || !firstMessageReceived) {
         session.config.maxThinkingTokens = tokens;
-        db.updateSession(session.id, { config: session.config });
+        await db.updateSession(session.id, { config: session.config });
         return { success: true };
       }
 
@@ -51,7 +52,7 @@ export class SDKRuntimeConfig {
       }
 
       session.config.maxThinkingTokens = tokens;
-      db.updateSession(session.id, { config: session.config });
+      await db.updateSession(session.id, { config: session.config });
 
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
@@ -67,18 +68,36 @@ export class SDKRuntimeConfig {
     }
   }
 
+  async applyThinking(update: {
+    maxThinkingTokens?: number;
+    effortLevel?: ThinkingEffort;
+    disableThinking?: boolean;
+  }): Promise<void> {
+    const { queryObject } = this.ctx;
+    if (!queryObject) return;
+    if (update.maxThinkingTokens !== undefined)
+      await queryObject.setMaxThinkingTokens?.(update.maxThinkingTokens);
+    const flags = {
+      ...(update.effortLevel ? { effortLevel: update.effortLevel } : {}),
+      ...(update.disableThinking === undefined
+        ? {}
+        : { env: { [DISABLE_THINKING_ENV]: update.disableThinking ? '1' : '0' } }),
+    };
+    if (Object.keys(flags).length) await queryObject.applyFlagSettings?.(flags);
+  }
+
   async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {
     const { session, db, internalEventBus, logger, queryObject, firstMessageReceived } = this.ctx;
 
     try {
       if (!queryObject || !firstMessageReceived) {
         session.config.permissionMode = mode as Session['config']['permissionMode'];
-        db.updateSession(session.id, { config: session.config });
+        await db.updateSession(session.id, { config: session.config });
         return { success: true };
       }
 
       session.config.permissionMode = mode as Session['config']['permissionMode'];
-      db.updateSession(session.id, { config: session.config });
+      await db.updateSession(session.id, { config: session.config });
 
       if (queryObject.setPermissionMode) {
         await queryObject.setPermissionMode(mode);
@@ -123,7 +142,7 @@ export class SDKRuntimeConfig {
     try {
       const newConfig = { ...session.config, tools };
       session.config = newConfig;
-      db.updateSession(session.id, { config: newConfig });
+      await db.updateSession(session.id, { config: newConfig });
 
       await this.refreshContextUsage();
 
@@ -141,7 +160,7 @@ export class SDKRuntimeConfig {
     }
   }
 
-  private async refreshContextUsage(): Promise<void> {
+  async refreshContextUsage(): Promise<void> {
     const { session, internalEventBus, contextTracker, queryObject, logger } = this.ctx;
     if (!queryObject) return;
 

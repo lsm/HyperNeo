@@ -63,32 +63,32 @@ export function createClientOperations(clients: ClientRegistrationRepository) {
     .pipe(() => Date.now(), 'input', 'now')
     .pipe(requireClientData, ['input', 'now'], 'result:admission')
     .pipe(
-      (registration: ClientRegistration) => {
-        clients.register(registration);
+      async (registration: ClientRegistration) => {
+        await clients.register(registration);
         return { ok: true as const };
       },
       'admission',
       'admission'
     )
-    .end('admission') as (
+    .endAsync('admission') as (
     input: z.infer<typeof Register>,
     caller: OperationCaller
-  ) => z.infer<typeof Registered>;
+  ) => Promise<z.infer<typeof Registered>>;
   const unregister = (superpipe({})('client.unregister') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocalUser, 'caller', 'result:admission')
     .pipe(
-      (input: z.infer<typeof Unregister>) => ({
+      async (input: z.infer<typeof Unregister>) => ({
         ok: true as const,
-        removed: clients.unregister(input.clientId, input.kind),
+        removed: await clients.unregister(input.clientId, input.kind),
       }),
       'input',
       'admission'
     )
-    .end('admission') as (
+    .endAsync('admission') as (
     input: z.infer<typeof Unregister>,
     caller: OperationCaller
-  ) => z.infer<typeof Removed>;
+  ) => Promise<z.infer<typeof Removed>>;
   const list = (superpipe({})('client.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocalUser, 'caller', 'result:admission')

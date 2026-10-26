@@ -1185,6 +1185,50 @@ describe('SpaceGoalService', () => {
     expect(taskRepo.getTask(task.task!.id)?.result).toBeNull();
   });
 
+  it('leaves a task that moved on since its terminal transition was read', () => {
+    const goal = service.createGoal({ spaceId, title: 'Fenced goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    taskRepo.updateTask(task.task!.id, { status: 'blocked' });
+
+    expect(() =>
+      service.handleTaskTerminal(task.task!.id, {
+        fromStatus: 'in_progress',
+        updates: { status: 'done', result: 'shipped' },
+      })
+    ).toThrow('left in_progress');
+
+    expect(taskRepo.getTask(task.task!.id)?.status).toBe('blocked');
+    expect(taskRepo.getTask(task.task!.id)?.result).toBeNull();
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
+  });
+
+  it('does not treat a stale terminal read as applied once the task reopened', () => {
+    const goal = service.createGoal({ spaceId, title: 'Stale terminal read' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    const id = task.task!.id;
+    taskRepo.updateTask(id, { status: 'in_progress' });
+    taskRepo.updateTask(id, { status: 'done' });
+    const stale = taskRepo.getTask(id)!;
+    taskRepo.updateTask(id, { status: 'open' });
+    const getTask = taskRepo.getTask.bind(taskRepo);
+    let reads = 0;
+    taskRepo.getTask = (taskId: string) => (reads++ === 0 ? stale : getTask(taskId));
+
+    expect(() =>
+      service.handleTaskTerminal(id, {
+        fromStatus: 'in_progress',
+        updates: { status: 'done' },
+      })
+    ).toThrow('left in_progress');
+    taskRepo.getTask = getTask;
+
+    expect(taskRepo.getTask(id)?.status).toBe('open');
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
+  });
+
   describe('goal workspacePath validation', () => {
     let resolvingService: SpaceGoalService;
 

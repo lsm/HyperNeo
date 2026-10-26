@@ -1,4 +1,6 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { createMailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import {
   captureEpisodeStage,
   clearCooldownStage,
@@ -8,9 +10,13 @@ import {
   settleOwningDeliveryStage,
 } from '../../../../src/lib/agent/rate-limit-manual-cancel';
 
-function ctx(overrides: Partial<RateLimitManualCancelCtx> = {}): RateLimitManualCancelCtx {
+type TestDb = Omit<RateLimitManualCancelDb, 'getDatabase'> &
+  Partial<Pick<RateLimitManualCancelDb, 'getDatabase'>>;
+
+function ctx(
+  overrides: Omit<Partial<RateLimitManualCancelCtx>, 'db'> & { db?: TestDb } = {}
+): RateLimitManualCancelCtx {
   return {
-    db: { getSession: () => null, getJobQueueRepo: () => null },
     sessionId: 'test-session-id',
     getLiveEpisodeMessageUuid: () => undefined,
     getPersistedArmMessageUuid: () => undefined,
@@ -23,10 +29,17 @@ function ctx(overrides: Partial<RateLimitManualCancelCtx> = {}): RateLimitManual
     episodeMessageUuid: undefined,
     cooldownClearPending: false,
     ...overrides,
+    db: {
+      getSession: () => null,
+      getDatabase: () => {
+        throw new Error('This test must not write');
+      },
+      ...overrides.db,
+    },
   };
 }
 
-function persistedCooldownDb(messageId: string): RateLimitManualCancelDb {
+function persistedCooldownDb(messageId: string): TestDb {
   return {
     getSession: () => ({
       processingState: JSON.stringify({ status: 'rate_limit_cooldown', messageId }),
@@ -134,164 +147,236 @@ describe('captureEpisodeStage', () => {
 });
 
 describe('settleOwningDeliveryStage', () => {
-  test('an episode cancels and settles the episode delivery', () => {
-    const cancelDelivery = mock(() => true);
-    const markDeliveryFailedByUuid = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
-    const publishStatusesFailed = mock((_messageIds: string[]) => {});
-    settleOwningDeliveryStage(
-      ctx({
-        db: {
-          getSession: () => null,
-          getJobQueueRepo: () => ({
-            cancelDelivery,
-          }),
-          getSDKMessageRepo: () => ({ markDeliveryFailedByUuid }),
-        },
-        episodeMessageUuid: 'msg-episode',
-        publishStatusesFailed,
-      })
+  let fixture: ReturnType<typeof createMailboxTestDb>;
+  const sessionId = 'test-session-id';
+  const future = () => Date.now() + 60_000;
+  function seed(uuid: string, sid = sessionId, status = 'enqueued' as 'enqueued' | 'consumed') {
+    fixture.sdkMessageRepo.saveUserMessage(
+      sid,
+      {
+        type: 'user',
+        uuid,
+        message: { role: 'user', content: uuid },
+      },
+      status
     );
-    expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-    expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
-    expect(publishStatusesFailed).toHaveBeenCalledWith(['db-msg-episode']);
+    return fixture.jobQueue.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: sid, messageUuid: uuid },
+      runAt: future(),
+    });
+  }
+  function deliveryCtx(overrides: Partial<RateLimitManualCancelCtx> = {}) {
+    return ctx({ db: { getSession: () => null, getDatabase: () => fixture.db }, ...overrides });
+  }
+  beforeEach(() => {
+    fixture = createMailboxTestDb();
+  });
+  afterEach(() => {
+    fixture.close();
   });
 
-  test('reschedules the remaining session deliveries after settling', () => {
-    const markDeliveryFailedByUuid = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
-    const publishStatusesFailed = mock((_messageIds: string[]) => {});
-    const rescheduleSessionDeliveries = mock(() => true);
-    settleOwningDeliveryStage(
-      ctx({
-        db: {
-          getSession: () => null,
-          getJobQueueRepo: () => ({
-            cancelDelivery: () => true,
-            rescheduleSessionDeliveries,
-          }),
-          getSDKMessageRepo: () => ({ markDeliveryFailedByUuid }),
-        },
-        episodeMessageUuid: 'msg-episode',
-        publishStatusesFailed,
-      })
-    );
-    expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
-    expect(publishStatusesFailed).toHaveBeenCalledTimes(1);
-    expect(publishStatusesFailed).toHaveBeenCalledWith(['db-msg-episode']);
-    expect(rescheduleSessionDeliveries).toHaveBeenCalledWith('test-session-id', expect.any(Number));
+  test('commits all settlement writes before notifying and leaves other sessions untouched', async () => {
+    const owning = seed('episode');
+    const next = seed('next');
+    fixture.db.prepare('UPDATE job_queue SET run_at = 0 WHERE id = ?').run(next.id);
+    const [nextClaim] = fixture.jobQueue.dequeue('message_delivery');
+    expect(nextClaim.id).toBe(next.id);
+    const other = seed('other', 'another-session');
+    const notifications: string[][] = [];
+    const command = deliveryCtx({
+      episodeMessageUuid: 'episode',
+      onDeliveryCancelError: (error) => {
+        throw error;
+      },
+      publishStatusesFailed: (ids) => {
+        fixture.db.exec('BEGIN IMMEDIATE');
+        fixture.db.exec('ROLLBACK');
+        expect(fixture.jobQueue.getJob(owning.id)).toBeNull();
+        expect(fixture.sdkMessageRepo.getUserSendStatus(sessionId, 'episode')).toBe('failed');
+        expect(fixture.jobQueue.getJob(next.id)?.runAt).toBeLessThan(next.runAt);
+        notifications.push(ids);
+      },
+    });
+    await settleOwningDeliveryStage(command);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toEqual([
+      fixture.sdkMessageRepo.findMessageIdByUuid(sessionId, 'episode'),
+    ]);
+    expect(fixture.jobQueue.getJob(other.id)).toEqual(other);
+    expect(fixture.jobQueue.getJob(next.id)).toMatchObject({
+      status: 'pending',
+      claimToken: null,
+      startedAt: null,
+      heartbeatAt: null,
+      retryCount: 0,
+    });
+    expect(fixture.jobQueue.heartbeat(next.id, nextClaim.claimToken)).toBe(false);
+    await settleOwningDeliveryStage(command);
+    expect(notifications).toHaveLength(1);
   });
 
-  test('skips the publish when no bundled message settles', () => {
-    const publishStatusesFailed = mock((_messageIds: string[]) => {});
-    settleOwningDeliveryStage(
-      ctx({
-        db: {
-          getSession: () => null,
-          getJobQueueRepo: () => ({ cancelDelivery: () => true }),
-          getSDKMessageRepo: () => ({ markDeliveryFailedByUuid: () => null }),
-        },
-        episodeMessageUuid: 'msg-episode',
-        publishStatusesFailed,
+  test('resolves a fallback owning delivery inside the queued transaction', async () => {
+    const original = seed('original');
+    const gateway = new DbGateway(':memory:', fixture.db);
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = gateway.run.bind(gateway);
+    gateway.run = async (op, args) => {
+      await hold;
+      return run(op, args);
+    };
+    bindGateway(fixture.db, gateway);
+    const pending = settleOwningDeliveryStage(deliveryCtx());
+    const inserted = seed('new-owner');
+    fixture.db
+      .prepare('UPDATE job_queue SET created_at = ? WHERE id = ?')
+      .run(original.createdAt - 1000, inserted.id);
+    release();
+    await pending;
+    expect(fixture.jobQueue.getJob(inserted.id)).toBeNull();
+    expect(fixture.jobQueue.getJob(original.id)?.status).toBe('pending');
+    expect(fixture.sdkMessageRepo.getUserSendStatus(sessionId, 'original')).toBe('enqueued');
+    expect(fixture.sdkMessageRepo.getUserSendStatus(sessionId, 'new-owner')).toBe('failed');
+  });
+
+  test('rolls back job deletion when message settlement fails', async () => {
+    const owning = seed('episode');
+    const next = seed('next');
+    fixture.db.exec(`CREATE TRIGGER refuse_failure BEFORE UPDATE OF send_status ON sdk_messages
+      BEGIN SELECT RAISE(ABORT, 'synthetic settlement failure'); END`);
+    const onDeliveryCancelError = mock(() => {});
+    const publishStatusesFailed = mock(() => {});
+    await settleOwningDeliveryStage(
+      deliveryCtx({ episodeMessageUuid: 'episode', onDeliveryCancelError, publishStatusesFailed })
+    );
+    expect(onDeliveryCancelError).toHaveBeenCalledTimes(1);
+    expect(publishStatusesFailed).not.toHaveBeenCalled();
+    expect(fixture.jobQueue.getJob(owning.id)).toEqual(owning);
+    expect(fixture.jobQueue.getJob(next.id)).toEqual(next);
+    expect(fixture.sdkMessageRepo.getUserSendStatus(sessionId, 'episode')).toBe('enqueued');
+  });
+
+  test('rejects a writer fault without any main-connection fallback', async () => {
+    const owning = seed('episode');
+    bindGateway(
+      fixture.db,
+      new DbGateway('synthetic-writer', null, undefined, () => {
+        throw new Error('writer unavailable');
       })
     );
+    const onDeliveryCancelError = mock(() => {});
+    const publishStatusesFailed = mock(() => {});
+    await settleOwningDeliveryStage(
+      deliveryCtx({ episodeMessageUuid: 'episode', onDeliveryCancelError, publishStatusesFailed })
+    );
+    expect(onDeliveryCancelError).toHaveBeenCalledTimes(1);
+    expect(publishStatusesFailed).not.toHaveBeenCalled();
+    expect(fixture.jobQueue.getJob(owning.id)).toEqual(owning);
+    expect(fixture.sdkMessageRepo.getUserSendStatus(sessionId, 'episode')).toBe('enqueued');
+  });
+
+  test('does not fail an already consumed message or notify without a settlement', async () => {
+    const owning = seed('episode', sessionId, 'consumed');
+    const publishStatusesFailed = mock(() => {});
+    await settleOwningDeliveryStage(
+      deliveryCtx({ episodeMessageUuid: 'episode', publishStatusesFailed })
+    );
+    expect(fixture.jobQueue.getJob(owning.id)).toBeNull();
+    expect(fixture.sdkMessageRepo.getUserSendStatus(sessionId, 'episode')).toBe('consumed');
     expect(publishStatusesFailed).not.toHaveBeenCalled();
   });
 
-  test('does nothing when no owning delivery resolves', () => {
-    const cancelDelivery = mock(() => true);
-    const clearCooldown = mock(() => {});
-    const out = settleOwningDeliveryStage(
-      ctx({
-        db: {
-          getSession: () => null,
-          getJobQueueRepo: () => ({
-            cancelDelivery,
-            getActiveDeliveryMessageUuid: () => null,
-          }),
-        },
-        episodeMessageUuid: undefined,
-        cooldownClearPending: true,
-        clearCooldown,
-      })
+  test('does nothing when no owning delivery exists', async () => {
+    const publishStatusesFailed = mock(() => {});
+    const out = await settleOwningDeliveryStage(
+      deliveryCtx({ cooldownClearPending: true, publishStatusesFailed })
     );
-    expect(cancelDelivery).not.toHaveBeenCalled();
+    expect(publishStatusesFailed).not.toHaveBeenCalled();
     expect(out.cooldownClearPending).toBe(true);
-  });
-
-  test('a delivery cancellation failure reports the error and skips the reschedule', () => {
-    const onDeliveryCancelError = mock((_error: unknown) => {});
-    const rescheduleSessionDeliveries = mock(() => true);
-    settleOwningDeliveryStage(
-      ctx({
-        db: {
-          getSession: () => null,
-          getJobQueueRepo: () => ({
-            cancelDelivery: () => {
-              throw new Error('job queue locked');
-            },
-            rescheduleSessionDeliveries,
-          }),
-        },
-        episodeMessageUuid: 'msg-episode',
-        onDeliveryCancelError,
-      })
-    );
-    expect(onDeliveryCancelError).toHaveBeenCalledTimes(1);
-    expect(onDeliveryCancelError.mock.calls[0][0]).toBeInstanceOf(Error);
-    expect(rescheduleSessionDeliveries).not.toHaveBeenCalled();
+    expect(fixture.rows()).toEqual([]);
   });
 });
 
 describe('clearCooldownStage', () => {
-  test('clears the cooldown only when a clear is pending', () => {
-    const clearCooldown = mock(() => {});
-    clearCooldownStage(ctx({ cooldownClearPending: true, clearCooldown }));
-    expect(clearCooldown).toHaveBeenCalledTimes(1);
-
+  test('awaits a pending cooldown clear and skips an inactive cooldown', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let settled = false;
+    const pending = clearCooldownStage(
+      ctx({ cooldownClearPending: true, clearCooldown: () => hold })
+    ).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    await pending;
+    expect(settled).toBe(true);
     const idle = mock(() => {});
-    clearCooldownStage(ctx({ cooldownClearPending: false, clearCooldown: idle }));
+    await clearCooldownStage(ctx({ cooldownClearPending: false, clearCooldown: idle }));
     expect(idle).not.toHaveBeenCalled();
   });
 });
 
 describe('runRateLimitManualCancel', () => {
-  test('runs capture, settle, and clear synchronously for a persisted cooldown', () => {
-    const effects: string[] = [];
-    runRateLimitManualCancel({
-      db: {
-        getSession: () => ({
-          processingState: JSON.stringify({
-            status: 'rate_limit_cooldown',
-            messageId: 'msg-episode',
-          }),
-        }),
-        getJobQueueRepo: () => ({
-          cancelDelivery: () => true,
-          rescheduleSessionDeliveries: () => true,
-        }),
-        getSDKMessageRepo: () => ({
-          markDeliveryFailedByUuid: (_sessionId: string, uuid: string) => `db-${uuid}`,
-        }),
-      },
-      sessionId: 'test-session-id',
-      getLiveEpisodeMessageUuid: () => undefined,
-      getPersistedArmMessageUuid: () => undefined,
-      cancelWatchdog: () => {
-        effects.push('cancelWatchdog');
-      },
-      isInMemoryCooldown: () => true,
-      clearCooldown: () => {
-        effects.push('clearCooldown');
-      },
-      publishStatusesFailed: (messageIds) => {
-        effects.push(`publish:${messageIds.join(',')}`);
-      },
-      onPersistedCooldownReadError: () => {
-        effects.push('readError');
-      },
-      onDeliveryCancelError: () => {
-        effects.push('settleError');
-      },
-    });
-    expect(effects).toEqual(['cancelWatchdog', 'publish:db-msg-episode', 'clearCooldown']);
+  test('awaits commit and publication before clearing the cooldown', async () => {
+    const fixture = createMailboxTestDb();
+    try {
+      fixture.sdkMessageRepo.saveUserMessage(
+        'test-session-id',
+        { type: 'user', uuid: 'episode', message: { role: 'user', content: 'cancel me' } },
+        'enqueued'
+      );
+      fixture.jobQueue.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'test-session-id', messageUuid: 'episode' },
+        runAt: Date.now() + 60000,
+      });
+      const effects: string[] = [];
+      let publishStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        publishStarted = resolve;
+      });
+      let release!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const pending = runRateLimitManualCancel(
+        ctx({
+          db: { ...persistedCooldownDb('episode'), getDatabase: () => fixture.db },
+          cancelWatchdog: () => {
+            effects.push('watchdog');
+          },
+          onDeliveryCancelError: (error) => {
+            throw error;
+          },
+          publishStatusesFailed: async () => {
+            fixture.db.exec('BEGIN IMMEDIATE');
+            fixture.db.exec('ROLLBACK');
+            expect(fixture.sdkMessageRepo.getUserSendStatus('test-session-id', 'episode')).toBe(
+              'failed'
+            );
+            effects.push('publish');
+            publishStarted();
+            await hold;
+          },
+          clearCooldown: () => {
+            effects.push('clear');
+          },
+        })
+      );
+      await Promise.race([started, pending]);
+      expect(effects).toEqual(['watchdog', 'publish']);
+      release();
+      await pending;
+      expect(effects).toEqual(['watchdog', 'publish', 'clear']);
+    } finally {
+      fixture.close();
+    }
   });
 });

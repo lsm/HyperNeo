@@ -1,3 +1,4 @@
+import { SESSION_CLI_HELP } from './session-cli-commands.ts';
 export interface CliOptions {
   port?: number;
   host?: string;
@@ -61,21 +62,22 @@ Usage: hyperneo [options]
 
 Options:
   -p, --port <port>         Port to listen on (default: 9283)
-  --host <host>             Host to bind to (default: 0.0.0.0)
+  --host <host>             Host to bind to (default: 127.0.0.1)
   --db-path <path>          Database file path (default: ~/.hyperneo/data/daemon.db)
-  --workspace <path>        Default workspace root for file indexing
+  --workspace <path>        Neo user folder override; also file indexing root
   -V, --version             Show version number
   -h, --help                Show this help message
 
+Neo user files default to ~/HyperNeo. HYPERNEO_WORKSPACE_PATH sets the same override.
+The folder is the selected path, with no suffix, created on first need.
+
 Session commands:
-  hyperneo send <session-id> <text>   Message another session from inside a session
-  hyperneo question <question-id>     Read a Neo question and whether the human answered it
-  hyperneo build                      Read daemon build and health through the owner-only session socket
+${SESSION_CLI_HELP}
 
 Examples:
   hyperneo                      Start server (database at ~/.hyperneo/data/daemon.db)
   hyperneo -p 8080              Start on port 8080
-  hyperneo --workspace ~/code   Start with a default workspace root
+  hyperneo --workspace ~/HyperNeo-Rui  Use a different Neo user folder
   hyperneo --db-path /data/db.db  Use a custom database path
 `;
 }

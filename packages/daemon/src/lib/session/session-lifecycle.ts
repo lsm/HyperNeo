@@ -1,3 +1,4 @@
+import { releaseWorkerSandbox } from '../drivers/worker-sandbox.ts';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import type {
   MessageHub,
@@ -13,7 +14,7 @@ import type { SessionInputDraftSnapshot } from '../../storage/repositories/sessi
 import { runOneShotModel } from '../agent/one-shot-model.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
+import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { getProviderService } from '../provider-service.ts';
 import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
@@ -63,6 +64,7 @@ export interface CreateSessionParams {
   detectGit?: false;
   title?: string;
   sessionId?: string;
+  executionProjectPath?: string;
   lobbyId?: string;
   spaceId?: string;
   createdBy?: 'human';
@@ -212,6 +214,9 @@ export class SessionLifecycle {
         settingSources: params.config?.settingSources ?? globalSettings.settingSources,
       },
       metadata: {
+        ...(params.executionProjectPath
+          ? { executionProjectPath: params.executionProjectPath }
+          : {}),
         messageCount: 0,
         totalTokens: 0,
         inputTokens: 0,
@@ -252,7 +257,7 @@ export class SessionLifecycle {
     };
 
     try {
-      this.db.createSession(session, {
+      await this.db.createSession(session, {
         enforceWorkspaceOwnership: true,
         ownershipPath: baseWorkspacePath ?? undefined,
       });
@@ -385,9 +390,9 @@ export class SessionLifecycle {
       },
     };
 
-    this.db.updateSession(sessionId, updatedSession);
+    await this.db.updateSession(sessionId, updatedSession);
 
-    agentSession.updateMetadata(updatedSession);
+    await agentSession.updateMetadata(updatedSession);
 
     await this.internalEventBus.publish('session.updated', {
       sessionId,
@@ -489,9 +494,9 @@ export class SessionLifecycle {
       },
     };
 
-    this.db.updateSession(sessionId, updatedSession);
+    await this.db.updateSession(sessionId, updatedSession);
 
-    agentSession.updateMetadata(updatedSession);
+    await agentSession.updateMetadata(updatedSession);
 
     await this.internalEventBus.publish('session.updated', {
       sessionId,
@@ -505,7 +510,7 @@ export class SessionLifecycle {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     if (agentSession && updates.config && 'autoCompactPercent' in updates.config) {
       const { config, ...metadata } = updates;
-      agentSession.updateMetadata(metadata);
+      await agentSession.updateMetadata(metadata);
       await agentSession.updateConfig(config);
       updates = {
         ...updates,
@@ -513,8 +518,8 @@ export class SessionLifecycle {
         metadata: agentSession.getSessionData().metadata,
       };
     } else {
-      this.db.updateSession(sessionId, updates);
-      if (agentSession) agentSession.updateMetadata(updates);
+      await this.db.updateSession(sessionId, updates);
+      if (agentSession) await agentSession.updateMetadata(updates);
     }
 
     await this.internalEventBus
@@ -566,12 +571,25 @@ export class SessionLifecycle {
     const completedPhases: string[] = [];
     const archivedAt = new Date().toISOString();
 
+    if (agentSession) {
+      try {
+        await agentSession.cleanup();
+        completedPhases.push('agent-cleanup');
+      } catch (error) {
+        this.logger.error(
+          `[SessionLifecycle] archiveResources: AgentSession cleanup failed:`,
+          error
+        );
+      }
+    }
+
+    await releaseWorkerSandbox(sessionSdkPath(session));
+
     await this.update(sessionId, { status: 'archived', archivedAt });
     completedPhases.push('db-mark-archived');
 
     try {
-      const failedDbIds: string[] = [];
-      materializeMailboxFailuresForSession(sessionId, {
+      const failedDbIds = await teardownSessionDeliveries(sessionId, {
         db: this.db,
         internalEventBus: this.internalEventBus,
         settleSkipped: (sid, messageUuid) =>
@@ -579,19 +597,6 @@ export class SessionLifecycle {
             messageUuid
           ) ?? Promise.resolve(),
       });
-      const jobQueue = this.db.getJobQueueRepo?.();
-      const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
-      const sdkRepo = this.db.getSDKMessageRepo?.();
-      for (const messageUuid of messageUuids) {
-        const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
-        if (failedDbId) failedDbIds.push(failedDbId);
-      }
-      const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
-      for (const row of deferredRows) {
-        if (!row.uuid) continue;
-        const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, row.uuid) ?? null;
-        if (failedDbId) failedDbIds.push(failedDbId);
-      }
       if (failedDbIds.length > 0) {
         await this.internalEventBus
           .publish('messages.statusChanged', {
@@ -604,18 +609,6 @@ export class SessionLifecycle {
       completedPhases.push('delivery-cancel');
     } catch (error) {
       this.logger.error(`[SessionLifecycle] archiveResources: delivery cancel failed:`, error);
-    }
-
-    if (agentSession) {
-      try {
-        await agentSession.cleanup();
-        completedPhases.push('agent-cleanup');
-      } catch (error) {
-        this.logger.error(
-          `[SessionLifecycle] archiveResources: AgentSession cleanup failed:`,
-          error
-        );
-      }
     }
 
     let archiveMetadata:
@@ -705,16 +698,30 @@ export class SessionLifecycle {
     const completedPhases: string[] = [];
 
     try {
-      if (session && session.status !== 'archived') {
-        await this.update(sessionId, {
-          status: 'archived',
-          archivedAt: new Date().toISOString(),
-        });
-        completedPhases.push('db-mark-archived');
+      if (agentSession) {
+        try {
+          await agentSession.cleanup();
+          completedPhases.push('agent-cleanup');
+        } catch (error) {
+          this.logger.error(
+            `[SessionLifecycle] deleteResources: AgentSession cleanup failed:`,
+            error
+          );
+        }
+      }
+
+      if (session) {
+        await releaseWorkerSandbox(sessionSdkPath(session));
+        if (session.status !== 'archived') {
+          await this.update(sessionId, {
+            status: 'archived',
+            archivedAt: new Date().toISOString(),
+          });
+          completedPhases.push('db-mark-archived');
+        }
       }
       try {
-        const failedDbIds: string[] = [];
-        materializeMailboxFailuresForSession(sessionId, {
+        const failedDbIds = await teardownSessionDeliveries(sessionId, {
           db: this.db,
           internalEventBus: this.internalEventBus,
           settleSkipped: (sid, messageUuid) =>
@@ -722,19 +729,6 @@ export class SessionLifecycle {
               messageUuid
             ) ?? Promise.resolve(),
         });
-        const jobQueue = this.db.getJobQueueRepo?.();
-        const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
-        const sdkRepo = this.db.getSDKMessageRepo?.();
-        for (const messageUuid of messageUuids) {
-          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
-          if (failedDbId) failedDbIds.push(failedDbId);
-        }
-        const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
-        for (const row of deferredRows) {
-          if (!row.uuid) continue;
-          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, row.uuid) ?? null;
-          if (failedDbId) failedDbIds.push(failedDbId);
-        }
         if (failedDbIds.length > 0) {
           await this.internalEventBus
             .publish('messages.statusChanged', {
@@ -747,18 +741,6 @@ export class SessionLifecycle {
         completedPhases.push('delivery-cancel');
       } catch (error) {
         this.logger.error(`[SessionLifecycle] deleteResources: delivery cancel failed:`, error);
-      }
-
-      if (agentSession) {
-        try {
-          await agentSession.cleanup();
-          completedPhases.push('agent-cleanup');
-        } catch (error) {
-          this.logger.error(
-            `[SessionLifecycle] deleteResources: AgentSession cleanup failed:`,
-            error
-          );
-        }
       }
 
       if (session) {
@@ -795,7 +777,7 @@ export class SessionLifecycle {
       }
 
       try {
-        this.db.deleteSession(sessionId);
+        await this.db.deleteSession(sessionId);
         completedPhases.push('db-delete');
       } catch (error) {
         this.logger.error(`[SessionLifecycle] deleteResources: Database deletion failed:`, error);
@@ -934,9 +916,9 @@ export class SessionLifecycle {
         },
       };
 
-      this.db.updateSession(sessionId, updatedSession);
+      await this.db.updateSession(sessionId, updatedSession);
 
-      agentSession.updateMetadata(updatedSession);
+      await agentSession.updateMetadata(updatedSession);
 
       await this.internalEventBus.publish('session.updated', {
         sessionId,
@@ -963,8 +945,8 @@ export class SessionLifecycle {
         },
       };
 
-      this.db.updateSession(sessionId, fallbackSession);
-      agentSession.updateMetadata(fallbackSession);
+      await this.db.updateSession(sessionId, fallbackSession);
+      await agentSession.updateMetadata(fallbackSession);
 
       await this.internalEventBus.publish('session.updated', {
         sessionId,

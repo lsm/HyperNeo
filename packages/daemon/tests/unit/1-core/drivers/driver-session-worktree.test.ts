@@ -1,3 +1,10 @@
+import {
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+} from '../../../../src/lib/drivers/worker-sandbox';
+import { existsSync } from 'node:fs';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway';
+import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 import { createMailboxEntry } from '../../../../src/lib/mailbox/entry';
@@ -50,13 +57,16 @@ describe('hyperneoSessionControl withdraw', () => {
       throw new Error('must not restore');
     });
     const revoke = mock(
-      async (id: string, mode: string, expected: 'deferred', commit: () => void) => {
+      async (id: string, mode: string, expected: 'deferred', withdrawalJobId: string) => {
         expect(mode).toBe('remove');
-        return fixture.db.transaction(() => {
-          const removed = fixture.sdkMessageRepo.deletePendingUserMessage('owned', id, expected);
-          if (removed?.uuid) commit();
-          return { changed: !!removed };
-        })();
+        const removed = await gatewayFor(fixture.db).run(sdkPendingRemoval, {
+          sessionId: 'owned',
+          messageDbId: id,
+          mode: 'remove',
+          expectedStatus: expected,
+          withdrawalJobId,
+        });
+        return { changed: !!removed };
       }
     );
     const controls = hyperneoSessionControl({
@@ -66,6 +76,7 @@ describe('hyperneoSessionControl withdraw', () => {
           getSession: restore,
         },
         db: {
+          gateway: gatewayFor(fixture.db),
           getDatabase: () => fixture.db,
           getSDKMessageRepo: () => fixture.sdkMessageRepo,
           deletePendingUserMessage: (
@@ -94,7 +105,7 @@ describe('hyperneoSessionControl withdraw', () => {
       );
     expect(revoke).toHaveBeenCalledTimes(cached ? (status === 'deferred' ? 1 : 2) : 0);
     if (cached)
-      expect(revoke).toHaveBeenCalledWith('db-input', 'remove', 'deferred', expect.any(Function));
+      expect(revoke).toHaveBeenCalledWith('db-input', 'remove', 'deferred', expect.any(String));
   });
 });
 
@@ -164,6 +175,44 @@ describe('hyperneoSessionControl interrupt', () => {
 });
 
 describe('hyperneoSessionControl archive', () => {
+  test('an admitted archive retry releases an already archived SDK worker runtime', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'archived-runtime-'));
+    mkdirSync(join(root, '.git'));
+    const env = await prepareWorkerSandbox(root);
+    const controls = hyperneoSessionControl({
+      deps: {
+        db: { listChildSessions: () => [] },
+        sessionManager: {
+          getSessionFromDB: () => ({ id: 'owned', workspacePath: root, status: 'archived' }),
+          getCachedSession: () => undefined,
+          archiveSessionResources: async () => {
+            throw new Error('must not archive twice');
+          },
+        },
+      },
+    } as never);
+    try {
+      expect(
+        await controls.archive!({ adapter: 'hyperneo', id: 'owned' }, () => ({
+          ok: false,
+          reason: 'busy',
+          detail: 'new',
+        }))
+      ).toMatchObject({ ok: false });
+      expect(existsSync(env.TMPDIR)).toBe(true);
+      expect(await controls.archive!({ adapter: 'hyperneo', id: 'owned' }, () => null)).toEqual({
+        ok: true,
+        value: { archived: false },
+      });
+      expect(existsSync(env.TMPDIR)).toBe(false);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+      expect(existsSync(root)).toBe(true);
+    } finally {
+      await releaseWorkerSandbox(root);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
     'uses the preserving lifecycle only for an admitted idle session (%s)',
     async (state) => {
@@ -323,12 +372,88 @@ describe('newestAvailableModel', () => {
 });
 
 describe('createDriverSession model', () => {
+  const offers = () => [
+    { ...model('swe-2-high', '2026-09-01'), name: 'SWE-2 High', provider: 'custom:synthetic' },
+    { ...model('other-high', '2026-09-01'), name: 'Other High', provider: 'custom:other' },
+  ];
+
+  test('preserves provider and effort for a shared-folder start under a Git parent', async () => {
+    const { created, manager } = sessionManager(true);
+    await createDriverSession(
+      manager as never,
+      '/HyperNeo',
+      'task',
+      'swe-2-high',
+      async () => offers(),
+      'custom:synthetic',
+      'extra high',
+      true
+    );
+    expect(created).toEqual([
+      {
+        workspacePath: '/HyperNeo',
+        title: 'task',
+        worktreeMode: 'direct',
+        config: { model: 'swe-2-high', provider: 'custom:synthetic', thinkingLevel: 'think32k' },
+      },
+    ]);
+  });
+
+  test('starts on a unique case-insensitive display name and its provider', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'sWe-2 HIGH', async () =>
+      offers()
+    );
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
+  });
+
+  test('refuses an ambiguous display name and lists both matching ids before creation', async () => {
+    const { created, manager } = sessionManager(false);
+    await expect(
+      createDriverSession(manager as never, '/notes', 'task', 'SWE-2 High', async () =>
+        offers().map((entry) => ({ ...entry, name: 'SWE-2 High' }))
+      )
+    ).rejects.toThrow(/swe-2-high.*other-high/);
+    expect(created).toEqual([]);
+  });
+
+  test('an exact id wins over another model display name', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', async () =>
+      offers().map((entry) => ({ ...entry, name: 'swe-2-high' }))
+    );
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:synthetic' });
+  });
+
   test('opens the session on the model asked for', async () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(manager as never, '/notes', 'essay', 'glm-5.3', async () => [
       { ...model('glm-5.3[1m]', '2026-08-14'), alias: 'glm-5.3' },
     ]);
-    expect(created[0].config).toEqual({ model: 'glm-5.3' });
+    expect(created[0].config).toEqual({ model: 'glm-5.3[1m]', provider: 'glm' });
+  });
+
+  test('applies effort to session configuration while retaining its default model', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(
+      manager as never,
+      '/notes',
+      'task',
+      undefined,
+      async () => offers(),
+      undefined,
+      'high'
+    );
+    expect(created[0].config).toEqual({ thinkingLevel: 'think24k' });
+  });
+
+  test('preserves the selected provider when another provider offers the same id', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(manager as never, '/notes', 'task', 'Other Model', async () => [
+      offers()[0],
+      { ...offers()[0], provider: 'custom:other', name: 'Other Model' },
+    ]);
+    expect(created[0].config).toEqual({ model: 'swe-2-high', provider: 'custom:other' });
   });
 
   test('falls back to the newest available model when the default cannot run', async () => {
@@ -356,8 +481,26 @@ describe('createDriverSession model', () => {
     await createDriverSession(manager as never, '/notes', 'essay', 'kimi-k3', models);
     await createDriverSession(manager as never, '/notes', 'essay', 'claude-sonnet-4-6', models);
     expect(created.map((params): unknown => params.config)).toEqual([
-      { model: 'kimi-k3' },
-      { model: 'claude-sonnet-4-6' },
+      { model: 'kimi-k3-0901', provider: 'kimi' },
+      { model: 'sonnet', provider: 'sonnet' },
+    ]);
+  });
+
+  test('exact shared ids retain catalog precedence while a unique name selects its provider', async () => {
+    const { created, manager } = sessionManager(false);
+    const models = async () => [
+      offers()[0],
+      {
+        ...offers()[0],
+        provider: 'custom:other',
+        name: 'Other SWE offer',
+      },
+    ];
+    await createDriverSession(manager as never, '/notes', 'task', 'swe-2-high', models);
+    await createDriverSession(manager as never, '/notes', 'task', 'Other SWE offer', models);
+    expect(created.map((entry) => entry.config)).toEqual([
+      { model: 'swe-2-high', provider: 'custom:synthetic' },
+      { model: 'swe-2-high', provider: 'custom:other' },
     ]);
   });
 

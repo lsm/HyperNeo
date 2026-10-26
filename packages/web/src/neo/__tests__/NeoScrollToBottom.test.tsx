@@ -125,7 +125,9 @@ describe('Neo scroll to bottom', () => {
   it('watches the chat rail content, including content added after first load', async () => {
     renderLive();
     const rail = document.querySelector('.neo-chat-rail')!;
-    expect([...rail.children].every((child) => observed.has(child))).toBe(true);
+    await waitFor(() =>
+      expect([...rail.children].every((child) => observed.has(child))).toBe(true)
+    );
     const late = document.createElement('div');
     rail.append(late);
     await waitFor(() => expect(observed.has(late)).toBe(true));

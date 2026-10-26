@@ -20,6 +20,7 @@ export interface MailboxDeliveryDeps {
   publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
   scheduleDeferredReplay?(sessionId: string): void | Promise<void>;
   defersFor?(sessionId: string, entry: MailboxEntry): boolean;
+  prepareEntry?(entry: MailboxEntry, jobId: string): Promise<MailboxEntry | null>;
 }
 
 function readAdmissionRowid(db: BunDatabase, jobId: string): number | undefined {
@@ -42,7 +43,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     }
     const to = parsed.to;
     const target = to.sessionId;
-    const entry = {
+    let entry = {
       ...parsed,
       to,
       deliveryMode:
@@ -55,6 +56,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     }
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
+    }
+    if (deps.prepareEntry) {
+      const prepared = await deps.prepareEntry(entry, job.id);
+      if (!prepared) return { outcome: 'queued_neo_note' };
+      entry = { ...entry, message: prepared.message };
     }
     const admission = deps.captureAdmission?.(entry);
     const canDeliver = () => {
@@ -88,7 +94,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         return;
       }
     };
-    const ensured = ensurePrompt({
+    const ensured = await ensurePrompt({
       ...plan,
       db: deps.db,
       sdkMessageRepo: deps.sdkMessageRepo,
@@ -105,7 +111,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
-        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken) && canDeliver(),
+        claim: { jobId: job.id, claimToken: job.claimToken },
+        canDeliver,
       });
       if (retried) publish(retried.dbId);
     } else if (existing?.sendStatus === 'deferred' && entry.deliveryMode !== 'defer') {
@@ -117,7 +124,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         origin: plan.delivery.origin,
         admittedAt: plan.delivery.admittedAt,
         ...(admissionRowid !== undefined ? { admissionRowid } : {}),
-        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken) && canDeliver(),
+        claim: { jobId: job.id, claimToken: job.claimToken },
+        canDeliver,
       });
       if (activated[0]) publish(activated[0].dbId);
     } else if (
@@ -126,8 +134,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       !deps.sdkMessageRepo.hasConsumptionEvidence(target, messageUuid) &&
       deps.sdkMessageRepo.getSettledDeliveryMessageId(target, messageUuid) === null
     ) {
-      deps.sdkMessageRepo.reopenDeliveryByUuid(target, messageUuid);
-      deps.sdkMessageRepo.markDeliveryDeferredByUuid(target, messageUuid);
+      await deps.sdkMessageRepo.write('reopenDeliveryByUuid', target, messageUuid);
+      await deps.sdkMessageRepo.write('markDeliveryDeferredByUuid', target, messageUuid);
     }
     if (entry.deliveryMode === 'defer' && deps.publishDeferredStatus) {
       const deferredDbId = deps.sdkMessageRepo.findMessageIdByUuid(target, messageUuid);
@@ -139,7 +147,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       }
     }
     if (deps.isSessionArchived(target)) {
-      const failedId = deps.sdkMessageRepo.markDeliveryFailedByUuid(target, messageUuid);
+      const failedId = await deps.sdkMessageRepo.write(
+        'markDeliveryFailedByUuid',
+        target,
+        messageUuid
+      );
       if (failedId !== null) {
         await deps.publishFailed?.(target, failedId);
       }

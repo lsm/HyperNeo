@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { backfillSdkMessageColumns } from '../../../../src/storage/schema/m413-sdk-message-columns';
 import {
   planRestartRecovery,
   type RestartRecoveryDeps,
@@ -48,7 +49,7 @@ describe('recoverRestartCutTurns', () => {
             ? { promptUuid: 'p2', workedAfter: true }
             : null,
       hasActiveDelivery: () => false,
-      resend: (id, uuid, enqueueDelivery) => {
+      resend: async (id, uuid, enqueueDelivery) => {
         calls.push(`resend ${id} ${uuid} ${enqueueDelivery}`);
         return true;
       },
@@ -167,6 +168,51 @@ describe('restart recovery reads', () => {
     });
     expect(sdk.readRestartRecoveryEvidence('idle')).toBeNull();
     expect(sessions.listProcessingSessionIds().sort()).toEqual(['asked', 'working']);
+  });
+
+  test('restart recovery waits for projection evidence instead of resending a tool result', async () => {
+    row('asked', 'user', '2026-10-23T00:00:00Z', prompt('retained request'), {
+      uuid: 'request',
+      status: 'consumed',
+    });
+    row('asked', 'user', '2026-10-23T00:00:01Z', toolResult, {
+      uuid: 'tool-result',
+      status: 'consumed',
+    });
+    db.exec(
+      "UPDATE sdk_messages SET has_tool_result=NULL; DELETE FROM migration_markers WHERE key='sdk_message_columns_backfilled_v2'"
+    );
+    expect(sdk.readRestartRecoveryEvidence('asked')?.promptUuid).toBe('tool-result');
+    let release = () => {};
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resent: string[] = [];
+    const deps: RestartRecoveryDeps = {
+      readEvidence: async () => {
+        await ready;
+        return sdk.readRestartRecoveryEvidence('asked');
+      },
+      hasActiveDelivery: () => false,
+      resend: async (_id: string, uuid: string) => {
+        resent.push(uuid);
+        return true;
+      },
+      sendNote: async () => false,
+    };
+    const recovery = recoverRestartCutTurns(['asked'], deps);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resent).toEqual([]);
+      await backfillSdkMessageColumns(db, () => {});
+      release();
+      await recovery;
+      expect(resent).toEqual(['request']);
+      expect(sdk.getDeliveryContent('asked', 'tool-result')?.sendStatus).toBe('consumed');
+    } finally {
+      release();
+      await recovery;
+    }
   });
 
   test('the cut-off prompt reopens for delivery through the shared retry transition', () => {

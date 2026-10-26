@@ -61,7 +61,7 @@ describe('SDKRuntimeConfig', () => {
       },
     };
 
-    updateSessionSpy = mock(() => {});
+    updateSessionSpy = mock(async () => {});
     mockDb = {
       updateSession: updateSessionSpy,
     } as unknown as Database;
@@ -149,6 +149,40 @@ describe('SDKRuntimeConfig', () => {
     it('should create config with dependencies', () => {
       config = createConfig();
       expect(config).toBeDefined();
+    });
+  });
+
+  describe('applyThinking', () => {
+    it('sends the budget and effort to the live query', async () => {
+      const applyFlagSettings = mock(async () => {});
+      Object.assign(mockQueryObject as object, { applyFlagSettings });
+      config = createConfig();
+
+      await config.applyThinking({ maxThinkingTokens: 0, effortLevel: 'low' });
+
+      expect(setMaxThinkingTokensSpy).toHaveBeenCalledWith(0);
+      expect(applyFlagSettings).toHaveBeenCalledWith({ effortLevel: 'low' });
+    });
+
+    it('turns thinking off through the CLI env and back on with 0', async () => {
+      const applyFlagSettings = mock(async () => {});
+      Object.assign(mockQueryObject as object, { applyFlagSettings });
+      config = createConfig();
+
+      await config.applyThinking({ disableThinking: true });
+      await config.applyThinking({ disableThinking: false, effortLevel: 'high' });
+
+      expect(applyFlagSettings.mock.calls).toEqual([
+        [{ env: { CLAUDE_CODE_DISABLE_THINKING: '1' } }],
+        [{ effortLevel: 'high', env: { CLAUDE_CODE_DISABLE_THINKING: '0' } }],
+      ]);
+    });
+
+    it('leaves the query untouched when nothing resolves', async () => {
+      config = createConfig();
+      await config.applyThinking({});
+
+      expect(setMaxThinkingTokensSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -289,6 +323,8 @@ describe('SDKRuntimeConfig', () => {
       expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
         config: mockSession.config,
       });
+      expect(setPermissionModeSpy).not.toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(setPermissionModeSpy).toHaveBeenCalledWith('acceptEdits');
 
       resolveCli();

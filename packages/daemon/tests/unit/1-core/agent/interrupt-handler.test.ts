@@ -1,3 +1,5 @@
+import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   InterruptHandler,
@@ -110,6 +112,7 @@ describe('InterruptHandler', () => {
     cancelForSessionSpy = mock(() => [] as string[]);
     markFailedSpy = mock(() => null);
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       getJobQueueRepo: mock(() => ({
         cancelForSessionWithMessages: cancelForSessionSpy,
         cancelMailboxForSession: mock(() => []),
@@ -136,7 +139,7 @@ describe('InterruptHandler', () => {
       messageQueue: mockMessageQueue,
       stateManager: mockStateManager,
       logger: mockLogger,
-      db: mockDb,
+      db: withSdkTeardownGateway(overrides.db ?? mockDb),
       internalEventBus: mockEventBus,
       queryObject: mockQueryObject,
       queryPromise: mockQueryPromise,
@@ -375,6 +378,7 @@ describe('InterruptHandler', () => {
     it('teardown cancels durable deliveries before stopping the session', async () => {
       cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),
@@ -403,6 +407,7 @@ describe('InterruptHandler', () => {
       const notifySpy = mock(() => {});
       cancelForSessionSpy = mock(() => ['turn-uuid']);
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),
@@ -422,6 +427,7 @@ describe('InterruptHandler', () => {
       getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
       cancelForSessionSpy = mock(() => ['pre-claim-uuid']);
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),
@@ -443,6 +449,7 @@ describe('InterruptHandler', () => {
         status === 'enqueued' ? [orphan] : []
       );
       mockDb = {
+        writeSDKMessage: writeThroughRepo,
         getJobQueueRepo: mock(() => ({
           cancelForSessionWithMessages: cancelForSessionSpy,
           cancelMailboxForSession: mock(() => []),
@@ -936,7 +943,7 @@ describe('InterruptHandler', () => {
     async function makeRealFixture(sessionId: string): Promise<RealFixture> {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
-      db.createSession(session);
+      await db.createSession(session);
       const queue = new MessageQueue();
       const published: Array<{ channel: string; payload: Record<string, unknown> }> = [];
       const bus = {

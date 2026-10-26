@@ -1,0 +1,8 @@
+{
+  "runtime": "deno",
+  "mode": "before",
+  "exitCode": 1,
+  "head": "8ee3b457b507835036de29edc56820d01edf450c",
+  "temporaryDaemonDataRemoved": true,
+  "freeGiBBefore": 74.24702072143555
+}

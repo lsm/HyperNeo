@@ -17,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
+import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../acp/acp-safe-fs.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
@@ -534,20 +535,25 @@ export class NeoHomeRepository {
       const message = input.confirmation
         ? `${input.message}\n\nNeo-Confirmed-By: question ${input.confirmation.questionId}`
         : input.message;
+      const replace = (path: string, bytes: Buffer | null) =>
+        isSafeFsSupported()
+          ? replaceFileWithinWorkspace(this.root, path.split('/'), bytes)
+          : bytes === null
+            ? rm(join(this.root, path), { force: true })
+            : writeFile(join(this.root, path), bytes);
       try {
         for (const [path, bytes] of writes) {
-          await mkdir(dirname(join(this.root, path)), { recursive: true });
-          await writeFile(join(this.root, path), bytes);
+          if (!isSafeFsSupported())
+            await mkdir(dirname(join(this.root, path)), { recursive: true });
+          await replace(path, bytes);
         }
         await this.git(['add', '--', ...paths]);
         await this.git(['commit', '--only', '-m', message, '--', ...paths]);
       } catch (error) {
         await this.git(['reset', '--', ...paths]).catch(() => {});
-        for (const [path, before] of originals)
-          await (before === null
-            ? rm(join(this.root, path), { force: true })
-            : writeFile(join(this.root, path), before)
-          ).catch(() => {});
+        for (const [path, before] of originals) await replace(path, before).catch(() => {});
+        if (['ELOOP', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+          return { ok: false, reason: 'invalid_path: home path changed during save.' };
         throw error;
       }
     }
@@ -633,10 +639,7 @@ export class NeoHomeRepository {
         throw error;
       }
     }
-    const projects = this.projects.listProjects().map((project) => ({
-      id: project.id,
-      homePath: this.projects.ensureHomePath(project),
-    }));
+    const projects = await this.projects.reserveHomeProjects();
     for (const project of projects)
       await mkdir(join(this.root, project.homePath), { recursive: true });
     return { ok: true, path: this.root, projects };

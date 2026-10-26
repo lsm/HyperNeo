@@ -1,8 +1,18 @@
+import { sdkSideOnlyWrites } from '../sdk-message-body-admission.ts';
+import { runtimeWorkerUrl } from '../../lib/runtime-worker-url.ts';
+import { forwardSQLiteWorkerLog } from '../sqlite-worker-observability.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
-import { emitStructuredLogEvent } from '../../lib/logger.ts';
+import { Logger } from '../../lib/logger.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteQueryObservabilityOptions } from '../sqlite-query-observability.ts';
-import type { DbOp } from './db-op.ts';
+import {
+  ChangeRecorder,
+  type DbOp,
+  type Method,
+  type RepositoryOp,
+  type TableChange,
+} from './db-op.ts';
 
 type Lane = DbOp<unknown, unknown>['mode'];
 
@@ -17,14 +27,17 @@ export type DbGatewayRequest = {
 export type DbGatewayReply =
   | { ready: true }
   | { log: StructuredLogEvent }
-  | { id: number; result?: unknown; error?: string };
+  | { id: number; result?: unknown; changes?: TableChange[]; error?: string };
 
+const log = new Logger('db-gateway');
 const MAX_PENDING = 1024;
+const REPLY_TIMEOUT_MS = 30_000;
 
 class WorkerLane {
   private worker: Worker | null = null;
   private ready: Promise<Worker> | null = null;
   private closed = false;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
   private id = 0;
   private readonly pending = new Map<
     number,
@@ -35,6 +48,8 @@ class WorkerLane {
     private readonly lane: Lane,
     private readonly dbPath: string,
     private readonly createWorker: () => Worker,
+    private readonly replyTimeoutMs: number,
+    private readonly replay: (changes: TableChange[]) => void,
     private readonly queryObservability?: SQLiteQueryObservabilityOptions
   ) {}
 
@@ -46,16 +61,24 @@ class WorkerLane {
     const id = ++this.id;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      void this.open().then((worker) =>
-        worker.postMessage({
-          id,
-          dbPath: this.dbPath,
-          lane: this.lane,
-          op,
-          args,
-          queryObservability: this.queryObservability,
-        } satisfies DbGatewayRequest)
-      );
+      this.watchdog ??= this.armWatchdog();
+      void this.open().then((worker) => {
+        try {
+          worker.postMessage({
+            id,
+            dbPath: this.dbPath,
+            lane: this.lane,
+            op,
+            args,
+            queryObservability: this.queryObservability,
+          } satisfies DbGatewayRequest);
+        } catch (error) {
+          const waiter = this.pending.get(id);
+          this.pending.delete(id);
+          this.rearmWatchdog();
+          waiter?.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
     });
   }
 
@@ -78,17 +101,16 @@ class WorkerLane {
       }
       worker.onmessage = ({ data }: MessageEvent<DbGatewayReply>) => {
         if ('ready' in data) resolve(worker);
-        else if ('log' in data)
-          emitStructuredLogEvent({
-            ...data.log,
-            args: [data.log.message],
-            metadata: { ...data.log.metadata, workerKind: `db-gateway-${this.lane}` },
-          });
+        else if ('log' in data) forwardSQLiteWorkerLog(data, `db-gateway-${this.lane}`);
         else {
           const waiter = this.pending.get(data.id);
           this.pending.delete(data.id);
-          if (data.error === undefined) waiter?.resolve(data.result);
-          else waiter?.reject(new Error(data.error));
+          this.rearmWatchdog();
+          if (data.error !== undefined) waiter?.reject(new Error(data.error));
+          else {
+            if (data.changes?.length) this.replay(data.changes);
+            waiter?.resolve(data.result);
+          }
         }
       };
       worker.onerror = (event) => {
@@ -98,10 +120,29 @@ class WorkerLane {
     }));
   }
 
+  private armWatchdog(): ReturnType<typeof setTimeout> {
+    return setTimeout(
+      () =>
+        this.stop(
+          new Error(
+            `DB gateway ${this.lane} worker gave no reply for ${this.replyTimeoutMs} ms; outcome unknown`
+          )
+        ),
+      this.replyTimeoutMs
+    );
+  }
+
+  private rearmWatchdog(): void {
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = this.pending.size > 0 ? this.armWatchdog() : null;
+  }
+
   private stop(error = new Error(`DB gateway ${this.lane} worker closed`)): void {
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = null;
     for (const waiter of this.pending.values()) waiter.reject(error);
     this.pending.clear();
   }
@@ -109,30 +150,125 @@ class WorkerLane {
 
 export class DbGateway {
   private readonly lanes: Record<Lane, WorkerLane>;
+  onChanges: (changes: TableChange[]) => void = () => {};
+  sdkBodyWriteMode?: () => boolean;
 
   constructor(
     dbPath: string,
     private readonly inline: Database | null,
     queryObservability?: SQLiteQueryObservabilityOptions,
     createWorker = () =>
-      new Worker(new URL('./db-gateway-worker.ts', import.meta.url).href, { type: 'module' })
+      new Worker(
+        runtimeWorkerUrl(
+          './db-gateway-worker.ts',
+          './daemon/src/storage/db-gateway/db-gateway-worker.ts',
+          import.meta.url
+        ).toString(),
+        { type: 'module' }
+      ),
+    replyTimeoutMs = REPLY_TIMEOUT_MS
   ) {
     this.lanes = {
-      read: new WorkerLane('read', dbPath, createWorker, queryObservability),
-      write: new WorkerLane('write', dbPath, createWorker, queryObservability),
+      read: new WorkerLane(
+        'read',
+        dbPath,
+        createWorker,
+        replyTimeoutMs,
+        this.replay,
+        queryObservability
+      ),
+      write: new WorkerLane(
+        'write',
+        dbPath,
+        createWorker,
+        replyTimeoutMs,
+        this.replay,
+        queryObservability
+      ),
     };
   }
 
   run<A, R>(op: DbOp<A, R>, args: A): Promise<R> {
+    if (
+      op.name.startsWith('sdk_messages.') &&
+      this.sdkBodyWriteMode &&
+      typeof args === 'object' &&
+      args !== null
+    )
+      args = { ...args, sdkSideOnlyWrites: this.sdkBodyWriteMode() };
     const db = this.inline;
     if (db)
-      return Promise.resolve().then(() =>
-        db.transaction(() => op.run(db, args), op.mode === 'write' ? 'immediate' : 'deferred')()
-      );
+      return Promise.resolve().then(() => {
+        const recorder = new ChangeRecorder();
+        const result = db.transaction(
+          () => op.run(db, args, recorder),
+          op.mode === 'write' ? 'immediate' : 'deferred'
+        )();
+        if (recorder.changes.length) this.replay(recorder.changes);
+        return result;
+      });
     return this.lanes[op.mode].send(op.name, args) as Promise<R>;
+  }
+
+  call<R, M extends Method<R>, K extends M>(
+    op: RepositoryOp<R, M>,
+    method: K,
+    ...args: R[K] extends (...args: infer P) => unknown ? P : never
+  ): Promise<R[K] extends (...args: never[]) => infer T ? Awaited<T> : never> {
+    return this.run(op, { method, args }) as never;
   }
 
   close(): Promise<void> {
     return Promise.all([this.lanes.read.close(), this.lanes.write.close()]).then(() => {});
   }
+
+  private readonly replay = (changes: TableChange[]) => {
+    try {
+      this.onChanges(changes);
+    } catch (error) {
+      log.error('could not announce committed table changes:', error);
+    }
+  };
+}
+
+const gateways = new WeakMap<Database, DbGateway>();
+
+export function bindGateway(db: Database, gateway: DbGateway): void {
+  gateways.set(db, gateway);
+  gateway.sdkBodyWriteMode = () => sdkSideOnlyWrites(db);
+}
+
+export function gatewayFor(db: Database): DbGateway {
+  let gateway = gateways.get(db);
+  if (gateway) return gateway;
+  const unbound = new DbGateway(':memory:', db);
+  let warned = false;
+  unbound.onChanges = (changes) => {
+    if (warned) return;
+    warned = true;
+    log.warn(
+      `changes to ${[...new Set(changes.map((change) => change.table))].join(', ')} ran on a connection with no bound gateway, so nothing announced them`
+    );
+  };
+  gateways.set(db, unbound);
+  return unbound;
+}
+
+const spaceTaskLanes = new WeakMap<Database, DbGateway>();
+
+export function bindSpaceTaskLane(db: Database, lane: DbGateway): void {
+  spaceTaskLanes.set(db, lane);
+}
+
+export function spaceTaskLaneFor(
+  db: Database,
+  changes?: Pick<ReactiveDatabase, 'notifyChange'>
+): DbGateway {
+  const bound = spaceTaskLanes.get(db);
+  if (bound) return bound;
+  const lane = new DbGateway(':memory:', db);
+  lane.onChanges = (recorded) => {
+    for (const { table, scope } of recorded) changes?.notifyChange(table, scope);
+  };
+  return lane;
 }

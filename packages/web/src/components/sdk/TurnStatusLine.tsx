@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { ChatTurn } from '../../lib/chat-turns.ts';
 import { cn } from '../../lib/utils.ts';
-import { ContentDisclosureControl } from '../ui/ContentDisclosureControl.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 
 function formatDuration(ms: number): string {
@@ -57,19 +56,17 @@ export function TurnStatusLine({
   return (
     <div
       class={cn(
-        'flow-root py-1.5 text-xs',
+        'flex items-center gap-2 py-1.5 text-xs',
         turn.outcome === 'failed' ? 'text-danger' : 'text-fg-muted'
       )}
       data-testid="turn-status-line"
     >
       {running && <Spinner size="xs" />}
-      <span>{summary}</span>
+      <span class="truncate">{summary}</span>
       {!running && turn.toolCount + turn.errorCount > 0 && (
-        <ContentDisclosureControl
-          expanded={expanded}
-          onToggle={onToggle}
-          aria-label={expanded ? 'Hide steps' : 'Show steps'}
-        />
+        <button type="button" class="text-fg-faint hover:text-fg underline" onClick={onToggle}>
+          {expanded ? 'Hide steps' : 'Show steps'}
+        </button>
       )}
     </div>
   );

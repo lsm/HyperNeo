@@ -8,9 +8,14 @@ import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-test.each(['ordinary', 'neo'] as const)(
+test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
   '%s SDK compacts mid-turn without cancelling tools or losing queued inputs',
   async (kind) => {
+    const oneM = kind.startsWith('opus');
+    const native = kind === 'opus-native';
+    const model = oneM ? 'claude-opus-5-5' : 'claude-haiku-4-5-20251001';
+    const percent = oneM ? 90 : 60;
+    const capacity = oneM ? 1_000_000 : 200000;
     const run = await mkdtemp(join(tmpdir(), 'sdk-auto-compact-'));
     await mkdir(join(run, 'workspace'));
     await mkdir(join(run, 'home'));
@@ -34,6 +39,8 @@ test.each(['ordinary', 'neo'] as const)(
     let turn = 0;
     let summaryCalls = 0;
     let beforeCrossing: unknown;
+    let daemonContext: unknown;
+    let perModelBackstop: unknown;
     let held = false;
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -45,7 +52,11 @@ test.each(['ordinary', 'neo'] as const)(
       const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
       res.setHeader('content-type', 'application/json');
       if (req.url?.includes('count_tokens')) return res.end('{"input_tokens":1000}');
-      if (req.url?.endsWith('/models')) return res.end('{"data":[],"has_more":false}');
+      if (req.url?.endsWith('/models')) {
+        return res.end(
+          JSON.stringify({ data: [{ id: model, max_input_tokens: capacity }], has_more: false })
+        );
+      }
       if (!req.url?.startsWith('/v1/messages')) {
         res.statusCode = 404;
         return res.end('{}');
@@ -67,7 +78,7 @@ test.each(['ordinary', 'neo'] as const)(
           held = true;
           await gate;
         }
-        usage = turn === 2 ? 125000 : 1000;
+        usage = turn === 2 ? (native ? 975000 : oneM ? 905000 : 125000) : 1000;
         content =
           turn <= 2
             ? [
@@ -133,6 +144,15 @@ test.each(['ordinary', 'neo'] as const)(
     await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
     const address = fixture.address();
     if (!address || typeof address === 'string') throw new Error('Missing loopback model address');
+    if (oneM) {
+      const { default: Anthropic } = await import('@anthropic-ai/sdk');
+      const client = new Anthropic({
+        apiKey: 'sk-synthetic-loopback-only',
+        baseURL: `http://127.0.0.1:${address.port}`,
+      });
+      const page = await client.models.list();
+      expect(page.data).toMatchObject([{ id: model, max_input_tokens: 1_000_000 }]);
+    }
     const environment = {
       HOME: join(run, 'home'),
       PATH: `${join(run, 'bin')}:${process.env.PATH}`,
@@ -153,6 +173,7 @@ test.each(['ordinary', 'neo'] as const)(
       const options = await build.apply(this, args);
       built.push({
         cli: options.pathToClaudeCodeExecutable,
+        model: options.model,
         settings: options.settings,
         env: Object.fromEntries(
           Object.entries(options.env ?? {}).filter(([key]) => /COMPACT/.test(key))
@@ -227,30 +248,21 @@ test.each(['ordinary', 'neo'] as const)(
       if (existing) await hub.request('providers.update', { id: existing.id, params, credentials });
       else await hub.request('providers.create', { params, credentials });
       const { setModelsCache } = await import('../../../src/lib/model-service.ts');
-      setModelsCache(
-        new Map([
-          [
-            'global',
-            [
-              {
-                id: 'claude-haiku-4-5-20251001',
-                name: 'Synthetic Haiku',
-                provider: 'anthropic',
-                available: true,
-                contextWindow: 200000,
-              },
-            ],
-          ],
-        ])
+      const { AnthropicProvider } = await import(
+        '../../../src/lib/providers/anthropic-provider.ts'
       );
+      const catalog = new AnthropicProvider().convertSdkModels([
+        { value: model, displayName: 'Synthetic model', description: '' },
+      ]);
+      setModelsCache(new Map([['global', catalog]]));
       const call = (name: string, input: unknown = {}) =>
         hub.request<Record<string, unknown>>('operation.invoke', { name, input });
       if (kind === 'neo')
         expect(
           await call('neo.preferences.set', {
-            model: 'claude-haiku-4-5-20251001',
+            model: model,
             provider: 'anthropic',
-            autoCompactPercent: 60,
+            autoCompactPercent: native ? undefined : percent,
             thinkingLevel: 'off',
           })
         ).toMatchObject({ ok: true });
@@ -262,16 +274,16 @@ test.each(['ordinary', 'neo'] as const)(
                 workspacePath: join(run, 'workspace'),
                 title: 'SDK compaction proof',
                 config: {
-                  model: 'claude-haiku-4-5-20251001',
+                  model: model,
                   provider: 'anthropic',
-                  autoCompactPercent: 60,
+                  autoCompactPercent: native ? undefined : percent,
                   sdkToolsPreset: ['Read'],
                   permissionMode: 'bypassPermissions',
                 },
               })
             ).sessionId;
       const send = async (content: string) => {
-        if (kind === 'ordinary')
+        if (kind !== 'neo')
           return hub.request<{ messageId: string }>('message.send', { sessionId, content });
         const requestId = randomUUID();
         expect(await call('neo.message.send', { sessionId, requestId, content })).toMatchObject({
@@ -294,10 +306,37 @@ test.each(['ordinary', 'neo'] as const)(
       for (const marker of markers) accepted.push(await send(marker));
       const live = await app.sessionManager.getSessionForControl(sessionId);
       beforeCrossing = await live?.queryObject?.getContextUsage();
+      const { ContextFetcher } = await import('../../../src/lib/agent/context-fetcher.ts');
+      daemonContext = await new ContextFetcher(sessionId).fetch(live?.queryObject ?? null, {
+        ...catalog[0],
+        autoCompactPercent: native ? undefined : percent,
+      });
+      if (native) {
+        perModelBackstop = await new ContextFetcher(sessionId).fetch(live?.queryObject ?? null, {
+          ...catalog[0],
+          autoCompactPercent: 90,
+          autoCompactPercentOverride: 90,
+        });
+        expect(perModelBackstop).toMatchObject({
+          totalCapacity: 1_000_000,
+          autoCompactThreshold: 900000,
+        });
+      }
+      if (oneM) {
+        expect(built[0]).toMatchObject({ model: `${model}[1m]` });
+        expect(daemonContext).toMatchObject({ totalCapacity: expect.any(Number) });
+        expect(
+          requests.every((r) => !String((r.body as { model: string }).model).includes('[1m]'))
+        ).toBe(true);
+      }
       expect(beforeCrossing).toMatchObject({
-        autoCompactThreshold: 120000,
+        autoCompactThreshold: native ? expect.any(Number) : (capacity * percent) / 100,
         isAutoCompactEnabled: true,
       });
+      if (native)
+        expect(
+          (beforeCrossing as { autoCompactThreshold: number }).autoCompactThreshold
+        ).toBeGreaterThan(900000);
       await new Promise((resolve) => setTimeout(resolve, 11000));
       release();
       await wait(async () => {
@@ -376,6 +415,8 @@ test.each(['ordinary', 'neo'] as const)(
               run,
               kind,
               beforeCrossing,
+              daemonContext,
+              perModelBackstop,
               built,
               turn,
               summaryCalls,

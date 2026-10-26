@@ -40,7 +40,7 @@ afterEach(() => {
 
 async function makeHarness(sessionId: string): Promise<Harness> {
   const db = await createTestDb();
-  db.createSession(createTestSession(sessionId));
+  await db.createSession(createTestSession(sessionId));
   new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', projectId: null });
   const events = new InternalEventBus<DaemonInternalEventMap>();
   const failed: string[][] = [];
@@ -79,7 +79,7 @@ async function makeHarness(sessionId: string): Promise<Harness> {
   return harness;
 }
 
-function queueNote(harness: Harness, uuid: string): void {
+async function queueNote(harness: Harness, uuid: string): Promise<void> {
   harness.db.getSDKMessageRepo().saveUserMessage(
     harness.sessionId,
     {
@@ -90,7 +90,9 @@ function queueNote(harness: Harness, uuid: string): void {
     } as unknown as SDKMessage,
     'enqueued'
   );
-  deliverMessage(harness.db.getJobQueueRepo(), harness.sessionId, uuid, { origin: 'recovery' });
+  await deliverMessage(harness.db.getJobQueueRepo(), harness.sessionId, uuid, {
+    origin: 'recovery',
+  });
 }
 
 function consumeHumanInput(harness: Harness, uuid: string): void {
@@ -130,20 +132,22 @@ async function streamIntoRunningTurn(harness: Harness, head: string) {
 describe('Neo note queue', () => {
   it('retains older notes when a newer note for the same card or ask arrives', async () => {
     const harness = await makeHarness('neo:supersede');
-    queueNote(harness, 'w1:done-check:1');
-    queueNote(harness, 'neo-ask-evidence:a1:old');
-    queueNote(harness, 'w2:done-check:1');
+    await queueNote(harness, 'w1:done-check:1');
+    await queueNote(harness, 'neo-ask-evidence:a1:old');
+    await queueNote(harness, 'w2:done-check:1');
     await harness.service.deliverForward(
       harness.sessionId,
       'w1:stall:7',
       'stalled',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     await harness.service.deliverForward(
       harness.sessionId,
       'neo-ask-evidence:a1:new',
       'evidence',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     expect(statusOf(harness, 'w1:done-check:1')).toBe('enqueued');
     expect(statusOf(harness, 'neo-ask-evidence:a1:old')).toBe('enqueued');
@@ -155,18 +159,20 @@ describe('Neo note queue', () => {
 
   it('queues and delivers notes even when their card or ask has settled', async () => {
     const harness = await makeHarness('neo:settled');
-    queueNote(harness, 'neo-card-pr:w-done:s1');
+    await queueNote(harness, 'neo-card-pr:w-done:s1');
     await harness.service.deliverForward(
       harness.sessionId,
       'w-done:done-check:4',
       'check',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     await harness.service.deliverForward(
       harness.sessionId,
       'neo-ask-evidence:a-done:x',
       'evidence',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     expect(mailboxed(harness, 'w-done:done-check:4')).toBe(1);
     expect(mailboxed(harness, 'neo-ask-evidence:a-done:x')).toBe(1);
@@ -181,13 +187,14 @@ describe('Neo note queue', () => {
   it('delivers queued facts older than the last consumed human input', async () => {
     const harness = await makeHarness('neo:stale');
     const facts = ['w1:done-check:1', 'neo-ask-evidence:a1:x'];
-    for (const uuid of facts) queueNote(harness, uuid);
+    for (const uuid of facts) await queueNote(harness, uuid);
     consumeHumanInput(harness, 'h1');
     await harness.service.deliverForward(
       harness.sessionId,
       'w3:stall:1',
       'new fact',
-      harness.sessionId
+      harness.sessionId,
+      'event'
     );
     expect(facts.map((uuid) => statusOf(harness, uuid))).toEqual(['enqueued', 'enqueued']);
     for (const uuid of facts) {
@@ -203,7 +210,13 @@ describe('Neo note queue', () => {
   it('keeps delivery retry identity without suppressing messages by subject', async () => {
     const harness = await makeHarness('neo:retry');
     for (const id of ['w1:stall:1', 'w1:stall:1', 'w1:stall:2']) {
-      await harness.service.deliverForward(harness.sessionId, id, 'fact', harness.sessionId);
+      await harness.service.deliverForward(
+        harness.sessionId,
+        id,
+        'fact',
+        harness.sessionId,
+        'event'
+      );
     }
     expect(mailboxed(harness, 'w1:stall:1')).toBe(1);
     expect(mailboxed(harness, 'w1:stall:2')).toBe(1);

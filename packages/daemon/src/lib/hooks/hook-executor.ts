@@ -18,9 +18,12 @@ import '../github/connectors/production.ts';
 import '../workflows/built-in-validators/index.ts';
 import { getBuiltInValidator } from './built-in-validator-registry.ts';
 import { buildHookRestrictedEnv } from './hook-script-env.ts';
+import type { ConnectorContext } from '../github/connectors/connector.ts';
 
 export interface HookExecutorContext {
   workspacePath: string;
+  readGithubPr?: ConnectorContext['readPr'];
+  readGithubReviewThreads?: ConnectorContext['readReviewThreads'];
   runId: string;
   hookId: string;
   methodName: string;
@@ -190,6 +193,8 @@ export async function executeHookScript(
 
 export interface HookExecutorConfig {
   workspacePath: string;
+  readGithubPr?: ConnectorContext['readPr'];
+  readGithubReviewThreads?: ConnectorContext['readReviewThreads'];
 }
 
 export class HookExecutor {
@@ -208,7 +213,12 @@ export class HookExecutor {
           },
         };
       }
-      const result = await fn(context);
+      const result = await fn({
+        ...context,
+        readGithubPr: this.config.readGithubPr ?? context.readGithubPr,
+        readGithubReviewThreads:
+          this.config.readGithubReviewThreads ?? context.readGithubReviewThreads,
+      });
       return { result };
     }
 

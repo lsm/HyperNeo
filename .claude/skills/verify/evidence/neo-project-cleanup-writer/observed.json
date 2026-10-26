@@ -1,0 +1,67 @@
+{
+  "baseline": {
+    "mainCleanupSql": 126,
+    "committedWriterCommands": 0,
+    "competingRpcMs": 7.369832999999971,
+    "healthMs": 0.1622499999999718,
+    "maxLoopLagMs": 6.098874999999907,
+    "mergedContext": "home\n\ncopy",
+    "targetRevision": 2
+  },
+  "bun": {
+    "mainCleanupSql": 0,
+    "committedWriterCommands": 42,
+    "competingRpcMs": 10.332125000000019,
+    "healthMs": 0.16575000000000273,
+    "maxLoopLagMs": 2.6906660000000784,
+    "mergedContext": "home\n\ncopy",
+    "targetRevision": 2,
+    "contention": {
+      "healthMs": 0.2674580000000333,
+      "writeMs": 1204.075291,
+      "affectedWriteUnder250ms": false
+    }
+  },
+  "deno": {
+    "mainCleanupSql": 0,
+    "committedWriterCommands": 42,
+    "competingRpcMs": 12.287958999999773,
+    "healthMs": 0.25870800000006966,
+    "maxLoopLagMs": 2.670667000000094,
+    "mergedContext": "home\n\ncopy",
+    "targetRevision": 2,
+    "contention": {
+      "healthMs": 0.4327499999999418,
+      "writeMs": 1232.2255,
+      "affectedWriteUnder250ms": false
+    }
+  },
+  "rebasedBun": {
+    "mainCleanupSql": 0,
+    "committedWriterCommands": 42,
+    "competingRpcMs": 135.15162499999997,
+    "healthMs": 0.6308340000000499,
+    "maxLoopLagMs": 34.7375420000003,
+    "mergedContext": "home\n\ncopy",
+    "targetRevision": 2,
+    "contention": {
+      "healthMs": 0.5774579999997513,
+      "writeMs": 1199.9672499999997,
+      "affectedWriteUnder250ms": false
+    }
+  },
+  "rebasedDeno": {
+    "mainCleanupSql": 0,
+    "committedWriterCommands": 42,
+    "competingRpcMs": 44.971332999999504,
+    "healthMs": 0.9903340000000753,
+    "maxLoopLagMs": 7.064792000000125,
+    "mergedContext": "home\n\ncopy",
+    "targetRevision": 2,
+    "contention": {
+      "healthMs": 0.7214169999997466,
+      "writeMs": 1289.2107919999999,
+      "affectedWriteUnder250ms": false
+    }
+  }
+}

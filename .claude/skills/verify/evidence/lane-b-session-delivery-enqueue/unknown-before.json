@@ -1,0 +1,8 @@
+{
+  "exitCode": 1,
+  "committedDeliveryJobs": 1,
+  "observedInputStatus": "failed",
+  "expectedInputStatus": "enqueued",
+  "fault": "reply rejected after the real enqueue transaction committed",
+  "environment": "scrubbed environment and disposable home"
+}

@@ -1,3 +1,5 @@
+export { keepNeoOwnedSettings } from '../global-settings-patch.ts';
+import { configureWorkerSandbox, configureWorkerSockets } from '../drivers/worker-sandbox.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { GlobalSettings } from '@hyperneo/shared';
@@ -7,6 +9,7 @@ import type { Database } from '../../storage/database.ts';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 import { EXA_CREDENTIAL_PROVIDER_ID } from '../agent/exa-web-tools.ts';
+import { assertNoToolSelectionDefaults } from '../tools/session-tool-choice.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 export { EXA_CREDENTIAL_PROVIDER_ID };
@@ -67,9 +70,12 @@ export function registerSettingsHandlers(
   db: Database,
   credentialManager?: ProviderCredentialManager
 ) {
+  configureWorkerSockets(() => settingsManager.getGlobalSettings().workerUnixSockets ?? []);
+  configureWorkerSandbox(() => settingsManager.getGlobalSettings().workerSandbox ?? 'off');
   messageHub.onRequest(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {
+      assertNoToolSelectionDefaults(data.updates);
       const touchesCustomEndpoints = data.updates.customEndpoints !== undefined;
       const run = async () => {
         if (touchesCustomEndpoints) {
@@ -96,7 +102,6 @@ export function registerSettingsHandlers(
           exaMutation
         );
         const runCredentialMutations = async () => {
-          const priorSettings = settingsManager.getGlobalSettings();
           const needsCredentialSnapshot = credentialManager
             ? Boolean(
                 voiceMutation.storeKey ||
@@ -113,9 +118,8 @@ export function registerSettingsHandlers(
             needsCredentialSnapshot && (exaMutation.storeKey || exaMutation.remove)
               ? ((await credentialManager?.getCredentials(EXA_CREDENTIAL_PROVIDER_ID)) ?? null)
               : null;
-          const result = settingsManager.updateGlobalSettings(
-            keepNeoOwnedSettings(updates, settingsManager.getGlobalSettings())
-          );
+          const { settings: result, ...rollback } =
+            await settingsManager.updateGlobalSettingsAsync(updates);
           try {
             await applyCredentialMutation(
               voiceMutation,
@@ -128,7 +132,7 @@ export function registerSettingsHandlers(
               EXA_CREDENTIAL_PROVIDER_ID
             );
           } catch (error) {
-            settingsManager.saveGlobalSettings(priorSettings);
+            await settingsManager.rollbackGlobalSettingsAsync(rollback);
             await restorePriorCredential(
               priorVoiceCredential,
               credentialManager,
@@ -368,29 +372,6 @@ function normalizeEndpoint(endpoint: string): string {
   } catch {
     return endpoint;
   }
-}
-
-export function keepNeoOwnedSettings(
-  updates: Partial<GlobalSettings>,
-  current: GlobalSettings
-): Partial<GlobalSettings> {
-  if (!updates.neo) return updates;
-  const {
-    standingRules: _rules,
-    preferences: _preferences,
-    mutedSessions: _muted,
-    ...neo
-  } = updates.neo;
-  const { standingRules, preferences, mutedSessions } = current.neo ?? {};
-  return {
-    ...updates,
-    neo: {
-      ...neo,
-      ...(standingRules ? { standingRules } : {}),
-      ...(preferences ? { preferences } : {}),
-      ...(mutedSessions ? { mutedSessions } : {}),
-    },
-  };
 }
 
 export function publishGlobalSettings(

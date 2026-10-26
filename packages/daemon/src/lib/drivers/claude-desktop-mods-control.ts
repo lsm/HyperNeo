@@ -1,8 +1,4 @@
-import { createHash } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { parseAddress } from '../mailbox/address.ts';
-import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
-import { createMailboxEntry } from '../mailbox/entry.ts';
 import { readClaudeInboxEndpoint } from './claude-inbox-endpoint.ts';
 import { requireClaudeReplyDestination } from './claude-inbox-submit.ts';
 import type { createClaudeDesktopModsRuntime } from './claude-desktop-mods-runtime.ts';
@@ -57,32 +53,6 @@ function planControl(action: Action, target: Target | null) {
           'The plugin has not observed the current turn ID; stop is unavailable until a turn event arrives.'
         ),
       };
-}
-function report(sessionId: string, deps: Deps) {
-  deps.runtime.outbox.reportChanges(sessionId, (job, fact) => {
-    const to = parseAddress(String(job.payload.from));
-    if (to?.kind !== 'session') throw new Error('Desktop mods report has no session destination');
-    const outcome = enqueueMailboxEntry(
-      deps.runtime.outbox.jobs,
-      createMailboxEntry({
-        to,
-        origin: `driver:claude-desktop:${sessionId}`,
-        messageUuid: createHash('sha256')
-          .update(`${job.id}:${JSON.stringify(fact)}`)
-          .digest('hex'),
-        message: {
-          type: 'user',
-          inputKind: 'system',
-          parent_tool_use_id: null,
-          message: {
-            role: 'user',
-            content: `Claude Desktop peer transport fact (API receipt is not proof of execution): ${JSON.stringify(fact)}`,
-          },
-        },
-      })
-    );
-    if (outcome.kind === 'rejected') throw new Error(outcome.reason);
-  });
 }
 function observeStop(
   sessionId: string,
@@ -149,22 +119,14 @@ async function executeControl(
   deps: Deps
 ): Promise<Outcome> {
   const outbox = deps.runtime.outbox;
-  if (action.kind === 'withdraw') {
-    return outbox.transaction(() => {
-      const result = outbox.withdraw(sessionId, from, action.id);
-      report(sessionId, deps);
-      return result;
-    });
-  }
-  const job = outbox.transaction(() => {
-    const queued = outbox.enqueue(
-      sessionId,
-      from,
-      action.kind === 'submit' ? action : { kind: 'stop', turnId: action.turnId! }
-    );
-    report(sessionId, deps);
-    return queued;
-  });
+  if (action.kind === 'withdraw')
+    return outbox.write('withdrawReported', sessionId, from, action.id);
+  const job = await outbox.write(
+    'enqueueReported',
+    sessionId,
+    from,
+    action.kind === 'submit' ? action : { kind: 'stop', turnId: action.turnId! }
+  );
   return action.kind === 'submit'
     ? { ok: true, value: { delivered: false, unconfirmed: true, queuedSubmissionId: job.id } }
     : observeStop(sessionId, target!, action.turnId!, job.id, from, deps);
@@ -194,6 +156,6 @@ export function createClaudeDesktopModsControl(deps: Deps) {
       control(sessionId, { kind: 'withdraw', id }, context, deps) as Promise<
         Result<WorkWithdrawal>
       >,
-    report: (sessionId: string) => report(sessionId, deps),
+    report: (sessionId: string) => deps.runtime.outbox.write('report', sessionId),
   };
 }

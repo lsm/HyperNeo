@@ -1,5 +1,6 @@
 {
   "name": "hyperneo",
+  "version": "0.49.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -39,13 +40,15 @@
     "strip-comments": "bun scripts/strip-comments.ts",
     "check:online-shards": "scripts/test-online.sh --verify",
     "architecture:file-size-report": "bun run scripts/architecture-file-size-report.ts",
-    "check": "bun run check:no-comments && bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:operation-names && bun run check:db-schema-parity && bun run check:test-quality && bun run check:test-matrix && bun run check:online-shards && bun run check:raw-palette && bun run check:neo-strings && bun run check:neo-pack-imports",
+    "check": "bun run check:no-comments && bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:operation-names && bun run check:db-schema-parity && bun run check:test-quality && bun run check:test-matrix && bun run check:online-shards && bun run check:raw-palette && bun run check:neo-strings && bun run check:neo-pack-imports && bun run check:db-main-thread",
     "db:maintain-message-search": "bun run scripts/maintain-message-search-db.ts",
     "perf:daemon-live-scale": "bun packages/daemon/scripts/benchmark/live-scale-query-regression.ts",
     "test:proxy:start": "./scripts/dev-proxy.sh start",
     "test:proxy:stop": "./scripts/dev-proxy.sh stop",
     "test:proxy:status": "./scripts/dev-proxy.sh status",
-    "test:proxy:restart": "./scripts/dev-proxy.sh restart"
+    "test:proxy:restart": "./scripts/dev-proxy.sh restart",
+    "check:db-main-thread": "bun scripts/check-db-main-thread.ts",
+    "test:db-main-thread": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-db-main-thread.test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

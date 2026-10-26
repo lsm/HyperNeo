@@ -7,6 +7,7 @@ import {
 } from '@hyperneo/shared/types/neo-conversation-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
+import { readNeoPreviewReference } from './neo-preview-context.ts';
 import { admitPublicationCursor, admitPublicationLifetime } from './publication-client.ts';
 
 export type ConversationAskPage = {
@@ -136,6 +137,8 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
   const messageStatus = NEO_MESSAGE_STATUSES.find((status) => status === row.messageStatus);
   if (row.messageStatus !== undefined && !messageStatus) return null;
   const replyTo = object(row.replyTo);
+  const previewContext = readNeoPreviewReference(row.previewContext);
+  if (row.previewContext !== undefined && !previewContext) return null;
   return {
     conversationId: page.conversationId,
     requestId: row.requestId,
@@ -143,6 +146,7 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     sequence: row.sequence,
     createdAt: row.createdAt,
     content,
+    ...(previewContext ? { previewContext } : {}),
     ...(messageStatus ? { messageStatus } : {}),
     ...(object(row.delivery)?.state === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
     ...(replyTo &&

@@ -148,10 +148,17 @@ export function handleTaskTerminal(
     };
   }
   const result = runAtomic(deps, () => {
+    const current = deps.taskRepo.getTask(taskId);
+    const applied =
+      current && current.status === nextStatus && current.status !== transition?.fromStatus
+        ? current
+        : null;
     const task =
-      transition?.updates && Object.keys(transition.updates).length > 0
-        ? (deps.taskRepo.updateTask(taskId, transition.updates) as SpaceTask)
-        : existing;
+      applied ??
+      (transition?.updates && Object.keys(transition.updates).length > 0
+        ? deps.taskRepo.updateTask(taskId, transition.updates, transition.fromStatus ?? undefined)
+        : current);
+    if (!task) throw new Error(`Task ${taskId} left ${transition?.fromStatus} before its update`);
     if (!isTerminalTaskStatus(task.status)) {
       return {
         goal,

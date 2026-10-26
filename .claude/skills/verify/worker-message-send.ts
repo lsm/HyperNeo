@@ -93,7 +93,7 @@ const execute = async (neo: boolean) => {
     stderr: (data) => writeFileSync(join(run, `${mode}-stderr.log`), data, { flag: 'a' }),
     maxTurns: 8,
   };
-  if (neo) options.systemPrompt = { type: 'custom', prompt: buildNeoPrompt(), snapshot: false };
+  if (neo) options.systemPrompt = { type: 'custom', prompt: buildNeoPrompt([]), snapshot: false };
   const stream = query({ prompt: neo ? neoPrompt : 'Send the complete synthetic report in one operation call.', options });
   try { for await (const event of stream) writeFileSync(join(run, `${mode}-events.jsonl`), `${JSON.stringify(event)}\n`, { flag: 'a' }); }
   finally { stream.close(); }

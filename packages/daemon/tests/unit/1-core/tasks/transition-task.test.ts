@@ -8,6 +8,7 @@ import {
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { runDbOpOn, fixtureChanges } from '../../helpers/run-db-op';
 import { createTestDb } from '../../../helpers/database';
 
 describe('standalone lifecycle persistence', () => {
@@ -17,26 +18,25 @@ describe('standalone lifecycle persistence', () => {
   });
   afterEach(() => db.close());
   function create() {
-    return createStandaloneTask(
+    return createStandaloneTask.run(
       db.getDatabase(),
-      { title: 'Work', labels: ['one'] },
-      'creator',
-      () => {}
+      { input: { title: 'Work', labels: ['one'] }, creatorSessionId: 'creator' },
+      fixtureChanges()
     );
   }
 
-  test('commits completion before notifying and preserves metadata and ownership', () => {
+  test('commits completion before notifying and preserves metadata and ownership', async () => {
     const task = create();
     const notify = mock(() => {
       db.getDatabase().exec('BEGIN');
       db.getDatabase().exec('ROLLBACK');
       expect(readTaskCore(db.getDatabase(), task.id)?.status).toBe('done');
     });
-    const done = transitionStandaloneTask(
-      db.getDatabase(),
-      { taskId: task.id, status: 'done', result: 'Finished' },
-      notify
-    );
+    const done = await runDbOpOn(db.getDatabase(), notify)(transitionStandaloneTask, {
+      taskId: task.id,
+      status: 'done',
+      result: 'Finished',
+    });
     expect(done).toEqual({
       ...task,
       status: 'done',
@@ -54,18 +54,18 @@ describe('standalone lifecycle persistence', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  test('persists restart and archive decisions without launching execution', () => {
+  test('persists restart and archive decisions without launching execution', async () => {
     const task = create();
     const run = (status: 'done' | 'in_progress' | 'cancelled' | 'archived') =>
-      transitionStandaloneTask(db.getDatabase(), { taskId: task.id, status }, () => {});
-    run('done');
-    expect(run('in_progress')).toMatchObject({
+      runDbOpOn(db.getDatabase())(transitionStandaloneTask, { taskId: task.id, status });
+    await run('done');
+    expect(await run('in_progress')).toMatchObject({
       startedAt: expect.any(Number),
       completedAt: null,
       result: null,
     });
-    run('cancelled');
-    expect(run('archived')).toMatchObject({
+    await run('cancelled');
+    expect(await run('archived')).toMatchObject({
       archivedAt: expect.any(Number),
       completedAt: expect.any(Number),
     });
@@ -77,7 +77,7 @@ describe('standalone lifecycle persistence', () => {
     ).toEqual({ task_agent_session_id: null, workflow_run_id: null });
   });
 
-  test('returns null for missing or Space-owned tasks without notifying', () => {
+  test('returns null for missing or Space-owned tasks without notifying', async () => {
     const space = new SpaceRepository(db.getDatabase()).createSpace({
       name: 'Test',
       slug: 'test',
@@ -88,7 +88,10 @@ describe('standalone lifecycle persistence', () => {
     const notify = mock(() => {});
     for (const taskId of ['absent', owned.id]) {
       expect(
-        transitionStandaloneTask(db.getDatabase(), { taskId, status: 'done' }, notify)
+        await runDbOpOn(db.getDatabase(), notify)(transitionStandaloneTask, {
+          taskId,
+          status: 'done',
+        })
       ).toBeNull();
     }
     expect(tasks.getTask(owned.id)).toEqual(owned);
@@ -98,41 +101,35 @@ describe('standalone lifecycle persistence', () => {
   test.each([
     ['open', undefined, 'invalid_transition'],
     ['blocked', 'Result', 'result_requires_done'],
-  ] as const)('rejects %s without changing storage', (status, result, reason) => {
+  ] as const)('rejects %s without changing storage', async (status, result, reason) => {
     const task = create();
     const notify = mock(() => {});
     expect(
-      transitionStandaloneTask(db.getDatabase(), { taskId: task.id, status, result }, notify)
+      await runDbOpOn(db.getDatabase(), notify)(transitionStandaloneTask, {
+        taskId: task.id,
+        status,
+        result,
+      })
     ).toBe(reason);
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test('rolls back failed persistence and emits no notification', () => {
+  test('rolls back failed persistence and emits no notification', async () => {
     const task = create();
     const notify = mock(() => {});
     db.getDatabase().exec(
       "CREATE TRIGGER reject_transition AFTER UPDATE ON space_tasks BEGIN SELECT RAISE(ABORT, 'rejected'); END"
     );
-    expect(() =>
-      transitionStandaloneTask(db.getDatabase(), { taskId: task.id, status: 'done' }, notify)
-    ).toThrow('rejected');
+    await expect(
+      runDbOpOn(db.getDatabase(), notify)(transitionStandaloneTask, {
+        taskId: task.id,
+        status: 'done',
+      })
+    ).rejects.toThrow('rejected');
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
     db.getDatabase().exec('BEGIN');
     db.getDatabase().exec('ROLLBACK');
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  test('preserves caller transactions and does not notify before their commit', () => {
-    const task = create();
-    const notify = mock(() => {});
-    db.getDatabase().transaction(() => {
-      expect(() =>
-        transitionStandaloneTask(db.getDatabase(), { taskId: task.id, status: 'done' }, notify)
-      ).toThrow('own transaction');
-      expect(() => db.getDatabase().exec('BEGIN')).toThrow();
-      expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
-    })();
     expect(notify).not.toHaveBeenCalled();
   });
 

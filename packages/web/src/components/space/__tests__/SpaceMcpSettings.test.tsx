@@ -78,6 +78,15 @@ describe('SpaceMcpSettings', () => {
     expect(mockSubscribe).toHaveBeenCalledWith('space-1');
   });
 
+  it('discloses that defaults affect new sessions while running tasks keep their tools', () => {
+    const { getByText } = render(<SpaceMcpSettings spaceId="space-1" />);
+    expect(
+      getByText(
+        'Enable or disable MCP servers for tasks spawned in this space. Each toggle overrides the global default. Changes apply to new sessions; already-running tasks keep the MCP set they started with.'
+      )
+    ).toBeTruthy();
+  });
+
   it('renders grouped entries with group labels', () => {
     setEntries([
       makeEntry('alpha', { source: 'user' }),

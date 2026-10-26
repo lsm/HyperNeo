@@ -350,6 +350,35 @@
   background: var(--neo-quote-background);
   border-radius: 0 8px 8px 0;
   padding: 8px 12px;
+  position: relative;
+  padding-right: 72px;
+}
+
+.neo-quote-copy {
+  position: absolute;
+  top: 0;
+  right: 4px;
+}
+
+.neo-quote-copy-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  min-height: 44px;
+  font-style: normal;
+}
+
+.neo-quote-copy-button [aria-live] {
+  min-height: 12px;
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.neo-quote-copy-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
 }
 
 .neo-markdown th {
@@ -410,52 +439,6 @@
     transition: none !important;
   }
 }
-.neo-activity {
-  height: 28px;
-  margin: -4px 0 10px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 4px 6px;
-  border-bottom: 1px solid var(--line);
-  color: var(--fg-muted);
-  font-size: 12px;
-}
-.neo-activity[hidden] {
-  display: none;
-}
-.neo-activity-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.neo-activity-count {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 11px;
-}
-@media (prefers-reduced-motion: no-preference) {
-  @supports (background-clip: text) {
-    .neo-activity-text {
-      background: linear-gradient(100deg, var(--fg-muted) 43%, var(--fg) 50%, var(--fg-muted) 57%);
-      background-size: 250% 100%;
-      background-clip: text;
-      color: transparent;
-      animation: neo-activity-sweep 4.5s ease-in-out infinite;
-    }
-  }
-}
-@keyframes neo-activity-sweep {
-  0%,
-  12% {
-    background-position: 100% 0;
-  }
-  78%,
-  100% {
-    background-position: 0% 0;
-  }
-}
-
 @media (min-width: 1120px) {
   .neo-public-layout {
     --neo-chat-width: 100%;
@@ -602,4 +585,248 @@
 
 .neo-message-flash .neo-message-bubble {
   animation: neo-message-flash 1.5s ease-out;
+}
+
+.artifact-preview-panel {
+  position: fixed;
+  inset: 10% 0 0;
+  z-index: 50;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 20px 20px 0 0;
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 32px rgb(0 0 0 / 0.15);
+  animation: artifact-sheet-enter 180ms ease-out;
+}
+.artifact-preview-panel section > header {
+  padding-right: 44px;
+}
+.neo-shell:has(> .artifact-preview-panel[hidden]) {
+  --artifact-preview-width: 0px;
+}
+.artifact-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: rgb(0 0 0 / 0.2);
+}
+.artifact-preview-handle {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+.artifact-preview-phone {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.artifact-preview-phone section > header {
+  padding-right: 16px;
+}
+.artifact-preview-phone > .artifact-preview-handle {
+  height: 44px;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0;
+  touch-action: none;
+}
+.artifact-preview-handle span {
+  width: 36px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--line-strong);
+}
+@keyframes artifact-sheet-enter {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-preview-panel {
+    animation: none;
+  }
+}
+@media (min-width: 1120px) {
+  .neo-shell:has(> .artifact-preview-panel) {
+    --artifact-preview-width: min(40rem, 42vw);
+    padding-right: var(--artifact-preview-width);
+  }
+  .neo-shell:has(> .artifact-preview-panel) > .neo-float-dock {
+    right: calc(var(--artifact-preview-width) + 12px);
+  }
+  .neo-shell:has(> .artifact-preview-panel) > .neo-composer-dock {
+    right: var(--artifact-preview-width);
+    transition: none;
+  }
+  .neo-shell:has(> .artifact-preview-panel) > .neo-scroll {
+    transition: none;
+  }
+  .neo-has-scenes:has(> .artifact-preview-panel) > .neo-composer-dock {
+    width: calc((100% - var(--artifact-preview-width)) * 0.58);
+  }
+  .neo-has-scenes.neo-has-session:has(> .artifact-preview-panel) > .neo-composer-dock {
+    width: calc((100% - var(--artifact-preview-width)) * 0.45);
+  }
+  .artifact-preview-panel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: var(--artifact-preview-width);
+    border-radius: 0;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    box-shadow: none;
+    animation: none;
+  }
+  .neo-shell > .artifact-preview-panel {
+    inset: 12px 12px 12px auto;
+    width: calc(var(--artifact-preview-width) - 24px);
+    border: 0;
+    border-radius: 24px;
+    box-shadow: var(--flat-shadow);
+  }
+  .artifact-preview-backdrop,
+  .artifact-preview-handle {
+    display: none;
+  }
+}
+
+@media (min-width: 720px) {
+  .neo-shell.neo-preview-focus {
+    --artifact-preview-width: var(--neo-preview-width, 56%);
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, calc(100% - var(--artifact-preview-width))) minmax(
+        0,
+        var(--artifact-preview-width)
+      );
+    padding-right: 0;
+  }
+  .neo-shell.neo-preview-focus > .neo-scroll {
+    display: contents;
+  }
+  .neo-shell.neo-preview-focus .neo-chat-rail {
+    grid-area: 1 / 1;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    max-width: none;
+    margin: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding: 76px 24px calc(var(--neo-composer-height, 190px) + 32px);
+  }
+  .neo-shell.neo-preview-focus .neo-scene-list {
+    grid-area: 1 / 2;
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+    max-width: none;
+    height: auto;
+    margin: calc(12px + 4rem) 12px 12px;
+    padding: 16px;
+    overflow-y: auto;
+    border-radius: 0 0 24px 24px;
+    background: var(--surface);
+  }
+  .neo-shell.neo-preview-focus .neo-scene-list[hidden] {
+    display: none;
+  }
+  .neo-shell.neo-preview-focus > .artifact-preview-panel {
+    grid-area: 1 / 2;
+    order: -1;
+    position: relative;
+    inset: auto;
+    width: auto;
+    margin: 12px;
+    border: 0;
+    border-radius: 24px;
+    box-shadow: var(--flat-shadow);
+    animation: none;
+    z-index: auto;
+  }
+  .neo-shell.neo-preview-work .neo-scene-list {
+    position: relative;
+  }
+  .neo-shell.neo-preview-focus > .artifact-preview-backdrop,
+  .neo-shell.neo-preview-focus .artifact-preview-handle {
+    display: none;
+  }
+  .neo-shell.neo-preview-focus > .neo-composer-dock {
+    width: calc(100% - var(--artifact-preview-width));
+    right: auto;
+    transition: none;
+  }
+}
+@media (min-width: 1440px) {
+  .neo-shell.neo-preview-focus {
+    --artifact-preview-width: var(--neo-preview-width, 44%);
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) {
+    grid-template-columns: minmax(0, calc((100% - var(--artifact-preview-width)) * 0.58)) minmax(
+        0,
+        calc((100% - var(--artifact-preview-width)) * 0.42)
+      ) minmax(0, var(--artifact-preview-width));
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) > .artifact-preview-panel {
+    grid-column: 3;
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) .neo-scene-list {
+    margin: 0;
+    padding: 76px 16px 32px;
+    background: transparent;
+    border-radius: 0;
+  }
+  .neo-shell.neo-preview-focus:not(.neo-preview-work) > .neo-composer-dock {
+    width: calc((100% - var(--artifact-preview-width)) * 0.58);
+  }
+}
+@media (min-width: 720px) {
+  .neo-shell.neo-preview-expanded :is(.neo-float-dock, .neo-chat-rail, .neo-composer-dock) {
+    visibility: hidden;
+  }
+  .neo-shell.neo-preview-focus.neo-preview-expanded > .artifact-preview-panel {
+    position: absolute;
+    grid-area: auto;
+    inset: 12px;
+    margin: 0;
+    width: auto;
+  }
+  .neo-shell.neo-preview-focus.neo-preview-expanded .neo-scene-list {
+    position: absolute;
+    z-index: 1;
+    grid-area: auto;
+    inset: calc(12px + 4rem) 12px 12px;
+    margin: 0;
+    padding: 16px;
+    border-radius: 0 0 24px 24px;
+    background: var(--surface);
+  }
+}
+.neo-preview-resizer {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  right: calc(var(--artifact-preview-width) - 12px);
+  width: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.neo-preview-resizer::after {
+  content: "";
+  width: 3px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  opacity: 0.4;
+}
+.neo-preview-resizer:is(:hover, :focus-visible)::after {
+  background: var(--accent);
+  opacity: 1;
 }

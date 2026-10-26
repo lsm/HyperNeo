@@ -1,5 +1,9 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
+import { MessageHub } from '@hyperneo/shared/message-hub/message-hub';
+import { createResponseMessage, MessageType } from '@hyperneo/shared/message-hub/protocol';
+import type { HubMessage, IMessageTransport } from '@hyperneo/shared/message-hub/types';
 import { signal } from '@preact/signals';
-import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
+import { render, cleanup, screen, waitFor, fireEvent, act } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockConnectionState = signal<'connected' | 'disconnected'>('connected');
@@ -54,6 +58,72 @@ describe('ModelsSettings — load failure surfacing', () => {
     cleanup();
   });
 
+  it.each([false, true])(
+    'waits for delayed discovery through the real hub, forced=%s',
+    async (forced) => {
+      vi.useFakeTimers();
+      const hub = new MessageHub();
+      let receive: (message: HubMessage) => void = () => {};
+      const transport = {
+        name: 'delayed-models',
+        isReady: () => true,
+        getState: () => 'connected',
+        initialize: async () => {},
+        close: async () => {},
+        onMessage: (handler: (message: HubMessage) => void) => {
+          receive = handler;
+          return () => {};
+        },
+        onConnectionChange: () => () => {},
+        send: async (message: HubMessage) => {
+          if (message.type !== MessageType.REQUEST) return;
+          const refresh = (message.data as { forceRefresh?: boolean }).forceRefresh;
+          const delay = forced ? (refresh ? 60000 : 0) : 15000;
+          const models =
+            forced && !refresh
+              ? []
+              : [{ id: 'cold-sdk', display_name: 'Cold SDK model', provider: 'anthropic' }];
+          setTimeout(
+            () =>
+              receive(
+                createResponseMessage({
+                  method: message.method,
+                  sessionId: message.sessionId,
+                  requestId: message.id,
+                  data: { models },
+                })
+              ),
+            delay
+          );
+        },
+      } as IMessageTransport;
+      hub.registerTransport(transport);
+      mockGetHubIfConnected.mockReturnValue(hub);
+      try {
+        render(<ModelsSettings />);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        if (forced) fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10001);
+        });
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.queryByText('Cold SDK model')).toBeNull();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(forced ? 50000 : 5000);
+        });
+        expect(screen.queryByRole('alert')).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Change', exact: true }));
+        expect(screen.getAllByText('Cold SDK model').length).toBeGreaterThan(0);
+      } finally {
+        cleanup();
+        hub.cleanup();
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it('shows a durable error with Retry instead of a silent empty state when the hub is missing', async () => {
     render(<ModelsSettings />);
 
@@ -84,7 +154,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
-    expect(mockRequest).toHaveBeenCalledWith('models.list', { useCache: true });
+    expect(mockRequest).toHaveBeenCalledWith(
+      'models.list',
+      { useCache: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
   });
 
   it('keeps the error state when Retry runs while the hub is still missing', async () => {
@@ -120,7 +194,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
-    expect(mockRequest).toHaveBeenCalledWith('models.list', { useCache: true });
+    expect(mockRequest).toHaveBeenCalledWith(
+      'models.list',
+      { useCache: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
   });
 
   it('retries with forceRefresh after a failed explicit refresh', async () => {
@@ -148,7 +226,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     fireEvent.click(retry);
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+      expect(mockRequest).toHaveBeenLastCalledWith(
+        'models.list',
+        { forceRefresh: true },
+        { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+      );
     });
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
@@ -193,7 +275,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(2);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { useCache: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { useCache: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
@@ -222,7 +308,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(retry.disabled).toBe(true);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { forceRefresh: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
 
     resolveRequest({ models: [] });
     await waitFor(() => {
@@ -259,7 +349,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(5);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { forceRefresh: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
@@ -354,7 +448,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(4);
     });
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    expect(mockRequest).toHaveBeenLastCalledWith(
+      'models.list',
+      { forceRefresh: true },
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+    );
     await waitFor(() => {
       expect(refresh.disabled).toBe(true);
     });
@@ -444,5 +542,162 @@ describe('ModelsSettings — default model', () => {
     (globalSettings as { value: unknown }).value = { model: 'gone', modelProvider: 'anthropic' };
     render(<ModelsSettings />);
     expect(await screen.findByText('gone (not available)')).toBeTruthy();
+  });
+});
+
+describe('ModelsSettings — default thinking beside the default model', () => {
+  const settingsRef = globalSettings as { value: unknown };
+
+  function serveModels(models: unknown[]) {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({ models });
+  }
+
+  beforeEach(() => {
+    cleanup();
+    mockConnectionState.value = 'connected';
+    mockRequest.mockReset();
+    mockListProviderAuthStatus.mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(updateGlobalSettings)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    settingsRef.value = null;
+  });
+
+  it('shows the saved global thinking level and writes nothing on open', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'think24k',
+    };
+    serveModels([
+      {
+        id: 'claude-sonnet-5',
+        display_name: 'Sonnet',
+        description: '',
+        provider: 'anthropic',
+        thinkingModes: 'granular',
+      },
+    ]);
+    render(<ModelsSettings />);
+
+    const select = (await screen.findByLabelText('Default thinking')) as HTMLSelectElement;
+    await waitFor(() => expect(screen.getByText(/Sonnet · /)).toBeTruthy());
+    expect(select.value).toBe('think24k');
+    expect([...select.options].map((option) => option.value)).toEqual([
+      'off',
+      'think8k',
+      'think16k',
+      'think24k',
+      'think32k',
+      'think48k',
+      'think64k',
+    ]);
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('saves only the global thinkingLevel key when changed', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'off',
+    };
+    serveModels([
+      {
+        id: 'claude-sonnet-5',
+        display_name: 'Sonnet',
+        description: '',
+        provider: 'anthropic',
+        thinkingModes: 'granular',
+      },
+    ]);
+    render(<ModelsSettings />);
+
+    const select = (await screen.findByLabelText('Default thinking')) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'think16k' } });
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({ thinkingLevel: 'think16k' })
+    );
+  });
+
+  it('offers only Off for a model without thinking, keeping an unsupported saved value as is', async () => {
+    settingsRef.value = {
+      model: 'minimax-m3',
+      modelProvider: 'minimax',
+      thinkingLevel: 'think32k',
+    };
+    serveModels([
+      {
+        id: 'minimax-m3',
+        display_name: 'MiniMax M3',
+        description: '',
+        provider: 'minimax',
+        thinkingModes: 'off',
+      },
+    ]);
+    render(<ModelsSettings />);
+
+    await waitFor(() => expect(screen.getByText(/MiniMax M3 · /)).toBeTruthy());
+    const select = screen.getByLabelText('Default thinking') as HTMLSelectElement;
+    expect(select.value).toBe('think32k');
+    expect([...select.options].map((option) => option.value)).toEqual(['off', 'think32k']);
+    expect(screen.getByText(/not supported by this model/)).toBeTruthy();
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('uses the provider thinking capability when the model carries none', async () => {
+    settingsRef.value = { model: 'llama-4', modelProvider: 'ollama', thinkingLevel: 'off' };
+    serveModels([{ id: 'llama-4', display_name: 'Llama 4', description: '', provider: 'ollama' }]);
+    render(<ModelsSettings />);
+
+    await waitFor(() => expect(screen.getByText(/Llama 4 · /)).toBeTruthy());
+    const select = screen.getByLabelText('Default thinking') as HTMLSelectElement;
+    expect([...select.options].map((option) => option.value)).toEqual(['off']);
+    expect(screen.queryByText(/support for this model is unknown/)).toBeNull();
+  });
+
+  it('claims no unknown thinking support while the catalog is loading', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'off',
+    };
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockReturnValue(new Promise(() => {}));
+    render(<ModelsSettings />);
+
+    await screen.findAllByText('Loading models...');
+    expect(screen.getByLabelText('Default thinking')).toBeTruthy();
+    expect(screen.queryByText(/support for this model is unknown/)).toBeNull();
+  });
+
+  it('rolls the control back to the saved value when the save fails', async () => {
+    settingsRef.value = {
+      model: 'claude-sonnet-5',
+      modelProvider: 'anthropic',
+      thinkingLevel: 'think8k',
+    };
+    serveModels([
+      {
+        id: 'claude-sonnet-5',
+        display_name: 'Sonnet',
+        description: '',
+        provider: 'anthropic',
+        thinkingModes: 'granular',
+      },
+    ]);
+    vi.mocked(updateGlobalSettings).mockRejectedValueOnce(new Error('nope'));
+    render(<ModelsSettings />);
+
+    const select = (await screen.findByLabelText('Default thinking')) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'think64k' } });
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(select.value).toBe('think8k'));
   });
 });

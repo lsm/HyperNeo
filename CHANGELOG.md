@@ -4,6 +4,153 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-26
+
+### Added
+
+- **Session tools**: Save tool choices and apply them consistently to current and new SDK sessions (#8881, #8819).
+- **Phone setup**: Guide device pairing from Settings (#8640).
+- **Kimi models**: Add K3.1 Pro and Highspeed with region-aware availability (#8635).
+- **Coding settings**: Configure repository policy and explicitly add or remove watched repositories from Settings (#8588, #8610).
+- **Work feed**: Limit an instance's feed to sessions it started (#8604).
+- **Neo settings**: List muted sessions and unmute them individually (#8590).
+- **Document previews**: Show file tabs and retain preview workspace navigation state (#8583, #8586, #8595).
+- **Coding verification**: Admit recorded manual merges through the existing completion gates (#8484).
+
+### Changed
+
+- **Database writes**: Route live SDK message writers through the database gateway (#8570).
+
+### Fixed
+
+- **Model discovery**: Keep cold SDK startup within bounded parallel discovery, return healthy providers when another stalls, and let browser model lists wait for discovery (#8930).
+- **Neo chat**: Keep the scrolled-up view stable and hide system-forwarded worker messages from the human conversation (#8927, #8922).
+- **SDK startup**: Start sessions without inheriting auto mode, and allow workers to run isolated local test servers (#8923, #8925).
+- **Desktop delivery**: Queue Codex work even when Desktop ownership is temporarily unavailable (#8879).
+- **New-user sessions**: Resolve model targets with thinking effort, keep non-coding work in one visible folder, and isolate automatic project discovery (#8617, #8621, #8620).
+- **Tools panel**: Show the tools observed in the current SDK query (#8636, #8641).
+- **Neo work**: Deliver worker milestones and card answers reliably; keep Waiting on you cards first with stable ordering (#8843, #8834, #8911).
+- **File previews**: Preserve preview and draft context and allow explicit non-sensitive attachment paths (#8801, #8811, #8883).
+- **Responsiveness**: Move queued work, native feed, GitHub poll, mailbox and settings writes to the database writer, reclaim stale jobs, and keep slow WebSocket clients connected (#8898, #8868, #8905, #8871, #8931, #8921, #8917, #8882).
+- **Coding ledger**: Reduce review-query overhead, scan fairly across quota failures, and diagnose stale approved PR observations (#8861, #8893, #8906).
+- **Worker isolation**: Enforce the prepared worker OS write sandbox (#8632).
+- **Device pairing**: Restore `hyperneo pair` and `hyperneo devices` in compiled binaries and list both commands in help (#8615).
+- **First start**: Download the Claude Code SDK without blocking the event loop, load embeddings in compiled binaries, and preserve explicit test mode in compiled entrypoints (#8599, #8601, #8612).
+- **Browser security**: Refuse cross-site WebSocket upgrades and mutating HTTP requests (#8594).
+- **Neo cards**: Link reply notices to their question cards and preserve the human turn context (#8584, #8603).
+- **Neo model menu**: Restore model and thinking choices on the Neo page (#8587).
+- **Desktop delivery**: Match direct and retried messages to the receiver's current permission mode (#8577, #8592).
+- **Coding events**: Keep PR events across restarts and log skipped unowned events (#8598).
+- **Repository watches**: Start with no watched repositories and require explicit enrolment (#8608).
+- **Prepared Claude workers**: Persist native Edit/Write denies for the main checkout and sibling clones while allowing the worker's own clone; unlisted outside directories still require the next OS-sandbox slice (#8606).
+
+## [0.48.0] - 2026-10-24
+
+This release includes the features and fixes since v0.46.0, including the unpublished v0.47.0, v0.47.1 and v0.47.2 changes below. Those earlier tags remain unchanged.
+
+### Added
+
+- **Settings**: Manage Neo standing rules one by one and choose default thinking beside the default model (#8563, #8561).
+- **Focused discussions**: Prepare fresh sessions, retain source-session links on cards and asks, and record settled outcomes (#8424, #8471, #8473, #8480).
+- **Documents**: Attach complete PR-head files and dock previews beside Neo (#8454, #8459).
+- **Coding verification**: Configure stage actors and review bots, prepare pinned checkouts, record verification facts, and require assigned QA smoke (#8442, #8512, #8522, #8529, #8431, #8474, #8468).
+- **Chat notices**: Publish notices for Neo card question replies (#8547).
+- **Ledger health**: Persist coverage health, deliver notices, and publish daily dropped-work counts (#8492, #8494, #8504, #8441).
+
+### Changed
+
+- **Database writes**: Expand guarded and awaited gateway writes across sessions, messages, search, task runtime, coding ledgers and delivery; switch space-task writes to the gateway (#8382, #8349, #8350, #8367, #8447, #8450, #8548, #8550).
+- **Permission controls**: Show the configured Claude worker permission mode and the SDK mode's actual name (#8564, #8556).
+
+### Fixed
+
+- **Compiled startup**: Embed worker entrypoints and resolve encoded Windows virtual paths, with a native Windows smoke check required before merge (#8528, #8540, #8572).
+- **Coding notifications**: Restore PR lifecycle notifications, persist merged-PR owner delivery intent, and reconcile polling coverage (#8544, #8573, #8535).
+- **Desktop delivery**: Recover stale wake helpers and keep sent Claude messages pending rather than relaying them again (#8566, #8555).
+- **Preview rendering**: Match Markdown previews to assistant typography (#8571).
+- **Todo completion**: Refuse to finish a todo while its card remains unanswered (#8552).
+- **Worker documents**: Register artifacts from a Claude worker's own checkout (#8562).
+- **SDK startup**: Bound startup permit holds and await remaining live message writers (#8500, #8508).
+
+## [0.47.2] - 2026-10-24
+
+v0.47.1 was held before publication to include the coding-pack notification fix. This release includes the v0.47.1 and v0.47.0 changes below; neither earlier tag was published.
+
+### Fixed
+
+- **Coding notifications**: Restore PR lifecycle notifications (#8544).
+- **GitHub observations**: Reconcile polling coverage (#8535).
+- **Space tasks**: Fence reopen-from-terminal updates against the status that was read (#8537).
+- **Builds**: Align dev-push compilation with the release worker entrypoints (#8540).
+
+### Changed
+
+- **Database writes**: Record agent child processes and Neo session messages through the database gateway (#8538, #8545).
+
+## [0.47.1] - 2026-10-24
+
+Patch release: v0.47.0 did not reach npm or GitHub Releases because compiled binaries could not load their worker modules. This release includes the v0.47.0 changes below.
+
+### Added
+
+- **Coding workspaces**: Prepare pinned actor checkouts for coding work (#8522).
+
+### Changed
+
+- **Database writes**: Route post-approval and task-agent task writes, operation refusals, Claude inbox routes and Neo session-watch state through their database lanes (#8517, #8521, #8516, #8524, #8527).
+- **Delivery persistence**: Extract mailbox failure transitions and consolidate session-delivery teardown persistence (#8519, #8526).
+
+### Fixed
+
+- **Compiled binaries**: Embed JavaScript worker entrypoints for database gateway, embedding and event-loop workers, with a compiled startup smoke check (#8528).
+
+## [0.47.0] - 2026-10-24
+
+### Added
+
+- **Focused discussions**: Prepare a fresh session, open its source from question cards, keep the session link on the ask, and record a settled decision while execution remains tracked (#8424, #8471, #8473, #8480).
+- **Documents**: Attach complete PR-head files through the coding pack and dock web previews beside Neo (#8454, #8459).
+- **Coding verification**: Record review and QA stage facts, use the configured review bot, require assigned QA smoke for completion, and prepare recorded manual merges (#8431, #8442, #8474, #8468).
+- **Ledger health**: Persist starvation and reconciliation coverage health, deliver coverage notices, and publish daily dropped-work counts (#8492, #8494, #8504, #8441).
+
+### Changed
+
+- **Database writes**: Expand awaited database paths for guarded session writes, SDK messages, search, task runtime, coding ledgers and the Claude Desktop outbox (#8382, #8349, #8350, #8367, #8406, #8413, #8447, #8450, #8508).
+- **SDK storage**: Extract bounded legacy SDK column-backfill chunks (#8510).
+- **GitHub observations**: Share readiness and review-thread facts across consumers and overlapping poll cycles (#8366, #8423, #8439, #8462, #8470, #8476, #8479).
+
+### Fixed
+
+- **SDK startup**: Bound startup permit holds so a slow launch cannot starve other sessions (#8500).
+- **Delivery**: Preserve queued Claude Desktop work and accepted session-event receipts, replay terminal events, and discover unrecorded subscribed PR closures (#8460, #8483, #8486, #8488, #8490).
+- **Session controls**: Default prepared Claude Desktop sessions to the configured worker permission mode, launch current Anthropic models with 1M context, and list registered adapters in unknown-adapter errors (#8387, #8437, #8503).
+- **Neo work**: Require todo references for dispatch, allow same-worker delivery channels, and remind Neo about stalled asks (#8430, #8453, #8436).
+- **GitHub reads**: Ignore expired successful quota readings and accept extra file metadata in PR previews (#8507, #8498).
+
+## [0.46.0] - 2026-10-23
+
+### Added
+
+- **Neo work**: Goals, schedules and fact-driven todo completion; dispatch-bound worker results and report-only relays for silent worker turns (#8263).
+- **Document previews**: Registered documents open from Neo replies and question cards without pasting their contents into the conversation (#8392).
+- **Model controls**: Ordered primary/fallback preferences, per-model auto-compaction, and live model/thinking changes for Anthropic, GLM, DeepSeek and Kimi (#7950, #8303, #8340, #8364).
+- **Diagnostics**: SQLite contention timing and opt-in event-loop profiles identify slow phases and worker SQL (#7967, #8377).
+
+### Changed
+
+- **Network default**: The daemon now listens on `127.0.0.1` by default. Direct LAN clients, including iOS and another daemon, must set `--host 0.0.0.0`, `HOST=0.0.0.0`, or a specific LAN address. This reduces accidental exposure; reachable-peer authentication remains tracked separately (#8393, #7975).
+- **Database gateway**: Job-queue claims, settlements and WebSocket authentication reads use the gateway; table-change notifications are replayed after worker writes (#8300, #8299, #8348). The sessions-writer switch is not part of this release.
+- **Neo UI**: Expandable todo rows, model-switch disclosures, and a connection-settings drawer aligned with iOS (#8345, #8336, #8395).
+
+### Fixed
+
+- **Codex delivery**: Desktop ownership is acquired before unloaded-thread delivery, with bounded owner discovery and visible refusal instead of a competing background writer while Desktop is running (#8370, #8384).
+- **Claude Desktop**: Prepared work is woken through Desktop (#8274).
+- **Neo inputs**: Interrupted inputs recover with fresh SDK attempt identities (#8388).
+- **Model preferences**: Refused or deferred primary-model restores preserve the fallback model's thinking level (#7973).
+- **Responsiveness**: Batched Neo snapshots and card eligibility reads, asynchronous worktree resolution, and explicit SQLite worker closure reduce main-loop stalls (#7944, #7947, #7967, #7986).
+- **Storage/runtime**: Stale SDK message indexes retire on upgrade, and missing embedding runtime/model assets recover automatically (#8376, #8379).
+
 ## [0.45.2] - 2026-10-18
 
 ### Fixed

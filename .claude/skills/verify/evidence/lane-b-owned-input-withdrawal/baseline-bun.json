@@ -1,0 +1,59 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 463,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "rpcError": "MessageHubResponseError: owned-input withdrawal admission SQL reached main connection",
+  "pendingJob": {
+    "id": "13fd26bd-0d95-45c7-a26d-7755e4e8f829",
+    "queue": "mailbox",
+    "status": "pending",
+    "payload": {
+      "id": "01M5TF0D6GX8DS2DWGBCAKC0RB",
+      "to": {
+        "kind": "session",
+        "sessionId": "7cedacbf-f2e6-4e5d-ab15-112e2494f2db"
+      },
+      "origin": "chat",
+      "message": {
+        "type": "user",
+        "message": {
+          "content": "Withdraw this queued input",
+          "role": "user"
+        },
+        "parent_tool_use_id": null
+      },
+      "messageUuid": "d90828fe-7747-4ab0-8bb1-d8028108f36e",
+      "status": "enqueued",
+      "policy": {
+        "ttlMs": 86400000,
+        "maxAttempts": 5,
+        "priority": 0
+      },
+      "deliveryMode": "defer"
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 4,
+    "retryCount": 0,
+    "runAt": 1792963261648,
+    "createdAt": 1792963261648,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": null
+  },
+  "mainSqlAttempts": 1
+}

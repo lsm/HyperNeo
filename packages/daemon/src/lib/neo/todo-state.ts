@@ -5,9 +5,10 @@ import type { NeoTodoJudgement } from './pack-contract.ts';
 
 export interface TodoStateFacts {
   todo: NeoTodo;
-  order: readonly Pick<NeoTodo, 'id' | 'state' | 'startedAt'>[];
+  order: readonly (Pick<NeoTodo, 'id' | 'state' | 'startedAt'> & { questionOpen?: number })[];
   askOpen: boolean;
   questionOpen: boolean;
+  humanAnswerDelivered?: boolean;
   dispatched: boolean;
   live: string | null;
   change: NeoTodoPatch;
@@ -22,6 +23,23 @@ export interface TodoStateDecision {
 export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDecision {
   const { todo, judgement, change } = facts;
   if (todo.state === 'removed') return { patch: {}, startNext: null };
+  if (
+    todo.blockedBy === 'needs-human' &&
+    judgement.state !== 'done' &&
+    change.state !== 'removed' &&
+    facts.askOpen &&
+    (!facts.humanAnswerDelivered || facts.questionOpen)
+  )
+    return {
+      patch: {
+        ...change,
+        state: 'blocked',
+        blockedBy: 'needs-human',
+        blockedReason: todo.blockedReason,
+        nextAction: todo.nextAction,
+      },
+      startNext: null,
+    };
   let patch = { ...change };
   if (!facts.askOpen && ['todo', 'doing', 'blocked'].includes(todo.state))
     patch = { ...patch, state: 'removed', finishedAt: now };
@@ -50,7 +68,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       };
     else if (
       !Object.keys(change).length &&
-      !['done', 'failed'].includes(todo.state) &&
+      !['done', 'closed_unverified', 'failed'].includes(todo.state) &&
       !(todo.state === 'blocked' && todo.blockedBy === 'failure')
     ) {
       if (
@@ -84,10 +102,17 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       Object.entries(patch).filter(([key, value]) => value !== todo[key as keyof NeoTodo])
     ) as NeoTodoPatch;
   const next =
-    facts.askOpen && state === 'done'
-      ? facts.order.find((row) => row.id !== todo.id && !['done', 'removed'].includes(row.state))
+    facts.askOpen && ['done', 'closed_unverified'].includes(state)
+      ? facts.order.find(
+          (row) =>
+            row.id !== todo.id && !['done', 'closed_unverified', 'removed'].includes(row.state)
+        )
       : null;
-  return { patch, startNext: next?.state === 'todo' && next.startedAt === null ? next.id : null };
+  return {
+    patch,
+    startNext:
+      next?.state === 'todo' && next.startedAt === null && !next.questionOpen ? next.id : null,
+  };
 }
 
 const recompute = (superpipe({})('neo.todo.recompute') as PipelineAPI)

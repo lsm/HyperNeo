@@ -54,6 +54,102 @@ const preflight = (superpipe({})('sdkBodyCopyPreflight') as PipelineAPI)
   )
   .end('status') as (facts: Facts) => 'complete' | 'run' | 'refused';
 
+function markSdkBodyCopyDone(db: Database): 'done' | 'locked' {
+  const busy = (db.prepare('PRAGMA busy_timeout').get() as { timeout: number }).timeout;
+  try {
+    db.exec('PRAGMA busy_timeout=0');
+    db.prepare('INSERT OR IGNORE INTO migration_markers(key,applied_at) VALUES (?,?)').run(
+      DONE,
+      Date.now()
+    );
+    return 'done';
+  } catch (error) {
+    if (!/busy|locked/i.test(String(error))) throw error;
+    return 'locked';
+  } finally {
+    db.exec(`PRAGMA busy_timeout=${busy}`);
+  }
+}
+
+type BodyChunk = { state: Progress; rows: number; malformed: number; copiedBytes: number };
+
+function copySdkBodyChunk(
+  db: Database,
+  { state: previousState, through }: { state: Progress; through: number }
+): BodyChunk | 'locked' {
+  const state = { ...previousState };
+  const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
+  const insert = db.prepare(`INSERT OR IGNORE INTO sdk_message_bodies(seq,sdk_message)
+    SELECT m.seq,${joinedSdkMessageBody('b', 'm')} FROM sdk_messages m
+    LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE m.seq=?`);
+  const update = db.prepare(
+    `UPDATE sdk_messages SET sdk_message='',${names.map((key) => `${key}=?`).join(',')} WHERE seq=?`
+  );
+  const cursor = db.prepare('INSERT INTO migration_markers(key,applied_at) VALUES (?,?)');
+  const saveCursor = () => {
+    db.prepare('DELETE FROM migration_markers WHERE key GLOB ?').run(`${STATE}*`);
+    cursor.run(`${STATE}${JSON.stringify(state)}`, Date.now());
+  };
+  let rows = 0,
+    malformed = 0,
+    copiedBytes = 0;
+  const busy = (db.prepare('PRAGMA busy_timeout').get() as { timeout: number }).timeout;
+  const transactionAt = performance.now();
+  try {
+    db.exec('PRAGMA busy_timeout=0');
+    db.transaction(() => {
+      const before = createHash('sha256').update(state.beforeHash ?? '');
+      const after = createHash('sha256').update(state.afterHash ?? '');
+      db.exec('INSERT INTO sdk_message_body_copy_active(singleton) VALUES (1)');
+      const selected = db
+        .prepare(`SELECT m.seq,m.task_id,${joinedSdkMessageBody('b', 'm')} AS body
+        FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq
+        WHERE m.seq>? AND m.seq<=? ORDER BY m.seq`)
+        .all(state.through, through) as { seq: number; task_id: string | null; body: string }[];
+      for (const row of selected) {
+        let derived: ReturnType<typeof deriveSdkMessageColumns> | undefined;
+        try {
+          derived = deriveSdkMessageColumns(JSON.parse(row.body), row.task_id);
+        } catch {
+          malformed++;
+        }
+        insert.run(row.seq);
+        update.run(...names.map((name) => derived?.[name] ?? null), row.seq);
+        const copied = db
+          .prepare('SELECT sdk_message AS body FROM sdk_message_bodies WHERE seq=?')
+          .get(row.seq) as { body: string };
+        if (copied.body !== row.body)
+          throw new SdkBodyCopyTerminalError(
+            `SDK body copy byte mismatch at seq ${row.seq}`,
+            state.backupPath
+          );
+        const frame = `${row.seq}:${Buffer.byteLength(row.body)}:`;
+        before.update(frame).update(row.body);
+        after.update(frame).update(copied.body);
+        state.through = row.seq;
+        copiedBytes += Buffer.byteLength(row.body);
+        rows++;
+        if (performance.now() - transactionAt >= 20) break;
+      }
+      db.exec('DELETE FROM sdk_message_body_copy_active');
+      state.beforeHash = before.digest('hex');
+      state.afterHash = after.digest('hex');
+      if (state.beforeHash !== state.afterHash)
+        throw new SdkBodyCopyTerminalError(
+          'SDK body copy logical digest mismatch',
+          state.backupPath
+        );
+      saveCursor();
+    }, 'immediate')();
+    return { state, rows, malformed, copiedBytes };
+  } catch (error) {
+    if (!/busy|locked/i.test(String(error))) throw error;
+    return 'locked';
+  } finally {
+    db.exec(`PRAGMA busy_timeout=${busy}`);
+  }
+}
+
 export async function migrateSdkMessageBodies(db: Database, options: Options) {
   const done = Boolean(
     db.prepare('SELECT 1 FROM migration_markers WHERE key IN (?,?)').get(DONE, REVERSED)
@@ -109,18 +205,6 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
     );
   state.backupPath = await options.verifyBackup(Boolean(prior), state.backupPath);
   if (options.signal?.aborted) return { status: 'cancelled' as const };
-  const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
-  const insert = db.prepare(`INSERT OR IGNORE INTO sdk_message_bodies(seq,sdk_message)
-    SELECT m.seq,${joinedSdkMessageBody('b', 'm')} FROM sdk_messages m
-    LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE m.seq=?`);
-  const update = db.prepare(
-    `UPDATE sdk_messages SET sdk_message='',${names.map((key) => `${key}=?`).join(',')} WHERE seq=?`
-  );
-  const cursor = db.prepare('INSERT INTO migration_markers(key,applied_at) VALUES (?,?)');
-  const saveCursor = () => {
-    db.prepare('DELETE FROM migration_markers WHERE key GLOB ?').run(`${STATE}*`);
-    cursor.run(`${STATE}${JSON.stringify(state)}`, Date.now());
-  };
   const auto = (db.prepare('PRAGMA wal_autocheckpoint').get() as { wal_autocheckpoint: number })
     .wal_autocheckpoint;
   db.exec('PRAGMA wal_autocheckpoint=0');
@@ -133,21 +217,7 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
         WHERE m.seq>? AND m.seq<=? ORDER BY m.seq LIMIT 128`)
         .all(state.through, state.ceiling) as { seq: number; bytes: number }[];
       if (!sizes.length) {
-        const busy = (db.prepare('PRAGMA busy_timeout').get() as { timeout: number }).timeout;
-        let locked = false;
-        try {
-          db.exec('PRAGMA busy_timeout=0');
-          db.prepare('INSERT OR IGNORE INTO migration_markers(key,applied_at) VALUES (?,?)').run(
-            DONE,
-            Date.now()
-          );
-        } catch (error) {
-          if (!/busy|locked/i.test(String(error))) throw error;
-          locked = true;
-        } finally {
-          db.exec(`PRAGMA busy_timeout=${busy}`);
-        }
-        if (locked) {
+        if (markSdkBodyCopyDone(db) === 'locked') {
           await new Promise((resolve) => setTimeout(resolve, 25));
           continue;
         }
@@ -171,80 +241,23 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
         bytes += row.bytes;
         through = row.seq;
       }
-      let rows = 0,
-        malformed = 0,
-        copiedBytes = 0;
-      let locked = false;
-      const previousState = { ...state };
-      const busy = (db.prepare('PRAGMA busy_timeout').get() as { timeout: number }).timeout;
       const transactionAt = performance.now();
-      try {
-        db.exec('PRAGMA busy_timeout=0');
-        db.transaction(() => {
-          const before = createHash('sha256').update(state.beforeHash ?? '');
-          const after = createHash('sha256').update(state.afterHash ?? '');
-          db.exec('INSERT INTO sdk_message_body_copy_active(singleton) VALUES (1)');
-          const selected = db
-            .prepare(`SELECT m.seq,m.task_id,${joinedSdkMessageBody('b', 'm')} AS body
-            FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq
-            WHERE m.seq>? AND m.seq<=? ORDER BY m.seq`)
-            .all(state.through, through) as { seq: number; task_id: string | null; body: string }[];
-          for (const row of selected) {
-            let derived: ReturnType<typeof deriveSdkMessageColumns> | undefined;
-            try {
-              derived = deriveSdkMessageColumns(JSON.parse(row.body), row.task_id);
-            } catch {
-              malformed++;
-            }
-            insert.run(row.seq);
-            update.run(...names.map((name) => derived?.[name] ?? null), row.seq);
-            const copied = db
-              .prepare('SELECT sdk_message AS body FROM sdk_message_bodies WHERE seq=?')
-              .get(row.seq) as { body: string };
-            if (copied.body !== row.body)
-              throw new SdkBodyCopyTerminalError(
-                `SDK body copy byte mismatch at seq ${row.seq}`,
-                state.backupPath
-              );
-            const frame = `${row.seq}:${Buffer.byteLength(row.body)}:`;
-            before.update(frame).update(row.body);
-            after.update(frame).update(copied.body);
-            state.through = row.seq;
-            copiedBytes += Buffer.byteLength(row.body);
-            rows++;
-            if (performance.now() - transactionAt >= 20) break;
-          }
-          db.exec('DELETE FROM sdk_message_body_copy_active');
-          state.beforeHash = before.digest('hex');
-          state.afterHash = after.digest('hex');
-          if (state.beforeHash !== state.afterHash)
-            throw new SdkBodyCopyTerminalError(
-              'SDK body copy logical digest mismatch',
-              state.backupPath
-            );
-          saveCursor();
-        }, 'immediate')();
-      } catch (error) {
-        Object.assign(state, previousState);
-        if (!/busy|locked/i.test(String(error))) throw error;
-        locked = true;
-      } finally {
-        db.exec(`PRAGMA busy_timeout=${busy}`);
-      }
-      if (locked) {
+      const chunk = copySdkBodyChunk(db, { state, through });
+      if (chunk === 'locked') {
         options.log(JSON.stringify({ phase: 'writer_busy', through: state.through }));
         await new Promise((resolve) => setTimeout(resolve, 25));
         continue;
       }
+      state = chunk.state;
       const transactionMs = performance.now() - transactionAt;
       options.log(
         JSON.stringify({
           phase: 'chunk',
           through: state.through,
           ceiling: state.ceiling,
-          rows,
-          bytes: copiedBytes,
-          malformed,
+          rows: chunk.rows,
+          bytes: chunk.copiedBytes,
+          malformed: chunk.malformed,
           transactionMs,
           elapsedMs: performance.now() - started,
         })

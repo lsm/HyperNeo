@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from './runtime-worker-url.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search.ts';
 
@@ -32,9 +33,16 @@ export class MessageSearchWorkerService {
     this.cancel(coalesceKey);
 
     const requestId = generateUUID();
-    const worker = new Worker(new URL('./message-search-worker.ts', import.meta.url).href, {
-      type: 'module',
-    });
+    const worker = new Worker(
+      runtimeWorkerUrl(
+        './message-search-worker.ts',
+        './daemon/src/lib/message-search-worker.ts',
+        import.meta.url
+      ).toString(),
+      {
+        type: 'module',
+      }
+    );
 
     return new Promise<MessageSearchResponse>((resolve) => {
       const cleanup = () => {

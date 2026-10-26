@@ -72,7 +72,10 @@ function fixture() {
                 closedAt: null,
                 reviews: { nodes: reviews },
                 commits: { nodes: [{ commit: { statusCheckRollup: ci ? { state: ci } : null } }] },
-                files: { nodes: [{ path: 'docs/design/approved.md' }] },
+                files: {
+                  nodes: [{ path: 'docs/design/approved.md' }],
+                  pageInfo: { hasNextPage: false },
+                },
                 ...extra,
               },
             ],

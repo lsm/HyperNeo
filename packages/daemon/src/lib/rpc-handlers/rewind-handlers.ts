@@ -38,9 +38,13 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.preview', async (data) => {
     const { sessionId, checkpointId } = data as { sessionId: string; checkpointId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId, {
-      replayPendingMessages: false,
-    });
+    const agentSession = await sessionManager.getSessionAsync(
+      sessionId,
+      {
+        replayPendingMessages: false,
+      },
+      false
+    );
     if (!agentSession) {
       return {
         preview: {
@@ -65,9 +69,13 @@ export function setupRewindHandlers(
       mode?: RewindMode;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId, {
-      replayPendingMessages: false,
-    });
+    const agentSession = await sessionManager.getSessionAsync(
+      sessionId,
+      {
+        replayPendingMessages: false,
+      },
+      false
+    );
     if (!agentSession) {
       return {
         result: {
@@ -105,9 +113,13 @@ export function setupRewindHandlers(
       };
     }
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId, {
-      replayPendingMessages: false,
-    });
+    const agentSession = await sessionManager.getSessionAsync(
+      sessionId,
+      {
+        replayPendingMessages: false,
+      },
+      false
+    );
     if (!agentSession) {
       return {
         result: {

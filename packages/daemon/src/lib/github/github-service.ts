@@ -3,6 +3,8 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
 import type { Config } from '../../config.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { githubPollRefreshWrites } from '../../storage/repositories/github-poll-refresh-write.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import { GITHUB_POLL } from '../job-queue-constants.ts';
 import { handleGitHubPoll } from '../job-handlers/github-poll.handler.ts';
@@ -13,6 +15,7 @@ import type {
   SecurityCheckResult,
   InboxItem,
 } from './types.ts';
+import type { GitHubPollCollector } from './poll-source.ts';
 import { GitHubPollingService, createPollingService } from './polling-service.ts';
 import {
   GitHubEventFilter,
@@ -38,6 +41,7 @@ export interface GitHubServiceOptions {
   jobQueue?: JobQueueRepository;
   jobProcessor?: JobQueueProcessor;
   getPollingIntervalSeconds?: () => number | undefined;
+  collectPollPage?: GitHubPollCollector;
 }
 
 export class GitHubService {
@@ -47,6 +51,7 @@ export class GitHubService {
   private apiKey: string;
   private apiKeyType?: 'api_key' | 'oauth';
   private githubToken?: string;
+  private collectPollPage?: GitHubPollCollector;
 
   private pollingService?: GitHubPollingService;
   private eventFilter: GitHubEventFilter;
@@ -58,6 +63,10 @@ export class GitHubService {
   private jobProcessor?: JobQueueProcessor;
   private getPollingIntervalSeconds?: () => number | undefined;
   private pollJobHandlerRegistered = false;
+  private pollingRefreshVersion = 0;
+  private pollRefreshRetry?: ReturnType<typeof setTimeout>;
+  private stopped = false;
+  pollRefreshDegraded = false;
 
   constructor(options: GitHubServiceOptions) {
     this.db = options.db;
@@ -66,6 +75,7 @@ export class GitHubService {
     this.apiKey = options.apiKey;
     this.apiKeyType = options.apiKeyType;
     this.githubToken = options.githubToken;
+    this.collectPollPage = options.collectPollPage;
     this.jobQueue = options.jobQueue;
     this.jobProcessor = options.jobProcessor;
     this.getPollingIntervalSeconds = options.getPollingIntervalSeconds;
@@ -92,7 +102,9 @@ export class GitHubService {
     });
   }
 
-  start(): void {
+  async start(): Promise<void> {
+    this.stopped = false;
+    clearTimeout(this.pollRefreshRetry);
     if (this.config.githubWebhookSecret) {
       this.webhookHandler = createWebhookHandler(this.config.githubWebhookSecret, async (event) => {
         await this.processEvent(event);
@@ -100,16 +112,29 @@ export class GitHubService {
       log.info('Webhook handler initialized');
     }
 
-    this.refreshPolling();
+    const refreshVersion = this.pollingRefreshVersion + 1;
+    try {
+      await this.refreshPolling();
+      if (refreshVersion === this.pollingRefreshVersion) this.pollRefreshDegraded = false;
+    } catch {
+      if (this.stopped || refreshVersion !== this.pollingRefreshVersion) return;
+      this.pollRefreshDegraded = true;
+      this.pollRefreshRetry = setTimeout(
+        () => void this.start(),
+        (this.getPollingIntervalSecondsValue() || DEFAULT_GITHUB_POLLING_INTERVAL_SECONDS) * 1000
+      );
+    }
 
     log.info('GitHub service started');
   }
 
-  refreshPolling(options: { reschedulePending?: boolean } = {}): void {
+  async refreshPolling(options: { reschedulePending?: boolean } = {}): Promise<void> {
+    const refreshVersion = ++this.pollingRefreshVersion;
     const intervalSeconds = this.getPollingIntervalSecondsValue();
 
     if (intervalSeconds <= 0 || !this.githubToken) {
-      this.deletePendingPollJobs();
+      await this.refreshPollJobs(false);
+      if (refreshVersion !== this.pollingRefreshVersion) return;
       if (this.pollingService) {
         this.pollingService.stop();
         this.pollingService = undefined;
@@ -124,6 +149,7 @@ export class GitHubService {
       this.pollingService = createPollingService(
         {
           token: this.githubToken,
+          collectPollPage: this.collectPollPage,
           interval: intervalMs,
         },
         async (event) => {
@@ -150,17 +176,7 @@ export class GitHubService {
         log.info('github.poll job handler registered');
       }
 
-      if (options.reschedulePending) {
-        this.deletePendingPollJobs();
-      }
-
-      const existing = this.jobQueue.listJobs({
-        queue: GITHUB_POLL,
-        status: ['pending', 'processing'],
-        limit: 1,
-      });
-      if (existing.length === 0) {
-        this.jobQueue.enqueue({ queue: GITHUB_POLL, payload: {}, runAt: Date.now() });
+      if (await this.refreshPollJobs(true, options.reschedulePending)) {
         log.info('Enqueued initial github.poll job');
       }
     }
@@ -174,14 +190,24 @@ export class GitHubService {
     return Math.min(MAX_GITHUB_POLLING_INTERVAL_SECONDS, Math.max(0, Math.trunc(configured)));
   }
 
-  private deletePendingPollJobs(): void {
-    if (!this.jobQueue) return;
-    for (const job of this.jobQueue.listJobs({ queue: GITHUB_POLL, status: 'pending' })) {
-      this.jobQueue.deleteJob(job.id);
+  private async refreshPollJobs(enabled: boolean, reschedulePending = false) {
+    if (!this.jobQueue) return null;
+    try {
+      return await gatewayFor(this.jobQueue.db).call(githubPollRefreshWrites, 'refresh', {
+        enabled,
+        reschedulePending,
+        runAt: Date.now(),
+      });
+    } catch (error) {
+      log.warn('GitHub polling refresh persistence failed', error);
+      throw error;
     }
   }
 
   stop(): void {
+    this.stopped = true;
+    this.pollingRefreshVersion++;
+    clearTimeout(this.pollRefreshRetry);
     if (this.pollingService) {
       this.pollingService.stop();
       this.pollingService = undefined;

@@ -37,7 +37,7 @@ try {
     const strip = page.locator(`[data-session-schedules="${surface.sessionId}"]`);
     await strip.waitFor({ timeout:30000 });
     assert.equal(await strip.getAttribute('open'), null);
-    await strip.getByRole('button',{name:'more — Schedules',exact:true}).click();
+    await strip.getByText('Schedules', { exact:true }).click();
     const row = strip.locator(`[data-schedule="${surface.scheduleId}"]`);
     await row.waitFor();
     assert.equal(await strip.locator('[data-schedule]').count(),2);
@@ -49,7 +49,7 @@ try {
     assert((await row.innerText()).includes('Skipped · Session busy'));
     assert.equal(await row.locator('time').count(),2);
     assert((await strip.innerText()).includes('0 9 * * * · UTC'));
-    await row.getByRole('button',{ name:`more — ${surface.title}`, exact:true }).click();
+    await row.getByRole('button',{ name:surface.title, exact:true }).click();
     await row.getByText('Guide publicly available').waitFor();
     await row.getByRole('button',{ name:'Pause', exact:true }).click();
     await row.getByRole('button',{ name:'Resume', exact:true }).waitFor();
@@ -60,14 +60,14 @@ try {
     await strip.getByRole('button',{ name:'Refresh schedules', exact:true }).click();
     await strip.getByRole('button',{ name:'Refresh schedules', exact:true }).waitFor({ state:'visible' });
     await row.getByRole('button',{ name:'Pause', exact:true }).waitFor();
-    await page.waitForFunction(id => [...document.querySelectorAll(`[data-session-schedules="${id}"] button`)].some(b => b.textContent === 'Refresh schedules' && !b.disabled), surface.sessionId);
+    await page.waitForFunction(id => !document.querySelector(`[data-session-schedules="${id}"] > div > button`)?.disabled, surface.sessionId);
     if (mode !== 'reproduce' && width === 1280 && surface.name === 'neo') {
       const goalId = list(surface.sessionId).find(item => item.id === surface.scheduleId).sourceId;
       assert(rpc('goal.session.update', { ownerSessionId:surface.sessionId, goalId, title:'Guide renamed externally' }).accepted);
-      await row.getByRole('button',{ name:'less — Guide renamed externally', exact:true }).waitFor({ timeout:45000 });
+      await row.getByRole('button',{ name:'Guide renamed externally', exact:true }).waitFor({ timeout:45000 });
       assert(rpc('goal.session.update', { ownerSessionId:surface.sessionId, goalId, title:surface.title }).accepted);
       await strip.getByRole('button',{ name:'Refresh schedules', exact:true }).click();
-      await row.getByRole('button',{ name:`less — ${surface.title}`, exact:true }).waitFor();
+      await row.getByRole('button',{ name:surface.title, exact:true }).waitFor();
     }
     const box = await strip.boundingBox();
     assert(box && box.x >= 0 && box.x + box.width <= width + 1,JSON.stringify(box));

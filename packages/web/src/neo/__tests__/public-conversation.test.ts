@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { describe, expect, it } from 'vitest';
 import {
   admitNeoPublicSources,
+  neoPublicationAnswerOrigins,
   projectNeoPublicConversation,
   requireNeoPublicIdentities,
 } from '../public-conversation.ts';
@@ -290,6 +291,7 @@ describe('session message rows', () => {
     toName: 'Neo',
     text,
     createdAt,
+    kind: 'session' as const,
   });
 
   it('places messages between sessions in time order beside the conversation, once loaded history reaches them', () => {
@@ -306,4 +308,50 @@ describe('session message rows', () => {
       result.entries.map((entry) => (entry.kind === 'session' ? entry.message.text : entry.kind))
     ).toEqual(['ask', 'PR #9 is up\nCI green']);
   });
+
+  it('never places system-forwarded worker batches in the human conversation', () => {
+    const result = projectNeoPublicConversation(
+      root,
+      { ...asks([ask()]), hasEarlier: true },
+      publications([]),
+      [],
+      [
+        {
+          ...message(1, '2026-09-30T20:05:00.000Z', 'System-forwarded worker messages'),
+          kind: 'worker-batch' as const,
+        },
+        message(2, '2026-09-30T20:06:00.000Z', 'PR #9 is up'),
+      ]
+    );
+    expect(
+      result.entries.map((entry) => (entry.kind === 'session' ? entry.message.text : entry.kind))
+    ).toEqual(['ask', 'PR #9 is up']);
+  });
+});
+
+it('does not classify a card reply notice or its edit history as an answered human input', () => {
+  const origin = { sessionId: root, messageId: 'human' };
+  expect(
+    neoPublicationAnswerOrigins({
+      conversationId: id,
+      publicationId: 'notice',
+      sequence: 1,
+      createdAt: at,
+      shortText: 'Card',
+      fullText: 'Card',
+      links: [],
+      askOrigin: origin,
+      answerInput: origin,
+      revisions: [
+        {
+          revisionId: 'edit',
+          shortText: 'Old',
+          fullText: 'Old',
+          createdAt: at,
+          producerInput: origin,
+        },
+      ],
+      cardReply: { sourceMessageIds: ['human'], askId: 'a', questionId: 'q', mutationId: 'm' },
+    })
+  ).toEqual([]);
 });

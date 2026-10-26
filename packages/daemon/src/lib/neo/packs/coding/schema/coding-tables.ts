@@ -1,10 +1,30 @@
 import type { Database } from '../../../../../storage/sqlite-compat.ts';
 
 export function createCodingPackTables(db: Database, activatedAt = Date.now()): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_todo_prs (
+  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
+    todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    head TEXT NOT NULL,
+    gate_json TEXT NOT NULL CHECK (json_valid(gate_json)),
+    smoke_json TEXT CHECK (smoke_json IS NULL OR json_valid(smoke_json)),
+    PRIMARY KEY (todo_id, url, head)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_todo_prs (
     todo_id TEXT PRIMARY KEY REFERENCES neo_todos(id) ON DELETE CASCADE,
     prs_json TEXT NOT NULL CHECK (json_valid(prs_json)),
     read_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_stage_heads (
+    url TEXT PRIMARY KEY,
+    observed_at INTEGER NOT NULL,
+    head TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_stage_facts (
+    url TEXT NOT NULL,
+    head TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN ('review', 'qa')),
+    fact_json TEXT NOT NULL CHECK (json_valid(fact_json)),
+    PRIMARY KEY (url, stage)
   );
   CREATE TABLE IF NOT EXISTS pack_coding_pr_claims (
     todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
@@ -28,6 +48,10 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     told_at INTEGER,
     read_at INTEGER NOT NULL,
     PRIMARY KEY (repo, number)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_pr_event_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    activated_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS pack_coding_poll_facts (
     http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json)),
@@ -134,12 +158,26 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     active_at INTEGER NOT NULL,
     seen_at INTEGER NOT NULL
   )`);
+  const heads = db.prepare('PRAGMA table_info(pack_coding_stage_heads)').all() as {
+    name: string;
+  }[];
+  if (!heads.some((column) => column.name === 'observed_at'))
+    db.exec(
+      'ALTER TABLE pack_coding_stage_heads ADD COLUMN observed_at INTEGER NOT NULL DEFAULT 0'
+    );
   const pages = db.prepare('PRAGMA table_info(pack_coding_poll_facts)').all() as { name: string }[];
   if (!pages.some((column) => column.name === 'http_json'))
     db.exec(
       'ALTER TABLE pack_coding_poll_facts ADD COLUMN http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json))'
     );
   const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
+  if (!ledger.some((column) => column.name === 'terminal_event_json'))
+    db.exec(
+      'ALTER TABLE pack_coding_pr_ledger ADD COLUMN terminal_event_json TEXT CHECK (terminal_event_json IS NULL OR json_valid(terminal_event_json))'
+    );
+  db.prepare(
+    'INSERT OR IGNORE INTO pack_coding_pr_event_state (id, activated_at) VALUES (1, ?)'
+  ).run(activatedAt);
   if (!ledger.some((column) => column.name === 'reply_at'))
     db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');
   if (!ledger.some((column) => column.name === 'created_at'))
@@ -148,6 +186,11 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     db.exec(
       'ALTER TABLE pack_coding_pr_ledger ADD COLUMN author_is_bot INTEGER NOT NULL DEFAULT 1'
     );
+  const unowned = db.prepare('PRAGMA table_info(pack_coding_pr_unowned_state)').all() as {
+    name: string;
+  }[];
+  if (!unowned.some((column) => column.name === 'pending_rows'))
+    db.exec('ALTER TABLE pack_coding_pr_unowned_state ADD COLUMN pending_rows TEXT');
   db.prepare(
     'INSERT OR IGNORE INTO pack_coding_pr_unowned_state (id, activated_at) VALUES (1, ?)'
   ).run(activatedAt);

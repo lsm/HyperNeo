@@ -14,9 +14,9 @@ export interface InjectionDeliveryRowDeps {
     message: SDKUserMessage,
     sendStatus: 'enqueued' | 'deferred',
     origin?: MessageOrigin
-  ): string;
-  reopenDeliveryByUuid(sessionId: string, uuid: string): string | null;
-  markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null;
+  ): Promise<string>;
+  reopenDeliveryByUuid(sessionId: string, uuid: string): Promise<string | null>;
+  markDeliveryDeferredByUuid(sessionId: string, uuid: string): Promise<string | null>;
 }
 
 export async function reopenFailedDeliveryRow(
@@ -24,7 +24,7 @@ export async function reopenFailedDeliveryRow(
   sessionId: string,
   messageId: string
 ): Promise<void> {
-  const reopenedDbId = deps.reopenDeliveryByUuid(sessionId, messageId);
+  const reopenedDbId = await deps.reopenDeliveryByUuid(sessionId, messageId);
   if (reopenedDbId) {
     await deps.publishStatusChanged(sessionId, reopenedDbId, 'enqueued');
   }
@@ -35,7 +35,7 @@ export async function flipDeliveryRowToDeferred(
   sessionId: string,
   messageId: string
 ): Promise<string | null> {
-  const flippedDbId = deps.markDeliveryDeferredByUuid(sessionId, messageId);
+  const flippedDbId = await deps.markDeliveryDeferredByUuid(sessionId, messageId);
   if (flippedDbId) {
     await deps.publishStatusChanged(sessionId, flippedDbId, 'deferred');
   }
@@ -57,7 +57,7 @@ export async function settleDeliveryRowStatus(
 ): Promise<string> {
   const dbId = args.rowExists
     ? args.messageId
-    : deps.saveUserMessage(args.sessionId, args.message, args.status, args.origin);
+    : await deps.saveUserMessage(args.sessionId, args.message, args.status, args.origin);
   await deps.publishStatusChanged(args.sessionId, dbId, args.status);
   return dbId;
 }

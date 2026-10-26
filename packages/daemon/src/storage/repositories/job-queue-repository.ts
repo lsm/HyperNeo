@@ -1,3 +1,6 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import type { DbGateway } from '../db-gateway/db-gateway.ts';
+import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { generateUUID } from '@hyperneo/shared';
 import { withBusyRetry } from '../busy-retry.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
@@ -8,6 +11,11 @@ export type JobClaim =
   | { method: 'dequeue'; args: Parameters<JobQueueRepository['dequeue']> }
   | { method: 'dequeueSessionFifo'; args: Parameters<JobQueueRepository['dequeueSessionFifo']> }
   | { method: 'dequeueExempt'; args: Parameters<JobQueueRepository['dequeueExempt']> };
+
+export type JobCleanup = {
+  beforeMs: number;
+  completed: { queue: string; beforeMs: number }[];
+};
 
 export interface Job {
   id: string;
@@ -204,7 +212,7 @@ export function buildJobQueueSessionFifoSelection(
 }
 
 export class JobQueueRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(readonly db: BunDatabase) {}
 
   submissionReceipt<T>(key: string, fingerprint: string): T | null {
     const row = this.db
@@ -222,12 +230,16 @@ export class JobQueueRepository {
         const prior = this.submissionReceipt<T>(key, fingerprint);
         if (prior !== null) return prior;
         const receipt = submit();
-        this.db
-          .prepare('INSERT INTO message_send_receipts (key, fingerprint, receipt) VALUES (?, ?, ?)')
-          .run(key, fingerprint, JSON.stringify(receipt));
+        this.recordSubmissionReceipt(key, fingerprint, receipt);
         return receipt;
       }, 'immediate')()
     );
+  }
+
+  recordSubmissionReceipt<T>(key: string, fingerprint: string, receipt: T): void {
+    this.db
+      .prepare('INSERT INTO message_send_receipts (key, fingerprint, receipt) VALUES (?, ?, ?)')
+      .run(key, fingerprint, JSON.stringify(receipt));
   }
 
   enqueue(params: EnqueueParams): Job {
@@ -420,10 +432,13 @@ export class JobQueueRepository {
     );
   }
 
-  reschedulePending(jobId: string, runAt: number): boolean {
+  reschedulePending(jobId: string, runAt: number, claimToken?: string | null): boolean {
     const res = this.db
-      .prepare(`UPDATE job_queue SET run_at = ? WHERE id = ? AND status = 'pending'`)
-      .run(runAt, jobId);
+      .prepare(
+        `UPDATE job_queue SET run_at = ? WHERE id = ? AND status = 'pending'
+          AND (? = 0 OR json_extract(payload, '$.__claimToken') IS ?)`
+      )
+      .run(runAt, jobId, claimToken === undefined ? 0 : 1, claimToken ?? null);
     return res.changes > 0;
   }
 
@@ -508,7 +523,7 @@ export class JobQueueRepository {
           .prepare(
             `SELECT id, payload
                  FROM job_queue
-                WHERE queue = 'mailbox'
+                WHERE queue IN ('mailbox', 'neo_notes')
                   AND json_extract(payload, '$.to.sessionId') = ?
                   AND status IN ('pending', 'processing')
                   ${modeFilter}`
@@ -517,7 +532,7 @@ export class JobQueueRepository {
         this.db
           .prepare(
             `DELETE FROM job_queue
-                WHERE queue = 'mailbox'
+                WHERE queue IN ('mailbox', 'neo_notes')
                   AND json_extract(payload, '$.to.sessionId') = ?
                   AND status IN ('pending', 'processing')
                   ${modeFilter}`
@@ -614,7 +629,13 @@ export class JobQueueRepository {
     }
   }
 
-  transitionDeliverySendStatusFenced(args: {
+  async transitionDeliverySendStatusFenced(
+    args: Parameters<JobQueueRepository['transitionDeliverySendStatusFencedSync']>[0]
+  ): Promise<string[]> {
+    const { sdkDeliveryFencedStatus } = await import('./sdk-message-transactions.ts');
+    return gatewayFor(this.db).run(sdkDeliveryFencedStatus, args);
+  }
+  transitionDeliverySendStatusFencedSync(args: {
     sessionId: string;
     kickoffUuid: string;
     claimToken: string;
@@ -897,6 +918,17 @@ export class JobQueueRepository {
     return result.changes > 0 ? this.getJob(jobId) : null;
   }
 
+  snapshotPayload(jobId: string, key: string, content: unknown): unknown {
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          'UPDATE job_queue SET payload=json_set(payload, ?, json(?)) WHERE id=? AND json_type(payload, ?) IS NULL'
+        )
+        .run(`$.${key}`, JSON.stringify(content), jobId, `$.${key}`);
+      return this.getJob(jobId)?.payload[key];
+    })();
+  }
+
   getJob(jobId: string): Job | null {
     const stmt = this.db.prepare(`SELECT * FROM job_queue WHERE id = ?`);
     const row = stmt.get(jobId) as Record<string, unknown> | undefined;
@@ -1171,4 +1203,56 @@ function sqliteJsonScalar(value: unknown): string | number | null {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (value === null) return null;
   throw new Error('enqueueUniquePending matchPayload values must be JSON scalar values');
+}
+
+export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueueRepository, [
+  'dequeue',
+  'dequeueSessionFifo',
+  'dequeueExempt',
+  'heartbeat',
+  'complete',
+  'fail',
+  'markDead',
+  'snapshotPayload',
+]);
+
+export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [
+  'isClaimOwnedByAnother',
+]);
+
+const CLEANUP_BATCH_ROWS = 500;
+
+export const cleanupJobs = defineDbOp({
+  name: 'jobs.cleanup',
+  mode: 'write',
+  run: (db: BunDatabase, { beforeMs, completed }: JobCleanup): number => {
+    let deleted = db
+      .prepare(
+        `DELETE FROM job_queue WHERE rowid IN (
+           SELECT rowid FROM job_queue
+            WHERE status IN ('completed', 'dead', 'failed') AND completed_at < ? LIMIT ?)`
+      )
+      .run(beforeMs, CLEANUP_BATCH_ROWS).changes;
+    for (const lane of completed) {
+      if (deleted >= CLEANUP_BATCH_ROWS) break;
+      deleted += db
+        .prepare(
+          `DELETE FROM job_queue WHERE rowid IN (
+             SELECT rowid FROM job_queue
+              WHERE queue = ? AND status = 'completed' AND completed_at < ? LIMIT ?)`
+        )
+        .run(lane.queue, lane.beforeMs, CLEANUP_BATCH_ROWS - deleted).changes;
+    }
+    return deleted;
+  },
+});
+
+export async function cleanupJobsInBatches(db: DbGateway, cleanup: JobCleanup): Promise<number> {
+  let total = 0;
+  for (;;) {
+    const deleted = await db.run(cleanupJobs, cleanup);
+    total += deleted;
+    if (deleted < CLEANUP_BATCH_ROWS) return total;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }

@@ -39,12 +39,14 @@ export function clearModelListCache(): void {
   modelListCache.clear();
 }
 
-function cacheKey(params: {
+interface EndpointConnectionParams {
   baseUrl: string;
   type?: string;
   apiKey?: string;
   headers?: Record<string, string>;
-}): string {
+}
+
+function cacheKey(params: EndpointConnectionParams): string {
   return JSON.stringify([
     params.baseUrl,
     params.type ?? 'openai-chat',
@@ -53,12 +55,12 @@ function cacheKey(params: {
   ]);
 }
 
-async function fetchModelsFromEndpoint(params: {
-  baseUrl: string;
-  type?: string;
-  apiKey?: string;
-  headers?: Record<string, string>;
-}): Promise<Array<{ id: string; name?: string }>> {
+async function fetchFromEndpoint<T>(
+  params: EndpointConnectionParams,
+  readResponse: (response: Response, url: string) => Promise<T>
+): Promise<T> {
+  const problem = baseUrlProblem(params.baseUrl);
+  if (problem) throw new Error(problem);
   const resolvedType = (params.type ?? 'openai-chat') as string;
   const probeUrl = buildModelListUrl(params.baseUrl, resolvedType);
 
@@ -86,8 +88,7 @@ async function fetchModelsFromEndpoint(params: {
     if (!resp.ok) {
       throw new Error(`Endpoint returned HTTP ${resp.status}`);
     }
-    const data = await resp.json();
-    return normalizeModelList(resolvedType, data);
+    return await readResponse(resp, probeUrl);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Request timed out after 10s');
@@ -313,6 +314,13 @@ export function registerCustomEndpointHandlers(
     return { endpoints: settingsManager.getGlobalSettings().customEndpoints ?? [] };
   });
 
+  messageHub.onRequest('customEndpoints.testConnection', async (data: EndpointConnectionParams) =>
+    fetchFromEndpoint(data, async (response, url) => {
+      await response.body?.cancel();
+      return { success: true, message: `Reached ${url}` };
+    })
+  );
+
   messageHub.onRequest(
     'customEndpoints.listModels',
     async (data: {
@@ -349,7 +357,9 @@ export function registerCustomEndpointHandlers(
         return { models, fromCache: false };
       }
 
-      const models = await fetchModelsFromEndpoint(data);
+      const models = await fetchFromEndpoint(data, async (response) =>
+        normalizeModelList(data.type ?? 'openai-chat', await response.json())
+      );
       modelListCache.set(key, { models, fetchedAt: Date.now() });
       return { models, fromCache: false };
     }

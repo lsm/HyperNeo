@@ -1,3 +1,14 @@
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { vi } from 'vitest';
+import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  prepareWorkerSandbox,
+  releaseWorkerSandbox,
+} from '../../../../src/lib/drivers/worker-sandbox';
+import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -186,6 +197,7 @@ describe('SessionLifecycle', () => {
     createdSessions = [];
 
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock((session: Session) => {
         createdSessions.push(session);
       }),
@@ -255,7 +267,7 @@ describe('SessionLifecycle', () => {
     };
 
     lifecycle = new SessionLifecycle(
-      mockDb,
+      withSdkTeardownGateway(mockDb),
       mockWorktreeManager,
       mockSessionCache,
       mockInternalEventBus,
@@ -497,6 +509,7 @@ describe('SessionLifecycle', () => {
         repo = new SessionRepository(rawDb);
 
         mockDb = {
+          writeSDKMessage: writeThroughRepo,
           createSession: (
             session: Session,
             options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
@@ -1106,6 +1119,65 @@ describe('SessionLifecycle', () => {
     });
   });
 
+  it.each(['archive', 'delete'] as const)(
+    'releases prepared-worker runtime roots on %s',
+    async (action) => {
+      const root = mkdtempSync(join(tmpdir(), 'worker-lifecycle-'));
+      mkdirSync(join(root, '.git'));
+      const env = await prepareWorkerSandbox(root);
+      const locked = join(env.TMPDIR, 'locked');
+      mkdirSync(locked);
+      writeFileSync(join(locked, 'synthetic'), 'worker bytes');
+      chmodSync(locked, 0o000);
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'owned-worker',
+        workspacePath: root,
+        metadata: {},
+      });
+      try {
+        if (action === 'archive')
+          await lifecycle.archiveResources('owned-worker', 'ui_session_archive');
+        else await lifecycle.deleteResources('owned-worker', 'ui_session_delete');
+        expect(existsSync(env.TMPDIR)).toBe(false);
+        expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+        expect(existsSync(root)).toBe(true);
+      } finally {
+        if (existsSync(locked)) chmodSync(locked, 0o700);
+        await releaseWorkerSandbox(root);
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(['archive', 'delete'] as const)(
+    'keeps the session unarchived when runtime release fails during %s',
+    async (action) => {
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'owned-worker',
+        workspacePath: '/synthetic/worker',
+        status: 'idle',
+        metadata: {},
+      });
+      const failure = vi
+        .spyOn(sandbox, 'releaseWorkerSandbox')
+        .mockRejectedValue(new Error('synthetic EBUSY'));
+      try {
+        const result =
+          action === 'archive'
+            ? lifecycle.archiveResources('owned-worker', 'ui_session_archive')
+            : lifecycle.deleteResources('owned-worker', 'ui_session_delete');
+        await expect(result).rejects.toThrow('synthetic EBUSY');
+        expect(mockDb.updateSession).not.toHaveBeenCalledWith(
+          'owned-worker',
+          expect.objectContaining({ status: 'archived' })
+        );
+        expect(mockDb.deleteSession).not.toHaveBeenCalled();
+      } finally {
+        failure.mockRestore();
+      }
+    }
+  );
+
   describe('deleteResources (UI-only: session.delete)', () => {
     it('should delete session from database', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
@@ -1653,6 +1725,7 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),
@@ -1800,6 +1873,7 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),
@@ -1910,6 +1984,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),
@@ -2040,6 +2115,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 
   beforeEach(() => {
     mockDb = {
+      writeSDKMessage: writeThroughRepo,
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),

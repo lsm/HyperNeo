@@ -1,14 +1,14 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 
-function makeTempDbPath(): string {
-  return join(tmpdir(), `reactive-db-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+function makeTempDbDir(): string {
+  return mkdtempSync(join(tmpdir(), 'reactive-db-test-'));
 }
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
@@ -40,12 +40,14 @@ function makeSession(id: string, overrides: Partial<Session> = {}): Session {
 }
 
 describe('ReactiveDatabase', () => {
+  let dbDir: string;
   let dbPath: string;
   let db: Database;
   let reactiveDb: ReactiveDatabase;
 
   beforeEach(async () => {
-    dbPath = makeTempDbPath();
+    dbDir = makeTempDbDir();
+    dbPath = join(dbDir, 'test.db');
     db = new Database(dbPath);
     reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
@@ -56,9 +58,7 @@ describe('ReactiveDatabase', () => {
       db.close();
     } catch {}
     try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
+      rmSync(dbDir, { recursive: true, force: true });
     } catch {}
   });
 
@@ -214,6 +214,22 @@ describe('ReactiveDatabase', () => {
       expect(sessionEvents.length).toBe(1);
       expect(msgEvents.length).toBe(0);
     });
+
+    test('change:global_settings waits until an async settings save settles', async () => {
+      let settle: (saved: boolean) => void = () => {};
+      db.saveGlobalSettings = (() =>
+        new Promise<boolean>((resolve) => (settle = resolve))) as never;
+      const msgEvents: unknown[] = [];
+      reactiveDb.on('change:global_settings', () => msgEvents.push(1));
+
+      const saved = reactiveDb.db.saveGlobalSettings({});
+      await Promise.resolve();
+      expect(msgEvents.length).toBe(0);
+
+      settle(true);
+      expect(await saved).toBe(true);
+      expect(msgEvents.length).toBe(1);
+    });
   });
 
   describe('getTableVersion', () => {
@@ -304,73 +320,54 @@ describe('ReactiveDatabase', () => {
     });
   });
 
-  describe('session writes that settle later', () => {
-    function deferUpdates(): Array<() => void> {
+  describe('proxied writes that settle later', () => {
+    function deferSaves(): Array<() => void> {
       const settle: Array<() => void> = [];
-      const write = db.updateSession.bind(db);
-      db.updateSession = (id, updates) =>
-        new Promise<void>((resolve) => settle.push(() => resolve(write(id, updates))));
+      db.saveGlobalSettings = (() =>
+        new Promise<boolean>((resolve) => settle.push(() => resolve(true)))) as never;
       return settle;
     }
 
     test('emits the change only once the write has landed', async () => {
       await db.createSession(makeSession('late'));
-      const settle = deferUpdates();
-      const titles: string[] = [];
-      reactiveDb.on('change:sessions', () => titles.push(db.getSession('late')!.title));
+      const settle = deferSaves();
+      const events: unknown[] = [];
+      reactiveDb.on('change:global_settings', (event) => events.push(event));
 
-      const write = reactiveDb.db.updateSession('late', { title: 'Landed' });
+      const write = reactiveDb.db.saveGlobalSettings({});
       await Promise.resolve();
-      expect(titles).toEqual([]);
+      expect(events).toEqual([]);
 
       settle[0]();
       await write;
-      expect(titles).toEqual(['Landed']);
+      expect(events).toHaveLength(1);
     });
 
-    test('scopes the change by the session as it was when the write was issued', async () => {
-      await db.createSession(
-        makeSession('moved', { context: { spaceId: 'space-1', taskId: 'task-1' } })
-      );
-      const settle = deferUpdates();
-      const scopes: unknown[] = [];
-      reactiveDb.on('change:sessions', (event) => scopes.push(event.scope?.taskId));
-
-      const write = reactiveDb.db.updateSession('moved', { title: 'Renamed' });
-      db.getDatabase()
-        .prepare('UPDATE sessions SET session_context = ? WHERE id = ?')
-        .run(JSON.stringify({ spaceId: 'space-1', taskId: 'task-2' }), 'moved');
-      settle[0]();
-      await write;
-
-      expect(scopes).toEqual(['task-1']);
-    });
-
-    test('a committed batch emits now and its pending session write emits once it lands', async () => {
+    test('a committed batch emits now and its pending write emits once it lands', async () => {
       await db.createSession(makeSession('batched'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.updateSession('batched', { title: 'Later' });
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.commitTransaction();
       expect(events.map((event) => event.tables)).toEqual([['space_tasks']]);
 
       settle[0]();
       await write;
-      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['sessions']]);
+      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['global_settings']]);
     });
 
     test('a later aborted batch keeps the change of a committed batch write', async () => {
       await db.createSession(makeSession('committed'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const tables: string[][] = [];
       reactiveDb.on('change', (data) => tables.push(data.tables));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.updateSession('committed', { title: 'Kept' });
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.commitTransaction();
       reactiveDb.beginTransaction();
       reactiveDb.notifyChange('space_tasks');
@@ -378,41 +375,41 @@ describe('ReactiveDatabase', () => {
       settle[0]();
       await write;
 
-      expect(tables).toEqual([['sessions']]);
+      expect(tables).toEqual([['global_settings']]);
     });
 
     test('a write landing inside an unrelated batch survives that batch aborting', async () => {
       await db.createSession(makeSession('outside'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const tables: string[][] = [];
       reactiveDb.on('change', (data) => tables.push(data.tables));
 
-      const write = reactiveDb.db.updateSession('outside', { title: 'Landed' });
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.beginTransaction();
       settle[0]();
       await write;
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.abortTransaction();
 
-      expect(tables).toEqual([['sessions']]);
+      expect(tables).toEqual([['global_settings']]);
     });
 
-    test('an aborted batch drops the change of a session write that lands later', async () => {
+    test('an aborted batch drops the change of a write that lands later', async () => {
       await db.createSession(makeSession('aborted'));
-      const settle = deferUpdates();
+      const settle = deferSaves();
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      const write = reactiveDb.db.updateSession('aborted', { title: 'Dropped' });
+      const write = reactiveDb.db.saveGlobalSettings({});
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.abortTransaction();
       settle[0]();
       await write;
-      await reactiveDb.db.createSession(makeSession('after-abort'));
+      reactiveDb.notifyChange('global_settings');
 
-      expect(events.map((event) => event.tables)).toEqual([['sessions']]);
-      expect(reactiveDb.getTableVersion('sessions')).toBe(2);
+      expect(events.map((event) => event.tables)).toEqual([['global_settings']]);
+      expect(reactiveDb.getTableVersion('global_settings')).toBe(2);
     });
   });
 

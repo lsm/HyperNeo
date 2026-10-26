@@ -69,7 +69,8 @@ function isExplicitlyDisabled(raw: string | undefined): boolean {
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {
-  const nodeEnv = process.env.NODE_ENV || 'development';
+  const environment = process.env;
+  const nodeEnv = environment.NODE_ENV || 'development';
 
   const defaultDbPath = join(getDataDir(), 'data', 'daemon.db');
   const configuredLogPath = hyperneoEnv('LOG_FILE');
@@ -102,7 +103,7 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 
   return {
     port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283', 10),
-    host: overrides?.host ?? (process.env.HOST || '0.0.0.0'),
+    host: overrides?.host ?? (process.env.HOST || '127.0.0.1'),
     dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -116,7 +117,8 @@ export function getConfig(overrides?: ConfigOverrides): Config {
       DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT
     ),
     nodeEnv,
-    workspaceRoot: overrides?.workspaceRoot ?? hyperneoEnv('WORKSPACE_ROOT'),
+    workspaceRoot:
+      overrides?.workspaceRoot ?? hyperneoEnv('WORKSPACE_PATH') ?? hyperneoEnv('WORKSPACE_ROOT'),
     disableWorktrees: hyperneoEnv('DISABLE_WORKTREES') === '1',
     disableGoalProcessing: hyperneoEnv('DISABLE_GOAL_PROCESSING') === '1',
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,

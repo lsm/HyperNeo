@@ -3,9 +3,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { isSqliteBusyError } from '../../../../src/storage/busy-retry';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
+
+const gatewayWith = (
+  db: Database,
+  intercept: (method: string, args: unknown[], run: () => Promise<unknown>) => Promise<unknown>
+) => {
+  const inline = new DbGateway(':memory:', db);
+  return {
+    call: (op: never, method: string, ...args: unknown[]) =>
+      intercept(method, args, () =>
+        (inline.call as (...a: unknown[]) => Promise<unknown>)(op, method, ...args)
+      ),
+  } as unknown as DbGateway;
+};
 
 const DB_SCHEMA = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -151,12 +165,19 @@ describe('JobQueueProcessor — poll resilience', () => {
   let db: Database;
   let repo: JobQueueRepository;
   let processor: JobQueueProcessor;
+  let fault: (method: string, args: unknown[]) => Error | null;
 
   beforeEach(() => {
     db = new Database(':memory:');
     db.exec(DB_SCHEMA);
     repo = new JobQueueRepository(db as any);
-    processor = new JobQueueProcessor(repo);
+    fault = () => null;
+    processor = new JobQueueProcessor(repo, {
+      db: gatewayWith(db, (method, args, run) => {
+        const error = fault(method, args);
+        return error ? Promise.reject(error) : run();
+      }),
+    });
   });
 
   afterEach(async () => {
@@ -171,13 +192,9 @@ describe('JobQueueProcessor — poll resilience', () => {
     });
     repo.enqueue({ queue: 'resilient-q', payload: {} });
 
-    const original = repo.dequeue.bind(repo);
     let calls = 0;
-    repo.dequeue = ((...args: Parameters<typeof original>) => {
-      calls++;
-      if (calls === 1) throw new Error('database is locked');
-      return original(...args);
-    }) as typeof repo.dequeue;
+    fault = (method) =>
+      method === 'dequeue' && ++calls === 1 ? new Error('database is locked') : null;
 
     await expect(processor.tick()).resolves.toBe(0);
     const claimed = await processor.tick();
@@ -192,11 +209,8 @@ describe('JobQueueProcessor — poll resilience', () => {
     processor.register('healthy-q', async () => {
       goodCalls++;
     });
-    const original = repo.dequeue.bind(repo);
-    repo.dequeue = ((...args: Parameters<typeof original>) => {
-      if (args[0] === 'broken-q') throw new Error('SQLITE_BUSY');
-      return original(...args);
-    }) as typeof repo.dequeue;
+    fault = (method, args) =>
+      method === 'dequeue' && args[0] === 'broken-q' ? new Error('SQLITE_BUSY') : null;
     repo.enqueue({ queue: 'broken-q', payload: {} });
     repo.enqueue({ queue: 'healthy-q', payload: {} });
 
@@ -215,16 +229,16 @@ describe('JobQueueProcessor — poll resilience', () => {
       rejections.push(reason);
     };
     process.on('unhandledRejection', onRejection);
-    repo.complete = (() => {
-      throw new Error('complete failed');
-    }) as typeof repo.complete;
-    repo.fail = (() => {
-      throw new Error('fail failed');
-    }) as typeof repo.fail;
+    let settles = 0;
+    fault = (method) =>
+      method === 'complete' || method === 'fail'
+        ? new Error(`${method} failed ${++settles}`)
+        : null;
 
     try {
       await processor.tick();
       await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(settles).toBe(2);
       expect(rejections).toEqual([]);
     } finally {
       process.off('unhandledRejection', onRejection);

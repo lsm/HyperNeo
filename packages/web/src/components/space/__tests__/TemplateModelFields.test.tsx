@@ -266,7 +266,7 @@ describe('TemplateModelFields', () => {
     });
   });
 
-  it('clears an unsupported thinking level when a model without thinking is selected', () => {
+  it('keeps the chosen thinking level when a model without thinking is selected', () => {
     const onChange = vi.fn();
     const { getByTestId } = render(
       <TemplateModelFields
@@ -280,7 +280,7 @@ describe('TemplateModelFields', () => {
     expect(onChange).toHaveBeenCalledWith({
       model: 'minimax-1',
       provider: 'minimax',
-      thinkingLevel: null,
+      thinkingLevel: 'think8k',
     });
   });
 
@@ -302,7 +302,7 @@ describe('TemplateModelFields', () => {
     });
   });
 
-  it('resolves a model thinking mode from the loaded catalog', () => {
+  it('offers every thinking level for an on/off-only model', () => {
     const { getByTestId } = render(
       <TemplateModelFields
         value={{ model: 'kimi-k2', provider: 'kimi', thinkingLevel: null }}
@@ -311,7 +311,16 @@ describe('TemplateModelFields', () => {
     );
     const select = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
     const values = Array.from(select.options).map((option) => option.value);
-    expect(values).toEqual(['', 'off', 'think32k']);
+    expect(values).toEqual([
+      '',
+      'off',
+      'think8k',
+      'think16k',
+      'think24k',
+      'think32k',
+      'think48k',
+      'think64k',
+    ]);
   });
 
   it('preserves a saved thinking level when the selected model is absent from the catalog', async () => {
@@ -325,7 +334,16 @@ describe('TemplateModelFields', () => {
     const select = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
     await waitFor(() => {
       const values = Array.from(select.options).map((option) => option.value);
-      expect(values).toEqual(['', 'off', 'think32k', 'think8k']);
+      expect(values).toEqual([
+        '',
+        'off',
+        'think8k',
+        'think16k',
+        'think24k',
+        'think32k',
+        'think48k',
+        'think64k',
+      ]);
     });
     expect(onChange).not.toHaveBeenCalled();
   });

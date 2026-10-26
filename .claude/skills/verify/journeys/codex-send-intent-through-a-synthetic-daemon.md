@@ -1,59 +1,70 @@
 ## Codex send intent through a synthetic daemon
 
+Use the shared resource guard, isolated HOME/data setup and evidence cleanup in
+SKILL.md. From the worktree root, run:
+
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-send-proof-XXXXXX)
-env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  LOG_LEVEL=warn bun .claude/skills/verify/codex-send-intent.ts verify 9377 "$RUN"
+TMPDIR=/absolute/writable/temp bash .claude/skills/verify/proof-run.sh \
+  /absolute/fresh/evidence .claude/skills/verify/codex-send-intent.ts verify 9377
 ```
 
-The helper requires its synthetic `bin` at the front of PATH **before Bun starts**.
-Changing PATH inside the process does not change Bun’s executable lookup in the
-verified runtime. It asserts the resolved launcher path before any dispatch. Its
-`open` shim records arguments and never opens the GUI. As a control, the real
-new-thread handoff must open `new-handoff-control` and start through its Desktop
-owner. Existing ownerless input must separately record an open while the shim
-exits 1. With the native listener stopped, both a missing socket and a stale
-Unix socket must also request an open and deliver through app-server steer within
-two seconds. All five opens must be recorded separately; the queued delivery and receipt still succeed within two seconds,
-without waiting for ownership. The launcher trace is retained in
-`evidence/desktop-open.jsonl`.
+Choose a free non-8399 port. The helper starts an isolated daemon and synthetic
+Codex Desktop IPC/app-server sockets. It invokes production work.send and
+receipt-bound work.status over real WebSocket operation.invoke. No credentials,
+model, real Codex state or GUI is involved.
 
-The helper starts an isolated daemon and synthetic Codex Desktop IPC/app-server
-Unix sockets under its fresh HOME. It uses real WebSocket `operation.invoke`
-with the production Codex adapter. `work.adapters` must advertise steer for
-Codex and omit it for HyperNeo; the subsequent explicit steer must return the
-active turn receipt. The real `operations.describe` door must scope
-strict steer guidance to Codex and direct HyperNeo/Space targets to auto. Owner discovery rejects with a synthetic
-version mismatch while app-server has a steerable turn: default auto and explicit
-steer must return `steeredIntoTurnId` without queueing. Explicit queue must return
-`queuedSubmissionId`. Idle explicit steer must return `not_delivered` without
-queueing; idle auto starts a turn with `startedTurnId` and `delivered: true`.
-The idle fixture returns a completed latest turn (as Desktop does), with saved
-history but no loaded app-server runtime. It rejects `turn/start` with -32600
-`thread not found: synthetic` until `thread/resume` loads the runtime.
-The production path must resume with `excludeTurns: true` before starting;
-the send still returns the confirmed turn ID. Other resume failures return
-`not_delivered` with their cause and make no start or queue request. When owner
-discovery reports no client and resume returns exactly `thread synthetic already
-has an active writer`, auto reuses the existing queue path without starting
-another writer. The synthetic owner consumes the queued input and writes its reply;
-receipt-bound `work.status` must observe that exact input/reply. A subsequent
-unconsumed queue request stays `delivered: false` even with an older identical
-input in the transcript. Queue acceptance is distinct from consumption and does
-not prove Desktop rendering. After deployment, Neo sends the authorized legitimate
-research-dev input and relays its receipt/reply; verify it read-only using logs or
-RPC. Do not send test messages to the human's live threads.
-On regression commit `09c226b44`, this fixture reproduces the reported
-`thread not found` response through real WebSocket operation.invoke, then
-fails the idle success assertion. This prevents a fixture from silently treating
-persisted history as a loaded runtime. A Desktop owner rejects
-steering with `NoActiveTurn`, then accepts version 2 `thread-follower-start-turn`;
-its turn ID must survive the operation result schema. Refused owner starts
-return `not_delivered` with the reason and never enqueue. An uncertain server steer must never also queue.
-A Desktop-owned turn must steer through its owner; explicit Desktop refusal must
-return `not_delivered` with its reason. Warning-level routing records, peer calls
-and all RPC responses are retained in `evidence/observed.json`. On regression commit `548213b76`, the `verify` command fails at the idle
-`delivered: true` assertion: the unchanged adapter returns an unconsumed queue ID.
-The older `reproduce` action concerns the separate running-turn steering regression.
-No model, provider, credentials, real Codex state or GUI is involved. All owned
-servers and the daemon close in finally. Pick a free port other than 8399.
+Automatic input for active and completed targets must return a native queue ID,
+delivered false and no receipt before consumption. It must make no Desktop
+ownership request, open, steer or turn/start call. The app-server loaded list
+is checked before settings or queue calls; only a saved, unloaded thread is resumed.
+The stateful peer rejects settings and enqueue requests until that resume succeeds.
+The proof supplies a synthetic prepared-worker policy at the sandbox seam, so it
+does not require or prove OS runtime-directory permissions. The synthetic receiver
+then becomes idle and consumes that same queued input exactly once. work.status
+must show the matching input and reply; queue acceptance alone is not delivery.
+Explicit steer still returns its confirmed active turn ID; a known refusal must
+not also enqueue. New-thread creation retains its Desktop handoff.
+For marked prepared workers, queue dispatch must first recreate private runtime
+directories purged during idle time. Focused filesystem checks remove the actual
+worker runtime, invoke automatic send, and observe the directories at both native
+queue dispatch and CLI fallback. They also check that routine queue routing logs
+`native_queue`, without implying that a steering attempt failed. These checks do
+not start another writer or prove OS containment; use the worker-sandbox journey
+for that separate boundary.
+The queue fixture then explicitly rejects an input with the typed active-writer
+precondition response. work.send must return notSent true so callers can retry.
+A later queue request loses its acknowledgment after dispatch: that response
+must remain uncertain, without notSent or a second queue submission. Explicit
+steering retains the same distinction between pre-send failure and a lost reply.
+Two overlapping automatic submissions then share a long prefix, and another pair
+uses identical messages. Both queue calls take their pre-consumption snapshot
+before the receiver writes only the first input and reply. Run both normal and
+reversed receiver arrival orders for each message pair. Identify results by
+their returned queue IDs and submitted client input IDs, never Promise.all
+position: invocation order does not determine which call reaches the queue first.
+The first consumed submission
+may return that receipt only when its client input ID and complete message match;
+the second must remain accepted with its own queue ID and no receipt. Its
+matching text cannot borrow the first exchange. Receipt-bound work.status must
+still show the first submission's own reply. A synthetic CLI fallback appends
+an unrelated matching input while accepting a queue request: that route returns
+only the queue ID and delivered false, because it has no correlated input ID.
+
+The failing reproduction is committed before the fix: the unchanged adapter
+returns `not_delivered` with `thread/settings/update: thread not found` for the
+unloaded prepared worker. The fixed run observes that worker's matching reply
+after one enqueue. Disconnects at loaded-list, resume and settings must name
+the failed step, return typed `not_delivered` with `notSent: true`, and never enqueue.
+Retain observed.json, proof.log and
+run-status.json for red and green runs. The wrapper removes disposable daemon
+data after saving evidence.
+
+This proves daemon routing and transcript reporting with a synthetic receiver.
+It does not prove native Desktop queue consumption or rendering. After merge,
+read hyperneo build and confirm the served commit contains the squash commit.
+Never restart the live daemon. Neo must arrange any live disposable-thread
+consumption and human Desktop confirmation; do not use working threads.
+
+Also run the Codex IPC contract suite alongside the adapter, verbs and handoff
+suites. Its operation-schema check uses explicit mode steer; automatic sends
+must retain queue receipts with missing/stale IPC and refused/hung launchers.

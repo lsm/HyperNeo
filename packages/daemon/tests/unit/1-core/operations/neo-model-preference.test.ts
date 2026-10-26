@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import { getSessionContextModelInfo, setModelsCache } from '../../../../src/lib/model-service.ts';
 import {
-  clampNeoThinking,
   effectiveNeoPreference,
   neoCompactPercentFor,
   planNeoAlignment,
@@ -42,30 +41,8 @@ const opus = {
   available: true,
 } as ModelInfo;
 
-describe('clampNeoThinking', () => {
-  test.each<
-    [
-      string,
-      Parameters<typeof clampNeoThinking>[0],
-      Parameters<typeof clampNeoThinking>[1],
-      ReturnType<typeof clampNeoThinking>,
-    ]
-  >([
-    ['a supported level', ['off', 'think8k', 'think16k'], 'think16k', 'think16k'],
-    [
-      'the highest level below an unsupported one',
-      ['off', 'think8k', 'think32k'],
-      'think16k',
-      'think8k',
-    ],
-    ['off for a model without thinking', [], 'think32k', 'off'],
-  ])('keeps %s', (_case, levels, requested, clamped) => {
-    expect(clampNeoThinking(levels, requested)).toBe(clamped);
-  });
-});
-
 describe('requireNeoPreferenceModel', () => {
-  test('refuses a model the catalog does not offer and clamps thinking to the model', () => {
+  test('refuses a model the catalog does not offer and keeps the chosen thinking', () => {
     expect(
       requireNeoPreferenceModel(
         { model: 'gone', provider: 'deepseek', thinkingLevel: 'off' },
@@ -78,7 +55,7 @@ describe('requireNeoPreferenceModel', () => {
         { models: [flash] }
       )
     ).toEqual({
-      value: { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' },
+      value: { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'think16k' },
     });
   });
 
@@ -96,6 +73,18 @@ describe('requireNeoPreferenceModel', () => {
         { models: [flashGlm] }
       )
     ).toMatchObject({ reason: { ok: false, reason: expect.stringContaining('invalid_model') } });
+  });
+
+  test('saves the exact model id when given the alias of a listed model', () => {
+    const opusAlias = { ...opus, id: 'claude-opus-5-5', alias: 'opus' } as ModelInfo;
+    expect(
+      requireNeoPreferenceModel(
+        { model: 'opus', provider: 'anthropic', thinkingLevel: 'off' },
+        { models: [opusAlias] }
+      )
+    ).toEqual({
+      value: { model: 'claude-opus-5-5', provider: 'anthropic', thinkingLevel: 'off' },
+    });
   });
 });
 
@@ -207,7 +196,7 @@ describe('neo.preferences.set', () => {
   beforeEach(async () => {
     db = await createTestDb();
     const root = createTestSession('neo:root');
-    db.createSession({
+    await db.createSession({
       ...root,
       config: { ...root.config, model: 'claude-opus', provider: 'anthropic' },
     });
@@ -244,7 +233,7 @@ describe('neo.preferences.set', () => {
               model: db.getSession(sessionId)?.config.model,
               error: 'Synthetic unavailable primary',
             };
-          db.updateSession(sessionId, {
+          await db.updateSession(sessionId, {
             config: {
               ...db.getSession(sessionId)!.config,
               model,
@@ -260,7 +249,7 @@ describe('neo.preferences.set', () => {
         if (busy && updates.config && 'autoCompactPercent' in updates.config) {
           const { autoCompactPercent, ...rest } = updates.config;
           pendingFor = { sessionId, percent: autoCompactPercent ?? null };
-          db.updateSession(sessionId, {
+          await db.updateSession(sessionId, {
             config: rest,
             metadata: {
               ...db.getSession(sessionId)!.metadata,
@@ -269,7 +258,7 @@ describe('neo.preferences.set', () => {
           });
           return;
         }
-        db.updateSession(sessionId, updates);
+        await db.updateSession(sessionId, updates);
       },
       createSession: async (params: unknown) => {
         created.push(params);
@@ -355,8 +344,8 @@ describe('neo.preferences.set', () => {
       thinkingLevel: 'off' as const,
     };
     for (const id of ['neo:root', 'ordinary', 'worker']) {
-      if (id !== 'neo:root') db.createSession(createTestSession(id));
-      db.updateSession(id, { config: { ...db.getSession(id)!.config, ...base } });
+      if (id !== 'neo:root') await db.createSession(createTestSession(id));
+      await db.updateSession(id, { config: { ...(await db.getSession(id)!.config), ...base } });
     }
     service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', projectId: null });
     const percentage = async (id: string) =>
@@ -392,7 +381,7 @@ describe('neo.preferences.set', () => {
   });
 
   test('updates ordinary model configuration without a Neo percentage restart', async () => {
-    db.updateSession('neo:root', {
+    await db.updateSession('neo:root', {
       config: {
         ...db.getSession('neo:root')!.config,
         model: 'deepseek-v4-flash',
@@ -453,7 +442,7 @@ describe('neo.preferences.set', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('invalid_model') } });
   });
 
-  test('persists ordered fallbacks with their supported thinking and preserves them on primary-only edits', async () => {
+  test('persists ordered fallbacks with their chosen thinking and preserves them on primary-only edits', async () => {
     const fallbacks = [
       { model: 'claude-opus', provider: 'anthropic', thinkingLevel: 'think16k' },
       { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'think16k' },
@@ -464,7 +453,7 @@ describe('neo.preferences.set', () => {
       thinkingLevel: 'off',
       fallbacks,
     });
-    const expected = [fallbacks[0], { ...fallbacks[1], thinkingLevel: 'off' }];
+    const expected = fallbacks;
     expect(first).toMatchObject({ value: { ok: true, preferences: { fallbacks: expected } } });
     expect(await invoke('neo.snapshot', {})).toMatchObject({
       value: { preferences: { fallbacks: expected } },
@@ -515,7 +504,7 @@ describe('neo.preferences.set', () => {
       fallbacks: [{ model: 'deepseek-v4-flash', autoCompactPercent: 100 }],
     });
     expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
-    db.updateSession('neo:root', {
+    await db.updateSession('neo:root', {
       config: {
         ...db.getSession('neo:root')!.config,
         model: 'deepseek-v4-flash',
@@ -547,7 +536,7 @@ describe('neo.preferences.set', () => {
         },
       ],
     });
-    db.updateSession('neo:root', {
+    await db.updateSession('neo:root', {
       config: {
         ...db.getSession('neo:root')!.config,
         model: 'claude-opus',
@@ -561,7 +550,7 @@ describe('neo.preferences.set', () => {
       model: 'deepseek-v4-flash',
       provider: 'deepseek' as const,
     };
-    db.updateSession('neo:root', { config });
+    await db.updateSession('neo:root', { config });
     await events.publish('session.updated', {
       sessionId: 'neo:root',
       source: 'model-switch',
@@ -593,7 +582,7 @@ describe('neo.preferences.set', () => {
       model: 'deepseek-v4-flash',
       provider: 'deepseek' as const,
     };
-    db.updateSession('neo:root', { config });
+    await db.updateSession('neo:root', { config });
     await events.publish('session.updated', {
       sessionId: 'neo:root',
       source: 'status',
@@ -607,7 +596,7 @@ describe('neo.preferences.set', () => {
     });
     expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(80);
     const back = { ...config, model: 'claude-opus', provider: 'anthropic' as const };
-    db.updateSession('neo:root', { config: back });
+    await db.updateSession('neo:root', { config: back });
     await events.publish('session.updated', {
       sessionId: 'neo:root',
       source: 'model-refusal-fallback',
@@ -643,7 +632,7 @@ describe('neo.preferences.set', () => {
         provider: 'glm' as const,
         thinkingLevel: 'think8k' as const,
       };
-      db.updateSession('neo:root', {
+      await db.updateSession('neo:root', {
         config: { ...db.getSession('neo:root')!.config, ...fallback },
       });
       switchFailure = failure;

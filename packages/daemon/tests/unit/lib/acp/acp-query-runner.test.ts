@@ -1,3 +1,4 @@
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -54,7 +55,7 @@ function createMockClient() {
       _prompt: unknown,
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       callbacks?.onAccepted?.();
       yield {
         sessionId: 'acp-session-1',
@@ -218,6 +219,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
   const ctx: QueryRunnerContext = {
     session,
     db: {
+      writeSDKMessage: writeThroughRepo,
       saveSDKMessage: mock(() => {}),
       updateSession: mock(() => {}),
       getSDKMessageRepo: mock(() => ({
@@ -865,7 +867,7 @@ describe('AcpQueryRunner', () => {
       _prompt: unknown,
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       promptBodyRan = true;
       yield {
         sessionId: 'acp-session-1',
@@ -890,7 +892,7 @@ describe('AcpQueryRunner', () => {
       _prompt: unknown,
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       return;
     });
     const { runner, ctx } = createRunnerFixture({ client });

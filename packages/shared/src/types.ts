@@ -2,6 +2,7 @@ import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
 import type { ChatDisplayMode, SettingSource } from './types/settings.ts';
 import type { DeclarativeToolGuard } from './types/space.ts';
+import type { SessionToolSelection } from './types/session-tool-choice.ts';
 
 export type {
   ModelTier,
@@ -211,6 +212,14 @@ export function normalizeThinkingLevel(level: string | undefined | null): Thinki
 
 export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export const THINKING_EFFORTS: readonly ThinkingEffort[] = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
+
 const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
   off: undefined,
   think8k: 'low',
@@ -231,38 +240,13 @@ export function effortForThinkingLevel(
     .find((effort): effort is ThinkingEffort => !!effort && supported.includes(effort));
 }
 
-export function getThinkingLevelsForModel(
-  provider: string | undefined,
-  mode: 'off' | 'on' | 'granular' | undefined,
-  effortLevels: readonly ThinkingEffort[] | undefined
-): ThinkingLevel[] {
-  const levels = getThinkingOptionsForProvider(provider, mode).map((option) => option.value);
-  if (!effortLevels?.length || levels.length <= 2) return levels;
-  return levels.filter((level) => {
-    const effort = THINKING_LEVEL_EFFORT[level];
-    return !effort || (level !== 'think64k' && effortLevels.includes(effort));
-  });
-}
-
-export function getThinkingOptionsForProvider(
-  provider: string | undefined,
-  mode?: 'off' | 'on' | 'granular'
-): Array<{ value: ThinkingLevel; label: string }> {
-  const resolvedMode = mode ?? PROVIDER_THINKING_MODES[provider as Provider] ?? 'granular';
-  switch (resolvedMode) {
-    case 'off':
-      return [];
-    case 'on':
-      return [
-        { value: 'off', label: 'Off' },
-        { value: 'think32k', label: 'On' },
-      ];
-    case 'granular':
-      return THINKING_LEVELS.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }));
-  }
-}
+export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = THINKING_LEVELS.map(
+  (value) => ({ value, label: THINKING_LEVEL_LABELS[value] })
+);
 
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
+  toolSelection?: SessionToolSelection;
+
   provider?: Provider;
 
   providerConfig?: ProviderConfig;
@@ -371,6 +355,7 @@ export interface PendingModelSwitch {
 }
 
 export interface SessionMetadata {
+  executionProjectPath?: string;
   pendingAutoCompactPercent?: number | null;
   messageCount: number;
   progress?: SessionProgress;
@@ -567,7 +552,15 @@ export interface SubAgent {
   completedAt?: string;
 }
 
+export interface DataMigrationStatus {
+  name: 'sdk_message_columns_backfill_v2';
+  state: 'pending' | 'running' | 'complete' | 'failed';
+  through: number;
+  total: number;
+}
+
 export interface HealthStatus {
+  dataMigration?: DataMigrationStatus;
   status: 'ok' | 'error';
   version: string;
   uptime: number;

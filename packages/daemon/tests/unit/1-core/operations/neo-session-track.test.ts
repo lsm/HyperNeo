@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   findNeoSessionNotice,
   requireNeoTrackRoot,
@@ -10,7 +12,7 @@ import {
   reserveNeoAdoption,
 } from '../../../../src/lib/neo/session-track.ts';
 import { neoSessionKey, type NeoSessionNotice } from '../../../../src/lib/neo/session-watch.ts';
-import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
+import type { PlaceGroup, WorkRef, WorkStatus } from '../../../../src/lib/drivers/types.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -102,7 +104,7 @@ describe('neo.session.track', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession('neo:root'));
+    await db.createSession(createTestSession('neo:root'));
     listed = [];
     status = { status: 'running', lastActivityAt: 0 };
     sent.mockClear();
@@ -147,6 +149,84 @@ describe('neo.session.track', () => {
     db.close();
   });
 
+  test('concurrent Track taps create only one card for the worker', async () => {
+    Object.assign(service, { deliver: async () => {} });
+    service.sessionWatcher.sessionNotices = [notice()];
+    const registry = createOperationRegistry(createNeoOperations(service));
+    await Promise.all(
+      [1, 2].map(() =>
+        invokeOperation(
+          registry,
+          'neo.session.track',
+          { key },
+          { source: 'rpc', principal: 'local' }
+        )
+      )
+    );
+    expect(service.todos.listOpenAsks()).toHaveLength(1);
+  });
+
+  test('a done page keeps its worker and link from the same snapshot during rebinding', async () => {
+    const ask = service.todos.openAsk({
+      id: 'page-ask',
+      projectId: null,
+      sessionId: 'neo:root',
+      originMessageId: null,
+      title: 'Snapshot worker',
+      request: '',
+      createdAt: 1,
+    });
+    const todo = service.todos.addTodo(
+      'page-todo',
+      ask.id,
+      { title: 'Done step', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      1
+    );
+    service.todos.updateTodo(todo, { state: 'done' }, 2);
+    service.todoSessions.bind(todo.id, ref, 1);
+    service.todoSessions.recordRef(todo.id, ref, 1, 'codex://threads/t1');
+    Object.assign(service, {
+      readWorker: async (worker: WorkRef) => ({ ...worker, name: worker.id, label: worker.id }),
+    });
+    const read = service.todos.read.bind(service.todos);
+    const delayed = spyOn(service.todos, 'read').mockImplementation((async (method, ...args) => {
+      if (method === 'todoLinks') {
+        service.todoSessions.bind(todo.id, { adapter: 'codex-desktop', id: 't2' }, 3);
+        service.todoSessions.recordRef(
+          todo.id,
+          { adapter: 'codex-desktop', id: 't2' },
+          3,
+          'codex://threads/t2'
+        );
+      }
+      return read(method, ...args);
+    }) as typeof service.todos.read);
+    try {
+      const result = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.ask.doneTodos',
+        { askId: ask.id },
+        { source: 'rpc', principal: 'local' }
+      );
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: { ok: true, todos: [{ worker: { id: 't1' }, link: 'codex://threads/t1' }] },
+      });
+    } finally {
+      delayed.mockRestore();
+    }
+  });
+
+  test('a human Track tap immediately queues a Neo kickoff', async () => {
+    await service.trackSession('neo:root', notice(), Date.now());
+    expect(
+      db
+        .getJobQueueRepo()
+        .listActiveByPayload('mailbox', { 'to.sessionId': 'neo:root' })
+        .map((job) => job.payload.deliveryMode)
+    ).toEqual(['immediate']);
+  });
+
   test('a tap opens an ask whose todo follows the session and stays doing when it stops', async () => {
     Object.assign(service, { deliver: async () => {} });
     const tapped = Date.now();
@@ -156,7 +236,7 @@ describe('neo.session.track', () => {
     const [todo] = service.todos.listTodos(ask.id);
     expect(todo).toMatchObject({ state: 'doing', instruction: null, startedAt: tapped });
     expect(service.todoSessions.readRef(todo.id)).toEqual(ref);
-    expect(service.followedCardRefs(tapped)).toEqual([ref]);
+    expect(await service.followedCardRefs(tapped)).toEqual([ref]);
     status = { status: 'done', lastActivityAt: tapped - 1 };
     await service.todoRunner.refresh(() => {});
     expect(service.todos.getTodo(todo.id)?.state).toBe('doing');

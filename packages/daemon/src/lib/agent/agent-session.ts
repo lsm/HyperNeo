@@ -1,3 +1,8 @@
+import type {
+  SessionToolApplication,
+  SessionToolChoiceKey,
+} from '@hyperneo/shared/types/session-tool-choice';
+import { sdkPendingRemoval } from '../../storage/repositories/sdk-message-transactions.ts';
 import type { ChildProcess } from 'node:child_process';
 import type {
   AgentProcessingState,
@@ -29,9 +34,12 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
+import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import type { Database } from '../../storage/database.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
-import { OperationRefusalRepository } from '../../storage/repositories/operation-refusal-repository.ts';
+import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import type { OperationRefusal } from '../operations/mcp-adapter.ts';
 import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
@@ -153,6 +161,7 @@ import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
   getSessionContextModelInfo,
   initializeModels,
+  getModelInfo,
   resolveModelAlias,
   resolveSessionContextModelInfo,
 } from '../model-service.ts';
@@ -188,6 +197,7 @@ import {
   type ContextClearBoundaryOwner,
   type DeliveryOutcome,
   type DriveTurnOutcome,
+  DeliveryEnqueueRejectedError,
   deliverMessage,
   deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
@@ -220,7 +230,13 @@ import {
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
+import {
+  liveThinkingUpdate,
+  QueryOptionsBuilder,
+  type QueryOptionsBuilderContext,
+} from './query-options-builder.ts';
+import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
+import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
@@ -317,18 +333,31 @@ export class AgentSession
     );
   }
 
-  getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
-    return (this.operationMcpServer ??= createOperationMcpServer(
+  getOperationMcpServer(
+    inputOrigin?: () => { messageId: string } | null
+  ): ReturnType<typeof createOperationMcpServer> {
+    if (!inputOrigin && this.operationMcpServer) return this.operationMcpServer;
+    const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
-      () => resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+      () => {
+        return {
+          ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+          consumedInputId: inputOrigin?.()?.messageId,
+        };
+      },
       '',
       this.recordOperationRefusal
-    ));
+    );
+    if (!inputOrigin) this.operationMcpServer = server;
+    return server;
   }
 
-  private readonly recordOperationRefusal = (
-    refusal: Parameters<OperationRefusalRepository['record']>[0]
-  ) => new OperationRefusalRepository(this.db.getDatabase()).record(refusal, this.session.id);
+  private readonly recordOperationRefusal = (refusal: OperationRefusal) =>
+    gatewayFor(this.db.getDatabase()).run(recordOperationRefusal, {
+      refusal,
+      sessionId: this.session.id,
+      at: Date.now(),
+    });
 
   getOperationsCapabilityContribution(): AuthoredCapabilityContribution {
     return operationsCapabilityContribution(
@@ -517,7 +546,9 @@ export class AgentSession
     this.stateManager = new ProcessingStateManager(session.id, internalEventBus, db);
     this.contextTracker = new ContextTracker(session.id, (contextInfo: ContextInfo) => {
       this.session.metadata.lastContextInfo = contextInfo;
-      this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+      this.db
+        .updateSession(this.session.id, { metadata: this.session.metadata })
+        .catch((error) => this.logger.error('Failed to persist context info:', error));
     });
 
     this.messageHandler = new SDKMessageHandler(this);
@@ -554,12 +585,13 @@ export class AgentSession
         const gs = this.settingsManager.getGlobalSettings();
         const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
         const rawModel = this.session.config.model ?? 'sonnet';
-        const canonicalModel = await this.resolveModelIdOrDefault(provider, rawModel);
+        const info = await getModelInfo(rawModel, 'global', provider).catch(() => null);
         return resolveFallbackChain(
           provider,
-          canonicalModel,
+          info?.id ?? rawModel,
           gs.modelFallbackMap,
-          gs.fallbackModels
+          gs.fallbackModels,
+          info?.alias
         );
       },
       isEntryAvailable: async (entry) => {
@@ -715,7 +747,7 @@ export class AgentSession
     }
   }
 
-  static fromInit(
+  static async fromInit(
     init: AgentSessionInit,
     db: Database,
     messageHub: MessageHub,
@@ -724,12 +756,12 @@ export class AgentSession
     defaultModel: string,
     skillsManager?: import('../skills-manager.ts').SkillsManager,
     appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository.ts').AppMcpServerRepository
-  ): AgentSession {
+  ): Promise<AgentSession> {
     let session = db.getSession(init.sessionId);
 
     if (!session) {
       session = AgentSession.createSessionFromInit(init, defaultModel);
-      db.createSession(session);
+      await db.createSession(session, { initialSkillOverrides: init.skillOverrides });
     } else {
       const updates: Partial<Session> = {};
       let hasUpdates = false;
@@ -799,7 +831,7 @@ export class AgentSession
       }
 
       if (hasUpdates) {
-        db.updateSession(init.sessionId, updates);
+        await db.updateSession(init.sessionId, updates);
       }
     }
 
@@ -916,7 +948,7 @@ export class AgentSession
     if (rawProviderId !== normalizedProviderId) {
       this.session.config.provider = normalizedProviderId as Session['config']['provider'];
       try {
-        this.db.updateSession(this.session.id, { config: { ...this.session.config } });
+        await this.db.updateSession(this.session.id, { config: { ...this.session.config } });
       } catch {}
     }
     const wantsAcp = this.session.config.provider === 'acp';
@@ -1080,31 +1112,23 @@ export class AgentSession
     messageDbId: string,
     mode: 'remove' | 'defer',
     expectedStatus?: 'deferred',
-    commitRemoval?: () => void
+    withdrawalJobId?: string
   ): Promise<
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
     const result = await withSessionLock(this.session.id, async () => {
-      const remove = () =>
-        mode === 'remove'
-          ? expectedStatus
-            ? this.db.deletePendingUserMessage(this.session.id, messageDbId, expectedStatus)
-            : this.db.deletePendingUserMessage(this.session.id, messageDbId)
-          : this.db.deferEnqueuedUserMessage(this.session.id, messageDbId);
-      const result = commitRemoval
-        ? this.db.getDatabase().transaction(() => {
-            const removed = remove();
-            if (removed?.uuid) commitRemoval();
-            return removed;
-          })()
-        : remove();
+      const messages = this.db.getSDKMessageRepo();
+      const result = await messages.runWrite(sdkPendingRemoval, {
+        sessionId: this.session.id,
+        messageDbId,
+        mode,
+        expectedStatus,
+        withdrawalJobId,
+      });
       if (!result?.uuid) return { changed: false as const };
 
-      this.db.getJobQueueRepo().cancelDelivery(this.session.id, result.uuid);
       const removedFromMemory = this.messageQueue.remove(result.uuid);
       await this.stateManager.clearQueuedIfOwnedBy(result.uuid);
-      this.db.notifyChange?.('sdk_messages', { sessionId: this.session.id });
-      this.db.notifyChange?.('job_queue', { sessionId: this.session.id });
       return {
         changed: true as const,
         dbId: result.dbId,
@@ -1198,13 +1222,16 @@ export class AgentSession
   async startFreshContext(): Promise<void> {
     const reset = await this.resetQuery({ restartQuery: false });
     if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
-    this.retirePastSdkContext();
+    await this.retirePastSdkContext();
     this.session.sdkSessionId = undefined;
     this.session.sdkOriginPath = undefined;
-    this.db.updateSession(this.session.id, { sdkSessionId: undefined, sdkOriginPath: undefined });
+    await this.db.updateSession(this.session.id, {
+      sdkSessionId: undefined,
+      sdkOriginPath: undefined,
+    });
   }
 
-  private retirePastSdkContext(): void {
+  private async retirePastSdkContext(): Promise<void> {
     const pastSdkSessionIds = this.nextPastSdkSessionIds();
     const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
     if (lastSdkCost > 0 || pastSdkSessionIds) {
@@ -1215,12 +1242,12 @@ export class AgentSession
         lastSdkCost: lastSdkCost > 0 ? 0 : this.session.metadata?.lastSdkCost,
         ...(pastSdkSessionIds ? { pastSdkSessionIds } : {}),
       };
-      this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+      await this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     }
   }
 
   private async runClearConversationFlow(): Promise<void> {
-    this.retirePastSdkContext();
+    await this.retirePastSdkContext();
 
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextTurnEnd();
@@ -1319,7 +1346,7 @@ export class AgentSession
 
       if (!this.session.config.provider) {
         this.session.config.provider = 'anthropic';
-        this.db.updateSession(this.session.id, {
+        await this.db.updateSession(this.session.id, {
           config: { model: this.session.config.model, provider: 'anthropic' } as SessionConfig,
         });
       }
@@ -1424,9 +1451,9 @@ export class AgentSession
     }
   }
 
-  cancelRateLimitRetry(): void {
+  async cancelRateLimitRetry(): Promise<void> {
     this.networkPause.stop();
-    runRateLimitManualCancel({
+    await runRateLimitManualCancel({
       db: this.db,
       sessionId: this.session.id,
       getLiveEpisodeMessageUuid: () => this.rateLimitWatchdog.getState().lastUserMessage?.uuid,
@@ -1434,11 +1461,9 @@ export class AgentSession
         this.rateLimitWatchdog.getPersistedEpisodeMessageUuid?.() ?? undefined,
       cancelWatchdog: () => this.rateLimitWatchdog.cancel(false),
       isInMemoryCooldown: () => this.stateManager.getState().status === 'rate_limit_cooldown',
-      clearCooldown: () => {
-        void this.stateManager.setIdle();
-      },
-      publishStatusesFailed: (messageIds) => {
-        void this.internalEventBus
+      clearCooldown: () => this.stateManager.setIdle(),
+      publishStatusesFailed: async (messageIds) => {
+        await this.internalEventBus
           .publish('messages.statusChanged', {
             sessionId: this.session.id,
             messageIds,
@@ -1548,7 +1573,8 @@ export class AgentSession
       await this.applyPendingModelSwitch();
       return { success: false, model: this.session.config.model, error: invalid };
     }
-    if (modelSwitchTiming(this.stateManager.getState().status) === 'now') {
+    const live = await this.modelSwitchHandler.canSwitchLive(model, provider);
+    if (modelSwitchTiming(this.stateManager.getState().status, live) === 'now') {
       await this.setPendingModelSwitch(undefined);
       return this.handleModelSwitch(model, provider);
     }
@@ -1561,6 +1587,14 @@ export class AgentSession
     return applied
       ? { success: true, model }
       : { success: false, model: this.session.config.model, error: 'The model switch failed' };
+  }
+
+  cancelPendingModelSwitch(): Promise<{ cancelled: boolean }> {
+    return this.queueModelSwitch(async () => {
+      const cancelled = !!this.session.metadata?.pendingModelSwitch;
+      await this.setPendingModelSwitch(undefined);
+      return { cancelled };
+    });
   }
 
   private async applyPendingModelSwitch(): Promise<boolean> {
@@ -1591,7 +1625,7 @@ export class AgentSession
       ...this.session.metadata,
       pendingModelSwitch: pending ?? null,
     } as SessionMetadata;
-    this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+    await this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     await this.internalEventBus.publish('session.updated', {
       sessionId: this.session.id,
       source: 'model-switch',
@@ -1607,12 +1641,42 @@ export class AgentSession
     return this.sdkRuntimeConfig.setMaxThinkingTokens(tokens);
   }
 
+  async applyThinkingLevel(): Promise<void> {
+    if (this.queryObject instanceof AcpQueryAdapter) return;
+    const level = this.optionsBuilder.getEffectiveThinkingLevel();
+    getProviderRegistry()
+      .get(this.session.config.provider ?? '')
+      ?.setSessionThinkingConfig?.(this.session.id, level);
+    const update = liveThinkingUpdate(this.optionsBuilder.resolveThinkingOptions(), level);
+    setKeyBridgeThinkingOff(this.session.id, update.disableThinking === true);
+    await this.sdkRuntimeConfig.applyThinking(update);
+  }
+
   async setPermissionMode(mode: string): Promise<{ success: boolean; error?: string }> {
     return this.sdkRuntimeConfig.setPermissionMode(mode);
   }
 
   async getMcpServerStatus(): Promise<Array<{ name: string; status: string; error?: string }>> {
     return this.sdkRuntimeConfig.getMcpServerStatus();
+  }
+
+  async getToolInventory(): Promise<SessionToolInventory> {
+    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner) {
+      return { state: 'unverified', tools: [], skills: [], plugins: [], mcpServers: [] };
+    }
+    return this.queryRunner.getToolInventory();
+  }
+
+  async applyToolChoice(key: SessionToolChoiceKey): Promise<SessionToolApplication> {
+    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner)
+      return { application: 'restart_required', reason: 'provider_unverified' };
+    if (key.startsWith('skill:') && this.isQueryActiveOrStarting())
+      return { application: 'restart_required', reason: 'instructions_reload_unavailable' };
+    return this.queryRunner.applyToolChoice();
+  }
+
+  async refreshToolsContextUsage(): Promise<void> {
+    await this.sdkRuntimeConfig.refreshContextUsage();
   }
 
   async updateToolsConfig(
@@ -1763,8 +1827,8 @@ export class AgentSession
     this.sessionConfigHandler.applyCommittedInputDraft(text);
   }
 
-  updateMetadata(updates: Partial<Session>): void {
-    this.sessionConfigHandler.updateMetadata(updates);
+  updateMetadata(updates: Partial<Session>): Promise<void> {
+    return this.sessionConfigHandler.updateMetadata(updates);
   }
 
   getProcessingState(): AgentProcessingState {
@@ -2829,7 +2893,7 @@ export class AgentSession
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
         if (this.messageQueue.hasYielded?.(messageUuid)) {
           await withSessionLock(this.session.id, async () => {
-            this.markDeliveryConsumed(admission.consumedUuids);
+            await this.markDeliveryConsumed(admission.consumedUuids);
             await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
             signalDeliveryConsumed(this.session.id, messageUuid);
           });
@@ -2846,7 +2910,7 @@ export class AgentSession
     }
 
     await withSessionLock(this.session.id, async () => {
-      this.markDeliveryConsumed(admission.consumedUuids);
+      await this.markDeliveryConsumed(admission.consumedUuids);
       await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
       for (const uuid of admission.consumedUuids) {
         signalDeliveryConsumed(this.session.id, uuid);
@@ -2903,9 +2967,11 @@ export class AgentSession
   async deliverChatMessage(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, async () => {
       if (this.db.getSession(this.session.id)?.status === 'archived') {
-        const failedDbId = this.db
-          .getSDKMessageRepo()
-          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        const failedDbId = await this.db.writeSDKMessage(
+          'markDeliveryFailedByUuid',
+          this.session.id,
+          messageUuid
+        );
         if (failedDbId) {
           void this.internalEventBus
             .publish('messages.statusChanged', {
@@ -2918,13 +2984,16 @@ export class AgentSession
         throw new Error(`Session ${this.session.id} is archived`);
       }
       try {
-        deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+        await deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
         });
       } catch (err) {
-        const failedDbId = this.db
-          .getSDKMessageRepo()
-          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        if (!(err instanceof DeliveryEnqueueRejectedError)) throw err;
+        const failedDbId = await this.db.writeSDKMessage(
+          'markDeliveryFailedByUuid',
+          this.session.id,
+          messageUuid
+        );
         if (failedDbId) {
           void this.internalEventBus
             .publish('messages.statusChanged', {
@@ -2962,14 +3031,16 @@ export class AgentSession
     );
   }
 
-  private markDeliveryConsumed(uuids: string[]): void {
-    const flippedIds = this.db
-      .getSDKMessageRepo()
-      .markDeliveryConsumedByUuids(this.session.id, uuids);
+  private async markDeliveryConsumed(uuids: string[]): Promise<void> {
+    const flippedIds = await this.db.writeSDKMessage(
+      'markDeliveryConsumedByUuids',
+      this.session.id,
+      uuids
+    );
     if (flippedIds.length > 0) {
       const now = Date.now();
       for (const dbId of flippedIds) {
-        this.db.updateMessageTimestamp(dbId, now);
+        await this.db.updateMessageTimestamp(dbId, now);
       }
       void this.internalEventBus
         .publish('messages.statusChanged', {
@@ -3006,13 +3077,12 @@ export class AgentSession
         (uuid) => this.messageQueue.isRunning() && this.messageQueue.hasPendingOrInFlight(uuid)
       );
       for (const uuid of stranded) {
-        deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+        await deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
         void this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
       }
       return stranded.length;
     });
     let settled = 0;
-    const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
       if (!this.stateManager.isIdleOwnerCurrent(owner)) return;
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
@@ -3021,7 +3091,11 @@ export class AgentSession
         activeNow
       );
       for (const uuid of staleSubmitted) {
-        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, uuid);
+        const dbId = await this.db.writeSDKMessage(
+          'markDeliveryFailedByUuid',
+          this.session.id,
+          uuid
+        );
         if (dbId) {
           settled++;
           void this.internalEventBus
@@ -3051,23 +3125,23 @@ export class AgentSession
   }
 
   private persistAgentChild(pid: number, proc: TrackedAgentProcess): void {
-    try {
-      this.agentChildProcesses()?.record({
+    this.agentChildProcesses()
+      ?.record({
         pid,
         sessionId: this.session.id,
         command: (proc as unknown as ChildProcess).spawnfile ?? '',
         startedAt: Date.now(),
         daemonPid: process.pid,
-      });
-    } catch (error) {
-      this.logger.warn('Failed to persist the agent child pid for crash cleanup:', error);
-    }
+      })
+      .catch((error: unknown) =>
+        this.logger.warn('Failed to persist the agent child pid for crash cleanup:', error)
+      );
   }
 
   private forgetAgentChild(pid: number): void {
-    try {
-      this.agentChildProcesses()?.forget(pid);
-    } catch {}
+    this.agentChildProcesses()
+      ?.forget(pid)
+      .catch(() => {});
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {

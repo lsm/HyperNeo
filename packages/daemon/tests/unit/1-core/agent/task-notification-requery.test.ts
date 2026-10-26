@@ -328,7 +328,9 @@ describe('AgentSession task-notification requery (incident replay)', () => {
           ? { dbId: 'db-consumed' }
           : null
       ),
-      deletePendingUserMessage: mock(() => revokedPendingMessage),
+      getSDKMessageRepo: mock(() => ({
+        runWrite: mock(async () => revokedPendingMessage),
+      })),
       updateMessageStatus: mock(() => {}),
       updateMessageTimestamp: mock(() => {}),
       beginTransaction: mock(() => {}),

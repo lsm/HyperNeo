@@ -62,13 +62,8 @@ const named =
     if (raw?.data?.repository) raw.data.repository.nameWithOwner = repo;
     return raw;
   };
-const reconcile = (
-  ledger: CodingPrLedgerRepository,
-  repos: string[],
-  read: Read,
-  now: number,
-  skips?: Map<string, number>
-) => reconcileCodingPrLedger(ledger, repos, named(read), now, skips);
+const reconcile = (ledger: CodingPrLedgerRepository, repos: string[], read: Read, now: number) =>
+  reconcileCodingPrLedger(ledger, repos, named(read), now);
 
 function setup() {
   const db = new Database(':memory:');
@@ -113,6 +108,42 @@ describe('codingPrState', () => {
 });
 
 describe('planCodingLedgerRead', () => {
+  test.each(['review_bot', 'ci_only'] as const)(
+    'scopes %s human signoff to changed paths',
+    (mergePolicy) => {
+      const state = (files: unknown, humanSignoff = ['docs/design/**']) =>
+        planCodingLedgerRead(
+          response([
+            node(1, {
+              reviews: {
+                nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+              },
+              files,
+            }),
+          ]),
+          0,
+          () => ({ mergePolicy, reviewBot: 'bot', humanSignoff })
+        )?.rows[0].state;
+      const files = (paths: string[], hasNextPage = false) => ({
+        nodes: paths.map((path) => ({ path })),
+        pageInfo: { hasNextPage },
+      });
+      expect(state(files(['packages/daemon/src/app.ts']))).toBe('approved_green');
+      expect(state(files(['docs/design/nested/contract.md']))).toBe('waiting_human');
+      expect(state(files(['docs/designish/contract.md']))).toBe('approved_green');
+      expect(state(files([]))).toBe('approved_green');
+      expect(state(files(['packages/daemon/src/app.ts'], true))).toBe('waiting_human');
+      expect(state(undefined)).toBe('waiting_human');
+      expect(state(files(['packages/daemon/src/app.ts']), ['label:needs-human'])).toBe(
+        'waiting_human'
+      );
+      expect(state(files([]), ['label:needs-human'])).toBe('waiting_human');
+      expect(
+        state(files(['packages/daemon/src/app.ts']), ['docs/design/**', 'label:needs-human'])
+      ).toBe('waiting_human');
+    }
+  );
+
   test('keeps open PRs and ones closed within 7 days, and refuses partial reads', () => {
     const now = 10 * CODING_LEDGER_KEEP_MS;
     const recent = new Date(now - 60_000).toISOString();
@@ -189,7 +220,7 @@ describe('PR ledger reconcile', () => {
     db.close();
   });
 
-  test('a failed or partial read leaves the rows untouched, and a low rate limit ends the cycle', async () => {
+  test('a failed read preserves its rows without blocking unrelated targets on a summary budget', async () => {
     const { db, ledger } = setup();
     await reconcile(ledger, ['a/a', 'b/b'], async () => response([node(1)]), 100);
     const reads: string[] = [];
@@ -204,7 +235,7 @@ describe('PR ledger reconcile', () => {
       200
     );
     db.prepare("UPDATE pack_coding_pr_ledger SET read_at = 10 WHERE repo = 'a/a'").run();
-    expect(reads).toEqual(['c/c']);
+    expect(reads).toEqual(['c/c', 'd/d', 'a/a', 'b/b']);
     reads.length = 0;
     await reconcile(
       ledger,
@@ -270,14 +301,13 @@ describe('PR ledger cleanup', () => {
 
   test('counts consecutive failed reads per repo and clears the count on a good read', async () => {
     const { db, ledger } = setup();
-    const skips = new Map<string, number>();
     let good = false;
     const read = async () => (good ? response([node(1)]) : null);
-    for (const at of [1, 2, 3]) await reconcile(ledger, ['a/a'], read, at, skips);
-    expect(skips.get('a/a')).toBe(3);
+    for (const at of [1, 2, 3]) await reconcile(ledger, ['a/a'], read, at);
+    expect(ledger.health.read('a/a')?.misses).toBe(3);
     good = true;
-    await reconcile(ledger, ['a/a'], read, 4, skips);
-    expect(skips.get('a/a')).toBe(0);
+    await reconcile(ledger, ['a/a'], read, 4);
+    expect(ledger.health.read('a/a')?.misses).toBe(0);
     db.close();
   });
 });
@@ -730,7 +760,7 @@ describe('CodingPrLedgerRepository.pruneSessions', () => {
 });
 
 describe('PR ledger read order', () => {
-  test('reads the least recently read repos first, so a low budget does not starve the same repos', async () => {
+  test('reads new targets first without treating an unattributed budget as a shared stop', async () => {
     const { db, ledger } = setup();
     await reconcile(ledger, ['a/a', 'b/b', 'c/c'], async () => response([node(1)]), 100);
     db.prepare("UPDATE pack_coding_pr_ledger SET read_at = 50 WHERE repo = 'c/c'").run();
@@ -744,7 +774,7 @@ describe('PR ledger read order', () => {
       },
       200
     );
-    expect(reads).toEqual(['new/new']);
+    expect(reads).toEqual(['new/new', 'a/a', 'b/b', 'c/c']);
     reads.length = 0;
     await reconcile(
       ledger,
@@ -755,7 +785,7 @@ describe('PR ledger read order', () => {
       },
       300
     );
-    expect(reads).toEqual(['c/c']);
+    expect(reads).toEqual(['a/a', 'b/b', 'c/c', 'new/new']);
     db.close();
   });
 });
@@ -943,4 +973,74 @@ describe('PR ledger snapshot for a renamed repo', () => {
     expect(repo.allRepositories()).toEqual(['lsm/hyperneo-review', 'lsm/neokai', 'lsm/ops']);
     db.close();
   });
+});
+
+test('ledger facts retain terminal state despite missing approval and red CI', () => {
+  const now = 10 * CODING_LEDGER_KEEP_MS;
+  const planned = planCodingLedgerRead(
+    response(
+      [],
+      [
+        node(
+          8,
+          {
+            state: 'MERGED',
+            closedAt: new Date(now - 1).toISOString(),
+            createdAt: new Date(now - 100).toISOString(),
+            author: { login: 'writer', __typename: 'User' },
+          },
+          'FAILURE'
+        ),
+      ]
+    ),
+    now
+  );
+  expect(planned?.rows).toEqual([
+    {
+      repo: 'x/x',
+      number: 8,
+      title: 'PR 8',
+      branch: 'b8',
+      head: 'h8',
+      state: 'merged',
+      ci: 'FAILURE',
+      replyAt: null,
+      closedAt: now - 1,
+      createdAt: now - 100,
+      authorIsBot: false,
+    },
+  ]);
+});
+
+test('ledger reads repo preferences before same-pack global fallback', () => {
+  const { db, ledger } = setup();
+  try {
+    const save = (pack: string, scope: string, key: string, value: unknown) =>
+      db
+        .prepare(`INSERT INTO neo_pack_preferences VALUES (?, ?, ?, ?, ?, 'human', 1)`)
+        .run(pack, scope ? 'repo' : 'global', scope, key, JSON.stringify(value));
+    save('other', '', 'mergePolicy', 'ci_only');
+    expect(ledger.policy('x/x')).toEqual({
+      mergePolicy: undefined,
+      reviewBot: undefined,
+      humanSignoff: undefined,
+    });
+    save('coding', '', 'mergePolicy', 'review_bot');
+    save('coding', '', 'reviewBot', 'global-bot');
+    save('coding', '', 'humanSignoff', ['global/**']);
+    save('coding', 'X/X', 'mergePolicy', 'human');
+    save('coding', 'X/X', 'humanSignoff', []);
+    expect(ledger.policy('x/x')).toEqual({
+      mergePolicy: 'human',
+      reviewBot: 'global-bot',
+      humanSignoff: [],
+    });
+    expect(ledger.policy('y/y')).toEqual({
+      mergePolicy: 'review_bot',
+      reviewBot: 'global-bot',
+      humanSignoff: ['global/**'],
+    });
+  } finally {
+    db.close();
+  }
 });

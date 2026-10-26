@@ -5,6 +5,7 @@ import {
   type StandaloneTaskTransitionInput,
   type StandaloneTaskLifecyclePatch,
 } from '../../lib/tasks/standalone-lifecycle.ts';
+import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { decodeTaskCoreRow } from './task-row.ts';
 
@@ -74,14 +75,15 @@ const persistTaskTransition = (superpipe({})('persist-standalone-task-transition
   input: TransitionStandaloneTaskInput
 ) => TaskCore | Rejection | null;
 
-export function transitionStandaloneTask(
-  db: Database,
-  input: TransitionStandaloneTaskInput,
-  notifyChange: () => void
-): TaskCore | Rejection | null {
-  const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
-  if (active) throw new Error('Task transition requires its own transaction');
-  const result = db.transaction(() => persistTaskTransition(db, input))();
-  if (result !== null && typeof result !== 'string') notifyChange();
-  return result;
-}
+export const transitionStandaloneTask = defineDbOp<
+  TransitionStandaloneTaskInput,
+  TaskCore | Rejection | null
+>({
+  name: 'tasks.transitionStandalone',
+  mode: 'write',
+  run: (db, input, changes) => {
+    const result = persistTaskTransition(db, input);
+    if (result !== null && typeof result !== 'string') changes.notifyChange('space_tasks');
+    return result;
+  },
+});

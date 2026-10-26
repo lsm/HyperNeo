@@ -1,12 +1,61 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor } from '@testing-library/preact';
+import { render, waitFor, act, fireEvent } from '@testing-library/preact';
 import { TaskToolsModal } from '../TaskToolsModal';
+import { skillsStore } from '../../../lib/skills-store.ts';
 
-const mockListRuntimeMcpServers = vi.fn();
-
-vi.mock('../../../lib/api-helpers', () => ({
-  listRuntimeMcpServers: (...args: unknown[]) => mockListRuntimeMcpServers(...args),
+const mockInventoryRequest = vi.fn();
+const mockSessionRequest = vi.fn();
+const mockCatalogRequest = vi.fn();
+const inventoryEvents = new Map<string, (payload: unknown) => void>();
+let connectionListener: ((state: string) => void) | null = null;
+vi.mock('../../../lib/connection-manager.ts', () => ({
+  connectionManager: {
+    getHub: async () => ({
+      request: (name: string, input: { sessionId: string }) =>
+        name === 'session.get'
+          ? mockSessionRequest(input)
+          : name === 'session.mcp.list'
+            ? mockCatalogRequest(input)
+            : mockInventoryRequest(name, input),
+      onConnection: (callback: (state: string) => void) => {
+        connectionListener = callback;
+        return () => {
+          connectionListener = null;
+        };
+      },
+      onEvent: (name: string, callback: (payload: unknown) => void) => {
+        inventoryEvents.set(name, callback);
+        return () => inventoryEvents.delete(name);
+      },
+    }),
+  },
 }));
+
+vi.mock('../../../lib/skills-store.ts', async () => {
+  const { signal } = await import('@preact/signals');
+  return { skillsStore: { skills: signal([]), subscribe: async () => {}, unsubscribe: () => {} } };
+});
+const saved = (id: string, selected = false) => ({
+  id,
+  config: {
+    toolSelection: {
+      version: 1,
+      choices: { 'mcp:browser': { selected, aliases: ['browser-alias'] } },
+    },
+  },
+});
+
+const observed = (names: string[] = []) => ({
+  state: 'observed',
+  tools: ['Read'],
+  skills: [],
+  plugins: [],
+  mcpServers: names.map((name) => ({
+    name,
+    status: 'connected',
+    tools: [{ name: 'navigate' }].map((tool) => tool.name),
+  })),
+});
 
 vi.mock('../../ui/Modal', () => ({
   Modal: ({ children, isOpen, title }: { children: any; isOpen: boolean; title: string }) => {
@@ -22,17 +71,182 @@ vi.mock('../../ui/Modal', () => ({
 describe('TaskToolsModal', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    inventoryEvents.clear();
+    connectionListener = null;
+    mockInventoryRequest.mockResolvedValue(observed());
+    mockSessionRequest.mockImplementation(({ sessionId }: { sessionId: string }) =>
+      Promise.resolve({ session: saved(sessionId) })
+    );
+    mockCatalogRequest.mockResolvedValue({ entries: [] });
+    skillsStore.skills.value = [];
+  });
+
+  it('uses one canonical choice for the task session and refreshes its attachment', async () => {
+    skillsStore.skills.value = [
+      {
+        id: 'wrapper',
+        name: 'browser-alias',
+        displayName: 'Browser',
+        enabled: false,
+        sourceType: 'mcp_server',
+        config: { type: 'mcp_server', appMcpServerId: 'browser' },
+      },
+    ] as typeof skillsStore.skills.value;
+    mockCatalogRequest.mockResolvedValue({
+      entries: [
+        { server: { id: 'browser', name: 'Browser registry', enabled: false }, enabled: false },
+      ],
+    });
+    mockInventoryRequest.mockImplementation(async (name: string, input: unknown) => {
+      if (name === 'operation.invoke') {
+        expect(input).toEqual({
+          name: 'session.tools.setChoice',
+          input: { sessionId: 'task-session', key: 'mcp:browser', selected: true },
+        });
+        mockSessionRequest.mockResolvedValue({ session: saved('task-session', true) });
+        return { ok: true, changed: true, application: 'live' };
+      }
+      return observed(['browser-alias']);
+    });
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    fireEvent.click(await view.findByRole('button', { name: 'Use here: Browser', exact: true }));
+    await waitFor(() =>
+      expect(view.getByText('Saved · applied to the running session')).toBeTruthy()
+    );
+    expect(
+      view.getByRole('button', { name: 'Stop using here: Browser', exact: true })
+    ).toBeTruthy();
+  });
+
+  it('keeps observed tools visible when saved choices cannot load', async () => {
+    mockInventoryRequest.mockResolvedValue(observed(['confirmed-browser']));
+    mockCatalogRequest.mockRejectedValue(new Error('Synthetic catalog failure'));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.getByText(/Could not load saved tool choices/)).toBeTruthy());
+    expect(view.getByText('confirmed-browser')).toBeTruthy();
+    expect(view.getByText('Attached · 1 tool')).toBeTruthy();
+    expect(view.queryByRole('region', { name: 'Use tools in this session' })).toBeNull();
+  });
+
+  it('ignores a delayed saved selection from the previously displayed worker', async () => {
+    skillsStore.skills.value = [
+      {
+        id: 'wrapper',
+        name: 'browser-alias',
+        displayName: 'Browser',
+        enabled: false,
+        sourceType: 'mcp_server',
+        config: { type: 'mcp_server', appMcpServerId: 'browser' },
+      },
+    ] as typeof skillsStore.skills.value;
+    mockCatalogRequest.mockResolvedValue({
+      entries: [
+        { server: { id: 'browser', name: 'Browser registry', enabled: false }, enabled: false },
+      ],
+    });
+    let finish!: (value: unknown) => void;
+    mockSessionRequest.mockImplementation(({ sessionId }: { sessionId: string }) =>
+      sessionId === 'old'
+        ? new Promise((done) => {
+            finish = done;
+          })
+        : Promise.resolve({ session: saved(sessionId, true) })
+    );
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="old" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(mockSessionRequest).toHaveBeenCalledWith({ sessionId: 'old' }));
+    view.rerender(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="current" agentLabel="Coder" />
+    );
+    await view.findByRole('button', { name: 'Stop using here: Browser', exact: true });
+    await act(async () => {
+      finish({ session: saved('old') });
+    });
+    expect(
+      view.getByRole('button', { name: 'Stop using here: Browser', exact: true })
+    ).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Use here: Browser', exact: true })).toBeNull();
+  });
+
+  it('removes stale attachment claims from the picker when inventory refresh fails', async () => {
+    skillsStore.skills.value = [
+      {
+        id: 'wrapper',
+        name: 'browser-alias',
+        displayName: 'Browser',
+        enabled: false,
+        sourceType: 'mcp_server',
+        config: { type: 'mcp_server', appMcpServerId: 'browser' },
+      },
+    ] as typeof skillsStore.skills.value;
+    mockCatalogRequest.mockResolvedValue({
+      entries: [
+        { server: { id: 'browser', name: 'Browser registry', enabled: false }, enabled: false },
+      ],
+    });
+    mockInventoryRequest.mockResolvedValue(observed(['browser-alias']));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await view.findByRole('button', { name: 'Use here: Browser', exact: true });
+    expect(view.getAllByText('Attached · 1 tool')).toHaveLength(2);
+    mockInventoryRequest.mockRejectedValue(new Error('Synthetic inventory failure'));
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() =>
+      expect(view.getByText('Could not verify running tools. Try Refresh.')).toBeTruthy()
+    );
+    expect(view.queryAllByText('Attached · 1 tool')).toHaveLength(0);
+    expect(view.getByText(/running inventory unavailable/)).toBeTruthy();
+  });
+
+  it('does not show configured-only servers as observed task tools', async () => {
+    mockInventoryRequest.mockResolvedValue({
+      state: 'not_running',
+      tools: [],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    });
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.queryByText('Loading tools...')).toBeNull());
+    expect(view.queryByText('configured-only')).toBeNull();
+    expect(mockInventoryRequest).toHaveBeenCalledWith('session.getToolInventory', {
+      sessionId: 'task-session',
+    });
+    expect(view.getByText(/session not running/)).toBeTruthy();
+  });
+
+  it('reports an unverified task provider instead of asserting no runtime tools', async () => {
+    mockInventoryRequest.mockResolvedValue({
+      state: 'unverified',
+      tools: [],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    });
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.queryByText('Loading tools...')).toBeNull());
+    expect(view.getByText(/provider cannot confirm/)).toBeTruthy();
   });
 
   it('shows not-started message when sessionId is null', () => {
     const { getByText } = render(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId={null} agentLabel="Reviewer" />
     );
-    expect(getByText('Agent tools will be available after the agent starts.')).toBeTruthy();
+    expect(getByText('Start the agent to check its running tools.')).toBeTruthy();
   });
 
   it('shows loading state while fetching', () => {
-    mockListRuntimeMcpServers.mockReturnValue(new Promise(() => {}));
+    mockInventoryRequest.mockReturnValue(new Promise(() => {}));
     const { getByText } = render(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-123" agentLabel="Coder" />
     );
@@ -40,9 +254,7 @@ describe('TaskToolsModal', () => {
   });
 
   it('shows tools after loading', async () => {
-    mockListRuntimeMcpServers.mockResolvedValue({
-      servers: [{ name: 'agent-memory' }, { name: 'custom-tool' }],
-    });
+    mockInventoryRequest.mockResolvedValue(observed(['agent-memory', 'custom-tool']));
     const { getByText, queryByText, container } = render(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-123" agentLabel="Coder" />
     );
@@ -53,11 +265,14 @@ describe('TaskToolsModal', () => {
 
     expect(getByText('Agent memory')).toBeTruthy();
     expect(container.textContent).toContain('custom-tool');
-    expect(mockListRuntimeMcpServers).toHaveBeenCalledWith('sess-123');
+    expect(mockInventoryRequest).toHaveBeenCalledWith('session.getToolInventory', {
+      sessionId: 'sess-123',
+    });
+    expect(container.textContent).toContain('Attached · 1 tool');
   });
 
   it('shows empty state when no tools are registered', async () => {
-    mockListRuntimeMcpServers.mockResolvedValue({ servers: [] });
+    mockInventoryRequest.mockResolvedValue(observed());
     const { getByText, queryByText } = render(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-123" agentLabel="Coder" />
     );
@@ -66,11 +281,11 @@ describe('TaskToolsModal', () => {
       expect(queryByText('Loading tools...')).toBeNull();
     });
 
-    expect(getByText('No runtime tools registered for this agent.')).toBeTruthy();
+    expect(getByText('No MCP servers observed in this running session.')).toBeTruthy();
   });
 
   it('shows error state when fetch fails', async () => {
-    mockListRuntimeMcpServers.mockRejectedValue(new Error('Network error'));
+    mockInventoryRequest.mockRejectedValue(new Error('Private network diagnostic'));
     const { getByText, queryByText } = render(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-123" agentLabel="Coder" />
     );
@@ -79,30 +294,121 @@ describe('TaskToolsModal', () => {
       expect(queryByText('Loading tools...')).toBeNull();
     });
 
-    expect(getByText('Network error')).toBeTruthy();
+    expect(getByText('Could not verify running tools. Try Refresh.')).toBeTruthy();
+    expect(queryByText('Private network diagnostic')).toBeNull();
   });
 
   it('does not fetch when closed', () => {
     render(
       <TaskToolsModal isOpen={false} onClose={() => {}} sessionId="sess-123" agentLabel="Coder" />
     );
-    expect(mockListRuntimeMcpServers).not.toHaveBeenCalled();
+    expect(mockInventoryRequest).not.toHaveBeenCalled();
   });
 
   it('cancels in-flight request when sessionId changes', async () => {
-    mockListRuntimeMcpServers.mockImplementation((sessionId: string) => {
-      return Promise.resolve({ servers: [{ name: sessionId }] });
+    let finish!: (result: ReturnType<typeof observed>) => void;
+    mockInventoryRequest.mockImplementation((_method, { sessionId }: { sessionId: string }) => {
+      return sessionId === 'sess-a'
+        ? new Promise((done) => {
+            finish = done;
+          })
+        : Promise.resolve(observed(['current-tool']));
     });
-    const { rerender } = render(
+    const { rerender, getByText, queryByText } = render(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-a" agentLabel="Coder" />
+    );
+    await waitFor(() =>
+      expect(mockInventoryRequest).toHaveBeenCalledWith('session.getToolInventory', {
+        sessionId: 'sess-a',
+      })
     );
 
     rerender(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-b" agentLabel="Coder" />
     );
 
-    await waitFor(() => {
-      expect(mockListRuntimeMcpServers).toHaveBeenCalledWith('sess-b');
+    await waitFor(() => expect(getByText('current-tool')).toBeTruthy());
+    await act(async () => {
+      finish(observed(['stale-tool']));
+      await Promise.resolve();
     });
+    expect(queryByText('stale-tool')).toBeNull();
+    expect(getByText('current-tool')).toBeTruthy();
   });
+
+  it('hides previous tool names when a refresh fails and recovers on a later read', async () => {
+    mockInventoryRequest.mockResolvedValue(observed(['browser']));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.getByText('Observed tool names (1)')).toBeTruthy());
+    fireEvent.click(view.getByText('Observed tool names (1)'));
+    expect(view.getByText('Read')).toBeTruthy();
+    mockInventoryRequest.mockRejectedValue(new Error('Synthetic read failure'));
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() =>
+      expect(view.getByText('Could not verify running tools. Try Refresh.')).toBeTruthy()
+    );
+    expect(view.queryByText('Observed tool names (1)')).toBeNull();
+    expect(view.queryByText('Read')).toBeNull();
+    expect(view.queryByText('browser')).toBeNull();
+    mockInventoryRequest.mockResolvedValue(observed(['recovered-browser']));
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() => expect(view.getByText('recovered-browser')).toBeTruthy());
+    expect(view.getByText('Observed tool names (1)')).toBeTruthy();
+  });
+
+  it('retains confirmed servers through a pending refresh', async () => {
+    mockInventoryRequest.mockResolvedValue(observed(['browser']));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.getByText('Attached · 1 tool')).toBeTruthy());
+    let finish!: (result: ReturnType<typeof observed>) => void;
+    mockInventoryRequest.mockReturnValue(
+      new Promise((done) => {
+        finish = done;
+      })
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
+    await waitFor(() => expect(view.getByText('Refreshing tools...')).toBeTruthy());
+    expect(view.getByText('browser')).toBeTruthy();
+    expect(view.getByText('Attached · 1 tool')).toBeTruthy();
+    await act(async () => {
+      finish(observed());
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(view.queryByText('browser')).toBeNull());
+  });
+
+  it('invalidates ended queries and reloads after reconnect', async () => {
+    mockInventoryRequest.mockResolvedValue(observed(['browser']));
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task" agentLabel="Coder" />
+    );
+    await waitFor(() => expect(view.getByText('browser')).toBeTruthy());
+    mockInventoryRequest.mockResolvedValue({ ...observed(), state: 'not_running', tools: [] });
+    await act(() => inventoryEvents.get('session.toolInventory.changed')?.({ sessionId: 'task' }));
+    await waitFor(() => expect(view.getByText(/session not running/)).toBeTruthy());
+    await act(() => connectionListener?.('disconnected'));
+    expect(view.getByText('Not connected. Running tools are unverified.')).toBeTruthy();
+    mockInventoryRequest.mockResolvedValue(observed(['new-browser']));
+    await act(() => connectionListener?.('connected'));
+    await waitFor(() => expect(view.getByText('new-browser')).toBeTruthy());
+  });
+
+  it.each(['failed', 'pending', 'needs-auth', 'disabled', 'unverified'])(
+    'does not claim attachment for %s',
+    async (status) => {
+      mockInventoryRequest.mockResolvedValue({
+        ...observed(),
+        mcpServers: [{ name: 'browser', status, tools: null }],
+      });
+      const view = render(
+        <TaskToolsModal isOpen onClose={() => {}} sessionId="task" agentLabel="Coder" />
+      );
+      await waitFor(() => expect(view.getByText(/Configured but not attached yet/)).toBeTruthy());
+      expect(view.queryByText(/Attached ·/)).toBeNull();
+    }
+  );
 });

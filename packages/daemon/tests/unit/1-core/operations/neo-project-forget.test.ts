@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createNeoProjectForgetOperation } from '../../../../src/lib/neo/project-forget-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -40,6 +40,41 @@ beforeEach(async () => {
 afterEach(() => db.close());
 
 describe('neo.project.forget', () => {
+  test('forget admission does not read repositories on the main repository', async () => {
+    const main = spyOn(repo, 'allRepositories').mockImplementation(() => {
+      throw new Error('forget admission used the main repository');
+    });
+    try {
+      expect(await forget(atlas)).toEqual({ ok: true, repos: ['lsm/neo-atlas'] });
+      expect(repo.getProject(atlas)).toBeNull();
+    } finally {
+      main.mockRestore();
+    }
+  });
+
+  test('concurrent forget requests admit only one winner', async () => {
+    const results = await Promise.all([forget(atlas), forget(atlas)]);
+    expect(results.filter((result) => (result as { ok: boolean }).ok)).toHaveLength(1);
+    expect(results).toContainEqual({ ok: false, reason: 'project_missing' });
+  });
+
+  test('an external callback failure cannot roll back a committed forget', async () => {
+    const registry = createOperationRegistry([
+      createNeoProjectForgetOperation(repo, () => {
+        expect(repo.getProject(atlas)).toBeNull();
+        throw new Error('synthetic external effect failure');
+      }),
+    ]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas },
+      human
+    );
+    expect(result).toMatchObject({ kind: 'failed', message: 'synthetic external effect failure' });
+    expect(repo.getProject(atlas)).toBeNull();
+  });
+
   test('deletes the project, so its repository leaves the list', async () => {
     expect(repo.allRepositories()).toEqual(['lsm/hyperneo', 'lsm/neo-atlas']);
     expect(await forget(atlas)).toEqual({ ok: true, repos: ['lsm/neo-atlas'] });
@@ -66,7 +101,7 @@ describe('neo.project.forget', () => {
     repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
     expect(await forget('inbox')).toEqual({ ok: false, reason: 'project_protected' });
     expect(repo.getProject('inbox')?.title).toBe('Inbox');
-    db.createSession(createTestSession('session:worker'));
+    await db.createSession(createTestSession('session:worker'));
     db.getDatabase()
       .prepare(
         "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES (?, ?, 'worker')"

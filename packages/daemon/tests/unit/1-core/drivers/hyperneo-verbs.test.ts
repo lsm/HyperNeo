@@ -1,3 +1,8 @@
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
@@ -18,7 +23,11 @@ function control(db: Database, events: string[], withdraw?: HyperneoSessionContr
     sessions: {
       ...(withdraw ? { withdraw } : {}),
       resolveModel: async (model: string) =>
-        model === 'GLM 5.3' ? 'glm-5.3' : ['glm-5.3', 'gpt-6-luna'].includes(model) ? model : null,
+        model === 'GLM 5.3'
+          ? { id: 'glm-5.3', provider: 'glm' }
+          : ['glm-5.3', 'gpt-6-luna'].includes(model)
+            ? { id: model, provider: 'synthetic' }
+            : null,
       create: async (workspacePath: string, title: string, model?: string) => {
         selectedModel = model ?? selectedModel;
         const status = workspacePath === '/focus/repo' ? 'pending_worktree_choice' : 'active';
@@ -57,6 +66,8 @@ function control(db: Database, events: string[], withdraw?: HyperneoSessionContr
 }
 
 describe('hyperneo adapter send and status', () => {
+  let source: string;
+  let projectBase: string;
   let db: Database;
   let handed: Array<{
     sessionId: string;
@@ -69,11 +80,15 @@ describe('hyperneo adapter send and status', () => {
   let events: string[];
 
   beforeEach(() => {
+    configureWorkerSandbox(() => 'always');
+    source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
+    execFileSync('git', ['init', source]);
+    projectBase = join(source, 'project-storage');
     handed = [];
     events = [];
     outcome = { kind: 'enqueued', id: 'mb1' };
     db = new Database(':memory:');
-    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT, metadata TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT,
       worktree_branch TEXT, git_branch TEXT, worktree_path TEXT)`);
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
@@ -116,7 +131,11 @@ describe('hyperneo adapter send and status', () => {
     );
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    configureWorkerSandbox(() => 'off');
+    db.close();
+    rmSync(source, { recursive: true, force: true });
+  });
 
   function adapter(
     prepareExecution?: WorkExecutionPreparer,
@@ -125,6 +144,7 @@ describe('hyperneo adapter send and status', () => {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
       prepareExecution,
+      worktreeBaseDir: () => projectBase,
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -194,7 +214,7 @@ describe('hyperneo adapter send and status', () => {
       expect(handed).toEqual([
         {
           sessionId: id,
-          message: `after this turn\n\nReply with ${sessionReplyCall('sender')}, not SendMessage.`,
+          message: `after this turn\n\nReport milestones with ${sessionReplyCall('sender')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
           from: 'session:sender',
           messageUuid: expect.any(String),
           deliveryMode: 'defer',
@@ -220,30 +240,84 @@ describe('hyperneo adapter send and status', () => {
     ).toEqual({ ok: false, reason: 'not_delivered', detail: 'mailbox unavailable' });
   });
 
-  test('creates the native session in the prepared directory without another worktree choice', async () => {
-    const driver = adapter(async () => ({
-      ok: true,
-      value: {
-        directory: '/fresh/remote-base',
-        release: async () => {
-          throw new Error('Live resource released');
-        },
-      },
-    }));
-    expect(
-      await driver.start!(
-        {
-          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
-          title: 't',
-          message: 'm',
-          preparation: { pack: 'coding', parameters: {} },
-        },
-        { from: 'user', caller: { source: 'rpc' } }
-      )
-    ).toMatchObject({ ok: true });
-    expect(events).toEqual(['create /fresh/remote-base', 'announce new']);
-    expect(handed).toHaveLength(1);
+  test('creates the native session without scanning unrelated protected temp directories', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-'));
+    const directory = join(root, 'prepared');
+    const unrelated = mkdtempSync(join(tmpdir(), 'hyperneo-unrelated-'));
+    chmodSync(unrelated, 0);
+    mkdirSync(join(directory, '.git/info'), { recursive: true });
+    let released = false;
+    try {
+      const driver = adapter(async (_request, location) => {
+        expect(location.destination.startsWith(projectBase + '/')).toBe(true);
+        return {
+          ok: true,
+          value: {
+            directory,
+            release: async () => {
+              released = true;
+            },
+          },
+        };
+      });
+      expect(
+        await driver.start!(
+          {
+            place: { machine: 'imac', folder: source, name: 'repo' },
+            title: 't',
+            message: 'm',
+            preparation: { pack: 'coding', parameters: {} },
+          },
+          { from: 'user', caller: { source: 'rpc' } }
+        )
+      ).toMatchObject({ ok: true });
+      expect(events).toEqual([`create ${directory}`, 'announce new']);
+      expect(
+        JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8')).sandbox
+          .enabled
+      ).toBe(true);
+      expect(existsSync(projectBase)).toBe(false);
+      expect(handed).toHaveLength(1);
+      expect(released).toBe(false);
+    } finally {
+      chmodSync(unrelated, 0o700);
+      rmSync(unrelated, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
   });
+
+  test.each([
+    ['off', false],
+    ['always', true],
+  ] as const)(
+    'with the worker sandbox preference %s, a prepared start is sandboxed: %s',
+    async (mode, enabled) => {
+      configureWorkerSandbox(() => mode);
+      const root = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-mode-'));
+      const directory = join(root, 'prepared');
+      mkdirSync(join(directory, '.git/info'), { recursive: true });
+      try {
+        const driver = adapter(async () => ({
+          ok: true,
+          value: { directory, release: async () => {} },
+        }));
+        expect(
+          await driver.start!(
+            {
+              place: { machine: 'imac', folder: source, name: 'repo' },
+              title: 't',
+              message: 'm',
+              preparation: { pack: 'coding', parameters: {} },
+            },
+            { from: 'user', caller: { source: 'rpc' } }
+          )
+        ).toMatchObject({ ok: true });
+        expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(enabled);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
 
   test('failed preparation creates no native session or handoff', async () => {
     const driver = adapter(async () => ({
@@ -254,7 +328,7 @@ describe('hyperneo adapter send and status', () => {
     expect(
       await driver.start!(
         {
-          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+          place: { machine: 'imac', folder: source, name: 'repo' },
           title: 't',
           message: 'm',
           preparation: { pack: 'coding', parameters: {} },
@@ -262,6 +336,7 @@ describe('hyperneo adapter send and status', () => {
         { from: 'user', caller: { source: 'rpc' } }
       )
     ).toMatchObject({ ok: false, reason: 'preparation_failed' });
+    expect(existsSync(projectBase)).toBe(false);
     expect(events).toEqual([]);
     expect(handed).toEqual([]);
   });
@@ -511,7 +586,7 @@ describe('hyperneo adapter send and status', () => {
       caller: { source: 'rpc' },
     });
     expect(handed[0].message).toBe(
-      `go on\n\nReply with ${sessionReplyCall('daemon:imac::session:neo-root')}, not SendMessage.`
+      `go on\n\nReport milestones with ${sessionReplyCall('daemon:imac::session:neo-root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`
     );
   });
 
@@ -521,13 +596,13 @@ describe('hyperneo adapter send and status', () => {
     expect(handed).toEqual([
       {
         sessionId: 'idle',
-        message: `go on\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+        message: `go on\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
       {
         sessionId: 'busy',
-        message: `next\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+        message: `next\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
@@ -569,7 +644,7 @@ describe('hyperneo adapter start and stop', () => {
     handed = [];
     uuids = [];
     db = new Database(':memory:');
-    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT, metadata TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT,
       worktree_branch TEXT, git_branch TEXT, worktree_path TEXT)`);
     db.exec(`INSERT INTO sessions (id, title, workspace_path, status, last_active_at, processing_state, type)
@@ -618,7 +693,7 @@ describe('hyperneo adapter start and stop', () => {
     });
     expect(events).toEqual(['create /focus/repo', 'worktree new', 'announce new']);
     expect(handed).toEqual([
-      `new: make it larger\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+      `new: make it larger\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
     ]);
     expect(result).toMatchObject({
       value: { receipt: { executionId: 'new', inputId: uuids[0] } },
@@ -633,11 +708,42 @@ describe('hyperneo adapter start and stop', () => {
     expect(events[0]).toBe('create /focus/notes on glm-5.3');
     expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3' } });
     expect(handed).toEqual([
-      `new: write it\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+      `new: write it\n\nReport milestones with ${sessionReplyCall('neo:root')}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`,
     ]);
   });
 
-  test.each([{ model: 'unavailable' }, { effort: 'medium' }])(
+  test('starts HyperNeo work with the requested effort applied before delivery', async () => {
+    const result = await adapter({ effort: () => 'high' }).start!(
+      { place: place('/focus/notes'), title: 'task', message: 'write it', effort: 'high' },
+      from
+    );
+    expect(result).toMatchObject({ ok: true, value: { effort: 'high' } });
+    expect(handed).toHaveLength(1);
+  });
+
+  test.each([
+    [' high ', 'high'],
+    ['extra  high', 'extra high'],
+    [' THINK24K ', 'high'],
+  ])('normalizes effort %s before applying it', async (effort, confirmed) => {
+    const result = await adapter({ effort: () => confirmed }).start!(
+      { place: place('/focus/notes'), title: 'task', message: 'write it', effort },
+      from
+    );
+    expect(result).toMatchObject({ ok: true, value: { effort: confirmed } });
+    expect(handed).toHaveLength(1);
+  });
+
+  test('keeps input unsent when the session does not confirm the requested effort', async () => {
+    const result = await adapter({ effort: () => 'low' }).start!(
+      { place: place('/focus/notes'), title: 'task', message: 'write it', effort: 'high' },
+      from
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+    expect(handed).toEqual([]);
+  });
+
+  test.each([{ model: 'unavailable' }, { effort: 'unknown' }])(
     'refuses unsupported configuration before creating a session: %j',
     async (configuration) => {
       expect(

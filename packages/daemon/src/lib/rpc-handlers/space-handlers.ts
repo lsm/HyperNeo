@@ -29,6 +29,7 @@ import {
 import { createSpace, type CreateSpaceDeps } from '../space/create-space-pipeline.ts';
 import { seedBuiltInWorkflows } from '../workflows/seed-built-in-workflows.ts';
 import { Logger } from '../logger.ts';
+import { assertNoToolSelectionDefaults } from '../tools/session-tool-choice.ts';
 
 const log = new Logger('space-handlers');
 const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
@@ -160,6 +161,7 @@ export function setupSpaceHandlers(
   canHostTaskWorktree?: CreateSpaceDeps['canHostTaskWorktree']
 ): void {
   messageHub.onRequest('space.create', async (data) => {
+    assertNoToolSelectionDefaults((data as CreateSpaceParams).config);
     return createSpace(
       {
         createSpaceRecord: (params) => spaceManager.createSpace(params),

@@ -1,3 +1,6 @@
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
+import { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry';
 import { describe, expect, test } from 'bun:test';
 import {
   annotateUnreachable,
@@ -76,6 +79,7 @@ async function call(
       adapters: () => adapters,
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
       daemonName: 'imac',
+      isOpenTodo: (todoId) => todoId === 'open-todo',
     })
   );
   const outcome = await invokeOperation(registry, name, input, caller);
@@ -84,6 +88,75 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test.each(['before-connect', 'after-dispatch'] as const)(
+    'remote work.send preserves certainty for a failure %s',
+    async (phase) => {
+      const server = createServer();
+      const sockets = new WebSocketServer({ server });
+      let received = 0;
+      sockets.on('connection', (socket) =>
+        socket.on('message', () => {
+          received++;
+          socket.close();
+        })
+      );
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('No synthetic address');
+      const url = `ws://127.0.0.1:${address.port}`;
+      if (phase === 'before-connect')
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 100 });
+      await daemons.attach('laptop', url);
+      try {
+        const result = await call(
+          'work.send',
+          { ref: { adapter: 'codex-desktop', id: 'worker', daemon: 'laptop' }, message: 'answer' },
+          (daemon, name, input) => daemons.invoke(daemon, name, input, { timeoutMs: 100 }),
+          { source: 'rpc' },
+          []
+        );
+        expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
+        if (phase === 'before-connect') {
+          expect(result).toHaveProperty('notSent', true);
+          expect((result as { detail: string }).detail).not.toContain(
+            'may still have been delivered'
+          );
+          expect(received).toBe(0);
+        } else {
+          expect(result).not.toHaveProperty('notSent');
+          expect((result as { detail: string }).detail).toContain('may still have been delivered');
+          expect(received).toBe(1);
+        }
+      } finally {
+        await daemons.detach('laptop');
+        for (const socket of sockets.clients) socket.terminate();
+        sockets.close();
+        if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+  );
+
+  test('work.send preserves explicit no-send evidence across its operation result', async () => {
+    const failure = {
+      ok: false as const,
+      reason: 'not_delivered' as const,
+      detail: 'No transport request made',
+      notSent: true as const,
+    };
+    const adapter: WorkAdapter = { ...desktop, send: async () => failure };
+    expect(
+      await call(
+        'work.send',
+        { ref: { adapter: adapter.id, id: 'worker' }, message: 'answer' },
+        undefined,
+        { source: 'rpc' },
+        [adapter]
+      )
+    ).toEqual(failure);
+    expect(SendWorkResultSchema.parse(failure)).toEqual(failure);
+  });
+
   test.each(['steer', 'queue'] as const)('work.send honors explicit %s intent', async (mode) => {
     const adapter: WorkAdapter = {
       ...desktop,
@@ -280,6 +353,7 @@ describe('work verb operations', () => {
     const registry = createOperationRegistry(
       createWorkVerbOperations({
         adapters: () => [adapter],
+        isOpenTodo: (id) => id === 'open-todo',
         daemonName: 'imac',
         remote: { list: () => [], invoke: async () => ({}) },
       })
@@ -294,7 +368,7 @@ describe('work verb operations', () => {
     expect(
       await call(
         'work.queue',
-        { ref, message: ' next ', from: 'session:forged' },
+        { ref, message: ' next ', from: 'session:forged', todoId: 'open-todo' },
         undefined,
         caller,
         [adapter]
@@ -318,7 +392,7 @@ describe('work verb operations', () => {
     expect(received).toEqual([
       [
         ref,
-        'next\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send self "<text>" (not SendMessage). Keep working after you send.',
+        'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send self --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
         { from: 'session:self', caller },
       ],
       [ref, 'q1', { from: 'session:self', caller }],
@@ -330,7 +404,9 @@ describe('work verb operations', () => {
     async (verb) => {
       const input = {
         ref: { adapter: desktop.id, id: 'd1' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(await call(`work.${verb}`, input)).toMatchObject({ ok: false, reason: 'unsupported' });
     }
@@ -348,7 +424,9 @@ describe('work verb operations', () => {
       };
       const input = {
         ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(
         await call(`work.${verb}`, input, remote, {
@@ -368,7 +446,7 @@ describe('work verb operations', () => {
           ...(verb === 'queue'
             ? {
                 message:
-                  'next\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send daemon:imac::session:self "<text>" (not SendMessage). Keep working after you send.',
+                  'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send daemon:imac::session:self --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
               }
             : {}),
           ref: { adapter: desktop.id, id: 'd1' },
@@ -384,7 +462,9 @@ describe('work verb operations', () => {
     async (verb) => {
       const input = {
         ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
-        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+        ...(verb === 'queue'
+          ? { message: 'next', todoId: 'open-todo' }
+          : { queuedSubmissionId: 'q1' }),
       };
       expect(
         await call(`work.${verb}`, input, async () => {
@@ -712,7 +792,11 @@ describe('work verb operations', () => {
     const forwarded: unknown[] = [];
     await call(
       'work.send',
-      { ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' }, message: 'hi' },
+      {
+        ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' },
+        message: 'hi',
+        todoId: 'open-todo',
+      },
       async (_daemonId, _name, input) => {
         forwarded.push(input);
         return { ok: true, value: { delivered: true } };
@@ -767,6 +851,23 @@ describe('work verb operations', () => {
       value: [{ id: 'codex-desktop', capabilities: ['find', 'start'] }],
     });
     expect(asked).toEqual([['laptop', 'work.adapters', {}]]);
+  });
+
+  test('unknown adapter detail lists the registered adapter ids', async () => {
+    expect(
+      await call(
+        'work.start',
+        { adapter: 'codex', place, title: 'Task', message: 'Start task' },
+        undefined,
+        { source: 'rpc' },
+        [desktop, { ...desktop, id: 'codex-desktop' }, hyperneo]
+      )
+    ).toEqual({
+      ok: false,
+      reason: 'unknown_adapter',
+      detail:
+        'No adapter named codex here. Adapters here: claude-desktop, codex-desktop, hyperneo.',
+    });
   });
 
   test('rejects an adapter that is not registered or does not declare the verb', async () => {

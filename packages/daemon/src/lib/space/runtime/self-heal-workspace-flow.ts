@@ -85,12 +85,12 @@ export async function healWorkspaceSession(
 ): Promise<SelfHealWorkspacePlan> {
   const session = request.agentSession;
   if (plan.workspacePath && session.getSessionData().workspacePath !== plan.workspacePath) {
-    session.updateMetadata({ workspacePath: plan.workspacePath });
+    await session.updateMetadata({ workspacePath: plan.workspacePath });
     try {
       await reinjectNodeAgentMcpServer(session, plan.mcpContext);
     } catch (error) {
       if (plan.previousWorkspacePath !== undefined) {
-        session.updateMetadata({ workspacePath: plan.previousWorkspacePath });
+        await session.updateMetadata({ workspacePath: plan.previousWorkspacePath });
       }
       throw error;
     }

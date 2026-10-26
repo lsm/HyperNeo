@@ -12,7 +12,7 @@ import { recordDirectKickoffAtomically } from '../../../../src/lib/tasks/direct-
 import { createDirectKickoffReconciler } from '../../../../src/lib/tasks/reconcile-direct-kickoff';
 import { captureDirectMailboxAdmission } from '../../../../src/lib/tasks/direct-mailbox-admission';
 import { planMailboxAdmission } from '../../../../src/lib/mailbox/admission-plan';
-import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox';
+import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import type { MailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import { createTestSession } from '../../../helpers/database';

@@ -91,7 +91,7 @@ try {
   assert.equal((evidence.processes as unknown[]).length, 2);
   if (process.argv.includes('--historical-result')) {
     const text = 'Synthetic GLM key rejected (401)';
-    assert(app.db.saveSDKMessage(sessionId, { type: 'result', subtype: 'success',
+    assert(await app.db.saveSDKMessage(sessionId, { type: 'result', subtype: 'success',
       session_id: sessionId, uuid: crypto.randomUUID(), is_error: true, result: text,
       duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0,
       usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
@@ -102,7 +102,8 @@ try {
     const root = resolve('packages/web/dist');
     web = Bun.serve({ hostname: '127.0.0.1', port: 0, websocket: createWebSocketHandlers(app.transport, app.sessionManager), async fetch(req, server) {
       const path = new URL(req.url).pathname;
-      app.observeRequest(req);
+      const refused = app.guardRequest(req);
+      if (refused) return refused;
       if (path.startsWith('/ws')) {
         if (server.upgrade(req, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null) } })) return;
         return new Response('Upgrade failed', { status: 500 });

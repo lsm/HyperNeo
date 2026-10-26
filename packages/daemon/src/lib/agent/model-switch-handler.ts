@@ -13,8 +13,14 @@ import type { Database } from '../../storage/database.ts';
 import type { ErrorManager } from '../error-manager.ts';
 import { ErrorCategory } from '../error-manager.ts';
 import type { Logger } from '../logger.ts';
-import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service.ts';
+import {
+  isValidModel,
+  resolveModelAlias,
+  getModelInfo,
+  resolveSessionContextModelInfo,
+} from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
+import { providerSessionConfigForSession } from '../providers/session-config.js';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager.ts';
@@ -33,8 +39,36 @@ const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
 type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
 
-export function modelSwitchTiming(status: AgentProcessingState['status']): 'now' | 'next_turn' {
-  return status === 'idle' ? 'now' : 'next_turn';
+export function modelSwitchTiming(
+  status: AgentProcessingState['status'],
+  live = false
+): 'now' | 'next_turn' {
+  return live || status === 'idle' ? 'now' : 'next_turn';
+}
+
+type LiveSwitchSide = {
+  provider: string | undefined;
+  contextWindow?: number;
+  effortLevels?: readonly string[];
+};
+
+const LIVE_SWITCH_PROVIDERS = new Set(['anthropic', 'glm', 'deepseek', 'kimi']);
+
+export function wireModelForLiveSwitch(
+  model: string,
+  translated: string,
+  routed: string | undefined
+): string {
+  return translated === 'default' ? (routed ?? model) : translated;
+}
+
+export function canSwitchModelLive(previous: LiveSwitchSide, next: LiveSwitchSide) {
+  return (
+    LIVE_SWITCH_PROVIDERS.has(previous.provider ?? '') &&
+    previous.provider === next.provider &&
+    previous.contextWindow === next.contextWindow &&
+    (previous.effortLevels ?? []).join() === (next.effortLevels ?? []).join()
+  );
 }
 
 export function gateSwitchIdle(guarded: boolean, busy: boolean) {
@@ -299,6 +333,48 @@ export class ModelSwitchHandler {
     }
   }
 
+  private liveWireModel(model: string, providerId: string): string {
+    if (providerId === 'anthropic') {
+      return getProviderRegistry().get(providerId)?.translateModelIdForSdk?.(model) ?? model;
+    }
+    const provider = getProviderRegistry().get(providerId);
+    let envVars: Record<string, string | undefined> = {};
+    try {
+      envVars =
+        provider?.buildSdkConfig(model, providerSessionConfigForSession(this.ctx.session))
+          .envVars ?? {};
+    } catch {}
+    const sdkModel = envVars.ANTHROPIC_MODEL ?? provider?.translateModelIdForSdk?.(model) ?? model;
+    return wireModelForLiveSwitch(model, sdkModel, envVars.ANTHROPIC_DEFAULT_SONNET_MODEL);
+  }
+
+  async canSwitchLive(newModel: string, newProvider: string): Promise<boolean> {
+    const { session, queryObject } = this.ctx;
+    const provider = session.config.provider;
+    if (!queryObject?.setModel || !canSwitchModelLive({ provider }, { provider: newProvider }))
+      return false;
+    const [current, next] = await Promise.all([
+      resolveSessionContextModelInfo(session),
+      resolveSessionContextModelInfo({
+        ...session,
+        config: { ...session.config, model: newModel, provider: newProvider as Provider },
+      }),
+    ]);
+    const efforts = getProviderRegistry().get(newProvider);
+    return canSwitchModelLive(
+      {
+        provider,
+        contextWindow: current.modelInfo?.contextWindow,
+        effortLevels: efforts?.getModelEffortLevels?.(session.config.model),
+      },
+      {
+        provider: newProvider,
+        contextWindow: next.modelInfo?.contextWindow,
+        effortLevels: efforts?.getModelEffortLevels?.(newModel),
+      }
+    );
+  }
+
   async invalidModel(newModel: string, newProvider: string): Promise<string | null> {
     const { session } = this.ctx;
     const sessionApiKey =
@@ -366,6 +442,7 @@ export class ModelSwitchHandler {
       }
 
       const modelInfo = await getModelInfo(newModel, 'global', newProvider);
+      const live = !deferQueryStart && (await this.canSwitchLive(newModel, newProvider));
       const resolvedModel = preserveK3OneMSuffix(newModel, modelInfo?.id ?? newModel);
 
       const currentResolvedModel = preserveK3OneMSuffix(
@@ -430,13 +507,13 @@ export class ModelSwitchHandler {
         if (admitted !== true)
           return { success: false, model: session.config.model, error: admitted };
         durableCommit =
-          this.ctx.db.casSessionRuntimeSettings(commit.snapshot, {
+          (await this.ctx.db.casSessionRuntimeSettings(commit.snapshot, {
             model: resolvedModel,
             provider: nextProvider,
             thinkingLevel: commit.thinkingLevel,
             clearAcpSession: clearAcpSessionId,
             clearSdkSession: clearSdkSessionState,
-          }) === 'won';
+          })) === 'won';
         if (!durableCommit)
           return { success: false, model: session.config.model, error: 'session_settings_changed' };
       }
@@ -458,7 +535,7 @@ export class ModelSwitchHandler {
         if (commit?.thinkingLevel !== undefined)
           session.config.thinkingLevel = commit.thinkingLevel;
         if (!commit) {
-          db.updateSession(session.id, {
+          await db.updateSession(session.id, {
             config: {
               model: resolvedModel,
               provider: nextProvider,
@@ -511,7 +588,7 @@ export class ModelSwitchHandler {
           session.sdkSessionId = undefined;
           session.sdkOriginPath = undefined;
         }
-        db.updateSession(session.id, {
+        await db.updateSession(session.id, {
           config: {
             model: resolvedModel,
             provider: nextProvider,
@@ -533,6 +610,10 @@ export class ModelSwitchHandler {
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
           await this.ctx.queryObject.setModel(resolvedModel);
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+        } else if (live && this.ctx.queryObject?.setModel) {
+          await this.ctx.queryObject.setModel(this.liveWireModel(resolvedModel, nextProvider));
+          await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+          if (nextProvider !== 'anthropic') await lifecycleManager.restartWhenIdle();
         } else {
           if (deferQueryStart) await lifecycleManager.stop();
           else
@@ -586,7 +667,7 @@ export class ModelSwitchHandler {
       session.sdkSessionId = previousSdkSessionId;
       session.sdkOriginPath = previousSdkOriginPath;
       session.metadata = previousMetadata;
-      db.updateSession(session.id, {
+      await db.updateSession(session.id, {
         config: {
           model: previousModel,
           provider: originalProvider,

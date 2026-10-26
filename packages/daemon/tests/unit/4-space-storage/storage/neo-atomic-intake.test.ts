@@ -1,3 +1,4 @@
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { mirrorSdkMessageFixtureBodies } from '../../helpers/sdk-message-fixture-columns';
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -5,11 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
-import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
+import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants.ts';
 import {
   NeoConversationAskRepository,
   prepareNeoIntakeAsk,
+  persistNeoIntakeTransaction,
 } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
@@ -47,7 +49,7 @@ describe('atomic public ask intake primitive', () => {
     message = prompt(),
     hold: 'immediate' | 'manual' = 'immediate',
     id = conversationId
-  ) => ledger.acceptPrompt(id, message, hold, mailbox.sdkMessageRepo, mailbox.jobQueue);
+  ) => ledger.acceptPromptSync(id, message, hold, mailbox.sdkMessageRepo, mailbox.jobQueue);
   const legacy = (message = prompt()) =>
     ensurePrompt({
       db: mailbox.db,
@@ -57,6 +59,46 @@ describe('atomic public ask intake primitive', () => {
       message,
       delivery: { origin: 'chat' },
     });
+
+  test('the synchronous intake unit rolls all three records back with its outer transaction', () => {
+    const message = prompt();
+    const prepared = prepareNeoIntakeAsk(conversationId, message);
+    if (!('value' in prepared)) throw new Error('fixture ask rejected');
+    let publish = () => {};
+    const notify = spyOn(mailbox.sdkMessageRepo, 'runPostSaveSideEffects');
+    try {
+      expect(() =>
+        mailbox.db.transaction(() => {
+          const receipt = persistNeoIntakeTransaction(
+            prepared.value,
+            message,
+            'immediate',
+            mailbox.db,
+            ledger,
+            mailbox.sdkMessageRepo,
+            mailbox.jobQueue,
+            (effect) => {
+              publish = effect;
+            }
+          );
+          expect(receipt).not.toBeInstanceOf(Promise);
+          expect(receipt).toMatchObject({ accepted: true, created: true });
+          expect(ledger.list(conversationId)).toHaveLength(1);
+          expect(mailbox.sdkRows()).toHaveLength(1);
+          expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
+          expect(notify).not.toHaveBeenCalled();
+          expect(publish).toBeTypeOf('function');
+          throw new Error('outer rollback');
+        })()
+      ).toThrow('outer rollback');
+      expect(ledger.list(conversationId)).toEqual([]);
+      expect(mailbox.sdkRows()).toEqual([]);
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toEqual([]);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      notify.mockRestore();
+    }
+  });
 
   test('prepares only the existing human prompt shape without treating it as caller authority', () => {
     const message = prompt();
@@ -298,7 +340,7 @@ describe('atomic public ask intake primitive', () => {
   });
 });
 
-test('joint intake publishes only once all three records are visible from another connection', () => {
+test('joint intake publishes only once all three records are visible from another connection', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'neo-atomic-intake-'));
   const path = join(directory, 'fixture.db');
   const writer = new Database(path);
@@ -318,7 +360,10 @@ test('joint intake publishes only once all three records are visible from anothe
     const jobs = new JobQueueRepository(writer);
     const ledger = new NeoConversationAskRepository(writer);
     const observed: number[][] = [];
-    const notify = spyOn(sdk, 'runPostSaveSideEffects').mockImplementation(() => {
+    const gateway = new DbGateway(path, writer);
+    bindGateway(writer, gateway);
+    gateway.onChanges = (changes) => {
+      if (!changes.some((change) => change.table === 'sdk_messages')) return;
       observed.push(
         ['neo_conversation_asks', 'sdk_messages', 'job_queue'].map(
           (table) =>
@@ -326,18 +371,22 @@ test('joint intake publishes only once all three records are visible from anothe
               .count
         )
       );
-    });
-    expect(ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)).toMatchObject({
+    };
+    expect(
+      await ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)
+    ).toMatchObject({
       accepted: true,
       created: true,
     });
     expect(observed).toEqual([[1, 1, 1]]);
-    expect(ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)).toMatchObject({
+    expect(
+      await ledger.acceptPrompt(conversationId, prompt(), 'immediate', sdk, jobs)
+    ).toMatchObject({
       accepted: true,
       created: false,
     });
     expect(observed).toEqual([[1, 1, 1]]);
-    notify.mockRestore();
+    await gateway.close();
   } finally {
     reader.close();
     writer.close();

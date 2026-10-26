@@ -56,6 +56,7 @@ export function createCodingBranchPrReader(
       }
       if (!repo) return [];
       ledger ??= new CodingPrLedgerRepository(db());
+      if (!ledger.watches(repo)) return [];
       const facts = await ledger.branchFacts.refresh(repo, branch.branch, spawn, now);
       return facts.membership.status === 'known' ? facts.membership.urls : [];
     });

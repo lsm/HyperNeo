@@ -16,6 +16,7 @@ import {
 } from '../../../../src/lib/model-service';
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
+import { attachProviderWriter } from '../../../helpers/provider-rpc-writes';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 import type { ProviderRecord, CreateProviderParams, ModelInfo } from '@hyperneo/shared';
@@ -55,7 +56,7 @@ function createMockProviderRepo(): ProviderRepository {
   const records = new Map<string, ProviderRecord>();
   let nextId = 1;
 
-  return {
+  const repository = {
     listProviders: () => Array.from(records.values()).sort((a, b) => a.sortOrder - b.sortOrder),
     listEnabledProviders: () =>
       Array.from(records.values())
@@ -105,6 +106,8 @@ function createMockProviderRepo(): ProviderRepository {
     },
     countProviders: () => records.size,
   } as unknown as ProviderRepository;
+  attachProviderWriter(repository);
+  return repository;
 }
 
 function createMockCredentialManager(): ProviderCredentialManager {
@@ -264,7 +267,9 @@ describe('Provider RPC handlers', () => {
         force: true,
         baseUrl: 'https://models.example/v1',
       });
-      expect(result).toEqual({ models: [{ id: 'remote-model', name: 'Remote Model' }] });
+      expect(result).toEqual({
+        models: [{ id: 'remote-model', name: 'Remote Model', provider: 'remote' }],
+      });
     });
 
     it('rejects unknown, unregistered, and unsupported providers', async () => {
@@ -409,7 +414,7 @@ describe('Provider RPC handlers', () => {
         {}
       );
 
-      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default' }] });
+      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default', provider: 'acp' }] });
       expect(legacy).toEqual(canonical);
       expect(repo.getProvider(created.id)?.configJson).toBe(created.configJson);
       expect(provider.getAcpCommand()).toBe('registered acp');

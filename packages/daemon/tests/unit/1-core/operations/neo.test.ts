@@ -49,13 +49,12 @@ describe('Neo MVP', () => {
   let failed: string | null;
   let delivered: Set<string>;
   let interrupt: ReturnType<typeof mock>;
-  let settings: { neo?: { standingRules?: string[] } };
   let published: unknown[];
 
   beforeEach(async () => {
     const real = await createTestDb();
     sqlite = real.getDatabase();
-    real.createSession(createTestSession('ordinary'));
+    await real.createSession(createTestSession('ordinary'));
     created = [];
     active = new Set();
     jobs = [];
@@ -64,7 +63,6 @@ describe('Neo MVP', () => {
     failed = null;
     delivered = new Set();
     interrupt = mock(async () => {});
-    settings = {};
     published = [];
     const queue = {
       listActiveByPayload: (_queue: string, match: Record<string, unknown>) =>
@@ -80,11 +78,7 @@ describe('Neo MVP', () => {
     };
     db = {
       getDatabase: () => sqlite,
-      getGlobalSettings: () => settings,
-      updateGlobalSettings: (updates: typeof settings) => {
-        settings = { ...settings, ...updates };
-        return settings;
-      },
+      getGlobalSettings: () => real.getGlobalSettings(),
       getSession: (id: string) => (active.has(id) ? { id } : null),
       getJobQueueRepo: () => queue,
       getSDKMessageRepo: () => ({
@@ -231,7 +225,7 @@ describe('Neo MVP', () => {
         { source: 'mcp', role: 'neo', sessionId: holder }
       )
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('human') } });
-    expect(settings.neo?.standingRules).toEqual(rules);
+    expect(db.getGlobalSettings().neo?.standingRules).toEqual(rules);
   });
 
   test('opening a missing project reports a domain rejection instead of an execution fault', async () => {
@@ -307,6 +301,14 @@ describe('Neo MVP', () => {
     expect(await invoke('neo.ask.doneTodos', { askId: 'missing' }, caller)).toMatchObject({
       value: { ok: false, reason: 'not_found: no such ask.' },
     });
+    expect(
+      await invoke('neo.ask.read', { askId: 'missing' }, { ...caller, sessionId: 'impostor' })
+    ).toMatchObject({
+      value: { ok: false, reason: 'This operation belongs to Neo.' },
+    });
+    expect(await invoke('neo.ask.read', { askId: 'missing' }, caller)).toMatchObject({
+      value: { ok: false, reason: 'not_found: no such ask.' },
+    });
     const definitions = createNeoOperations(service);
     expect(
       listOperationSummaries(createOperationRegistry(definitions), caller, true).map(
@@ -327,19 +329,23 @@ describe('Neo MVP', () => {
       'neo.draft.recover',
       'neo.rule.ask',
       'neo.rule.applyAnswer',
+      'neo.workerSocket.ask',
       'pack.preferences.ask',
       'pack.preferences.applyAnswer',
       'neo.preferences.set',
       'pack.preferences.get',
       'pack.preferences.list',
       'neo.todo.add',
+      'neo.todo.bind',
       'neo.todo.edit',
       'neo.todo.remove',
       'neo.todo.continue',
       'neo.todo.retry',
       'neo.todo.close',
+      'neo.ask.read',
       'neo.ask.doneTodos',
       'neo.ask.open',
+      'neo.ask.outcome',
       'neo.ask.settle',
       'neo.question.ask',
       'neo.question.retire',
@@ -350,8 +356,15 @@ describe('Neo MVP', () => {
       'neo.rule.save',
       'neo.session.mute',
       'neo.session.track',
+      'neo.coding.write.plan',
+      'neo.coding.pr.file',
       'neo.github.read',
+      'neo.coding.merge.prepare',
+      'neo.coding.assign',
+      'neo.coding.smoke',
+      'neo.coding.result',
       'neo.pack.read',
+      'neo.ask.history',
       'neo.snapshot',
       'neo.project.save',
     ]);

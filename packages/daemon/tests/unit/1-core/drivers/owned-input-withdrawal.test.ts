@@ -1,6 +1,11 @@
+import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
+import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import {
+  claimOwnedInputWithdrawal,
+  requireOwnedQueuedInput,
+} from '../../../../src/storage/repositories/owned-input-withdrawal-write';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  requireOwnedQueuedInput,
   withdrawOwnedInput,
   type OwnedInputWithdrawalDeps,
 } from '../../../../src/lib/drivers/owned-input-withdrawal';
@@ -26,21 +31,21 @@ describe('owned deferred input withdrawal', () => {
     });
     enqueueMailboxEntry(db.jobQueue, entry);
     deps = {
-      jobs: db.jobQueue,
-      transaction: (effect) => db.db.transaction(effect)(),
-      messageId: (sessionId, uuid) => db.sdkMessageRepo.findMessageIdByUuid(sessionId, uuid),
-      removeDeferred: async (sessionId, id, commit) =>
-        db.db.transaction(() => {
-          removed.push(id);
-          const deleted =
-            db.db
-              .prepare(
-                "DELETE FROM sdk_messages WHERE session_id = ? AND id = ? AND send_status = 'deferred'"
-              )
-              .run(sessionId, id).changes > 0;
-          if (deleted) commit();
-          return deleted;
-        })(),
+      db: db.db,
+      removeDeferred: async (sessionId, messageDbId, withdrawalJobId) => {
+        db.db.exec('BEGIN IMMEDIATE');
+        db.db.exec('ROLLBACK');
+        removed.push(messageDbId);
+        return !!(
+          await db.sdkMessageRepo.runWrite(sdkPendingRemoval, {
+            sessionId,
+            messageDbId,
+            mode: 'remove',
+            expectedStatus: 'deferred',
+            withdrawalJobId,
+          })
+        )?.uuid;
+      },
     };
   });
 
@@ -52,7 +57,7 @@ describe('owned deferred input withdrawal', () => {
     db.db
       .prepare(`INSERT INTO sdk_messages
       (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
-      VALUES ('db-input', 'target', 'user', '{}', '2026-10-16', ?, 'input')`)
+      VALUES ('db-input', 'target', 'user', '{"uuid":"input"}', '2026-10-16', ?, 'input')`)
       .run(status);
   }
 
@@ -111,17 +116,78 @@ describe('owned deferred input withdrawal', () => {
     expect(db.rows()[0].status).toBe('completed');
   });
 
-  test('fails conservatively if a worker claims the mailbox before the CAS', async () => {
-    deps.jobs = {
-      getLatestByPayload: (...args) => db.jobQueue.getLatestByPayload(...args),
-      markDeadIfActive: (...args) => {
-        jobStatus('processing');
-        return db.jobQueue.markDeadIfActive(...args);
-      },
+  test('rejects a claim taken before the queued writer admission', async () => {
+    const gateway = new DbGateway(':memory:', db.db);
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = gateway.run.bind(gateway);
+    gateway.run = async (op, args) => {
+      await hold;
+      return run(op, args);
     };
-    expect(await withdraw()).toMatchObject({ value: { withdrawn: false } });
+    bindGateway(db.db, gateway);
+    const pending = withdraw();
+    jobStatus('processing');
+    release();
+    expect(await pending).toMatchObject({ value: { withdrawn: false } });
     expect(removed).toEqual([]);
     expect(db.rows()[0].status).toBe('processing');
+  });
+
+  test('validates sender ownership after the writer wait', async () => {
+    const gateway = new DbGateway(':memory:', db.db);
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = gateway.run.bind(gateway);
+    gateway.run = async (op, args) => {
+      await hold;
+      return run(op, args);
+    };
+    bindGateway(db.db, gateway);
+    const pending = withdraw();
+    db.db.exec("UPDATE job_queue SET payload=json_set(payload,'$.origin','session:other')");
+    release();
+    expect(await pending).toMatchObject({ value: { withdrawn: false } });
+    expect(removed).toEqual([]);
+    expect(db.rows()[0].status).toBe('pending');
+  });
+
+  test('propagates writer failure without a main-connection fallback', async () => {
+    bindGateway(
+      db.db,
+      new DbGateway('synthetic-withdrawal', null, undefined, () => {
+        throw new Error('writer unavailable');
+      })
+    );
+    await expect(withdraw()).rejects.toThrow('writer unavailable');
+    expect(db.rows()[0].status).toBe('pending');
+    expect(removed).toEqual([]);
+  });
+
+  test('returns only compact removal identity after claiming an input', async () => {
+    materialize('deferred');
+    const gateway = new DbGateway(':memory:', db.db);
+    const claim = await gateway.call(
+      claimOwnedInputWithdrawal,
+      'claim',
+      'target',
+      entry.id,
+      'session:sender'
+    );
+    expect(claim).toEqual({
+      value: {
+        jobId: db.rows()[0].id,
+        sessionId: 'target',
+        messageDbId: 'db-input',
+        wasPending: true,
+      },
+    });
+    expect(db.rows()[0]).toMatchObject({ status: 'dead', error: 'driver_input_withdrawing' });
+    expect(removed).toEqual([]);
   });
 
   test('SDK activation racing removal is not reported as withdrawn', async () => {
@@ -169,16 +235,13 @@ describe('owned deferred input withdrawal', () => {
   test('a failed tombstone write rolls back the SDK deletion before retry', async () => {
     materialize('deferred');
     jobStatus('completed');
-    deps.jobs = {
-      getLatestByPayload: (...args) => db.jobQueue.getLatestByPayload(...args),
-      markDeadIfActive: () => {
-        throw new Error('storage failed');
-      },
-    };
+    db.db.exec(
+      "CREATE TRIGGER fail_tombstone BEFORE UPDATE ON job_queue WHEN NEW.error='driver_input_withdrawn' BEGIN SELECT RAISE(ABORT,'storage failed'); END"
+    );
     await expect(withdraw()).rejects.toThrow('storage failed');
     expect(db.sdkRows()).toHaveLength(1);
     expect(db.rows()[0].status).toBe('completed');
-    deps.jobs = db.jobQueue;
+    db.db.exec('DROP TRIGGER fail_tombstone');
     expect(await withdraw()).toMatchObject({ value: { withdrawn: true } });
   });
 

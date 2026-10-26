@@ -6,12 +6,12 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   activatePrompts,
-  ensurePrompt,
-  persistAndEnqueueDelivery,
-  persistPrompt,
+  activatePromptsInTransaction,
+  ensurePrompt as ensurePromptAsync,
+  ensurePromptInTransaction as ensurePrompt,
   PromptContentConflictError,
-  redeliverPrompt,
   retryPrompt,
+  retryPromptInTransaction,
   verifyPromptContent,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import type { JobQueueRepository as JobQueueRepoType } from '../../../../src/storage/repositories/job-queue-repository';
@@ -94,7 +94,7 @@ function jobPayload(db: Database, sessionId: string, messageUuid: string) {
   return row ? (JSON.parse(row.payload) as Record<string, unknown>) : null;
 }
 
-describe('transactional outbox (persistAndEnqueueDelivery)', () => {
+describe('transactional outbox (ensurePrompt)', () => {
   let db: Database;
   let sdkRepo: SDKMessageRepository;
   let jobQueue: JobQueueRepository;
@@ -104,15 +104,143 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
   });
   afterEach(() => db.close());
 
+  it.each(['done', 'blocked', 'question', 'failed'])(
+    'retries an identical %s report when stored history lacks routing metadata',
+    (kind) => {
+      const args = {
+        db,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        delivery: { origin: 'chat' as const },
+      };
+      const first = ensurePrompt({ ...args, message: userMessage('report-retry') });
+      const replay = ensurePrompt({
+        ...args,
+        message: Object.assign(userMessage('report-retry'), { workerReportKind: kind }),
+      });
+      expect(replay.dbMessageId).toBe(first.dbMessageId);
+      expect(replay.created).toBe(false);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_messages').get()).toEqual({ n: 1 });
+      expect(
+        db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue='message_delivery'").get()
+      ).toEqual({ n: 1 });
+    }
+  );
+
+  it('synchronous activation commits the row and job without publishing', () => {
+    const { dbMessageId } = ensurePrompt({
+      db,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('sync-activate'),
+      hold: 'manual',
+      delivery: { origin: 'chat' },
+    });
+    let published = false;
+    const result = activatePromptsInTransaction({
+      db,
+      jobQueue,
+      sessionId: SESSION,
+      messageUuids: ['sync-activate'],
+      origin: 'chat',
+      publishStatusChanged: () => {
+        published = true;
+      },
+    });
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result).toEqual({ activated: [{ dbId: dbMessageId, messageUuid: 'sync-activate' }] });
+    expect(sdkRepo.getDeliveryContent(SESSION, 'sync-activate')?.sendStatus).toBe('enqueued');
+    expect(jobPayload(db, SESSION, 'sync-activate')?.released).toBe(true);
+    expect(published).toBe(false);
+  });
+
+  it('synchronous retry rolls the row and revived job back with its outer transaction', () => {
+    const { dbMessageId } = ensurePrompt({
+      db,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('sync-retry'),
+      delivery: { origin: 'chat' },
+    });
+    sdkRepo.updateMessageStatus([dbMessageId], 'failed');
+    db.prepare("UPDATE job_queue SET status='dead',error='retry fixture' WHERE queue=?").run(
+      MESSAGE_DELIVERY
+    );
+    let published = false;
+    expect(() =>
+      db.transaction(() => {
+        const result = retryPromptInTransaction({
+          db,
+          sdkMessageRepo: sdkRepo,
+          jobQueue,
+          sessionId: SESSION,
+          messageUuid: 'sync-retry',
+          origin: 'chat',
+          publishStatusChanged: () => {
+            published = true;
+          },
+        });
+        expect(result).not.toBeInstanceOf(Promise);
+        expect(result).toEqual({ dbId: dbMessageId, messageUuid: 'sync-retry' });
+        expect(sdkRepo.getDeliveryContent(SESSION, 'sync-retry')?.sendStatus).toBe('enqueued');
+        expect(
+          db.prepare('SELECT status FROM job_queue WHERE queue=?').get(MESSAGE_DELIVERY)
+        ).toEqual({ status: 'pending' });
+        throw new Error('outer rollback');
+      })()
+    ).toThrow('outer rollback');
+    expect(sdkRepo.getDeliveryContent(SESSION, 'sync-retry')?.sendStatus).toBe('failed');
+    expect(
+      db.prepare('SELECT status,error FROM job_queue WHERE queue=?').get(MESSAGE_DELIVERY)
+    ).toEqual({ status: 'dead', error: 'retry fixture' });
+    expect(published).toBe(false);
+  });
+
+  it('the async facade resolves after both outbox writes commit', async () => {
+    const pending = ensurePromptAsync({
+      db,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('async-commit'),
+      delivery: { origin: 'chat' },
+    });
+    expect(pending).toBeInstanceOf(Promise);
+    const { dbMessageId } = await pending;
+    expect(sdkRepo.getDeliveryContent(SESSION, 'async-commit')?.sendStatus).toBe('enqueued');
+    expect(jobPayload(db, SESSION, 'async-commit')?.messageUuid).toBe('async-commit');
+    expect(dbMessageId).toBeTruthy();
+  });
+
+  it('the async facade rejects after rolling back a failed enqueue', async () => {
+    db.exec(
+      "CREATE TRIGGER fail_async_enqueue BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'async enqueue failed'); END"
+    );
+    await expect(
+      ensurePromptAsync({
+        db,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('async-rollback'),
+        delivery: { origin: 'chat' },
+      })
+    ).rejects.toThrow('async enqueue failed');
+    expect(sdkRepo.getDeliveryContent(SESSION, 'async-rollback')).toBeNull();
+    expect(jobPayload(db, SESSION, 'async-rollback')).toBeNull();
+  });
+
   it('saves the user message AND enqueues a turn delivery job atomically', () => {
     const uuid = 'msg-1';
-    const { dbMessageId } = persistAndEnqueueDelivery({
+    const { dbMessageId } = ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
       sessionId: SESSION,
       message: userMessage(uuid),
-      sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
 
@@ -126,22 +254,20 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
   });
 
   it('enqueues a second FIFO sibling when a delivery job already owns the session', () => {
-    persistAndEnqueueDelivery({
+    ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
       sessionId: SESSION,
       message: userMessage('msg-first'),
-      sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
-    const { dbMessageId } = persistAndEnqueueDelivery({
+    const { dbMessageId } = ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
       sessionId: SESSION,
       message: userMessage('msg-second'),
-      sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
     expect(dbMessageId).toBeTruthy();
@@ -162,13 +288,12 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     } as unknown as JobQueueRepoType;
 
     expect(() =>
-      persistAndEnqueueDelivery({
+      ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue: failingQueue,
         sessionId: SESSION,
         message: userMessage('msg-fail'),
-        sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       })
     ).toThrow(/simulated job_queue transient failure/);
@@ -195,13 +320,12 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       },
     }) as typeof sdkRepo;
 
-    const result = persistAndEnqueueDelivery({
+    const result = ensurePrompt({
       db: db as never,
       sdkMessageRepo,
       jobQueue,
       sessionId: SESSION,
       message: userMessage('msg-sideeffect'),
-      sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
 
@@ -216,65 +340,29 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
   it('throws when the message carries no uuid (cannot key the job)', () => {
     const noUuid = { type: 'user', message: { role: 'user', content: [] } } as SDKMessage;
     expect(() =>
-      persistAndEnqueueDelivery({
+      ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
         sessionId: SESSION,
         message: noUuid,
-        sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       })
     ).toThrow(/no uuid/);
   });
 
   describe('call-site characterization (A1b)', () => {
-    it('has no same-UUID ownership precheck — a second persist enqueues a duplicate (FIFO siblings)', () => {
-      const first = persistAndEnqueueDelivery({
-        db: db as never,
-        sdkMessageRepo: sdkRepo,
-        jobQueue,
-        sessionId: SESSION,
-        message: userMessage('dup'),
-        sendStatus: 'enqueued',
-        delivery: { origin: 'chat' },
-      });
-      expect(first.dbMessageId).toBeTruthy();
-      const second = persistAndEnqueueDelivery({
-        db: db as never,
-        sdkMessageRepo: sdkRepo,
-        jobQueue,
-        sessionId: SESSION,
-        message: userMessage('dup'),
-        sendStatus: 'enqueued',
-        delivery: { origin: 'chat' },
-      });
-      expect(second.dbMessageId).toBeTruthy();
-      const jobs = db
-        .prepare(`SELECT payload FROM job_queue WHERE queue = ?`)
-        .all(MESSAGE_DELIVERY) as Array<{ payload: string }>;
-      const dupJobs = jobs.filter(
-        (j) => (JSON.parse(j.payload) as { messageUuid?: string }).messageUuid === 'dup'
-      );
-      expect(dupJobs).toHaveLength(2);
-      const rows = db
-        .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
-        .get(SESSION, 'dup') as { c: number };
-      expect(rows.c).toBe(2);
-    });
-
     it('commits the save alongside the enqueue with no arbiter collision', () => {
       jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: { sessionId: SESSION, messageUuid: 'anchor', origin: 'chat' },
       });
-      const { dbMessageId } = persistAndEnqueueDelivery({
+      const { dbMessageId } = ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
         sessionId: SESSION,
         message: userMessage('collide'),
-        sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       });
       const saved = db
@@ -297,13 +385,12 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       } as unknown as JobQueueRepoType;
 
       expect(() =>
-        persistAndEnqueueDelivery({
+        ensurePrompt({
           db: db as never,
           sdkMessageRepo: sdkRepo,
           jobQueue: failingQueue,
           sessionId: SESSION,
           message: userMessage('msg-single-fail'),
-          sendStatus: 'enqueued',
           delivery: { origin: 'chat' },
         })
       ).toThrow(/simulated job_queue transient failure/);
@@ -316,18 +403,17 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     });
   });
 
-  describe('pipeline composition (persist-and-enqueue-delivery)', () => {
+  describe('pipeline composition (ensurePrompt create path)', () => {
     it('persists the same admission-derived columns as saveUserMessageCore', () => {
       const viaOutbox = setup();
       const viaWrapper = setup();
 
-      const { dbMessageId: outboxId } = persistAndEnqueueDelivery({
+      const { dbMessageId: outboxId } = ensurePrompt({
         db: viaOutbox.db as never,
         sdkMessageRepo: viaOutbox.sdkRepo,
         jobQueue: viaOutbox.jobQueue,
         sessionId: SESSION,
         message: userMessage('parity'),
-        sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       });
       const core = viaWrapper.sdkRepo.saveUserMessageCore(
@@ -348,13 +434,12 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     });
 
     it('carries delivery.parentToolUseId and origin into the enqueued job payload', () => {
-      persistAndEnqueueDelivery({
+      ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
         sessionId: SESSION,
         message: userMessage('msg-parent'),
-        sendStatus: 'enqueued',
         delivery: { origin: 'space_inject', parentToolUseId: 'toolu_1' },
       });
       const payload = jobPayload(db, SESSION, 'msg-parent');
@@ -375,13 +460,12 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         },
       }) as typeof sdkRepo;
 
-      const { dbMessageId } = persistAndEnqueueDelivery({
+      const { dbMessageId } = ensurePrompt({
         db: db as never,
         sdkMessageRepo: spyRepo,
         jobQueue,
         sessionId: SESSION,
         message: userMessage('msg-spy'),
-        sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       });
 
@@ -389,7 +473,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     });
   });
 
-  describe('canonical producer API (persistPrompt / ensurePrompt / activatePrompts / retryPrompt)', () => {
+  describe('canonical producer API (ensurePrompt / activatePrompts / retryPrompt)', () => {
     function insertStatusRow(uuid: string, sendStatus: string, dbId = `db-${uuid}`): string {
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid, replacement_metadata_normalized)
@@ -451,8 +535,8 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       }>;
     }
 
-    it('persistPrompt immediate saves an enqueued row with a released turn job', () => {
-      const result = persistPrompt({
+    it('ensurePrompt immediate saves an enqueued row with a released turn job', () => {
+      const result = ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
@@ -468,8 +552,8 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(jobsFor('persist-immediate')[0].released).toBe(1);
     });
 
-    it('persistPrompt manual hold saves a deferred row with an unreleased job', () => {
-      const result = persistPrompt({
+    it('ensurePrompt manual hold saves a deferred row with an unreleased job', () => {
+      const result = ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
@@ -486,23 +570,8 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(jobsFor('persist-manual')[0].released).toBe(0);
     });
 
-    it('persistAndEnqueueDelivery keeps its shape and marks jobs released', () => {
-      const result = persistAndEnqueueDelivery({
-        db: db as never,
-        sdkMessageRepo: sdkRepo,
-        jobQueue,
-        sessionId: SESSION,
-        message: userMessage('wrapper-parity'),
-        sendStatus: 'enqueued',
-        delivery: { origin: 'chat' },
-      });
-
-      expect(result.dbMessageId).toBeTruthy();
-      expect(jobsFor('wrapper-parity')[0].released).toBe(1);
-    });
-
     it('ensurePrompt replays the same content onto the existing row and revives its job', () => {
-      const first = persistPrompt({
+      const first = ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
@@ -536,7 +605,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     });
 
     it('ensurePrompt errors on conflicting content without touching state', () => {
-      persistPrompt({
+      ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
@@ -639,7 +708,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         sessionId: SESSION,
         messageUuids: ['act-fenced'],
         origin: 'recovery',
-        claimValid: () => false,
+        canDeliver: () => false,
       });
 
       expect(denied.activated).toEqual([]);
@@ -652,7 +721,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         sessionId: SESSION,
         messageUuids: ['act-fenced'],
         origin: 'recovery',
-        claimValid: () => true,
+        canDeliver: () => true,
       });
 
       expect(activated.map((entry) => entry.messageUuid)).toEqual(['act-fenced']);
@@ -760,17 +829,15 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     it('activatePrompts rolls the whole batch back when the enqueue fails', async () => {
       insertStatusRow('rollback-1', 'deferred');
       insertStatusRow('rollback-2', 'deferred');
-      const failingQueue = {
-        enqueue: () => {
-          throw new Error('simulated job_queue transient failure');
-        },
-      } as unknown as JobQueueRepoType;
+      db.exec(
+        "CREATE TRIGGER fail_activate_enqueue BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'simulated job_queue transient failure'); END"
+      );
       let published = 0;
 
       await expect(
         activatePrompts({
           db: db as never,
-          jobQueue: failingQueue,
+          jobQueue,
           sessionId: SESSION,
           messageUuids: ['rollback-1', 'rollback-2'],
           origin: 'recovery',
@@ -787,34 +854,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         .get(MESSAGE_DELIVERY) as { c: number };
       expect(jobCount.c).toBe(0);
       expect(published).toBe(0);
-    });
-
-    it('redeliverPrompt gives a consumed row whose job completed a new pending delivery', () => {
-      persistAndEnqueueDelivery({
-        db: db as never,
-        jobQueue,
-        sdkMessageRepo: sdkRepo,
-        sessionId: SESSION,
-        message: userMessage('steered'),
-        sendStatus: 'enqueued',
-        delivery: { origin: 'chat' },
-      });
-      const [job] = jobQueue.dequeue(MESSAGE_DELIVERY, 1);
-      jobQueue.complete(job.id, {}, job.claimToken);
-      db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE sdk_uuid = ?`).run(
-        'steered'
-      );
-      expect(
-        redeliverPrompt({
-          db: db as never,
-          jobQueue,
-          sdkMessageRepo: sdkRepo,
-          sessionId: SESSION,
-          messageUuid: 'steered',
-        })
-      ).toBe(sdkRepo.findMessageIdByUuid(SESSION, 'steered'));
-      expect(rowStatus('steered')).toBe('enqueued');
-      expect(jobsFor('steered').map((row) => row.status)).toEqual(['pending']);
     });
 
     it('retryPrompt reopens a failed row with no prior job as a fresh released job', async () => {
@@ -850,7 +889,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         sessionId: SESSION,
         messageUuid: 'retry-fenced',
         origin: 'chat',
-        claimValid: () => false,
+        canDeliver: () => false,
       });
 
       expect(denied).toBeNull();
@@ -863,7 +902,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         sessionId: SESSION,
         messageUuid: 'retry-fenced',
         origin: 'chat',
-        claimValid: () => true,
+        canDeliver: () => true,
       });
 
       expect(retried?.dbId).toBeTruthy();
@@ -1053,22 +1092,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(retried).toBeNull();
       expect(rowStatus('retry-consumed')).toBe('consumed');
       expect(jobsFor('retry-consumed')).toHaveLength(0);
-    });
-
-    it('persistAndEnqueueDelivery maps a deferred sendStatus onto the manual hold', () => {
-      const result = persistAndEnqueueDelivery({
-        db: db as never,
-        sdkMessageRepo: sdkRepo,
-        jobQueue,
-        sessionId: SESSION,
-        message: userMessage('wrapper-deferred'),
-        sendStatus: 'deferred',
-        delivery: { origin: 'chat' },
-      });
-
-      expect(result.dbMessageId).toBeTruthy();
-      expect(rowStatus('wrapper-deferred')).toBe('deferred');
-      expect(jobsFor('wrapper-deferred')[0].released).toBe(0);
     });
 
     it('activatePrompts transitions exactly one row per uuid when duplicates exist', async () => {
@@ -1356,7 +1379,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     });
 
     it('ensurePrompt replays equivalent content whose object keys were built in a different order', () => {
-      persistPrompt({
+      ensurePrompt({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
@@ -1483,7 +1506,7 @@ describe('prompt content verification (verifyPromptContent)', () => {
   afterEach(() => db.close());
 
   function seedRow(uuid: string, text: string): void {
-    persistPrompt({
+    ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
@@ -1620,7 +1643,7 @@ describe('retryPrompt consumption-evidence guard', () => {
   afterEach(() => db.close());
 
   function failedRowWithEvidence(uuid: string): string {
-    const { dbMessageId } = persistPrompt({
+    const { dbMessageId } = ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
@@ -1771,9 +1794,9 @@ describe('admission-stamped delivery enqueue (admittedAt)', () => {
     return row;
   }
 
-  it('persistPrompt stamps the delivery job created_at with delivery.admittedAt', () => {
+  it('ensurePrompt stamps the delivery job created_at with delivery.admittedAt', () => {
     const before = Date.now();
-    persistPrompt({
+    ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
@@ -1788,8 +1811,8 @@ describe('admission-stamped delivery enqueue (admittedAt)', () => {
     expect(before).toBeGreaterThan(1234);
   });
 
-  it('persistPrompt carries delivery.admissionRowid into the delivery payload', () => {
-    persistPrompt({
+  it('ensurePrompt carries delivery.admissionRowid into the delivery payload', () => {
+    ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
@@ -1802,9 +1825,9 @@ describe('admission-stamped delivery enqueue (admittedAt)', () => {
     expect(JSON.parse(row.payload).admissionRowid).toBe(7);
   });
 
-  it('persistPrompt without admittedAt keeps created_at as the physical insert time', () => {
+  it('ensurePrompt without admittedAt keeps created_at as the physical insert time', () => {
     const before = Date.now();
-    persistPrompt({
+    ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
@@ -1833,7 +1856,7 @@ describe('admission-stamped delivery enqueue (admittedAt)', () => {
 
   it('an admittedAt-stamped job sorts ahead of a later direct sibling in the session FIFO', () => {
     const before = Date.now();
-    persistPrompt({
+    ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
@@ -1841,7 +1864,7 @@ describe('admission-stamped delivery enqueue (admittedAt)', () => {
       message: userMessage('stamp-early'),
       delivery: { origin: 'space_agent', admittedAt: before - 60_000 },
     });
-    persistPrompt({
+    ensurePrompt({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,

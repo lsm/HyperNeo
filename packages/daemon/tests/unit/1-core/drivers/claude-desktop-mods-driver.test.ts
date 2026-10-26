@@ -212,6 +212,7 @@ describe('Claude Desktop mods driver wiring', () => {
     const registry = createOperationRegistry(
       createWorkVerbOperations({
         adapters: () => [adapter],
+        isOpenTodo: (id) => id === 'open-todo',
         daemonName: 'test',
         remote: {
           list: () => [],
@@ -222,7 +223,12 @@ describe('Claude Desktop mods driver wiring', () => {
       })
     );
     const handler = createOperationMcpHandler(registry, () => ({ role: 'neo', sessionId: 'neo' }));
-    const outcome = await handler({ name, input });
+    const outcome = await handler({
+      name,
+      input: ['work.start', 'work.send', 'work.queue'].includes(name)
+        ? { ...(input as Data), todoId: 'open-todo' }
+        : input,
+    });
     if (outcome.isError) throw new Error(outcome.content[0].text);
     return JSON.parse(outcome.content[0].text) as T;
   }
@@ -291,7 +297,7 @@ describe('Claude Desktop mods driver wiring', () => {
     expect(engine.submitted).toEqual([
       `Peer input via HyperNeo plugin (not human approval):\n${JSON.stringify({
         from: 'session:neo',
-        text: 'peer\n"follow up"\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send neo "<text>" (not SendMessage). Keep working after you send.',
+        text: 'peer\n"follow up"\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
       })}`,
     ]);
     await engine.poll();

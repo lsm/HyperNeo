@@ -125,7 +125,7 @@ describe('ReturnType<typeof createNeoService> session ask links', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession('neo:root'));
+    await db.createSession(createTestSession('neo:root'));
     events.length = 0;
     sessions = [];
     status = { status: 'running', lastActivityAt: 0 };
@@ -176,7 +176,7 @@ describe('ReturnType<typeof createNeoService> session ask links', () => {
     service.readRefStates = async () => [];
     service.readBranchPrs = async () => [];
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
-    db.createSession(createTestSession('neo:inbox'));
+    await db.createSession(createTestSession('neo:inbox'));
     service.repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
   });
   afterEach(() => {
@@ -186,6 +186,11 @@ describe('ReturnType<typeof createNeoService> session ask links', () => {
 
   test('a PR a session without a todo opened gets that session as its ledger owner', async () => {
     const raw = db.getDatabase();
+    raw
+      .prepare(
+        "UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'"
+      )
+      .run(JSON.stringify([pr(12).split('/').slice(3, 5).join('/').toLowerCase()]));
     raw
       .prepare(
         `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, read_at)

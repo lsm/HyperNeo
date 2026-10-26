@@ -5,12 +5,15 @@ import type {
   SpaceWorkflow,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type {
+  SpaceTaskRepository,
+  WriteSpaceTask,
+} from '../../storage/repositories/space-task-repository.ts';
 import { Logger } from '../logger.ts';
 import { isSpawnSupersededError, isTransientSpawnError } from './node-execution-validation.ts';
 import {
   appendPostApprovalCompletionInstructions,
-  clearPendingCompletionState,
+  clearedPendingCompletion,
   collectPostApprovalRoutes,
   selectFirstDispatchablePostApprovalRoute,
 } from './post-approval-route-selection.ts';
@@ -21,7 +24,7 @@ import {
 import { POST_APPROVAL_TASK_AGENT_TARGET } from './post-approval-validator.ts';
 
 export {
-  clearPendingCompletionState,
+  clearedPendingCompletion,
   collectDispatchablePostApprovalRoutes,
   isCoderOwnedMergeWorkflow,
   mapPostApprovalDispatchWarning,
@@ -46,7 +49,8 @@ export interface SessionLivenessProbe {
 }
 
 export interface PostApprovalRouterDeps {
-  taskRepo: Pick<SpaceTaskRepository, 'updateTask' | 'getTask' | 'casPostApprovalRouting'>;
+  taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
+  writeTask: WriteSpaceTask;
   spawner: PostApprovalSubSessionSpawner;
   livenessProbe?: SessionLivenessProbe;
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
@@ -88,25 +92,20 @@ export type PostApprovalRouteResult =
 export class PostApprovalRouter {
   constructor(private readonly deps: PostApprovalRouterDeps) {}
 
-  private approvalGenerationHolds(task: SpaceTask): boolean {
-    const fresh = this.deps.taskRepo.getTask(task.id);
-    return (
-      fresh?.status === 'approved' &&
-      fresh.workflowRunId === task.workflowRunId &&
-      fresh.approvedAt === task.approvedAt &&
-      fresh.postApprovalSessionId === task.postApprovalSessionId
+  private async updateIfApprovalCurrent(
+    task: SpaceTask,
+    updates: UpdateSpaceTaskParams
+  ): Promise<void> {
+    await this.deps.writeTask(
+      'updateTask',
+      task.id,
+      updates,
+      'approved',
+      undefined,
+      task.postApprovalSessionId ?? null,
+      task.workflowRunId ?? null,
+      task.approvedAt ?? null
     );
-  }
-
-  private recordBlockedReasonIfCurrent(task: SpaceTask, reason: string): void {
-    if (!this.approvalGenerationHolds(task)) return;
-    this.deps.taskRepo.updateTask(task.id, {
-      postApprovalBlockedReason: reason,
-      pendingCheckpointType: null,
-      pendingCompletionSubmittedByNodeId: null,
-      pendingCompletionSubmittedAt: null,
-      pendingCompletionReason: null,
-    });
   }
 
   async route(
@@ -173,7 +172,7 @@ export class PostApprovalRouter {
         });
         terminalHandled = handled != null;
         if (!handled) {
-          this.deps.taskRepo.updateTask(task.id, updates);
+          await this.deps.writeTask('updateTask', task.id, updates);
         }
       } catch (err) {
         log.warn(
@@ -226,8 +225,8 @@ export class PostApprovalRouter {
           log.info(
             `PostApprovalRouter.route: task ${task.id} already has live post-approval session ${task.postApprovalSessionId}; skipping re-dispatch`
           );
-          if (task.postApprovalBlockedReason && this.approvalGenerationHolds(task)) {
-            this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: null });
+          if (task.postApprovalBlockedReason) {
+            await this.updateIfApprovalCurrent(task, { postApprovalBlockedReason: null });
           }
           return {
             mode: 'already-routed',
@@ -244,7 +243,7 @@ export class PostApprovalRouter {
     if (!workflow) {
       const reason = `task ${task.id}: cannot spawn post-approval sub-session without workflow`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
-      clearPendingCompletionState(this.deps.taskRepo, task.id);
+      await this.deps.writeTask('updateTask', task.id, clearedPendingCompletion);
       return { mode: 'skipped', reason };
     }
 
@@ -253,14 +252,17 @@ export class PostApprovalRouter {
     if ('reason' in admitted) {
       const reason = `task ${task.id}: ${admitted.reason}`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
-      this.recordBlockedReasonIfCurrent(task, reason);
+      await this.updateIfApprovalCurrent(task, {
+        postApprovalBlockedReason: reason,
+        ...clearedPendingCompletion,
+      });
       return { mode: 'skipped', reason };
     }
     const interpolatedInstructions = admitted.value;
     if (!interpolatedInstructions.trim()) {
       const reason = `task ${task.id}: post-approval route (targetAgent=${route.targetAgent}) has an empty instructions template`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
-      clearPendingCompletionState(this.deps.taskRepo, task.id);
+      await this.deps.writeTask('updateTask', task.id, clearedPendingCompletion);
       return { mode: 'skipped', reason };
     }
 
@@ -281,20 +283,27 @@ export class PostApprovalRouter {
       if (isSpawnSupersededError(err)) {
         const reason = `post-approval spawn for task ${task.id} superseded at ${err.stage ?? 'unknown'} — a concurrent writer moved the guarded row; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
-        this.recordBlockedReasonIfCurrent(task, reason);
+        await this.updateIfApprovalCurrent(task, {
+          postApprovalBlockedReason: reason,
+          ...clearedPendingCompletion,
+        });
         return { mode: 'skipped', reason };
       }
       if (isTransientSpawnError(err)) {
         const reason = `post-approval spawn for task ${task.id} deferred: ${err.message}; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
-        this.recordBlockedReasonIfCurrent(task, reason);
+        await this.updateIfApprovalCurrent(task, {
+          postApprovalBlockedReason: reason,
+          ...clearedPendingCompletion,
+        });
         return { mode: 'skipped', reason };
       }
       throw err;
     }
     const sessionId = spawnedSessionId;
 
-    const recorded = this.deps.taskRepo.casPostApprovalRouting(
+    const recorded = await this.deps.writeTask(
+      'casPostApprovalRouting',
       task.id,
       {
         workflowRunId: task.workflowRunId ?? null,

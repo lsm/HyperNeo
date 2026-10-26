@@ -7,6 +7,7 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 
 type ForgetRepo = Pick<NeoRepository, 'allRepositories' | 'forgetProject' | 'getBindingBySession'>;
 type Refusal = 'project_missing' | 'project_in_use' | 'project_protected' | 'root_or_human_only';
+type ForgetRepositories = (repos: readonly string[]) => void;
 type Forgotten = { ok: true; repos: string[] } | { ok: false; reason: Refusal };
 
 const Input = z.object({ projectId: z.string().min(1).max(100) });
@@ -24,8 +25,8 @@ const Result = z.union([
   }),
 ]);
 
-const runForget = (superpipe({})('neo.project.forget') as PipelineAPI)
-  .input(['projectId', 'caller', 'repo'])
+export const runNeoProjectForget = (superpipe({})('neo.project.forget') as PipelineAPI)
+  .input(['projectId', 'caller', 'repo', 'forgetRepositories'])
   .pipe(
     (caller: OperationCaller, repo: ForgetRepo) =>
       requireNeoTreeAuthor(
@@ -49,19 +50,32 @@ const runForget = (superpipe({})('neo.project.forget') as PipelineAPI)
     'repos'
   )
   .pipe(
-    (projectId: string, repo: ForgetRepo) => {
-      const forgotten = repo.forgetProject(projectId);
+    (
+      projectId: string,
+      repo: ForgetRepo,
+      repos: string[],
+      forgetRepositories: ForgetRepositories
+    ) => {
+      const forgotten = repo.forgetProject(projectId, () => forgetRepositories(repos));
       return 'reason' in forgotten
         ? { reason: { ok: false as const, reason: forgotten.reason } }
         : { value: forgotten };
     },
-    ['projectId', 'repo'],
+    ['projectId', 'repo', 'repos', 'forgetRepositories'],
     'result:outcome'
   )
   .pipe((repos: string[]) => ({ ok: true as const, repos }), 'repos', 'outcome')
-  .end('outcome') as (projectId: string, caller: OperationCaller, repo: ForgetRepo) => Forgotten;
+  .end('outcome') as (
+  projectId: string,
+  caller: OperationCaller,
+  repo: ForgetRepo,
+  forgetRepositories: ForgetRepositories
+) => Forgotten;
 
-export function createNeoProjectForgetOperation(repo: ForgetRepo) {
+export function createNeoProjectForgetOperation(
+  repo: Pick<NeoRepository, 'forgetProjectCommand'>,
+  forgetRepositories: ForgetRepositories = () => {}
+) {
   return defineOperation({
     name: 'neo.project.forget',
     description:
@@ -69,6 +83,10 @@ export function createNeoProjectForgetOperation(repo: ForgetRepo) {
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: async (input, caller) => runForget(input.projectId, caller, repo),
+    execute: async (input, caller) => {
+      const result = await repo.forgetProjectCommand(input.projectId, caller);
+      if (result.ok) forgetRepositories(result.repos);
+      return result;
+    },
   });
 }

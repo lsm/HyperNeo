@@ -6,6 +6,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { writeSpaceTaskOn } from '../../helpers/run-db-op';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -36,6 +37,7 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     const config = {
       db: { getDatabase: () => db },
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       internalEventBus: bus,
     } as unknown as TaskAgentManagerConfig;
     manager = new TaskAgentManager(config);

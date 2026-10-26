@@ -74,3 +74,26 @@ for stages 5/6, the stage-6 reaction is absent, and the stage-4 failed check is
 absent after all three polls. This is the P1 regression, independent of the
 40-request fairness fixture. The helper checks those losses and retains the
 before evidence. `resume-verify` must fail on that source and pass after the fix.
+
+## Restore missing watches and report stale polling
+
+Run `reconciliation-verify` with the same isolated setup and a fresh RUN. The
+fixture removes every persisted watch, restarts its daemon, and requires startup
+to reconstruct all subscription watches plus an open coding todo's repository.
+It then removes three subscription watches again before the first RPC cycle;
+all must regain polling and approvals reach their actual owner's mailbox within
+the same 40-request synthetic quota. A todo-only watch survives every cycle
+until its todo finishes, after which normal cleanup removes it.
+
+Finally the fixture binds the synthetic owner as Neo and returns a synthetic
+rate-limit response. Four RPC cycles must persist a `polling:<owner>/<repo>`
+health incident for each remaining watch and accept each concern into Neo's
+mailbox. Inspect `staleHealth` and `mailbox` in `evidence/polling.json`. This
+reuses coding health notice delivery but keeps polling incidents separate from
+ledger coverage incidents. The threshold is three missed enabled cycles,
+including cycles deferred by rate limits; disabled scopes do not count.
+
+The unit contracts cover recovery and rejected-wake retry. The separate
+`github-terminal-replay` journey verifies final-event acceptance before automatic
+unsubscribe. This journey does not verify a model consuming mailbox messages;
+live non-HyperNeo approval delivery remains a separate post-deploy check.

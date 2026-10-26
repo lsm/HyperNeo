@@ -44,7 +44,8 @@ for (const phase of ['initial', 'restart']) {
     });
     const db = app.db.getDatabase();
     const rows = db.prepare('SELECT * FROM neo_pack_preferences ORDER BY pack, scope_key, key').all();
-    assert.equal(rows.length, phase === 'initial' ? 0 : 1);
+    assert.equal(rows.length, phase === 'initial' ? 1 : 2);
+    assert.deepEqual(getNeoPackPreference(db, 'coding', { kind: 'global', key: '' }, 'watchedRepos')?.value, []);
     const scope = { kind: 'repo' as const, key: 'synthetic/repo' };
     const saved = getNeoPackPreference(db, 'coding', scope, 'mergePolicy');
     assert.equal(saved?.value, phase === 'initial' ? undefined : 'human');

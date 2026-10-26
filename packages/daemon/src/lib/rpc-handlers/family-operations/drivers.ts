@@ -1,3 +1,6 @@
+import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
+import { sessionSdkPath } from '../../session/sdk-path.ts';
+import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
 import { dirname, resolve } from 'node:path';
@@ -5,17 +8,21 @@ import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.t
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
 import { withdrawOwnedInput } from '../../drivers/owned-input-withdrawal.ts';
+import { readWorkInput } from '../../../storage/work-input.ts';
 import {
   workStartPreparation,
   type WorkExecutionPreparer,
 } from '../../drivers/start-preparation.ts';
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
+import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { codexStatePath } from '../../../storage/codex-desktop-read.ts';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
+import { recordStartedWork, type StartedWork } from '../../../storage/work-started-sessions.ts';
 import {
   ACP_AGENTS,
   createAcpAgentAdapter,
@@ -64,13 +71,19 @@ import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { neoFolder } from '../../neo/folder.ts';
+import { neoStartPlace } from '../../neo/start-place.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
 import { readWorkTurnPage, type WorkTurnPage } from '../../../storage/work-turn-page.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
-import type { ModelInfo, Provider } from '@hyperneo/shared';
+import {
+  THINKING_OPTIONS,
+  type ModelInfo,
+  type Provider,
+  type SessionConfig,
+} from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
 import { usableModels } from '../../usable-models.ts';
@@ -91,29 +104,57 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
   return getAvailableModels('global');
 }
 
+async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
+  const { findInModels } = await import('../../model-service.ts');
+  const available = usableModels(models);
+  const exact = available.find((entry) => entry.id === requested);
+  if (exact) return exact;
+  const names = available.filter((entry) => entry.name?.toLowerCase() === requested.toLowerCase());
+  if (names.length > 1)
+    throw new ModelUnavailableError(
+      `Model name '${requested}' is ambiguous: ${names.map((entry) => `${entry.id} (${entry.provider})`).join(', ')}. Choose an exact model ID.`
+    );
+  return names[0] ?? findInModels(available, requested) ?? null;
+}
+
 export async function createDriverSession(
   sessionManager: Pick<SessionManager, 'createSession' | 'getWorktreeManager'>,
   workspacePath: string,
   title: string,
   model?: string,
-  availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels
+  availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels,
+  provider?: string,
+  effort?: string,
+  inPlace = false,
+  prepared?: { sessionId: string; projectPath: string }
 ): Promise<string> {
-  const { gitRoot } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
+  const gitRoot = inPlace
+    ? null
+    : (await sessionManager.getWorktreeManager().detectGitSupport(workspacePath)).gitRoot;
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
-  const create = (config?: { model: string; provider?: Provider }) =>
+  const thinkingLevel = THINKING_OPTIONS.find(
+    (entry) => entry.label.toLowerCase() === effort
+  )?.value;
+  const create = (config?: Partial<SessionConfig>) =>
     sessionManager.createSession({
       workspacePath,
       title,
+      ...(prepared
+        ? { sessionId: prepared.sessionId, executionProjectPath: prepared.projectPath }
+        : {}),
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
-      ...(config ? { config } : {}),
+      ...(config || thinkingLevel
+        ? { config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
+        : {}),
     });
-  if (model) {
-    const { findInModels } = await import('../../model-service.ts');
-    if (!findInModels(usableModels(await availableModels()), model))
-      throw new ModelUnavailableError(`Model '${model}' is not available.`);
-  }
+  const selected = model
+    ? await resolveDriverModel(usableModels(await availableModels(), provider), model)
+    : null;
+  if (model && !selected) throw new ModelUnavailableError(`Model '${model}' is not available.`);
   try {
-    return await create(model ? { model } : undefined);
+    return await create(
+      selected ? { model: selected.id, provider: selected.provider as Provider } : undefined
+    );
   } catch (error) {
     if (model || !(error instanceof ModelUnavailableError)) throw error;
     const newest = newestAvailableModel(await availableModels());
@@ -132,7 +173,7 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
 }
 
 export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
-  const { sessionManager, internalEventBus, db, jobQueue } = context.deps;
+  const { sessionManager, internalEventBus, db } = context.deps;
   return {
     rename: async (ref, title) => {
       const session = sessionManager.getSessionFromDB(ref.id);
@@ -145,24 +186,19 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
     },
     withdraw: (sessionId, id, from) =>
       withdrawOwnedInput(sessionId, id, from, {
-        jobs: jobQueue,
-        transaction: (effect) => db.getDatabase().transaction(effect)(),
-        messageId: (target, uuid) => db.getSDKMessageRepo().findMessageIdByUuid(target, uuid),
-        removeDeferred: async (target, messageDbId, commit) => {
+        db: db.getDatabase(),
+        removeDeferred: async (target, dbId, jobId) => {
           const session = sessionManager.getCachedSession(target);
           if (session)
-            return (await session.revokePendingDelivery(messageDbId, 'remove', 'deferred', commit))
-              .changed;
-          const removed = db.getDatabase().transaction(() => {
-            const row = db.deletePendingUserMessage(target, messageDbId, 'deferred');
-            if (row?.uuid) commit();
-            return row;
-          })();
-          if (!removed?.uuid) return false;
-          jobQueue.cancelDelivery(target, removed.uuid);
-          db.notifyChange?.('sdk_messages', { sessionId: target });
-          db.notifyChange?.('job_queue', { sessionId: target });
-          return true;
+            return (await session.revokePendingDelivery(dbId, 'remove', 'deferred', jobId)).changed;
+          const removed = await db.gateway.run(sdkPendingRemoval, {
+            sessionId: target,
+            messageDbId: dbId,
+            mode: 'remove',
+            expectedStatus: 'deferred',
+            withdrawalJobId: jobId,
+          });
+          return !!removed?.uuid;
         },
       }),
     archive: async (ref, admit) => {
@@ -187,16 +223,30 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       const processing = sessionManager.getCachedSession(ref.id)?.getProcessingState().status;
       if (processing && !['idle', 'interrupted'].includes(processing))
         return reject('busy', 'The HyperNeo session still has a live turn.');
-      if (session.status === 'archived') return { ok: true, value: { archived: false } };
+      if (session.status === 'archived') {
+        await releaseWorkerSandbox(sessionSdkPath(session));
+        return { ok: true, value: { archived: false } };
+      }
       await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
       return { ok: true, value: { archived: true } };
     },
-    create: (workspacePath, title, model) =>
-      createDriverSession(sessionManager, workspacePath, title, model),
-    resolveModel: async (model) => {
-      const { findInModels } = await import('../../model-service.ts');
-      return findInModels(usableModels(await readAvailableModels()), model)?.id ?? null;
-    },
+    create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
+      createDriverSession(
+        sessionManager,
+        workspacePath,
+        title,
+        model,
+        readAvailableModels,
+        provider,
+        effort,
+        inPlace,
+        prepared
+      ),
+    resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
+    effort: (sessionId) =>
+      THINKING_OPTIONS.find(
+        (entry) => entry.value === sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
+      )?.label.toLowerCase() ?? null,
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
     chooseWorktree: async (sessionId) => {
       await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');
@@ -218,13 +268,29 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
   };
 }
 
-const CLAUDE_DESKTOP_SESSIONS = join(
+export const CLAUDE_DESKTOP_SESSIONS = join(
   homedir(),
   'Library',
   'Application Support',
   'Claude',
   'claude-code-sessions'
 );
+
+export async function ownClaudeSessions(
+  started: readonly StartedWork[],
+  desktopSessionsDir: string
+): Promise<Set<string>> {
+  const desktop = new Set(
+    started.flatMap((ref) => (ref.adapter === 'claude-desktop' ? [ref.id] : []))
+  );
+  const records = desktop.size ? await readClaudeDesktopRecords(desktopSessionsDir, new Map()) : [];
+  return new Set([
+    ...started.flatMap((ref) => (ref.adapter === 'claude-code' ? [ref.id] : [])),
+    ...records.flatMap((record) =>
+      desktop.has(record.sessionId) && record.cliSessionId ? [record.cliSessionId] : []
+    ),
+  ]);
+}
 
 function claudeCodeAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
@@ -331,7 +397,7 @@ function codexDesktopAdapters(
   prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
   const codexHome = join(homedir(), '.codex');
-  const statePath = join(codexHome, 'state_5.sqlite');
+  const statePath = codexStatePath(homedir());
   if (!existsSync(statePath)) return [];
   return [
     createCodexDesktopAdapter({
@@ -560,6 +626,18 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     adapters: () => adapters,
     remote: remoteDaemons,
     daemonName: machine,
+    startPlace: neoStartPlace({
+      db: db(),
+      machine,
+      workspaceRoot: context.deps.config.workspaceRoot,
+    }),
+    isOpenTodo: (todoId: string, sessionId: string) => {
+      const store = new NeoAskTodoRepository(db());
+      const todo = store.getTodo(todoId);
+      const ask = todo ? store.getAsk(todo.askId) : null;
+      return ask?.status === 'open' && ask.sessionId === sessionId;
+    },
+    recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
     namedFolder: {
       machine,
       homeDir: homedir(),
@@ -608,6 +686,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     createFindWorkOperation(deps),
     ...createWorkVerbOperations(deps),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
-    createReadWorkOperation({ readTurns, remote: remoteDaemons, daemonName: machine }),
+    createReadWorkOperation({
+      readTurns,
+      readInput: (sessionId, input) =>
+        context.deps.db.gateway.call(readWorkInput, 'find', sessionId, input),
+      remote: remoteDaemons,
+      daemonName: machine,
+    }),
   ];
 }

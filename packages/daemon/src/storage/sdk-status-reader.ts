@@ -1,3 +1,4 @@
+import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
 import type { PendingTurn } from './turn-vectors.ts';
 import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
@@ -16,6 +17,7 @@ export type SDKStatusPage = {
   total: number;
 };
 export type SDKPageParams = {
+  requireSession?: boolean;
   limit?: number;
   before?: number;
   since?: number;
@@ -114,6 +116,8 @@ export function readSDKMessagePage(
   repository: SDKMessageRepository,
   { sessionId, page }: SDKPageArgs
 ): SDKMessagePage {
+  if (page.requireSession && !repository.sessionExists(sessionId))
+    throw new Error('Session not found');
   const selected = repository.getSDKMessages(
     sessionId,
     page.limit,
@@ -153,9 +157,17 @@ export class SDKStatusReader {
   constructor(
     private readonly dbPath: string,
     private readonly createWorker = () =>
-      new Worker(new URL('./sdk-status-worker.ts', import.meta.url).href, { type: 'module' }),
+      new Worker(
+        runtimeWorkerUrl(
+          './sdk-status-worker.ts',
+          './daemon/src/storage/sdk-status-worker.ts',
+          import.meta.url
+        ).toString(),
+        { type: 'module' }
+      ),
     private readonly timeoutMs = 30_000,
-    private readonly queryObservability?: SQLiteQueryObservabilityOptions
+    private readonly queryObservability?: SQLiteQueryObservabilityOptions,
+    private readonly beforeRead?: (args: SDKReadArgs) => Promise<void>
   ) {}
 
   read(args: SDKStatusArgs): Promise<SDKStatusPage> {
@@ -190,7 +202,8 @@ export class SDKStatusReader {
     return this.enqueue({ codexSnapshot: { statePath, includeClosed } }) as Promise<CodexSnapshot>;
   }
 
-  private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
+  private async enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
+    if (this.beforeRead) await this.beforeRead(args);
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     const search = 'query' in args;
     if ((search ? this.searches : this.waiting) >= (search ? 3 : 16))

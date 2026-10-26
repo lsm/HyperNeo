@@ -12,6 +12,7 @@ import {
 } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import { PostApprovalRouter } from '../../../../src/lib/workflows/post-approval-router.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import { writeSpaceTaskOn } from '../../helpers/run-db-op';
 
 const SPACE_ID = 'space-par-test';
 
@@ -117,6 +118,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -145,6 +147,7 @@ describe('PostApprovalRouter.route', () => {
     };
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: throwingSpawner,
       livenessProbe: delegates.liveness,
     });
@@ -175,6 +178,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -216,6 +220,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -264,6 +269,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -307,6 +313,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -353,6 +360,7 @@ describe('PostApprovalRouter.route', () => {
 
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -379,6 +387,7 @@ describe('PostApprovalRouter.route', () => {
 
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -404,6 +413,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -425,6 +435,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -450,6 +461,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -478,6 +490,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -497,6 +510,7 @@ describe('PostApprovalRouter.route', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
     });
@@ -577,6 +591,7 @@ describe('PostApprovalRouter.route — routing CAS', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async (args) => {
           taskRepo.updateTask(args.task.id, { workflowRunId: 'run-other' });
@@ -608,6 +623,7 @@ describe('PostApprovalRouter.route — routing CAS', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async (args) => {
           taskRepo.updateTask(args.task.id, { status: 'done' });
@@ -636,6 +652,7 @@ describe('PostApprovalRouter.route — routing CAS', () => {
     delegates.aliveSessions.add('coder-exec-session');
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
       validateRecordedPointer: ({ sessionId, routeNodeId, routeAgentName }) =>
@@ -660,6 +677,7 @@ describe('PostApprovalRouter.route — routing CAS', () => {
     delegates.aliveSessions.add('worker-on-slot');
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
       validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
@@ -733,6 +751,7 @@ describe('PostApprovalRouter.route — replacement and failure-write guards', ()
     delegates.aliveSessions.add('stale-off-route');
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
       validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
@@ -758,6 +777,7 @@ describe('PostApprovalRouter.route — replacement and failure-write guards', ()
     delegates.aliveSessions.add('stale-off-route');
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async (args) => {
           taskRepo.updateTask(args.task.id, { status: 'done' });
@@ -792,6 +812,7 @@ describe('PostApprovalRouter.route — replacement and failure-write guards', ()
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async (args) => {
           taskRepo.updateTask(args.task.id, { workflowRunId: 'run-moved' });
@@ -815,6 +836,7 @@ describe('PostApprovalRouter.route — replacement and failure-write guards', ()
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async () => {
           throw new TransientSpawnError('spawn deferred: model pool busy');
@@ -857,6 +879,7 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async (args) => {
           const spawned = await delegates.spawner.spawnPostApprovalSubSession(args);
@@ -886,6 +909,7 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
     delegates.aliveSessions.add('worker-on-slot');
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
       validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
@@ -905,6 +929,7 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async (args) => {
           taskRepo.casPostApprovalRouting(
@@ -934,6 +959,7 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: {
         spawnPostApprovalSubSession: async (args) => {
           taskRepo.updateTask(args.task.id, {
@@ -995,6 +1021,7 @@ describe('PostApprovalRouter.route — cycle-13 guards', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
       cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
@@ -1034,6 +1061,7 @@ describe('PostApprovalRouter.route — pointer ownership before cancel', () => {
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
+      writeTask: writeSpaceTaskOn(db),
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
       cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),

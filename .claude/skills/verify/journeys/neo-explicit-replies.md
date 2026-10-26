@@ -22,7 +22,8 @@ asks back without marking its inputs answered. Omitting replyTo stays supported.
 The operations contracts cover several received messages, selecting only the
 first and third as answered; unknown, foreign, system, task and queued input
 ids; mixed valid/invalid lists; durable question reads and start-question
-rewording. Rejected references create neither publications nor questions.
+rewording. Publications omit unrecognized references and retain valid received
+human ids; question admission is covered by its own journey.
 New publications refuse triggerId; old stored triggerId/askOrigin remain readable.
 
 Evidence: `sdk/evidence/neo-goal-cycle-sdk.json` contains actual model input,

@@ -139,7 +139,7 @@ test('backpressure refuses excess requests instead of accumulating unbounded wor
 test('supported memory DB keeps complete status text without opening a file worker', async () => {
   const db = await createTestDb();
   try {
-    db.createSession(createTestSession('memory-status'));
+    await db.createSession(createTestSession('memory-status'));
     const text = 'Complete memory text 🦊\n'.repeat(2000);
     const message = {
       type: 'user',
@@ -150,7 +150,7 @@ test('supported memory DB keeps complete status text without opening a file work
         content: [{ type: 'text', text }, { type: 'image' }, { type: 'text', text: 'Second' }],
       },
     } as SDKMessage;
-    db.saveUserMessage('memory-status', message, 'consumed');
+    await db.saveUserMessage('memory-status', message, 'consumed');
     const stored = db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies').all();
     const page = await db.getUserMessagesByStatusAsync('memory-status', 'consumed', 20);
     expect(page.total).toBe(1);
@@ -168,8 +168,8 @@ test('supported memory DB keeps complete status text without opening a file work
 test('paged memory read retains child/background projection and complete stored tool output', async () => {
   const db = await createTestDb();
   try {
-    db.createSession(createTestSession('memory-page'));
-    db.saveSDKMessage('memory-page', {
+    await db.createSession(createTestSession('memory-page'));
+    await db.saveSDKMessage('memory-page', {
       type: 'assistant',
       uuid: 'parent',
       parent_tool_use_id: null,
@@ -179,7 +179,7 @@ test('paged memory read retains child/background projection and complete stored 
       },
     } as SDKMessage);
     const full = 'complete tool result\n'.repeat(2000);
-    db.saveUserMessage(
+    await db.saveUserMessage(
       'memory-page',
       {
         type: 'user',
@@ -192,7 +192,7 @@ test('paged memory read retains child/background projection and complete stored 
       } as SDKMessage,
       'consumed'
     );
-    db.saveSDKMessage('memory-page', {
+    await db.saveSDKMessage('memory-page', {
       type: 'system',
       subtype: 'task_started',
       uuid: 'background',
@@ -224,9 +224,9 @@ test('paged memory read retains child/background projection and complete stored 
 test('reader projections change only returned pages, never original or full-output bodies', async () => {
   const db = await createTestDb();
   try {
-    db.createSession(createTestSession('projected-page'));
+    await db.createSession(createTestSession('projected-page'));
     const full = 'complete output 🦊\n'.repeat(4000);
-    db.saveUserMessage(
+    await db.saveUserMessage(
       'projected-page',
       {
         type: 'user',
@@ -373,9 +373,9 @@ test('status and work search return their own complete output on the same reader
 test('memory work search retains semantic output and every stored body', async () => {
   const db = await createTestDb();
   try {
-    db.createSession(createTestSession('memory-search'));
+    await db.createSession(createTestSession('memory-search'));
     const text = 'Complete retained memory history 🦊 '.repeat(200);
-    db.saveUserMessage(
+    await db.saveUserMessage(
       'memory-search',
       {
         type: 'user',

@@ -2,7 +2,7 @@ import type { Options, SDKAssistantMessage, SDKMessage } from '@anthropic-ai/cla
 import { isSDKAssistantMessage } from '@hyperneo/shared/sdk/type-guards';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { KimiProvider } from '../providers/kimi-provider.ts';
-import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.ts';
+import { awaitSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
@@ -37,8 +37,8 @@ export function oneShotModelIds(
   };
 }
 
-function readOneShotRuntime(): OneShotRuntime {
-  return { cliPath: resolveSDKCliPath(), executable: isRunningUnderBun() ? 'bun' : undefined };
+async function readOneShotRuntime(): Promise<OneShotRuntime> {
+  return { cliPath: await awaitSDKCliPath(), executable: isRunningUnderBun() ? 'bun' : undefined };
 }
 
 export function buildOneShotQueryOptions(

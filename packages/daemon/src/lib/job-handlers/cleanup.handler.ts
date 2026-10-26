@@ -1,6 +1,11 @@
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { jobEnqueueWrites } from '../../storage/repositories/job-enqueue-writes.ts';
+import type {
+  Job,
+  JobCleanup,
+  JobQueueRepository,
+} from '../../storage/repositories/job-queue-repository.ts';
 import { JOB_QUEUE_CLEANUP, LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants.ts';
-import type { JobCleanup } from '../external-events/session-event-writer.ts';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * ONE_HOUR_MS;
@@ -33,10 +38,13 @@ export function createCleanupHandler(
 
     const nextRunAt = now + NEXT_RUN_DELAY_MS;
 
-    const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 1 });
-    if (pending.length === 0) {
-      jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: nextRunAt });
-    }
+    await gatewayFor(jobQueue.db).call(jobEnqueueWrites, 'enqueueUniquePending', {
+      queue: JOB_QUEUE_CLEANUP,
+      payload: {},
+      runAt: nextRunAt,
+      matchPayload: {},
+      activeStatuses: ['pending'],
+    });
 
     return { deletedJobs, nextRunAt };
   };

@@ -75,8 +75,14 @@ if (process.argv.includes('agents')) {
   }
   const s = sessions.find((s) => s.id === flag('--resume'))!;
   if (fault() === 'missing-import') process.exit(1);
-  s.permissionMode = s.title === 'rc-toggle' ? 'bypassPermissions' : 'acceptEdits';
-  s.pid ||= 9000 + sessions.indexOf(s);
+  if (s.permissionMode === 'bypassPermissions') s.permissionMode = 'acceptEdits';
+  const blockedPath = join(evidence, 'blocked-imports.json');
+  const blocked: string[] = existsSync(blockedPath)
+    ? JSON.parse(readFileSync(blockedPath, 'utf8'))
+    : [];
+  const staysDead =
+    blocked.includes(s.id) || (fault() === 'dead-helpers' && s.title === 'desktop-wake');
+  if (!staysDead) s.pid ||= 9000 + sessions.indexOf(s);
   mkdirSync(scope, { recursive: true });
   writeFileSync(
     recordPath(s),
@@ -134,6 +140,19 @@ if (process.argv.includes('agents')) {
     message: { content: [{ type: 'text', text: 'ready' }], stop_reason: 'end_turn' },
   });
   log({ kind: 'prepare', id: s.id, text, args: process.argv.slice(2) });
+} else if (process.argv.includes('--resume')) {
+  const target = sessions.find((s) => s.id === flag('--resume'))!;
+  const message = process.argv.at(-1)!;
+  log({ kind: 'headless-turn', target: target.id, mode: flag('--permission-mode'), message });
+  append(target, { type: 'user', uuid: crypto.randomUUID(), message: { content: message } });
+  append(target, {
+    type: 'assistant',
+    uuid: crypto.randomUUID(),
+    message: {
+      content: [{ type: 'text', text: `Completed: ${message}` }],
+      stop_reason: 'end_turn',
+    },
+  });
 } else if (process.argv.includes('HyperNeo relay')) {
   const prompt = process.argv.at(-1)!;
   const named = /to the session named ("(?:[^"\\]|\\.)*")/.exec(prompt)!;
@@ -141,13 +160,15 @@ if (process.argv.includes('agents')) {
   const helper = sessions.find((s) => s.title === name && s.pid)!;
   const text = prompt.split('<message>\n')[1].split('\n\n(Relayed from HyperNeo')[0];
   log({ kind: 'relay', helper: helper.id, mode: flag('--permission-mode'), text });
-  append(helper, {
-    type: 'user',
-    uuid: crypto.randomUUID(),
-    message: {
-      content: `<cross-session-message from="uds:/synthetic.sock">\n${text}\n</cross-session-message>`,
-    },
-  });
+  if (helper.title === 'rc-toggle' || helper.title === 'desktop-wake') {
+    append(helper, {
+      type: 'user',
+      uuid: crypto.randomUUID(),
+      message: {
+        content: `<cross-session-message from="uds:/synthetic.sock">\n${text}\n</cross-session-message>`,
+      },
+    });
+  }
   if (helper.title === 'rc-toggle') {
     const id = /local_([\da-f-]+)/.exec(text)![1];
     const target = sessions.find((s) => s.id === id)!;
@@ -161,6 +182,37 @@ if (process.argv.includes('agents')) {
       })
     );
     log({ kind: 'rc-request', target: id, mode: helper.permissionMode });
+  } else if (helper.title !== 'desktop-wake') {
+    const current = JSON.parse(readFileSync(recordPath(helper), 'utf8'));
+    if (existsSync(join(evidence, 'live-mode')))
+      current.permissionMode = readFileSync(join(evidence, 'live-mode'), 'utf8');
+    if (
+      fault() === 'refused' ||
+      (flag('--permission-mode') === 'bypassPermissions') !==
+        (current.permissionMode === 'bypassPermissions')
+    ) {
+      process.stderr.write('Native peer message held for permission approval');
+      process.exit(1);
+    }
+    log({
+      kind: 'target-relay',
+      target: helper.id,
+      mode: flag('--permission-mode'),
+      receiverMode: current.permissionMode,
+      message: text,
+    });
+    append(helper, {
+      type: 'user',
+      uuid: crypto.randomUUID(),
+      message: {
+        content: `<cross-session-message from="uds:/synthetic.sock">\n${text}\n</cross-session-message>`,
+      },
+    });
+    append(helper, {
+      type: 'assistant',
+      uuid: crypto.randomUUID(),
+      message: { content: [{ type: 'text', text: `Completed: ${text}` }], stop_reason: 'end_turn' },
+    });
   } else {
     const request: { session_id: string; message: string } = JSON.parse(
       text.split('<native_forward_request>\n')[1].split('\n</native_forward_request>')[0]
@@ -171,6 +223,18 @@ if (process.argv.includes('agents')) {
       process.exit(1);
     }
     log({ kind: 'native-send', helper: helper.id, target: target.id, message: request.message });
+    if (fault() === 'queued') {
+      target.status = 'running';
+      log({
+        kind: 'native-queued',
+        helper: helper.id,
+        target: target.id,
+        message: request.message,
+      });
+      save();
+      process.stdout.write('Native message queued while target is mid-turn');
+      process.exit(0);
+    }
     append(target, {
       type: 'user',
       uuid: crypto.randomUUID(),

@@ -1,3 +1,5 @@
+import { spaceTaskLaneFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { decodeTaskCoreRow } from '../tasks/task-row.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
@@ -201,10 +203,10 @@ export class SpaceTaskRepository {
           now,
           isTerminalStatus(initialStatus) ? 1 : 0
         );
+      this.upsertTaskSearchRow(id);
     }, 'immediate');
 
     insertTx();
-    this.upsertTaskSearchRow(id);
     this.reactiveDb?.notifyChange('space_tasks');
 
     return this.getTask(id)!;
@@ -401,7 +403,8 @@ export class SpaceTaskRepository {
     expectedStatus?: SpaceTaskStatus,
     expectedPendingCompletionGeneration?: number,
     expectedPostApprovalSessionId?: string | null,
-    expectedWorkflowRunId?: string | null
+    expectedWorkflowRunId?: string | null,
+    expectedApprovedAt?: number | null
   ): SpaceTask | null {
     if (this.hasTaskWithoutSpace(id)) return null;
     const fields: string[] = [];
@@ -620,31 +623,38 @@ export class SpaceTaskRepository {
       const workflowRunGuard =
         expectedWorkflowRunId === undefined ? '' : ' AND workflow_run_id IS ?';
       if (expectedWorkflowRunId !== undefined) values.push(expectedWorkflowRunId);
+      const approvedAtGuard = expectedApprovedAt === undefined ? '' : ' AND approved_at IS ?';
+      if (expectedApprovedAt !== undefined) values.push(expectedApprovedAt);
       const stmt = this.db.prepare(
-        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}${postApprovalGuard}${workflowRunGuard}`
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}${postApprovalGuard}${workflowRunGuard}${approvedAtGuard}`
       );
-      const result = stmt.run(...values);
-      if (
-        (expectedStatus !== undefined ||
-          expectedPendingCompletionGeneration !== undefined ||
-          expectedPostApprovalSessionId !== undefined ||
-          expectedWorkflowRunId !== undefined) &&
-        result.changes === 0
-      )
-        return null;
-      this.upsertTaskSearchRow(id);
-      if (params.status === 'archived') {
-        this.deleteTaskMessageRows(id);
-      } else if (params.status !== undefined || params.completedAt !== undefined) {
-        this.deleteExpiredTerminalTaskMessageRows(id);
-      }
-      if (
-        params.status === 'done' ||
-        params.status === 'cancelled' ||
-        params.status === 'archived'
-      ) {
-        this.archiveTerminalTaskWorkerSessions(id);
-      }
+      const written = this.db.transaction(() => {
+        const result = stmt.run(...values);
+        if (
+          (expectedStatus !== undefined ||
+            expectedPendingCompletionGeneration !== undefined ||
+            expectedPostApprovalSessionId !== undefined ||
+            expectedWorkflowRunId !== undefined ||
+            expectedApprovedAt !== undefined) &&
+          result.changes === 0
+        )
+          return false;
+        this.upsertTaskSearchRow(id);
+        if (params.status === 'archived') {
+          this.deleteTaskMessageRows(id);
+        } else if (params.status !== undefined || params.completedAt !== undefined) {
+          this.deleteExpiredTerminalTaskMessageRows(id);
+        }
+        if (
+          params.status === 'done' ||
+          params.status === 'cancelled' ||
+          params.status === 'archived'
+        ) {
+          this.archiveTerminalTaskWorkerSessions(id);
+        }
+        return true;
+      }, 'immediate')();
+      if (!written) return null;
 
       this.reactiveDb?.notifyChange('space_tasks');
     }
@@ -702,14 +712,18 @@ export class SpaceTaskRepository {
       );
       values.push(next);
     }
-    const result = this.db
-      .prepare(
-        `UPDATE space_tasks SET ${sets.join(', ')} WHERE space_id IS NOT NULL AND id = ? AND status IN (${placeholders})`
-      )
-      .run(...values, taskId, ...expectedStatuses);
-    if (result.changes === 0) return 'superseded';
-    this.upsertTaskSearchRow(taskId);
-    this.deleteExpiredTerminalTaskMessageRows(taskId);
+    const won = this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `UPDATE space_tasks SET ${sets.join(', ')} WHERE space_id IS NOT NULL AND id = ? AND status IN (${placeholders})`
+        )
+        .run(...values, taskId, ...expectedStatuses);
+      if (result.changes === 0) return false;
+      this.upsertTaskSearchRow(taskId);
+      this.deleteExpiredTerminalTaskMessageRows(taskId);
+      return true;
+    }, 'immediate')();
+    if (!won) return 'superseded';
     this.reactiveDb?.notifyChange('space_tasks');
     return 'won';
   }
@@ -784,10 +798,10 @@ export class SpaceTaskRepository {
         routing.postApprovalSessionId,
         taskId
       );
+      this.upsertTaskSearchRow(taskId);
       return true;
-    });
+    }, 'immediate');
     if (!tx()) return 'superseded';
-    this.upsertTaskSearchRow(taskId);
     this.reactiveDb?.notifyChange('space_tasks');
     return 'won';
   }
@@ -841,10 +855,12 @@ export class SpaceTaskRepository {
         terminal_generation = terminal_generation + CASE WHEN status = 'archived' THEN 0 ELSE 1 END
        WHERE space_id IS NOT NULL AND id = ?`
     );
-    stmt.run(now, now, id);
-    this.upsertTaskSearchRow(id);
-    this.deleteTaskMessageRows(id);
-    this.archiveTerminalTaskWorkerSessions(id);
+    this.db.transaction(() => {
+      stmt.run(now, now, id);
+      this.upsertTaskSearchRow(id);
+      this.deleteTaskMessageRows(id);
+      this.archiveTerminalTaskWorkerSessions(id);
+    }, 'immediate')();
     this.reactiveDb?.notifyChange('space_tasks');
     return this.getTask(id);
   }
@@ -852,22 +868,25 @@ export class SpaceTaskRepository {
   deleteTask(id: string): boolean {
     if (this.hasTaskWithoutSpace(id)) return false;
     const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE space_id IS NOT NULL AND id = ?`);
-    const result = stmt.run(id);
-    if (result.changes > 0) {
+    const deleted = this.db.transaction(() => {
+      if (stmt.run(id).changes === 0) return false;
       this.deleteTaskMessageSearchRows(id);
-      this.reactiveDb?.notifyChange('space_tasks');
-    }
-    return result.changes > 0;
+      return true;
+    }, 'immediate')();
+    if (deleted) this.reactiveDb?.notifyChange('space_tasks');
+    return deleted;
   }
 
   deleteTasksForSpace(spaceId: string): void {
-    const rows = this.db
-      .prepare(`SELECT id FROM space_tasks WHERE space_id = ?`)
-      .all(spaceId) as Array<{
-      id: string;
-    }>;
-    this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
-    for (const row of rows) this.deleteTaskMessageSearchRows(row.id);
+    this.db.transaction(() => {
+      const rows = this.db
+        .prepare(`SELECT id FROM space_tasks WHERE space_id = ?`)
+        .all(spaceId) as Array<{
+        id: string;
+      }>;
+      this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
+      for (const row of rows) this.deleteTaskMessageSearchRows(row.id);
+    }, 'immediate')();
     this.reactiveDb?.notifyChange('space_tasks');
   }
 
@@ -882,21 +901,22 @@ export class SpaceTaskRepository {
   }
 
   promoteDraftTasksByCreator(createdByTaskId: string): number {
-    const rows = this.db
-      .prepare(
-        `SELECT id FROM space_tasks WHERE space_id IS NOT NULL AND created_by_task_id = ? AND status = 'draft'`
-      )
-      .all(createdByTaskId) as Array<{ id: string }>;
-    const result = this.db
-      .prepare(
-        `UPDATE space_tasks SET status = 'open', updated_at = ? WHERE space_id IS NOT NULL AND created_by_task_id = ? AND status = 'draft'`
-      )
-      .run(Date.now(), createdByTaskId);
-    if (result.changes > 0) {
+    const promoted = this.db.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM space_tasks WHERE space_id IS NOT NULL AND created_by_task_id = ? AND status = 'draft'`
+        )
+        .all(createdByTaskId) as Array<{ id: string }>;
+      const result = this.db
+        .prepare(
+          `UPDATE space_tasks SET status = 'open', updated_at = ? WHERE space_id IS NOT NULL AND created_by_task_id = ? AND status = 'draft'`
+        )
+        .run(Date.now(), createdByTaskId);
       for (const row of rows) this.upsertTaskSearchRow(row.id);
-      this.reactiveDb?.notifyChange('space_tasks');
-    }
-    return result.changes;
+      return result.changes;
+    }, 'immediate')();
+    if (promoted > 0) this.reactiveDb?.notifyChange('space_tasks');
+    return promoted;
   }
 
   listActive(): SpaceTask[] {
@@ -1030,4 +1050,36 @@ function parseRestrictions(raw: unknown): TaskRestriction | null {
   } catch {
     return null;
   }
+}
+
+export const spaceTaskWrites = defineRepositoryOp(
+  'space_tasks.write',
+  'write',
+  SpaceTaskRepository,
+  [
+    'createTask',
+    'updateTask',
+    'casPostApprovalRouting',
+    'deleteTask',
+    'promoteDraftTasksByCreator',
+    'casStatus',
+    'casStatusWithPayload',
+    'clearMissingTaskAgentSession',
+    'clearAllSpawnReservations',
+    'markReconcileCheckedAt',
+  ]
+);
+
+type SpaceTaskWriteMethod = (typeof spaceTaskWrites.methods)[number];
+
+export type WriteSpaceTask = <K extends SpaceTaskWriteMethod>(
+  method: K,
+  ...args: SpaceTaskRepository[K] extends (...args: infer P) => unknown ? P : never
+) => Promise<SpaceTaskRepository[K] extends (...args: never[]) => infer T ? Awaited<T> : never>;
+
+export function spaceTaskWriter(
+  db: BunDatabase,
+  changes?: Pick<ReactiveDatabase, 'notifyChange'>
+): WriteSpaceTask {
+  return (method, ...args) => spaceTaskLaneFor(db, changes).call(spaceTaskWrites, method, ...args);
 }

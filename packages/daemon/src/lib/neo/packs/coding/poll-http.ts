@@ -9,7 +9,7 @@ type Subject = Parameters<CodingPollFactsRepository['read']>[0];
 type Snapshot = ReturnType<CodingPollFactsRepository['read']>;
 type Observation = Parameters<CodingPollFactsRepository['record']>[1];
 function readSnapshot(facts: CodingPollFactsRepository, subject: Subject, now: () => number) {
-  return facts.read(subject, now(), Infinity);
+  return facts.readCurrent(subject, now(), Infinity);
 }
 function cachedResponse(saved: Snapshot, cycle: string): Response | null {
   const page = saved.page;
@@ -38,7 +38,7 @@ async function requestPage(
     const response = await facts.acquire(subject, validator, () => request(boundValidator));
     return { response, validator: boundValidator };
   } catch (error) {
-    facts.record(subject, { reason: 'failed' }, now(), saved.observationRevision);
+    await facts.observeCurrent(subject, { reason: 'failed' }, now(), saved.observationRevision);
     throw error;
   }
 }
@@ -72,16 +72,39 @@ async function observePage(
       const next = response.headers.get('link')?.match(/<([^>]+)>;\s*rel="next"/)?.[1] ?? null;
       observation = { value, etag: response.headers.get('etag'), next, http };
     } catch {
-      facts.record(subject, { reason: 'partial' }, now(), saved.observationRevision);
+      await facts.observeCurrent(subject, { reason: 'partial' }, now(), saved.observationRevision);
       throw new Error('GitHub polling page is incomplete or invalid JSON');
     }
   }
-  if (!facts.record(subject, observation, now(), saved.observationRevision)) {
-    const current = cachedResponse(readSnapshot(facts, subject, now), cycle);
+  const recorded = await facts.observeCurrent(
+    subject,
+    observation,
+    now(),
+    saved.observationRevision
+  );
+  if (!recorded.accepted) {
+    const current = cachedResponse(recorded.facts, cycle);
     if (current) return current;
     throw new Error('GitHub polling observation superseded');
   }
   return response;
+}
+
+async function collectObservation(
+  facts: CodingPollFactsRepository,
+  subject: Subject,
+  cycle: string,
+  validator: string | null,
+  request: (validator: string | null) => Promise<Response>,
+  saved: Snapshot,
+  cached: Response | null,
+  now: () => number
+) {
+  if (cached) return cached;
+  return facts.acquireObservation(subject, validator, async () => {
+    const requested = await requestPage(facts, subject, validator, request, saved, null, now);
+    return observePage(facts, subject, cycle, saved, null, requested, now);
+  });
 }
 
 export const collectPollHttp = (superpipe({})('coding-ledger-collect-http-page') as PipelineAPI)
@@ -89,13 +112,8 @@ export const collectPollHttp = (superpipe({})('coding-ledger-collect-http-page')
   .pipe(readSnapshot, ['facts', 'subject', 'now'], 'saved')
   .pipe(cachedResponse, ['saved', 'cycle'], 'cached')
   .pipe(
-    requestPage,
-    ['facts', 'subject', 'validator', 'request', 'saved', 'cached', 'now'],
-    'requested'
-  )
-  .pipe(
-    observePage,
-    ['facts', 'subject', 'cycle', 'saved', 'cached', 'requested', 'now'],
+    collectObservation,
+    ['facts', 'subject', 'cycle', 'validator', 'request', 'saved', 'cached', 'now'],
     'response'
   )
   .endAsync('response') as (

@@ -66,8 +66,11 @@ describe('session.runtimeSettings.update native boundary', () => {
       pending: false,
     };
     const restart = vi.fn(async () => {});
+    const applyThinkingLevel = vi.fn(async () => {});
     const blindWrite = vi.fn();
-    const cas = vi.fn(repo.casSessionRuntimeSettings.bind(repo));
+    const cas = vi.fn(async (...args: Parameters<typeof repo.casSessionRuntimeSettings>) =>
+      repo.casSessionRuntimeSettings(...args)
+    );
     const capture = vi.fn(repo.captureSessionRuntimeSettings.bind(repo));
     const publish = vi.fn(async () => {});
     const ctx = {
@@ -94,6 +97,10 @@ describe('session.runtimeSettings.update native boundary', () => {
       getSessionData: () => session,
       getProcessingState: () => ({ status: state.status }),
       isQueryActiveOrStarting: () => !!state.query || !!state.starting,
+      get queryObject() {
+        return state.query;
+      },
+      applyThinkingLevel,
     } as unknown as AgentSession;
     let owner: AgentSession | null = native;
     const operations = createSessionRuntimeSettingsOperations({
@@ -114,6 +121,7 @@ describe('session.runtimeSettings.update native boundary', () => {
     return {
       state,
       session,
+      applyThinkingLevel,
       cas,
       capture,
       restart,
@@ -132,15 +140,17 @@ describe('session.runtimeSettings.update native boundary', () => {
 
   const PATCHES = [{ model: 'new-model' }, { provider: 'acp' }, { thinkingLevel: 'think16k' }];
   for (const patch of PATCHES) {
-    test.each([
-      'processing',
-      'queued',
-      'waiting_for_input',
-      'starting',
-      'query',
-      'preparing',
-      'pending',
-    ])(
+    test.each(
+      [
+        'processing',
+        'queued',
+        'waiting_for_input',
+        'starting',
+        'query',
+        'preparing',
+        'pending',
+      ].filter((busy) => !(busy === 'query' && 'thinkingLevel' in patch))
+    )(
       `refuses %s for ${Object.keys(patch)[0]} with unchanged real storage and native config`,
       async (busy) => {
         const f = fixture();
@@ -159,6 +169,20 @@ describe('session.runtimeSettings.update native boundary', () => {
       }
     );
   }
+
+  test('applies a thinking-only change to an idle session whose query is still running', async () => {
+    const f = fixture();
+    f.state.query = {};
+
+    expect(await f.invoke({ thinkingLevel: 'think16k' })).toMatchObject({ ok: true });
+    expect(f.session.config.thinkingLevel).toBe('think16k');
+    expect(f.applyThinkingLevel).toHaveBeenCalledTimes(1);
+    expect(f.restart).not.toHaveBeenCalled();
+    expect(await f.invoke({ model: 'new-model' })).toMatchObject({
+      ok: false,
+      reason: 'session_busy',
+    });
+  });
 
   test.each(['query', 'pending', 'preparing', 'replacement', 'archive-revival', 'generation'])(
     'rejects %s arising during actual native validation using the original capture',

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
+import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
 import { createNeoIntakeOperation, neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';

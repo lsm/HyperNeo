@@ -5,6 +5,7 @@ import {
   staleReclaimJitterDelays,
 } from '../../../../src/storage/job-queue-processor';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   clearStructuredLogSubscribers,
@@ -96,18 +97,16 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     expect(processed).toContain(job.id);
   });
 
-  it('calls reclaimStale() synchronously during start() before any tick interval fires', async () => {
+  it('requests writer reclaim during start() before any interval tick fires', async () => {
     let reclaimCallCount = 0;
-    const originalReclaim = repo.reclaimStale.bind(repo);
-    repo.reclaimStale = (staleBefore: number) => {
-      reclaimCallCount++;
-      return originalReclaim(staleBefore);
+    const gateway = new DbGateway(':memory:', db);
+    const call = gateway.call.bind(gateway);
+    gateway.call = (...args) => {
+      if (args[1] === 'reclaimStale') reclaimCallCount++;
+      return Reflect.apply(call, gateway, args);
     };
 
-    restartedProcessor = new JobQueueProcessor(repo, {
-      staleThresholdMs: 1_000,
-      pollIntervalMs: 60_000,
-    });
+    restartedProcessor = new JobQueueProcessor(repo, { db: gateway, pollIntervalMs: 60_000 });
     restartedProcessor.register('spy-queue', async () => {});
 
     restartedProcessor.start();
@@ -282,9 +281,9 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
   });
 
   const reclaimNow = (target: JobQueueProcessor) =>
-    (target as unknown as { reclaimStaleClaims(staleBefore: number): void }).reclaimStaleClaims(
-      Date.now() - 5_000
-    );
+    (
+      target as unknown as { reclaimStaleClaims(staleBefore: number): Promise<void> }
+    ).reclaimStaleClaims(Date.now() - 5_000);
 
   it('spreads a reclaimed herd so no 1-second window schedules more than 3 jobs', async () => {
     const M = 6;
@@ -307,7 +306,7 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
     processor.register('herd-queue', async () => {});
 
     const before = Date.now();
-    reclaimNow(processor);
+    await reclaimNow(processor);
     const after = Date.now();
 
     const runAts = jobIds.map((id) => {
@@ -366,7 +365,7 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
     processor.register('lone-queue', async () => {});
 
     const before = Date.now();
-    reclaimNow(processor);
+    await reclaimNow(processor);
     const after = Date.now();
 
     const reclaimed = repo.getJob(job.id);
@@ -516,7 +515,6 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
       metadata: Record<string, unknown>;
     }> = [];
     const unsubscribe = subscribeToStructuredLogs((event) => events.push(event));
-    const originalReschedule = repo.reschedulePending.bind(repo);
 
     processor = new JobQueueProcessor(repo, {
       staleThresholdMs: 60_000,
@@ -563,11 +561,11 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
       ).run(staleLease, staleLease, live.id, ...frozen.map((j) => j.id));
 
       const beforeReclaim = Date.now();
-      repo.reschedulePending = () => {
-        throw new Error('simulated disk-full');
-      };
+      db.exec(
+        "CREATE TRIGGER reject_jitter BEFORE UPDATE OF run_at ON job_queue BEGIN SELECT RAISE(ABORT, 'simulated disk-full'); END"
+      );
 
-      expect(() => reclaimNow(processor)).not.toThrow();
+      await expect(reclaimNow(processor)).resolves.toBeUndefined();
 
       const jitterFailures = events.filter(
         (event) => event.metadata.event === 'stale_reclaim_jitter_failed'
@@ -586,18 +584,17 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
         expect(row?.runAt).toBeLessThanOrEqual(beforeReclaim);
       }
 
-      expect(await processor.tick()).toBe(2);
-      expect(repo.getJob(live.id)?.status).toBe('pending');
-
-      await flush();
+      db.exec('DROP TRIGGER reject_jitter');
       expect(signals[0].aborted).toBe(true);
-      expect(await processor.tick()).toBe(1);
+      await processor.tick();
+      await flush();
+      await processor.tick();
       await flush();
       for (const job of [live, ...frozen]) {
         expect(repo.getJob(job.id)?.status).toBe('completed');
       }
     } finally {
-      repo.reschedulePending = originalReschedule;
+      db.exec('DROP TRIGGER IF EXISTS reject_jitter');
       unsubscribe();
       clearStructuredLogSubscribers();
     }

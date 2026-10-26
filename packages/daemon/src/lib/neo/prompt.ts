@@ -1,4 +1,4 @@
-import { NEO_ROOT_PROMPT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
+import { NEO_ROOT_PROMPT, NEO_ROOT_TURN_END, NEO_FOCUSED_DISCUSSION } from '@hyperneo/prompts';
 import type { NeoPackBrief } from './pack-contract.ts';
 
 function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
@@ -15,5 +15,7 @@ function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
 }
 
 export function neoPrompt(packs: readonly NeoPackBrief[]): string {
-  return [NEO_ROOT_PROMPT, neoPackBriefing(packs), NEO_ROOT_TURN_END].filter(Boolean).join('\n\n');
+  return [NEO_ROOT_PROMPT, neoPackBriefing(packs), NEO_FOCUSED_DISCUSSION, NEO_ROOT_TURN_END]
+    .filter(Boolean)
+    .join('\n\n');
 }

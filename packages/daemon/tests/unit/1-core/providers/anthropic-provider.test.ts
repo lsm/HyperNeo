@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn, jest } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
 import {
   classifyProviderFailure,
@@ -22,6 +22,33 @@ describe('AnthropicProvider', () => {
   afterEach(() => {
     resetProviderFailureStore();
     process.env = originalEnv;
+  });
+
+  it.each(['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])(
+    'launches %s with 1M context while preserving its API model id',
+    (id) => {
+      const models = provider.convertSdkModels([
+        { value: 'default', resolvedModel: id, displayName: id, description: '' },
+        { value: 'opus', resolvedModel: id, displayName: id, description: '' },
+      ]);
+      provider.setModelCache(models);
+      expect(models.every((model) => model.contextWindow === 1_000_000)).toBe(true);
+      expect(models.every((model) => !model.id.includes('[1m]'))).toBe(true);
+      expect(provider.translateModelIdForSdk(id)).toBe(`${id}[1m]`);
+      expect(provider.translateModelIdForSdk('opus')).toBe(`${id}[1m]`);
+      expect(provider.translateModelIdForSdk('default')).toBe(`${id}[1m]`);
+      expect(provider.translateModelIdForSdk(`${id}[1m]`)).toBe(`${id}[1m]`);
+    }
+  );
+
+  it('leaves legacy and unknown context windows unchanged', () => {
+    for (const id of ['claude-haiku-4-5-20251001', 'claude-future-unknown', 'opus']) {
+      expect(provider.translateModelIdForSdk(id)).toBe(id);
+      expect(
+        provider.convertSdkModels([{ value: id, displayName: id, description: '' }])[0]
+          .contextWindow
+      ).toBe(200000);
+    }
   });
 
   describe('basic properties', () => {
@@ -687,7 +714,7 @@ describe('AnthropicProvider', () => {
       expect(converted.find((m) => m.id === 'fable')?.family).toBe('fable');
     });
 
-    it('keeps every row the CLI lists with its own id and label', () => {
+    it('lists each row under its exact model id, keeping the alias and the floating default', () => {
       const sdkModels = [
         {
           value: 'default',
@@ -713,21 +740,91 @@ describe('AnthropicProvider', () => {
           displayName: 'Sonnet 5',
           description: 'Efficient for routine tasks',
         },
+        {
+          value: 'claude-sonnet-5-5',
+          resolvedModel: 'claude-sonnet-5-5',
+          displayName: 'Sonnet 5.5 (pinned)',
+          description: 'Same model as the sonnet alias',
+        },
       ];
 
       const converted = provider.convertSdkModels(sdkModels);
 
-      expect(converted.map((m) => [m.id, m.name, m.family])).toEqual([
-        ['default', 'Default (recommended)', 'haiku'],
-        ['opus[1m]', 'Opus (1M context)', 'opus'],
-        ['sonnet', 'Sonnet 5.5', 'sonnet'],
-        ['claude-sonnet-5', 'Sonnet 5', 'sonnet'],
+      expect(converted.map((m) => [m.id, m.alias, m.name, m.family])).toEqual([
+        ['default', 'default', 'Default (recommended)', 'haiku'],
+        ['claude-opus-5[1m]', 'opus[1m]', 'Opus (1M context)', 'opus'],
+        ['claude-sonnet-5-5', 'sonnet', 'Sonnet 5.5', 'sonnet'],
+        ['claude-sonnet-5', 'claude-sonnet-5', 'Sonnet 5', 'sonnet'],
       ]);
-      expect(converted.map((m) => m.contextWindow)).toEqual([200000, 1_000_000, 200000, 200000]);
+      expect(converted.map((m) => m.contextWindow)).toEqual([
+        1_000_000, 1_000_000, 1_000_000, 200000,
+      ]);
+    });
+
+    it('keeps the alias row when a pinned row for the same model is listed first', () => {
+      const converted = provider.convertSdkModels([
+        {
+          value: 'claude-opus-5-5',
+          resolvedModel: 'claude-opus-5-5',
+          displayName: 'Opus 5.5 (pinned)',
+          description: '',
+        },
+        {
+          value: 'opus',
+          resolvedModel: 'claude-opus-5-5',
+          displayName: 'Opus 5.5',
+          description: '',
+        },
+      ]);
+
+      expect(converted.map((m) => [m.id, m.alias, m.name])).toEqual([
+        ['claude-opus-5-5', 'opus', 'Opus 5.5'],
+      ]);
     });
 
     it('claims the fable SDK alias as Anthropic', () => {
       expect(provider.ownsModel('fable')).toBe(true);
     });
+  });
+});
+
+const coldProbeSetTimeout = setTimeout;
+
+describe('Anthropic cold model discovery', () => {
+  it('accepts the 15-second first SDK handshake observed under Rosetta', async () => {
+    let started = false;
+    let answer: (
+      models: Array<{ value: string; displayName: string; description: string }>
+    ) => void = () => {};
+    jest.useFakeTimers();
+    mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+      query: () => ({
+        interrupt: async () => {},
+        supportedModels: () => {
+          started = true;
+          return new Promise((resolve) => {
+            answer = resolve;
+          });
+        },
+      }),
+    }));
+    try {
+      const provider = new AnthropicProvider({});
+      provider.setCredentials({ type: 'api_key', apiKey: 'synthetic-unit-key' });
+      const response = provider.getModels().then(
+        (models) => ({ models }),
+        (error) => ({ error })
+      );
+      for (let i = 0; i < 100 && !started; i++)
+        await new Promise((resolve) => coldProbeSetTimeout(resolve, 0));
+      expect(started).toBe(true);
+      await jest.advanceTimersByTimeAsync(15000);
+      answer([{ value: 'haiku', displayName: 'Haiku', description: 'Cold SDK' }]);
+      const result = await response;
+      expect(result).not.toHaveProperty('error');
+      expect('models' in result && result.models.map((model) => model.id)).toEqual(['haiku']);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

@@ -1,9 +1,14 @@
 import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test';
+import { vi } from 'vitest';
+import type { GitHubPollCollector } from '../../../../src/lib/github/poll-source.ts';
 import { Database as SqliteDatabase } from '../../../../src/storage/sqlite-compat';
 import { GitHubService } from '../../../../src/lib/github/github-service';
 import { GITHUB_POLL } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import type { Database } from '../../../../src/storage/database';
+import { bindGateway, type DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { githubPollSuccessorWrites } from '../../../../src/storage/repositories/github-poll-successor-write';
+import { githubPollRefreshWrites } from '../../../../src/storage/repositories/github-poll-refresh-write';
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -47,7 +52,7 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-describe('GitHubService — job-queue-driven polling', () => {
+describe('GitHubService — job-queue-driven polling', async () => {
   let registerMock: ReturnType<typeof mock>;
   let enqueueMock: ReturnType<typeof mock>;
   let listJobsMock: ReturnType<typeof mock>;
@@ -71,7 +76,24 @@ describe('GitHubService — job-queue-driven polling', () => {
   }
 
   function makeJobQueue(listOverride?: ReturnType<typeof mock>) {
+    const raw = {} as SqliteDatabase;
+    bindGateway(raw, {
+      call: async (op, method, input) => {
+        if (op === githubPollRefreshWrites) {
+          expect(method).toBe('refresh');
+          const workerRepo = new githubPollRefreshWrites.Repository(raw);
+          workerRepo.listJobs = listOverride ?? listJobsMock;
+          workerRepo.deleteJob = deleteJobMock;
+          workerRepo.enqueue = enqueueMock;
+          return workerRepo.refresh(input as Parameters<typeof workerRepo.refresh>[0]);
+        }
+        expect(op).toBe(githubPollSuccessorWrites);
+        expect(method).toBe('enqueueUniquePending');
+        return enqueueMock(input);
+      },
+    } as unknown as DbGateway);
     return {
+      db: raw,
       enqueue: enqueueMock,
       listJobs: listOverride ?? listJobsMock,
       deleteJob: deleteJobMock,
@@ -94,18 +116,46 @@ describe('GitHubService — job-queue-driven polling', () => {
     });
   }
 
-  it('registers github.poll handler on jobProcessor when start() is called', () => {
+  it('passes both legacy page reads through its configured collector', async () => {
+    const collectPollPage: GitHubPollCollector = mock(async () => Response.json([]));
+    const db = makeDb();
+    const options = {
+      db,
+      internalEventBus: makeDaemonHub(),
+      config: makeConfig(),
+      apiKey: '',
+      githubToken: 'synthetic-transport-only',
+      collectPollPage,
+      getPollingIntervalSeconds: () => 60,
+    };
+    const service = new GitHubService(options);
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('Direct transport refused');
+    });
+    try {
+      await service.start();
+      service.addRepository('synthetic', 'legacy');
+      await service.getPollingService()!.triggerPoll();
+      expect(collectPollPage).toHaveBeenCalledTimes(2);
+    } finally {
+      service.stop();
+      db.getDatabase().close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('registers github.poll handler on jobProcessor when start() is called', async () => {
     const svc = makeService();
-    svc.start();
+    await svc.start();
 
     expect(registerMock).toHaveBeenCalledTimes(1);
     const [queue] = registerMock.mock.calls[0] as [string, unknown];
     expect(queue).toBe(GITHUB_POLL);
   });
 
-  it('enqueues initial github.poll job immediately on start()', () => {
+  it('enqueues initial github.poll job immediately on start()', async () => {
     const svc = makeService();
-    svc.start();
+    await svc.start();
 
     expect(enqueueMock).toHaveBeenCalledTimes(1);
     const [arg] = enqueueMock.mock.calls[0] as [{ queue: string; runAt: number }];
@@ -114,7 +164,7 @@ describe('GitHubService — job-queue-driven polling', () => {
     expect(arg.runAt).toBeLessThanOrEqual(Date.now() + 2000);
   });
 
-  it('skips initial enqueue when a pending job already exists (dedup)', () => {
+  it('skips initial enqueue when a pending job already exists (dedup)', async () => {
     const listWithExisting = mock(() => [makeJob({ status: 'pending' })]);
     const svc = new GitHubService({
       db: makeDb(),
@@ -126,12 +176,12 @@ describe('GitHubService — job-queue-driven polling', () => {
       jobProcessor: makeJobProcessor(),
     });
 
-    svc.start();
+    await svc.start();
 
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
-  it('skips initial enqueue when a processing job already exists (dedup)', () => {
+  it('skips initial enqueue when a processing job already exists (dedup)', async () => {
     const listWithExisting = mock(() => [makeJob({ status: 'processing' })]);
     const svc = new GitHubService({
       db: makeDb(),
@@ -143,12 +193,12 @@ describe('GitHubService — job-queue-driven polling', () => {
       jobProcessor: makeJobProcessor(),
     });
 
-    svc.start();
+    await svc.start();
 
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
-  it('does not register handler or enqueue when jobProcessor is absent', () => {
+  it('does not register handler or enqueue when jobProcessor is absent', async () => {
     const svc = new GitHubService({
       db: makeDb(),
       internalEventBus: makeDaemonHub(),
@@ -157,13 +207,13 @@ describe('GitHubService — job-queue-driven polling', () => {
       githubToken: 'test-github-token',
     });
 
-    svc.start();
+    await svc.start();
 
     expect(registerMock).not.toHaveBeenCalled();
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
-  it('does not register handler or enqueue when polling interval is 0', () => {
+  it('does not register handler or enqueue when polling interval is 0', async () => {
     const svc = new GitHubService({
       db: makeDb(),
       internalEventBus: makeDaemonHub(),
@@ -175,13 +225,13 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds: () => 0,
     });
 
-    svc.start();
+    await svc.start();
 
     expect(registerMock).not.toHaveBeenCalled();
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
-  it('does not register handler or enqueue when githubToken is absent', () => {
+  it('does not register handler or enqueue when githubToken is absent', async () => {
     const svc = new GitHubService({
       db: makeDb(),
       internalEventBus: makeDaemonHub(),
@@ -191,7 +241,7 @@ describe('GitHubService — job-queue-driven polling', () => {
       jobProcessor: makeJobProcessor(),
     });
 
-    svc.start();
+    await svc.start();
 
     expect(registerMock).not.toHaveBeenCalled();
     expect(enqueueMock).not.toHaveBeenCalled();
@@ -214,7 +264,7 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds: () => 60,
     });
 
-    svc.start();
+    await svc.start();
 
     expect(capturedHandler).toBeDefined();
 
@@ -246,9 +296,9 @@ describe('GitHubService — job-queue-driven polling', () => {
     expect(enqueueArg.runAt).toBeGreaterThan(Date.now());
   });
 
-  it('isPolling() returns false after stop(), and isRunning() on pollingService is false', () => {
+  it('isPolling() returns false after stop(), and isRunning() on pollingService is false', async () => {
     const svc = makeService();
-    svc.start();
+    await svc.start();
 
     expect(svc.isPolling()).toBe(true);
     const pollingService = svc.getPollingService()!;
@@ -277,7 +327,7 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds: () => 60,
     });
 
-    svc.start();
+    await svc.start();
 
     const pollingService = svc.getPollingService()!;
     expect(pollingService).toBeDefined();
@@ -321,7 +371,7 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds: () => intervalSeconds,
     });
 
-    svc.start();
+    await svc.start();
     const pollingService = svc.getPollingService()!;
     pollingService.triggerPoll = mock(async () => {
       intervalSeconds = 30;
@@ -335,7 +385,7 @@ describe('GitHubService — job-queue-driven polling', () => {
     expect(arg.runAt).toBeLessThanOrEqual(Date.now() + 31_000);
   });
 
-  it('replaces pending github.poll jobs when rescheduling after an interval change', () => {
+  it('replaces pending github.poll jobs when rescheduling after an interval change', async () => {
     const pendingJob = makeJob({
       id: 'pending-job',
       status: 'pending',
@@ -359,11 +409,11 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds: () => 30,
     });
 
-    svc.start();
+    await svc.start();
     enqueueMock.mockClear();
     deleteJobMock.mockClear();
 
-    svc.refreshPolling({ reschedulePending: true });
+    await svc.refreshPolling({ reschedulePending: true });
 
     expect(deleteJobMock).toHaveBeenCalledWith('pending-job');
     expect(enqueueMock).toHaveBeenCalledTimes(1);
@@ -371,7 +421,7 @@ describe('GitHubService — job-queue-driven polling', () => {
     expect(arg.runAt).toBeLessThanOrEqual(Date.now() + 100);
   });
 
-  it('deletes pending github.poll jobs when polling is disabled', () => {
+  it('deletes pending github.poll jobs when polling is disabled', async () => {
     const pendingJob = makeJob({ id: 'pending-job', status: 'pending' });
     const listWithPending = mock((filter?: { status?: string | string[] }) =>
       filter?.status === 'pending' ? [pendingJob] : []
@@ -388,7 +438,7 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds: () => 0,
     });
 
-    svc.start();
+    await svc.start();
 
     expect(deleteJobMock).toHaveBeenCalledWith('pending-job');
     expect(enqueueMock).not.toHaveBeenCalled();
@@ -412,7 +462,7 @@ describe('GitHubService — job-queue-driven polling', () => {
       getPollingIntervalSeconds: () => intervalSeconds,
     });
 
-    svc.start();
+    await svc.start();
     intervalSeconds = 30;
     enqueueMock.mockClear();
 

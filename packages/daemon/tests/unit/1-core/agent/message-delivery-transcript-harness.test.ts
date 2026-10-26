@@ -1,3 +1,4 @@
+import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { MessageContent, Provider, Session } from '@hyperneo/shared';
@@ -164,6 +165,22 @@ function instrumentDeliveryTranscript(
     transcript.push({ op: 'db:clearTurnEnd', sessionId, uuid: messageUuid });
   };
 
+  const originalWrite = db.writeSDKMessage.bind(db);
+  db.writeSDKMessage = (async (method: string, ...args: unknown[]) => {
+    const result = await (originalWrite as (...args: unknown[]) => Promise<unknown>)(
+      method,
+      ...args
+    );
+    if (method === 'markDeliveryConsumedByUuids')
+      transcript.push({
+        op: 'db:markConsumedBatch',
+        sessionId: args[0] as string,
+        uuids: args[1] as string[],
+        dbIds: result as string[],
+      });
+    return result;
+  }) as Database['writeSDKMessage'];
+
   const dbOriginals = {
     updateMessageStatus: db.updateMessageStatus.bind(db),
     updateMessageTimestamp: db.updateMessageTimestamp.bind(db),
@@ -173,8 +190,8 @@ function instrumentDeliveryTranscript(
     .getDatabase()
     .prepare('SELECT session_id, sdk_uuid FROM sdk_messages WHERE id = ?');
 
-  db.updateMessageStatus = (...args: Parameters<Database['updateMessageStatus']>) => {
-    dbOriginals.updateMessageStatus(...args);
+  db.updateMessageStatus = async (...args: Parameters<Database['updateMessageStatus']>) => {
+    await dbOriginals.updateMessageStatus(...args);
     const [messageIds, newStatus] = args;
     if (newStatus !== 'consumed') return;
     for (const dbId of [...new Set(messageIds)]) {
@@ -191,8 +208,8 @@ function instrumentDeliveryTranscript(
     }
   };
 
-  db.updateMessageTimestamp = (...args: Parameters<Database['updateMessageTimestamp']>) => {
-    dbOriginals.updateMessageTimestamp(...args);
+  db.updateMessageTimestamp = async (...args: Parameters<Database['updateMessageTimestamp']>) => {
+    await dbOriginals.updateMessageTimestamp(...args);
     const [dbId, timestampMs] = args;
     const row = messageRowLookup.get(dbId) as
       | { session_id: string; sdk_uuid: string | null }
@@ -205,6 +222,21 @@ function instrumentDeliveryTranscript(
       dbId,
       at: timestampMs ?? Date.now(),
     });
+  };
+
+  const originalGatewayRun = db.gateway.run.bind(db.gateway);
+  db.gateway.run = <A, R>(operation: DbOp<A, R>, args: A): Promise<R> => {
+    if (operation.name === 'jobs.parkDelivery') {
+      const call = args as {
+        method: string;
+        args: Parameters<JobQueueRepository['requeueParked']>;
+      };
+      if (call.method === 'park') {
+        const [jobId, runAt, claimToken] = call.args;
+        transcript.push({ op: 'job:requeueParked', jobId, runAt, claimToken: claimToken ?? null });
+      }
+    }
+    return originalGatewayRun(operation, args);
   };
 
   const jobOriginals = {
@@ -282,8 +314,10 @@ function instrumentDeliveryTranscript(
       sdkRepo.markDeliveryFailedByUuid = sdkOriginals.markDeliveryFailedByUuid;
       sdkRepo.recordDeliveryTurnEnd = sdkOriginals.recordDeliveryTurnEnd;
       sdkRepo.clearDeliveryTurnEnd = sdkOriginals.clearDeliveryTurnEnd;
+      db.writeSDKMessage = originalWrite;
       db.updateMessageStatus = dbOriginals.updateMessageStatus;
       db.updateMessageTimestamp = dbOriginals.updateMessageTimestamp;
+      db.gateway.run = originalGatewayRun;
       jobRepo.requeue = jobOriginals.requeue;
       jobRepo.requeueParked = jobOriginals.requeueParked;
       jobRepo.isClaimCurrent = jobOriginals.isClaimCurrent;
@@ -311,7 +345,7 @@ async function makeTestSession(
   if (opts?.provider) {
     session.config.provider = opts.provider;
   }
-  db.createSession(session);
+  await db.createSession(session);
   const bus = await createTestInternalEventBus();
   const messageHub = new MessageHub();
   const agentSession = new AgentSession(

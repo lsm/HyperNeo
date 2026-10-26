@@ -30,7 +30,7 @@ const collision = await rpc('neo.todo.edit', { todoId: other.todo?.id, addUrls: 
 const evidence = { askId, duplicate, edited, collision, final: null as unknown, snapshot: null as unknown };
 await writeFile(`${run}/evidence/todo-pr-claims.json`, JSON.stringify(evidence, null, 2));
 if (phase === 'before') { db.close(); throw new Error('Before reproduction recorded; duplicate/edit contract is not yet enforced'); }
-if (duplicate.ok || !duplicate.reason?.includes('claim-original') || !duplicate.reason?.includes('Original fix') || !edited.ok || !edited.todo.check.params.urls?.includes(url) || collision.ok) throw new Error('PR ownership admission failed');
+if (!duplicate.ok || !duplicate.records?.some((record: string) => record.includes('claim-original') && record.includes('Original fix')) || !edited.ok || !edited.todo.check.params.urls?.includes(url) || !collision.ok || !collision.records?.length) throw new Error('PR ownership records missing');
 await rpc('neo.todo.remove', { todoId: other.todo.id, reason: 'Synthetic collision check finished' });
 await writeFile(`${run}/pr.json`, JSON.stringify({ ...pr, state: 'MERGED', mergedAt: new Date().toISOString() }));
 const deadline = Date.now() + 210000;
@@ -43,4 +43,4 @@ evidence.snapshot = await rpc('neo.snapshot', {});
 await writeFile(`${run}/evidence/todo-pr-claims.json`, JSON.stringify(evidence, null, 2));
 db.close();
 if (!evidence.final || !JSON.stringify(evidence.final).includes('#14 merged')) throw new Error('Coding pack did not automatically close the edited todo on merge');
-console.log('PASS: duplicate refused with owner id/title, edit pins the URL, competing edit refused, and coding pack automatically closes the original on merge.');
+console.log('PASS: duplicate recorded with owner id/title, edit pins the URL, competing edit recorded, and coding pack automatically closes the original on merge.');

@@ -19,10 +19,10 @@ model is the primary. The helper adds three models through the shared model
 picker ("Add Neo model"), sets each thinking level, reorders and saves. "Make
 primary" moves a model to the top of the list. The helper checks persisted preferences through real `neo.snapshot` RPC,
 sets the primary's auto-compact to 70% (shown as "70% ≈ …K of …K tokens" from that
-model's catalog window; each model has its own field),
+model's catalog window; each model has its own field; compaction copy says it applies when idle),
 then reloads desktop/mobile pages and checks values, order, usable provider text
-and control bounds. Disabling fallbacks must persist an explicit empty chain
-after reload. Evidence: `evidence/neo-model-settings.json` and desktop/mobile PNGs.
+and control bounds. Clearing saved fallbacks (button "Clear saved fallbacks") must persist an explicit empty chain
+after reload, shown as "No saved fallbacks.". Evidence: `evidence/neo-model-settings.json` and desktop/mobile PNGs.
 Browser and helper-owned daemon/mock close on success or failure.
 
 Focused Settings contracts also cover cross-provider catalog entries, server
@@ -33,8 +33,8 @@ uses synthetic Anthropic models; the former Neo-only execution journey was retir
 fallback preferences no longer override the ordinary session recovery policy. No real account quota or GUI session
 is used. The Settings PR contains no new fallback execution policy.
 
-It also checks 90 resets to an omitted override, the Neo popover links to the new
-page, and ordinary Settings > Models contains no Neo preference controls.
+It also checks 90 resets to an omitted override, the Neo popover lists models
+instead of linking here, and ordinary Settings > Models contains no Neo preference controls.
 
 The auto-compaction percentage control in #8121 keeps its existing preference
 and snapshot API. Its value writes the ordinary per-session setting; verify

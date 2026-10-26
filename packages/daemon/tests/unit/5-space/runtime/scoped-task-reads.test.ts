@@ -18,6 +18,7 @@ import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { fixtureChanges } from '../../helpers/run-db-op';
 
 let db: Database;
 let sessions: SessionRepository;
@@ -75,7 +76,7 @@ test.each([undefined, 'other-space'])(
 );
 
 test('admitTaskOwner passes standalone and absent tasks to any caller', () => {
-  const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  const standalone = createStandaloneTask.run(db, { input: { title: 'Loose' } }, fixtureChanges());
   const caller = member('outsider', 'other-space');
   expect(admitTaskOwner(db, standalone.id, caller, admission)).toEqual({ value: standalone.id });
   expect(admitTaskOwner(db, 'absent', caller, admission)).toEqual({ value: 'absent' });

@@ -436,7 +436,7 @@ export class ProviderService {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
       };
     }
-    return shieldProviderKey(provider.id, sdkConfigToEnvVars(sdkConfig));
+    return shieldProviderKey(provider.id, sdkConfigToEnvVars(sdkConfig), sessionConfig.sessionId);
   }
 
   sessionProcessEnv(session: Session): NodeJS.ProcessEnv {

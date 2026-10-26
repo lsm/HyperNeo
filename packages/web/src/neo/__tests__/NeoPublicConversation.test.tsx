@@ -5,10 +5,14 @@ import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
+import {
+  artifactPreviewStack,
+  artifactPreviewWorkspace,
+  closeArtifactPreview,
+} from '../../lib/artifact-preview-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoPublicConversation, PendingAsk, publicAskText } from '../NeoPublicConversation.tsx';
-import { projectNeoProcessingActivity } from '../processing-activity.ts';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { neoMessageAnchor } from '../reply-context.ts';
 
@@ -76,8 +80,64 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
 
 afterEach(() => {
   cleanup();
+  closeArtifactPreview();
   connectionState.value = initialConnectionState;
   vi.clearAllMocks();
+});
+
+describe('message preview references', () => {
+  const previewContext = {
+    artifactId: 'registered-report',
+    snapshot: 'a'.repeat(64),
+    displayName: 'Synthetic report',
+    state: 'available' as const,
+  };
+  it.each([false, true])('opens an exact available reference from pending: %s', (pending) => {
+    if (pending)
+      render(
+        <PendingAsk
+          ask={{
+            requestId: 'bound',
+            sessionId: root,
+            text: 'About this report',
+            images: [],
+            createdAt: '2026-10-25T12:00:00Z',
+            state: 'sending',
+            previewContext,
+          }}
+        />
+      );
+    else
+      render(<NeoPublicConversation conversation={conversation([ask({ previewContext })], [])} />);
+    const button = screen.getByRole('button', { name: /Preview.*Synthetic report.*aaaaaaaa/ });
+    fireEvent.click(button);
+    expect(artifactPreviewStack.value.at(-1)).toEqual({
+      kind: 'artifact',
+      artifactId: previewContext.artifactId,
+    });
+    fireEvent.click(button);
+    expect(
+      artifactPreviewWorkspace.state.value.files.filter(
+        (file) => file.artifactId === previewContext.artifactId
+      )
+    ).toHaveLength(1);
+  });
+  it('shows an unavailable snapshot without opening a replacement', () => {
+    render(
+      <NeoPublicConversation
+        conversation={conversation(
+          [ask({ previewContext: { ...previewContext, state: 'unavailable' } })],
+          []
+        )}
+      />
+    );
+    const button = screen.getByRole('button', {
+      name: /Preview unavailable.*Synthetic report.*aaaaaaaa/,
+    });
+    expect(button.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(button);
+    expect(artifactPreviewStack.value).toHaveLength(0);
+  });
 });
 
 describe('durable public conversation presentation', () => {
@@ -477,15 +537,26 @@ describe('durable public conversation presentation', () => {
     }
   );
 
+  it('does not insert a transient loading row above retained messages during a refresh', async () => {
+    const { rerender } = render(<NeoPublicConversation conversation={conversation()} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    rerender(<NeoPublicConversation conversation={{ ...conversation(), status: 'loading' }} />);
+    expect(await screen.findByText('Fictional detail')).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+    rerender(
+      <NeoPublicConversation conversation={{ ...conversation([], []), status: 'loading' }} />
+    );
+    expect(screen.getByRole('status').textContent).toContain('Loading saved');
+  });
+
   it.each(['loading', 'unavailable'] as const)(
     'shows %s state while preserving retained rows and honest window limits',
     async (status) => {
       render(
         <NeoPublicConversation conversation={{ ...conversation(), status, hasEarlier: true }} />
       );
-      expect(screen.getByRole('status').textContent).toContain(
-        status === 'loading' ? 'Loading saved' : 'unavailable'
-      );
+      if (status === 'loading') expect(screen.queryByRole('status')).toBeNull();
+      else expect(screen.getByRole('status').textContent).toContain('unavailable');
       expect(screen.getByText('Showing part of your saved conversation.')).toBeTruthy();
       expect(await screen.findByText('Fictional detail')).toBeTruthy();
       if (status === 'unavailable')
@@ -567,64 +638,6 @@ describe('durable public conversation presentation', () => {
       expect(screen.queryByText(/Showing recent conversation/)).toBeNull();
       expect(screen.queryByRole('link', { name: 'Open full history ↗' })).toBeNull();
       expect(screen.queryByText('Showing part of your saved conversation.')).toBeNull();
-    }
-  );
-
-  it.each([
-    [{ status: 'processing', phase: 'thinking' }, 'Neo is working on a reply…'],
-    [{ status: 'rate_limit_cooldown' }, 'Neo is waiting to retry…'],
-    [{ status: 'queued' }, 'Neo is getting ready…'],
-  ] as const)(
-    'preserves anchored public activity for %j without a legacy duplicate',
-    async (state, label) => {
-      connectionState.value = 'connected';
-      const messages = [
-        {
-          type: 'user',
-          uuid: original.messageId,
-          session_id: root,
-          parent_tool_use_id: null,
-          inputKind: 'human',
-          message: { role: 'user', content: 'Private SDK ask text' },
-        },
-      ] as unknown as ChatMessage[];
-      const agentState = { ...state, messageId: original.messageId } as AgentProcessingState;
-      const native = signal<SessionState | null>({
-        sessionInfo: { id: root },
-        agentState,
-        error: null,
-        timestamp: 1,
-        commandsData: { availableCommands: [] },
-      } as unknown as SessionState);
-      const store = {
-        sdkMessages: signal(messages),
-        sessionState: native,
-        agentState: signal(agentState),
-        activeSessionId: signal(root),
-        isRecovering: signal(false),
-        hasMoreMessages: signal(false),
-        error: signal(null),
-        refresh: vi.fn(),
-      } as unknown as SessionStore;
-      expect(
-        projectNeoProcessingActivity(root, root, native.value, agentState, true, false, messages)
-      ).toEqual({ messageId: original.messageId, label });
-      const view = render(
-        <NeoConversation store={store} sessionId={root} publicConversation={conversation()} />
-      );
-      expect(screen.getAllByRole('status')).toHaveLength(1);
-      expect(screen.getByRole('status').textContent).toContain(label);
-      expect(screen.queryByText('Private SDK ask text')).toBeNull();
-      expect(document.getElementById(neoMessageAnchor(root, original.messageId))).toBeTruthy();
-      view.rerender(
-        <NeoConversation store={store} sessionId={root} publicConversation={conversation([], [])} />
-      );
-      expect(screen.getAllByRole('status')).toHaveLength(1);
-      expect(screen.getByRole('status').textContent).toContain(label);
-      await act(() => {
-        native.value = { ...native.value!, agentState: { status: 'idle' } };
-      });
-      expect(screen.queryByRole('status')).toBeNull();
     }
   );
 

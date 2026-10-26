@@ -59,7 +59,9 @@ describe('QueryModeHandler', () => {
     sendStatus: 'deferred' | 'enqueued',
     extra?: { isSynthetic?: boolean; inputKind?: string }
   ): string {
-    return db.saveUserMessage(SESSION_ID, userRow(uuid, text, extra), sendStatus);
+    return db
+      .getSDKMessageRepo()
+      .saveUserMessage(SESSION_ID, userRow(uuid, text, extra), sendStatus);
   }
 
   function rawDb() {
@@ -121,7 +123,7 @@ describe('QueryModeHandler', () => {
         toolCallCount: 0,
       },
     };
-    db.createSession(mockSession);
+    await db.createSession(mockSession);
 
     mockInternalEventBus = {
       publish: mock(async (event: string, payload: { messageIds?: string[]; status?: string }) => {
@@ -438,11 +440,9 @@ describe('QueryModeHandler', () => {
 
     it('rolls the activation back whole when the enqueue fails (no stranded row, no status event)', async () => {
       seedRow('uuid-1', 'one', 'deferred');
-      const jobQueue = db.getJobQueueRepo();
-      const enqueue = jobQueue.enqueue.bind(jobQueue);
-      jobQueue.enqueue = mock(() => {
-        throw new Error('queue unavailable');
-      });
+      db.getDatabase().exec(
+        "CREATE TRIGGER fail_flush_enqueue BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT,'queue unavailable'); END"
+      );
 
       const handler = createHandler();
       const result = await handler.handleQueryTrigger();
@@ -451,7 +451,7 @@ describe('QueryModeHandler', () => {
       expect(sendStatusByUuid('uuid-1')).toBe('deferred');
       expect(deliveryUuids()).toEqual([]);
       expect(statusEvents).toEqual([]);
-      jobQueue.enqueue = enqueue;
+      db.getDatabase().exec('DROP TRIGGER fail_flush_enqueue');
     });
 
     it('enqueues FIFO siblings when a delivery job is already active', async () => {
@@ -488,7 +488,7 @@ describe('QueryModeHandler', () => {
           content: [{ type: 'image', source: { type: 'base64' } }],
         },
       } as unknown as SDKMessage;
-      db.saveUserMessage(SESSION_ID, imageMessage, 'deferred');
+      await db.saveUserMessage(SESSION_ID, imageMessage, 'deferred');
       seedRow('uuid-1', 'one', 'deferred');
       seedRow('uuid-3', 'three', 'deferred');
       const backlog = db.getUserMessagesByStatus(SESSION_ID, 'deferred').messages;

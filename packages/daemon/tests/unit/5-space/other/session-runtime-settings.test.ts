@@ -71,6 +71,7 @@ function makeLiveSession(h: Harness, sessionId: string, status: string): AgentSe
     getSessionData: () => h.sessions.get(sessionId) as Session,
     getProcessingState: () => ({ status }),
     isQueryActiveOrStarting: () => status !== 'idle',
+    applyThinkingLevel: async () => {},
     handleModelSwitch: async (
       model: string,
       provider: string,
@@ -150,7 +151,7 @@ function harness(): Harness {
           }
         : null;
     },
-    commit: (snapshot, patch) => h.commit(snapshot, patch),
+    commit: async (snapshot, patch) => h.commit(snapshot, patch),
     isPreparing: () => false,
     hasPendingWork: () => false,
     notify: async () => {},

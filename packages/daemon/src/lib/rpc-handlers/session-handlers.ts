@@ -1,5 +1,9 @@
+import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
+import { sessionListReads } from '../../storage/repositories/session-list-read.ts';
 import type {
   CreateSessionRequest,
+  GetSessionToolInventoryRequest,
+  GetSessionToolInventoryResponse,
   HyperNeoActionMessage,
   ImageContent,
   ListRuntimeMcpServersRequest,
@@ -16,7 +20,6 @@ import type {
 import {
   composeDraftWhole,
   generateUUID,
-  getThinkingLevelsForModel,
   matchesDraftOrComposition,
   normalizeThinkingLevel,
 } from '@hyperneo/shared';
@@ -99,6 +102,7 @@ export async function detectStrandedProviders(
 }
 
 export interface SessionHandlerDeps {
+  writeToolPreferences?: SessionToolPreferenceWriter;
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Session[];
@@ -192,11 +196,27 @@ export function setupSessionHandlers(
     return { sessionId, session };
   });
 
+  messageHub.onRequest('session.getToolInventory', async (data) => {
+    const { sessionId } = data as GetSessionToolInventoryRequest;
+    if (!sessionId) throw new Error('sessionId is required');
+    const agentSession = await sessionManager.getSessionAsync(
+      sessionId,
+      { startQuery: false },
+      false
+    );
+    if (!agentSession) throw new Error(`Session not found: ${sessionId}`);
+    return (await agentSession.getToolInventory()) satisfies GetSessionToolInventoryResponse;
+  });
+
   messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
     const { sessionId } = data as ListRuntimeMcpServersRequest;
-    const agentSession = await sessionManager.getSessionAsync(sessionId, {
-      startQuery: false,
-    });
+    const agentSession = await sessionManager.getSessionAsync(
+      sessionId,
+      {
+        startQuery: false,
+      },
+      false
+    );
     if (!agentSession) {
       throw new Error(`Session not found: ${sessionId}`);
     }
@@ -260,10 +280,12 @@ export function setupSessionHandlers(
   messageHub.onRequest(
     'session.list',
     async (data: { status?: string; includeArchived?: boolean } | undefined) => {
-      const sessions = sessionManager.listSessions({
-        status: data?.status,
-        includeArchived: data?.includeArchived,
-      });
+      const sessions = await sessionManager
+        .getDatabase()
+        .gateway.call(sessionListReads, 'listSessions', {
+          status: data?.status,
+          includeArchived: data?.includeArchived,
+        });
       return { sessions };
     }
   );
@@ -318,7 +340,14 @@ export function setupSessionHandlers(
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
 
-    const configUpdate = admitUpdateSessionConfig(updates.config);
+    const currentSelection =
+      updates.config?.toolSelection === undefined
+        ? undefined
+        : (
+            agentSessionForUpdate?.getSessionData().config ??
+            sessionManager.getSessionFromDB(targetSessionId)?.config
+          )?.toolSelection;
+    const configUpdate = admitUpdateSessionConfig(updates.config, currentSelection);
     if (configUpdate) {
       updates.config = configUpdate;
     }
@@ -351,6 +380,17 @@ export function setupSessionHandlers(
       }
     }
 
+    if (updates.config && Object.hasOwn(updates.config, 'tools')) {
+      if (!deps?.writeToolPreferences) throw new Error('Tool preference writer unavailable');
+      const tools = updates.config.tools ?? {};
+      const result = await deps.writeToolPreferences(
+        targetSessionId,
+        { kind: 'skills', disabledSkills: tools.disabledSkills ?? [] },
+        tools
+      );
+      if (!result.ok) throw new Error(result.reason);
+      delete updates.config.tools;
+    }
     await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
     return { success: true };
@@ -637,6 +677,15 @@ export function setupSessionHandlers(
     return result;
   });
 
+  messageHub.onRequest('session.model.cancelPending', async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
+    return agentSession.cancelPendingModelSwitch();
+  });
+
   messageHub.onRequest('session.coordinator.switch', async (data) => {
     const { sessionId: targetSessionId, coordinatorMode } = data as {
       sessionId: string;
@@ -726,6 +775,7 @@ export function setupSessionHandlers(
         thinkingLevel,
       },
     });
+    await agentSession.applyThinkingLevel();
 
     return { success: true, thinkingLevel };
   });
@@ -762,7 +812,7 @@ export function setupSessionHandlers(
       let didRefresh = forceRefresh;
 
       if (forceRefresh) {
-        await refreshModels(undefined, { forceRemote: true });
+        await refreshModels(undefined, { forceRemote: true, allowPartial: true });
       }
 
       let availableModels = getAvailableModels('global');
@@ -813,7 +863,17 @@ export function setupSessionHandlers(
         }
       }
 
+      const { getAllProviderFailures } = await import('../providers/provider-failure-store.js');
+      const failures = getAllProviderFailures().filter((failure) =>
+        getProviderRegistry().has(failure.providerId)
+      );
+      const unavailable = new Set(failures.map((failure) => failure.providerId));
       return {
+        unavailableProviders: failures.map(({ providerId, errorKind }) => ({
+          providerId,
+          errorKind,
+          available: false,
+        })),
         models: availableModels.map((m) => ({
           id: m.id,
           display_name: m.name,
@@ -824,8 +884,7 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
-          thinkingLevels: getThinkingLevelsForModel(m.provider, m.thinkingModes, m.effortLevels),
-          available: m.available !== false,
+          available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),
         cached: !didRefresh && availableModels.length > 0,
@@ -843,7 +902,7 @@ export function setupSessionHandlers(
     };
 
     const agentSession = restartQuery
-      ? await sessionManager.getSessionAsync(targetSessionId, { startQuery: false })
+      ? await sessionManager.getSessionAsync(targetSessionId, { startQuery: false }, false)
       : await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
@@ -876,15 +935,19 @@ export function setupSessionHandlers(
     if (!agentSession) {
       throw new Error('Session not found');
     }
-    agentSession.cancelRateLimitRetry();
+    await agentSession.cancelRateLimitRetry();
     return { success: true };
   });
 
   messageHub.onRequest('session.retryNowAfterRateLimit', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId, {
-      startQuery: false,
-    });
+    const agentSession = await sessionManager.getSessionAsync(
+      targetSessionId,
+      {
+        startQuery: false,
+      },
+      false
+    );
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1131,9 +1194,13 @@ export function setupSessionHandlers(
         }
       | undefined;
     try {
-      const current = await sessionManager.getSessionAsync(targetSessionId, {
-        startQuery: false,
-      });
+      const current = await sessionManager.getSessionAsync(
+        targetSessionId,
+        {
+          startQuery: false,
+        },
+        false
+      );
       if (!current) {
         throw new Error(`Session not found: ${targetSessionId}`);
       }
@@ -1154,9 +1221,9 @@ export function setupSessionHandlers(
         };
       }
       await current.restart({
-        beforeStart: () => {
+        beforeStart: async () => {
           if (!identityRollback) return;
-          db.updateSession(targetSessionId, {
+          await db.updateSession(targetSessionId, {
             sdkSessionId: undefined,
             sdkOriginPath: undefined,
           });
@@ -1171,7 +1238,7 @@ export function setupSessionHandlers(
     } catch (err) {
       if (identityRollback) {
         const { session, sdkSessionId, sdkOriginPath } = identityRollback;
-        db.updateSession(targetSessionId, { sdkSessionId, sdkOriginPath });
+        await db.updateSession(targetSessionId, { sdkSessionId, sdkOriginPath });
         session.sdkSessionId = sdkSessionId;
         session.sdkOriginPath = sdkOriginPath;
       }
@@ -1182,7 +1249,7 @@ export function setupSessionHandlers(
         resolved: false,
         error: errorText,
       };
-      db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
+      await db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
       messageHub.event(
         'state.sdkMessages.delta',
         { added: [failedMessage], timestamp: Date.now() },
@@ -1191,7 +1258,7 @@ export function setupSessionHandlers(
       throw new Error(errorText);
     }
 
-    db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
+    await db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
 
     messageHub.event(
       'state.sdkMessages.delta',

@@ -1,148 +1,174 @@
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { handleGitHubPoll } from '../../../../src/lib/job-handlers/github-poll.handler';
 import { GITHUB_POLL } from '../../../../src/lib/job-queue-constants';
-import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
-
-function makeJob(overrides: Partial<Job> = {}): Job {
-  return {
-    id: 'job-1',
-    queue: GITHUB_POLL,
-    status: 'pending',
-    payload: {},
-    result: null,
-    error: null,
-    priority: 0,
-    maxRetries: 3,
-    retryCount: 0,
-    runAt: Date.now() + 60000,
-    createdAt: Date.now(),
-    startedAt: null,
-    completedAt: null,
-    ...overrides,
-  };
-}
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 
 describe('handleGitHubPoll', () => {
+  let mailbox: MailboxTestDb;
   let triggerPollMock: ReturnType<typeof mock>;
-  let enqueueMock: ReturnType<typeof mock>;
-  let listJobsMock: ReturnType<typeof mock>;
 
   beforeEach(() => {
+    mailbox = createMailboxTestDb();
     triggerPollMock = mock(async () => {});
-    enqueueMock = mock(() => makeJob());
-    listJobsMock = mock(() => []);
   });
 
-  function makeDeps(
-    overrides: {
-      intervalMs?: number;
-      pollingService?: ReturnType<typeof mock> | undefined;
-      isRunning?: boolean;
-    } = {}
-  ) {
-    const running = overrides.isRunning ?? true;
+  afterEach(() => mailbox.close());
+
+  function makeDeps(overrides: { intervalMs?: number; missing?: boolean; running?: boolean } = {}) {
     return {
-      pollingService:
-        'pollingService' in overrides
-          ? overrides.pollingService
-          : ({ triggerPoll: triggerPollMock, isRunning: () => running } as never),
-      jobQueue: {
-        enqueue: enqueueMock,
-        listJobs: listJobsMock,
-      } as never,
-      intervalMs: overrides.intervalMs ?? 60000,
+      pollingService: overrides.missing
+        ? undefined
+        : ({
+            triggerPoll: triggerPollMock,
+            isRunning: () => overrides.running ?? true,
+          } as never),
+      jobQueue: mailbox.jobQueue,
+      intervalMs: overrides.intervalMs ?? 60_000,
     };
   }
 
-  it('calls triggerPoll on the polling service', async () => {
-    await handleGitHubPoll(makeDeps());
-    expect(triggerPollMock).toHaveBeenCalledTimes(1);
-  });
+  const pending = () => mailbox.jobQueue.listJobs({ queue: GITHUB_POLL, status: 'pending' });
 
-  it('returns polled: true when triggerPoll succeeds', async () => {
-    const result = await handleGitHubPoll(makeDeps());
-    expect(result.polled).toBe(true);
-  });
-
-  it('returns a nextRunAt at least intervalMs from now', async () => {
+  it('calls triggerPoll and returns its successful result with a durable due time', async () => {
     const before = Date.now();
-    const result = await handleGitHubPoll(makeDeps({ intervalMs: 60000 }));
-    expect(result.nextRunAt).toBeGreaterThanOrEqual(before + 60000);
+    const result = await handleGitHubPoll(makeDeps());
+    expect(triggerPollMock).toHaveBeenCalledTimes(1);
+    expect(result.polled).toBe(true);
+    expect(result.nextRunAt).toBeGreaterThanOrEqual(before + 60_000);
+    expect(pending()).toHaveLength(1);
+    expect(pending()[0].runAt).toBe(result.nextRunAt);
+    expect(pending()[0].payload).toEqual({});
+    expect(pending()[0].retryCount).toBe(0);
   });
 
-  it('enqueues next job when no pending or processing job exists', async () => {
+  it('retains an existing pending successor and its due time', async () => {
+    const existing = mailbox.jobQueue.enqueue({ queue: GITHUB_POLL, payload: {}, runAt: 123 });
     await handleGitHubPoll(makeDeps());
-
-    expect(enqueueMock).toHaveBeenCalledTimes(1);
-    const enqueueArg = (enqueueMock.mock.calls[0] as [{ queue: string; runAt: number }])[0];
-    expect(enqueueArg.queue).toBe(GITHUB_POLL);
-    expect(enqueueArg.runAt).toBeGreaterThan(Date.now());
+    expect(pending()).toHaveLength(1);
+    expect(pending()[0].id).toBe(existing.id);
+    expect(pending()[0].runAt).toBe(123);
   });
 
-  it('skips enqueueing when a pending job already exists (dedup)', async () => {
-    listJobsMock = mock(() => [makeJob({ status: 'pending' })]);
-    const deps = makeDeps();
-    deps.jobQueue.listJobs = listJobsMock as never;
-    deps.jobQueue.enqueue = enqueueMock as never;
-
-    await handleGitHubPoll(deps);
-
-    expect(enqueueMock).not.toHaveBeenCalled();
-  });
-
-  it('does NOT check processing status in dedup — only pending — so self-scheduling always works', async () => {
+  it('self-schedules while the current poll is processing', async () => {
+    const current = mailbox.jobQueue.enqueue({ queue: GITHUB_POLL, payload: {} });
+    mailbox.jobQueue.dequeue(GITHUB_POLL);
     await handleGitHubPoll(makeDeps());
-
-    const listArg = (
-      listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
-    )[0];
-    expect(typeof listArg.status).toBe('string');
-    expect(listArg.status).toBe('pending');
-    expect(listArg.status).not.toContain('processing');
+    expect(mailbox.jobQueue.getJob(current.id)?.status).toBe('processing');
+    expect(pending()).toHaveLength(1);
+    expect(pending()[0].id).not.toBe(current.id);
   });
 
-  it('still schedules next poll when triggerPoll throws (error is caught internally)', async () => {
+  it('deduplicates concurrent successor requests', async () => {
+    await Promise.all([handleGitHubPoll(makeDeps()), handleGitHubPoll(makeDeps())]);
+    expect(triggerPollMock).toHaveBeenCalledTimes(2);
+    expect(pending()).toHaveLength(1);
+  });
+
+  it('still schedules the next poll when triggerPoll throws', async () => {
     triggerPollMock = mock(async () => {
       throw new Error('poll failed');
     });
-    listJobsMock = mock(() => []);
+    expect((await handleGitHubPoll(makeDeps())).polled).toBe(false);
+    expect(pending()).toHaveLength(1);
+  });
 
+  for (const overrides of [{ missing: true }, { running: false }]) {
+    it(`skips polling but retains successor scheduling for ${JSON.stringify(overrides)}`, async () => {
+      expect((await handleGitHubPoll(makeDeps(overrides))).polled).toBe(false);
+      expect(triggerPollMock).not.toHaveBeenCalled();
+      expect(pending()).toHaveLength(1);
+    });
+  }
+
+  it('evaluates an interval callback after polling and keeps it outside transactions', async () => {
+    let interval = 60_000;
+    triggerPollMock = mock(async () => {
+      interval = 10_000;
+    });
     const deps = makeDeps();
-    deps.pollingService = { triggerPoll: triggerPollMock, isRunning: () => true } as never;
-    deps.jobQueue.listJobs = listJobsMock as never;
-    deps.jobQueue.enqueue = enqueueMock as never;
-
-    const result = await handleGitHubPoll(deps);
-    expect(result.polled).toBe(false);
-    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    const before = Date.now();
+    const result = await handleGitHubPoll({
+      ...deps,
+      intervalMs: () => {
+        mailbox.db.exec('BEGIN');
+        mailbox.db.exec('ROLLBACK');
+        return interval;
+      },
+    });
+    expect(result.nextRunAt).toBeGreaterThanOrEqual(before + 10_000);
+    expect(result.nextRunAt).toBeLessThan(before + 60_000);
+    expect(pending()[0].runAt).toBe(result.nextRunAt);
   });
 
-  it('queries listJobs with pending status only and GITHUB_POLL queue', async () => {
-    await handleGitHubPoll(makeDeps());
-
-    expect(listJobsMock).toHaveBeenCalledTimes(1);
-    const listArg = (
-      listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
-    )[0];
-    expect(listArg.queue).toBe(GITHUB_POLL);
-    expect(listArg.status).toBe('pending');
-    expect(listArg.limit).toBe(1);
+  it('does not request a writer when its interval is disabled', async () => {
+    bindGateway(mailbox.db, {
+      call: async () => {
+        throw new Error('unexpected writer');
+      },
+    } as unknown as DbGateway);
+    expect(await handleGitHubPoll(makeDeps({ intervalMs: 0 }))).toEqual({
+      polled: true,
+      nextRunAt: 0,
+    });
+    expect(pending()).toEqual([]);
   });
 
-  it('returns polled: false when pollingService is undefined', async () => {
-    const deps = makeDeps({ pollingService: undefined });
-    const result = await handleGitHubPoll(deps);
-    expect(result.polled).toBe(false);
-    expect(triggerPollMock).not.toHaveBeenCalled();
-    expect(enqueueMock).toHaveBeenCalledTimes(1);
+  it('waits for admission to commit before resolving the poll result', async () => {
+    const inline = new DbGateway(':memory:', mailbox.db);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    bindGateway(mailbox.db, {
+      call: async (...args) => {
+        entered();
+        await gate;
+        return Reflect.apply(inline.call, inline, args);
+      },
+    } as DbGateway);
+    let settled = false;
+    const result = handleGitHubPoll(makeDeps()).then((value) => {
+      settled = true;
+      return value;
+    });
+    await requested;
+    try {
+      expect(settled).toBe(false);
+      expect(pending()).toEqual([]);
+    } finally {
+      release();
+    }
+    const receipt = await result;
+    expect(pending()[0].runAt).toBe(receipt.nextRunAt);
+    expect(pending()).toHaveLength(1);
+    expect(settled).toBe(true);
   });
 
-  it('skips triggerPoll and returns polled: false when pollingService.isRunning() is false', async () => {
-    const deps = makeDeps({ isRunning: false });
-    const result = await handleGitHubPoll(deps);
+  it('rejects an unavailable writer without main-connection replay', async () => {
+    bindGateway(mailbox.db, {
+      call: async () => {
+        throw new Error('writer unavailable');
+      },
+    } as unknown as DbGateway);
+    await expect(handleGitHubPoll(makeDeps())).rejects.toThrow('writer unavailable');
+    expect(pending()).toEqual([]);
+  });
 
-    expect(triggerPollMock).not.toHaveBeenCalled();
-    expect(result.polled).toBe(false);
-    expect(enqueueMock).toHaveBeenCalledTimes(1);
+  it('rolls back insertion when the writer cannot load its receipt', async () => {
+    const getJob = spyOn(JobQueueRepository.prototype, 'getJob').mockImplementation(() => {
+      throw new Error('receipt unavailable');
+    });
+    try {
+      await expect(handleGitHubPoll(makeDeps())).rejects.toThrow('receipt unavailable');
+      expect(pending()).toEqual([]);
+    } finally {
+      getJob.mockRestore();
+    }
   });
 });

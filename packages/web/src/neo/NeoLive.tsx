@@ -1,7 +1,11 @@
+import { resolveNeoCardReply } from './public-conversation.ts';
+import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -11,7 +15,6 @@ import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
-import { NeoActivity } from './NeoActivity.tsx';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
@@ -28,7 +31,7 @@ import {
 import { invokeOperation } from '../lib/operations.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
-import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
+import { useNeoPreviewCandidate } from './useNeoPreviewCandidate.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -37,16 +40,58 @@ import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 import type { NeoQuote } from './neo-intake.ts';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { t } from '../lib/i18n/index.ts';
 import { ArtifactPreviewPanel } from '../components/artifacts/ArtifactPreviewPanel.tsx';
+import {
+  artifactPreviewStack,
+  artifactPreviewWorkspace,
+  closeArtifactPreview,
+  takeArtifactPreviewOpener,
+  type ArtifactPreviewTarget,
+} from '../lib/artifact-preview-store.ts';
+import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
+import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
+
+async function loadNeoAskDetails(askId: string): Promise<NeoAskEntry> {
+  const hub = await connectionManager.getHub();
+  const result = await invokeOperation<
+    { ok: true; entry: NeoAskEntry } | { ok: false; reason: string }
+  >(hub, 'neo.ask.read', { askId });
+  if (!result.ok) throw new Error(result.reason);
+  return result.entry;
+}
 
 export function NeoLive() {
   const neo = useNeo();
   const attachments = useNeoAttachments(neo.sessionId);
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
-  const [scenesOpen, setScenesOpen] = useState(false);
+  const [scenesOpen, setScenesOpenState] = useState(false);
+  const [workReference, setWorkReference] = useState<ArtifactPreviewTarget | null>(null);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [previewSize, setPreviewSize] = useState<number | null>(null);
+  const [previewDesktop, setPreviewDesktop] = useState(
+    () => window.matchMedia('(min-width: 720px)').matches
+  );
+  const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 1440px)').matches);
+  const [cardTarget, setCardTarget] = useState<{ askId: string; questionId: string } | null>(null);
+  const [cardUnavailable, setCardUnavailable] = useState(false);
+  const returnToChat = useRef<{
+    element: HTMLElement;
+    top: number;
+    focus: HTMLElement | null;
+  } | null>(null);
+  useEffect(() => {
+    if (scenesOpen || !returnToChat.current) return;
+    const saved = returnToChat.current;
+    returnToChat.current = null;
+    saved.element.scrollTop = saved.top;
+    saved.focus?.focus({ preventScroll: true });
+    setCardTarget(null);
+    setCardUnavailable(false);
+  }, [scenesOpen]);
   const [chat, setChat] = useState<{ sessionId: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
@@ -57,9 +102,20 @@ export function NeoLive() {
     quote: NeoQuote;
   } | null>(null);
   const quote = quoted?.scope === neo.sessionId ? quoted.quote : undefined;
-  useEffect(() => setQuoted(null), [neo.sessionId]);
+  const [restoredPreview, setRestoredPreview] = useState<{
+    scope: string;
+    reference?: NeoPreviewReference;
+    pinned?: boolean;
+  } | null>(null);
+  const previewContext =
+    restoredPreview?.scope === neo.sessionId ? restoredPreview.reference : undefined;
+  useEffect(() => {
+    setQuoted(null);
+    setRestoredPreview(null);
+  }, [neo.sessionId]);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
+  const editRevision = useSignal(0);
   const acceptedCleanups = useRef(new Map<string, () => Promise<void>>()).current;
   const scroll = useRef<HTMLElement>(null);
   const mainScroll = useRef<HTMLElement>(null);
@@ -67,25 +123,71 @@ export function NeoLive() {
   const shell = useRef<HTMLDivElement>(null);
   const rail = useRef<HTMLDivElement>(null);
   const sceneSheet = useRef<HTMLDivElement>(null);
+  const workScrollTop = useRef(0);
   const nearBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
-  const projects = neo.snapshot?.projects ?? [];
   const view = neo.snapshot;
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
       ? neo.viewPublicConversation
       : undefined;
   const sceneScope = neo.sessionId;
-  const loadedScope = useRef<string | null>(null);
-  if (publicConversation?.status === 'ready') loadedScope.current = sceneScope;
-  const conversationLoaded =
-    loadedScope.current === sceneScope && publicConversation?.status !== 'unavailable';
-  useEffect(() => setChat(null), [sceneScope]);
+  const [history, setHistory] = useState<(NeoAskHistoryPage & { scope: string | null }) | null>(
+    null
+  );
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const older = history?.scope === sceneScope ? history : null;
+  const historyCursor = older ? older.nextCursor : view?.historyCursor;
+  const currentEntries = view?.todoAsks ?? [];
+  const workEntries = [
+    ...currentEntries,
+    ...(older?.entries ?? []).filter(
+      (entry) => !currentEntries.some((current) => current.ask.id === entry.ask.id)
+    ),
+  ];
+  useEffect(() => {
+    setHistory(null);
+    setLoadingHistory(false);
+    setChat(null);
+    setCardTarget(null);
+    setCardUnavailable(false);
+    returnToChat.current = null;
+  }, [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
+  async function loadOlder() {
+    if (!historyCursor || loadingHistory) return;
+    setLoadingHistory(true);
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<NeoAskHistoryPage>>(hub, 'neo.ask.history', {
+        before: historyCursor,
+      });
+      if (currentScope.current !== sceneScope) return;
+      if (!result.ok) throw new Error(result.reason);
+      setHistory({
+        ...result,
+        scope: sceneScope,
+        entries: [...(older?.entries ?? []), ...result.entries],
+      });
+    } catch (cause) {
+      if (currentScope.current === sceneScope)
+        neo.setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (currentScope.current === sceneScope) setLoadingHistory(false);
+    }
+  }
   const replyLabels = new Map(
-    (view?.todoAsks ?? []).flatMap((entry) => [
+    workEntries.flatMap((entry) => [
+      [`ask:${entry.ask.id}`, { label: entry.ask.title, askId: entry.ask.id }] as const,
+      ...(entry.summary?.questionRefs ?? []).map(
+        (question) =>
+          [
+            `question:${question.id}`,
+            { label: entry.ask.title.slice(0, 120), askId: entry.ask.id },
+          ] as const
+      ),
       ...entry.questions.map(
         (question) =>
           [
@@ -98,6 +200,14 @@ export function NeoLive() {
       ),
     ])
   );
+  useEffect(() => {
+    if (!cardTarget) return;
+    const target = resolveNeoCardReply(cardTarget, workEntries);
+    if (target === 'unavailable') {
+      setCardTarget(null);
+      setCardUnavailable(true);
+    } else if (target.questionId !== cardTarget.questionId) setCardTarget(target);
+  }, [view?.todoAsks, history, cardTarget]);
   const sceneGroups = [
     { key: 'attention', label: t('live.group.attention') },
     { key: 'running', label: t('live.group.running') },
@@ -107,14 +217,99 @@ export function NeoLive() {
     return {
       ...group,
       key,
-      entries: neoAskEntriesInOrder(
-        (view?.todoAsks ?? []).filter((entry) => neoAskEntryGroup(entry) === key)
-      ),
+      entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
   const columns = !!publicConversation;
-  const sheet = !!publicConversation && narrow;
+  const previewOpen =
+    artifactPreviewStack.value.length > 0 || artifactPreviewWorkspace.state.value.open;
+  const referenceWork =
+    scenesOpen &&
+    !roomy &&
+    previewDesktop &&
+    workReference?.kind === 'reference' &&
+    workReference === artifactPreviewStack.value.at(-1);
+  const focusPreview = columns && !chat && previewDesktop && previewOpen && !referenceWork;
+  const previewTarget = artifactPreviewStack.value.at(-1);
+  const previewCandidate = useNeoPreviewCandidate(
+    neo.sessionId,
+    !chat && !referenceWork && previewTarget?.kind === 'artifact'
+      ? previewTarget.artifactId
+      : undefined
+  );
+  const framedDraft =
+    !!(draft ?? inputDraft.content).trim() ||
+    !!quote ||
+    attachments.files.length > 0 ||
+    attachments.reading > 0;
+  const pinPreview = (reference = previewContext) =>
+    setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+  const fileIds = attachments.files.map((file) => file.id);
+  const frame = JSON.stringify([quote, fileIds, attachments.reading]);
+  const readVersion = useCallback(() => editRevision.value, [editRevision.value]);
+  const recovery = useNeoDraftReloadRecovery(
+    neo.sessionId,
+    reloadBuffer,
+    () => draft ?? '',
+    (text, reference) => {
+      setRestoredPreview({
+        scope: neo.sessionId!,
+        reference: reference ?? undefined,
+        pinned: true,
+      });
+      writeDraft(text);
+    },
+    readVersion
+  );
+  const recoveryReady = recovery.ready;
+  const priorFrame = useRef({ scope: neo.sessionId, frame });
+  useLayoutEffect(() => {
+    const prior = priorFrame.current;
+    priorFrame.current = { scope: neo.sessionId, frame };
+    if (!recoveryReady && prior.scope === neo.sessionId && prior.frame !== frame)
+      captureDraft(draft ?? '', previewContext);
+  }, [neo.sessionId, frame, recoveryReady]);
+  const draftLoadState = inputDraft.loadState;
+  useLayoutEffect(() => {
+    if (!neo.sessionId || !recoveryReady || restoredPreview?.pinned) return;
+    if (framedDraft) pinPreview();
+    else if (previewCandidate && draftLoadState === 'ready' && previewCandidate !== previewContext)
+      setRestoredPreview({ scope: neo.sessionId, reference: previewCandidate });
+  }, [
+    neo.sessionId,
+    framedDraft,
+    previewCandidate,
+    restoredPreview,
+    draftLoadState,
+    recoveryReady,
+  ]);
+  const expandable = focusPreview && previewTarget?.kind !== 'reference';
+  const expanded = expandable && previewExpanded;
+  const previewMin = roomy ? 32 : 40;
+  const previewMax = roomy ? 46 : 68;
+  const previewWidth = Math.min(previewMax, Math.max(previewMin, previewSize ?? (roomy ? 44 : 56)));
+  useLayoutEffect(() => {
+    if (!previewOpen || !previewDesktop) {
+      setPreviewExpanded(false);
+      setPreviewSize(null);
+    }
+  }, [previewOpen, previewDesktop]);
+  const previewWork = focusPreview && artifactPreviewStack.value.length === 0;
+  const workHidden = focusPreview && (!roomy || expanded) && !previewWork;
+  useLayoutEffect(() => {
+    if (!workHidden && sceneSheet.current) sceneSheet.current.scrollTop = workScrollTop.current;
+  }, [workHidden]);
+  const setScenesOpen = useCallback(
+    (open: boolean) => {
+      setWorkReference(open ? (artifactPreviewStack.value.at(-1) ?? null) : null);
+      if (open && focusPreview && !roomy && artifactPreviewStack.value.at(-1)?.kind === 'artifact')
+        artifactPreviewWorkspace.select(null);
+      setScenesOpenState(open);
+    },
+    [focusPreview, roomy]
+  );
+  const sheet = !!publicConversation && ((narrow && !focusPreview) || referenceWork);
   useNeoSheetSwipe({
     enabled: sheet && !chat,
     open: scenesOpen,
@@ -128,21 +323,51 @@ export function NeoLive() {
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
+  const replyInComposer = (quote: NeoQuote) => {
+    setQuoted({ scope: neo.sessionId!, quote });
+    setScenesOpen(false);
+    scrollToBottom();
+    const input = footer.current?.querySelector('textarea');
+    input?.scrollIntoView({ block: 'nearest' });
+    input?.focus({ preventScroll: true });
+  };
   const liveDraft = useRef(draft);
   liveDraft.current = draft;
+  const livePreview = useRef(previewContext);
+  livePreview.current = previewContext;
   const liveSession = useRef(neo.sessionId);
   liveSession.current = neo.sessionId;
   function writeDraft(text: string) {
     setDraft(text);
     if (currentScope.current === sceneScope) inputDraft.setContent(text);
   }
+  function captureDraft(text: string, reference: NeoPreviewReference | undefined) {
+    editRevision.value += 1;
+    const sessionId = neo.sessionId ?? '';
+    const base = inputDraft.readSavedDraft(sessionId);
+    if (!reloadBuffer.remember(sessionId, text, base, reference ?? null))
+      neo.setError(
+        'This edit could not be backed up for reload. Keep this page open until it is saved.'
+      );
+    writeDraft(text);
+  }
+  function bindPreview(reference?: NeoPreviewReference) {
+    setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+    captureDraft(draft ?? '', reference);
+  }
   useEffect(() => {
     if (sceneScope === null || draft === undefined) return;
     if (inputDraft.isSavedDraft(neo.sessionId ?? '', draft)) setDraft('');
     else inputDraft.setContent(draft);
   }, [sceneScope]);
-  useNeoVoiceRecovery(neo.sessionId, draft ?? '', () => draft ?? '', writeDraft, false);
-  useNeoDraftReloadRecovery(neo.sessionId, reloadBuffer, () => draft ?? '', writeDraft);
+  useNeoVoiceRecovery(
+    neo.sessionId,
+    draft ?? '',
+    () => draft ?? '',
+    writeDraft,
+    false,
+    recoveryReady
+  );
   const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
   const conversationReady =
@@ -154,9 +379,24 @@ export function NeoLive() {
   useLayoutEffect(() => {
     const selectScroll = () => {
       const desktop = window.matchMedia('(min-width: 1120px)').matches;
+      const previewWidth = window.matchMedia('(min-width: 720px)').matches;
+      if (
+        !previewWidth &&
+        artifactPreviewWorkspace.state.value.open &&
+        !artifactPreviewStack.value.length
+      ) {
+        takeArtifactPreviewOpener();
+        setScenesOpenState(true);
+        closeArtifactPreview();
+      }
       setNarrow(!desktop);
+      setPreviewDesktop(previewWidth);
+      setRoomy(window.matchMedia('(min-width: 1440px)').matches);
       const previous = scroll.current;
-      scroll.current = columns && desktop ? rail.current : mainScroll.current;
+      scroll.current =
+        columns && (desktop || (previewWidth && previewOpen && !chat && !referenceWork))
+          ? rail.current
+          : mainScroll.current;
       if (nearBottom.current && scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
       else if (scroll.current && scroll.current !== previous)
@@ -168,7 +408,7 @@ export function NeoLive() {
     selectScroll();
     window.addEventListener('resize', selectScroll);
     return () => window.removeEventListener('resize', selectScroll);
-  }, [columns]);
+  }, [columns, previewOpen, chat, referenceWork]);
 
   const earlierAnchor = useRef<{ key: string; top: number } | null>(null);
   const publicEntryAt = (element: HTMLElement, test: (entry: Element) => boolean) =>
@@ -314,7 +554,8 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}`}
+      style={expandable ? { '--neo-preview-width': `${previewWidth}%` } : undefined}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
     >
       {dragging && (
         <div
@@ -334,10 +575,8 @@ export function NeoLive() {
         connection={connectionState.value}
         onReconnect={() => void connectionManager.reconnect()}
         onRefresh={open}
-        projects={projects}
-        refreshProjects={neo.refresh}
       />
-      <header class="neo-float-dock">
+      <header class="neo-float-dock" inert={expanded} aria-hidden={expanded || undefined}>
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
@@ -392,6 +631,8 @@ export function NeoLive() {
       >
         <div
           ref={rail}
+          inert={expanded}
+          aria-hidden={expanded || undefined}
           class="neo-chat-rail px-5 pt-5 sm:px-8"
           onScroll={(event) => recordScroll(event.currentTarget)}
         >
@@ -434,18 +675,45 @@ export function NeoLive() {
               sessionId={neo.sessionId}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
-              onOpenWork={(anchor) => {
+              onOpenWork={(anchor, cardReply) => {
+                if (cardReply) {
+                  const element = scroll.current ?? mainScroll.current;
+                  if (element && !returnToChat.current)
+                    returnToChat.current = {
+                      element,
+                      top: element.scrollTop,
+                      focus:
+                        document.activeElement instanceof HTMLElement
+                          ? document.activeElement
+                          : null,
+                    };
+                  nearBottom.current = false;
+                  const target = resolveNeoCardReply(cardReply, workEntries);
+                  setCardTarget(target === 'unavailable' ? null : target);
+                  setCardUnavailable(target === 'unavailable');
+                  setChat(null);
+                  setScenesOpen(true);
+                  return;
+                }
                 setChat(null);
                 setScenesOpen(true);
                 requestAnimationFrame(() => {
-                  const owner = (view?.todoAsks ?? []).find(
-                    ({ ask, todos, questions }) =>
+                  const owner = workEntries.find(
+                    ({ ask, todos, questions, summary }) =>
                       anchor === `neo-ref-ask-${ask.id}` ||
                       todos.some((todo) => anchor === `neo-ref-todo-${todo.id}`) ||
-                      questions.some((question) => anchor === `neo-ref-question-${question.id}`)
+                      [...questions, ...(summary?.questionRefs ?? [])].some(
+                        (question) => anchor === `neo-ref-question-${question.id}`
+                      )
                   );
                   const card = owner && document.getElementById(`neo-ref-ask-${owner.ask.id}`);
-                  if (!document.getElementById(anchor))
+                  const question =
+                    owner &&
+                    [...owner.questions, ...(owner.summary?.questionRefs ?? [])].find(
+                      (question) => anchor === `neo-ref-question-${question.id}`
+                    );
+                  if (question) setCardTarget({ askId: owner!.ask.id, questionId: question.id });
+                  else if (!document.getElementById(anchor))
                     card?.querySelector<HTMLButtonElement>('[data-ask-details-toggle]')?.click();
                   requestAnimationFrame(() =>
                     (document.getElementById(anchor) ?? card)?.scrollIntoView({ block: 'center' })
@@ -453,20 +721,6 @@ export function NeoLive() {
                 });
               }}
               onRetryPublic={retryPublicConversation}
-              busy={neoBusyWords(
-                neo.snapshot?.working ?? [],
-                !!(
-                  connected &&
-                  publicConversation &&
-                  conversationLoaded &&
-                  neo.store.agentState.value.status !== 'waiting_for_input' &&
-                  !neo.store.error.value &&
-                  !view?.todoAsks?.some((entry) =>
-                    entry.questions.some((question) => question.state === 'open')
-                  ) &&
-                  neoAwaitingReply(publicConversation.entries)
-                )
-              )}
               pendingAsks={neo.pendingAsks}
               onRetryAsk={(requestId) =>
                 void neo
@@ -490,8 +744,17 @@ export function NeoLive() {
                 }
                 const restored = neo.discardSend(requestId);
                 if (!restored) return;
+                setRestoredPreview(
+                  restored.previewContext
+                    ? {
+                        scope: restored.sessionId,
+                        reference: restored.previewContext,
+                        pinned: true,
+                      }
+                    : null
+                );
                 acceptedCleanups.delete(requestId);
-                writeDraft(restored.text);
+                captureDraft(restored.text, restored.previewContext);
                 setQuoted(
                   restored.quote ? { scope: restored.sessionId, quote: restored.quote } : null
                 );
@@ -516,7 +779,15 @@ export function NeoLive() {
                   return false;
                 }
                 const text = publicAskText(ask.content);
-                writeDraft([liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'));
+                setRestoredPreview(
+                  ask.previewContext
+                    ? { scope: sessionId, reference: ask.previewContext, pinned: true }
+                    : null
+                );
+                captureDraft(
+                  [liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'),
+                  ask.previewContext
+                );
               }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;
@@ -562,8 +833,26 @@ export function NeoLive() {
         </div>
         <div
           ref={sceneSheet}
+          id="neo-preview-work-panel"
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
-          role="region"
+          role={previewWork ? 'tabpanel' : 'region'}
+          hidden={workHidden}
+          onScroll={(event) => {
+            if (!event.currentTarget.hidden) workScrollTop.current = event.currentTarget.scrollTop;
+          }}
+          aria-labelledby={previewWork ? artifactWorkTabId : undefined}
+          tabIndex={previewWork ? 0 : undefined}
+          onKeyDown={(event) => {
+            if (
+              previewWork &&
+              event.key === 'Tab' &&
+              event.shiftKey &&
+              event.target === event.currentTarget
+            ) {
+              event.preventDefault();
+              document.getElementById(artifactWorkTabId)?.focus();
+            }
+          }}
           aria-label={t('live.scenes')}
           aria-hidden={(sheet && !scenesOpen) || chat ? true : undefined}
           inert={(sheet && !scenesOpen) || !!chat}
@@ -580,6 +869,16 @@ export function NeoLive() {
                 <NeoIcon name="close" />
               </button>
             </div>
+          )}
+          {returnToChat.current && (
+            <button type="button" class="neo-float-link" onClick={() => setScenesOpen(false)}>
+              {t('chat.backToChat')}
+            </button>
+          )}
+          {cardUnavailable && (
+            <p role="status" class="mt-3 text-sm text-fg-muted">
+              {t('chat.cardUnavailable')}
+            </p>
           )}
           <NeoGoals sessionId={neo.sessionId} />
           {publicConversation && workCount === 0 && (
@@ -602,26 +901,29 @@ export function NeoLive() {
                   <NeoAskTodos
                     key={entry.ask.id}
                     entry={entry}
+                    focusedQuestion={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
                     onReply={
                       ready
-                        ? (question) => {
-                            setQuoted({
-                              scope: neo.sessionId!,
-                              quote: {
-                                author: 'Neo',
-                                text: neoQuestionText(question),
-                                anchor: `neo-ref-question-${question.id}`,
-                                replyTo: { kind: 'question', id: question.id },
-                              },
-                            });
-                            setScenesOpen(false);
-                            scrollToBottom();
-                            const input = footer.current?.querySelector('textarea');
-                            input?.scrollIntoView({ block: 'nearest' });
-                            input?.focus({ preventScroll: true });
-                          }
+                        ? (question) =>
+                            replyInComposer({
+                              author: 'Neo',
+                              text: neoQuestionText(question),
+                              anchor: `neo-ref-question-${question.id}`,
+                              replyTo: { kind: 'question', id: question.id },
+                            })
+                        : undefined
+                    }
+                    onReplyAsk={
+                      ready
+                        ? () =>
+                            replyInComposer({
+                              author: 'Neo',
+                              text: entry.ask.title,
+                              anchor: `neo-ref-ask-${entry.ask.id}`,
+                              replyTo: { kind: 'ask', id: entry.ask.id },
+                            })
                         : undefined
                     }
                     onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
@@ -633,6 +935,7 @@ export function NeoLive() {
                         })
                       )
                     }
+                    onLoadDetails={loadNeoAskDetails}
                     onOpen={(link) =>
                       link.startsWith('/session/')
                         ? setChat({ sessionId: link.slice('/session/'.length) })
@@ -642,6 +945,15 @@ export function NeoLive() {
                 ))}
               </section>
             )
+          )}
+          {historyCursor && (
+            <Button
+              variant="ghost"
+              disabled={!connected || loadingHistory}
+              onClick={() => void loadOlder()}
+            >
+              {t(loadingHistory ? 'live.loadingOlder' : 'live.showOlder')}
+            </Button>
           )}
         </div>
         {chat && (
@@ -656,6 +968,8 @@ export function NeoLive() {
       </main>
       <footer
         ref={footer}
+        inert={expanded}
+        aria-hidden={expanded || undefined}
         class="neo-composer-dock pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-3 pt-6"
       >
         <div class="neo-composer-rail relative px-3 sm:px-8">
@@ -667,14 +981,12 @@ export function NeoLive() {
           )}
           {ready && neo.sessionId && (
             <NeoComposer
-              activity={
-                <NeoActivity
-                  key={sceneScope}
-                  snapshot={view ?? null}
-                  enabled={connected && conversationReady}
-                />
-              }
               quote={quote}
+              previewContext={previewContext}
+              previewCandidate={previewCandidate}
+              onRebindPreview={() => bindPreview(previewCandidate)}
+              onPreviewCapture={() => bindPreview(previewContext)}
+              onCancelPreview={() => bindPreview()}
               onCancelQuote={() => setQuoted(null)}
               key={neo.sessionId}
               store={neo.store}
@@ -683,26 +995,29 @@ export function NeoLive() {
               onPreferenceSaved={() => void neo.refresh()}
               draft={draft ?? ''}
               onDraft={(text) => {
-                if (
-                  !reloadBuffer.remember(
-                    neo.sessionId ?? '',
-                    text,
-                    inputDraft.readSavedDraft(neo.sessionId ?? '')
-                  )
-                )
-                  neo.setError(
-                    'This edit could not be backed up for reload. Keep this page open until it is saved.'
-                  );
-                writeDraft(text);
+                const framed = text || quote || attachments.files.length || attachments.reading;
+                if (framed) pinPreview();
+                else setRestoredPreview(null);
+                captureDraft(text, framed ? previewContext : undefined);
               }}
-              onTranscript={(text) => writeDraft([draft, text].filter(Boolean).join('\n'))}
+              onTranscript={(text) => {
+                const content = [liveDraft.current, text].filter(Boolean).join('\n');
+                captureDraft(content, livePreview.current);
+              }}
               onError={neo.setError}
               onSend={(input) => {
+                editRevision.value += 1;
+                priorFrame.current.frame = JSON.stringify([quote, [], 0]);
+                const handoff = recovery.handoff().catch((error: unknown) => {
+                  if (currentScope.current === sceneScope)
+                    neo.setError(error instanceof Error ? error.message : String(error));
+                });
                 const submitted = draft ?? '';
                 const sessionId = neo.sessionId ?? '';
                 const captured = reloadBuffer.read(sessionId);
                 const submittedQuote = quoted;
                 setDraft('');
+                setRestoredPreview(null);
                 const cleanup = async () => {
                   if (input.quote)
                     setQuoted((current) => (current === submittedQuote ? null : current));
@@ -713,7 +1028,7 @@ export function NeoLive() {
                   const flight = neo.send(input);
                   const requestId = neo.sendRequestId(input);
                   if (requestId) acceptedCleanups.set(requestId, cleanup);
-                  const receipt = await flight;
+                  const receipt = await (recoveryReady ? flight : flight.finally(() => handoff));
                   if (receipt.ok) {
                     if (requestId) acceptedCleanups.delete(requestId);
                     await cleanup();
@@ -726,7 +1041,36 @@ export function NeoLive() {
         </div>
       </footer>
       <ToastContainer />
-      <ArtifactPreviewPanel />
+      {expandable && !expanded && (
+        <NeoPreviewResize
+          value={previewWidth}
+          min={previewMin}
+          max={previewMax}
+          controls={
+            previewTarget?.kind === 'artifact'
+              ? artifactTabIds(previewTarget.artifactId).panel
+              : 'neo-preview-work-panel'
+          }
+          onChange={setPreviewSize}
+        />
+      )}
+      <ArtifactPreviewPanel
+        fileTabs
+        expansion={
+          expandable ? { expanded, toggle: () => setPreviewExpanded(!expanded) } : undefined
+        }
+        suspended={!!chat || referenceWork}
+        work={
+          columns
+            ? {
+                id: 'neo-preview-work-panel',
+                showTab: !roomy || previewWork || expanded,
+                count: workCount,
+              }
+            : undefined
+        }
+        markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed"
+      />
     </div>
   );
 }

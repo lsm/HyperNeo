@@ -80,7 +80,7 @@ try {
     await pause();
   }
   const resultId = 'proof-recovery';
-  assert(app!.db.saveSDKMessage('synthetic-live', { type: 'result', uuid: resultId, subtype: 'success', result: 'complete' } as SDKMessage));
+  assert(await app!.db.saveSDKMessage('synthetic-live', { type: 'result', uuid: resultId, subtype: 'success', result: 'complete' } as SDKMessage));
   repo.markResultRecoveryIntercepted('synthetic-live', resultId, true);
   repo.markResultInternalCompactionTurn('synthetic-live', resultId);
   const recovery = first.prepare('SELECT m.sdk_message AS original,b.sdk_message AS body FROM sdk_messages m JOIN sdk_message_bodies b USING(seq) WHERE m.sdk_uuid=?').get(resultId) as { original: string; body: string };
@@ -105,10 +105,10 @@ try {
   const action = { type: 'hyperneo_action' as const, uuid: 'projection-action', session_id: 'synthetic-live', action: 'sdk_resume_choice' as const, resolved: false, timestamp: Date.now() };
   const actionId = repo.saveHyperNeoActionMessage('synthetic-live', action);
   first.db.prepare('DELETE FROM task_message_rows WHERE id=?').run(actionId);
-  app!.reactiveDb.db.updateMessageStatus([actionId], 'failed');
+  await app!.reactiveDb.db.updateMessageStatus([actionId], 'failed');
   assert.equal(projection().find((row) => row.id === actionId)?.flags, 80);
   for (let i = 0; i < 100; i++) {
-    assert(app!.db.saveSDKMessage('synthetic-live', { type: 'system', subtype: 'informational', level: 'warn', content: `ordinary ${i}`, uuid: `ordinary-${i}` } as SDKMessage));
+    assert(await app!.db.saveSDKMessage('synthetic-live', { type: 'system', subtype: 'informational', level: 'warn', content: `ordinary ${i}`, uuid: `ordinary-${i}` } as SDKMessage));
     if (i % 10 === 0) await pause();
   }
   const taskFeed = (label: string) => rpc('liveQuery.subscribe', { queryName: 'spaceTaskMessages.byTask', subscriptionId: `projection-${label}`, params: ['proof-task'] }, true);

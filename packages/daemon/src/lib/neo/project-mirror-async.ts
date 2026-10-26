@@ -1,3 +1,10 @@
+import { ownedNeoProjectGroups } from './owned-project-groups.ts';
+import { runtimeWorkerUrl } from '../runtime-worker-url.ts';
+import { getConfig } from '../../config.ts';
+import {
+  forwardSQLiteWorkerLog,
+  type SQLiteWorkerLog,
+} from '../../storage/sqlite-worker-observability.ts';
 import { resolve } from 'node:path';
 import type { Database } from '../../storage/database.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
@@ -6,7 +13,14 @@ import { mirrorNeoWorkspaceProjects } from './project-mirror.ts';
 
 const pending = new Map<string, Promise<boolean>>();
 const createWorker = () =>
-  new Worker(new URL('./project-mirror-worker.ts', import.meta.url).href, { type: 'module' });
+  new Worker(
+    runtimeWorkerUrl(
+      './project-mirror-worker.ts',
+      './daemon/src/lib/neo/project-mirror-worker.ts',
+      import.meta.url
+    ).toString(),
+    { type: 'module' }
+  );
 
 export function mirrorNeoWorkspaceProjectsAsync(
   db: Pick<Database, 'getDbPath' | 'getDatabase'>,
@@ -14,7 +28,9 @@ export function mirrorNeoWorkspaceProjectsAsync(
   spawn: () => Worker = createWorker
 ): Promise<boolean> {
   if (db.getDbPath() === ':memory:')
-    return Promise.resolve(mirrorNeoWorkspaceProjects(db.getDatabase(), groups));
+    return Promise.resolve(
+      mirrorNeoWorkspaceProjects(db.getDatabase(), ownedNeoProjectGroups(db.getDatabase(), groups))
+    );
   const path = resolve(db.getDbPath());
   const run = (pending.get(path) ?? Promise.resolve())
     .catch(() => {})
@@ -34,7 +50,13 @@ export function mirrorNeoWorkspaceProjectsAsync(
           };
           try {
             worker = runLagPhase('neo:project_mirror:worker_start', spawn);
-            worker.onmessage = (event: MessageEvent<{ changed: boolean } | { error: string }>) => {
+            worker.onmessage = (
+              event: MessageEvent<{ changed: boolean } | { error: string } | SQLiteWorkerLog>
+            ) => {
+              if ('log' in event.data) {
+                forwardSQLiteWorkerLog(event.data, 'project-mirror');
+                return;
+              }
               if ('error' in event.data) finish(false, new Error(event.data.error));
               else finish(event.data.changed);
             };
@@ -43,7 +65,12 @@ export function mirrorNeoWorkspaceProjectsAsync(
               () => finish(false, new Error('Project mirror worker timed out')),
               30_000
             );
-            worker.postMessage({ dbPath: path, groups });
+            worker.postMessage({
+              dbPath: path,
+              groups,
+              requestId: crypto.randomUUID(),
+              queryObservability: getConfig().sqlQueryObservability,
+            });
           } catch (error) {
             finish(false, error instanceof Error ? error : new Error(String(error)));
           }

@@ -6,6 +6,7 @@ import {
   neoDraftPayload,
   neoDraftThumbnails,
   requireNeoReceipt,
+  type NeoPendingAsk,
 } from '../neo-intake.ts';
 
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -148,6 +149,111 @@ describe('requireNeoReceipt', () => {
 });
 
 describe('Neo intake submission lifecycle', () => {
+  it('detaches a nested quote target before asynchronous send preparation', async () => {
+    const { client, request } = setup();
+    const quote = {
+      author: 'Neo' as const,
+      text: 'Original quote',
+      anchor: 'source',
+      replyTo: { kind: 'message' as const, id: 'original-message' },
+    };
+    const pending = client.send({ sessionId: 'neo:root', text: 'Reply', quote });
+    quote.replyTo.id = 'different-message';
+    await pending;
+    expect(request.mock.calls[0][1].input.replyTo).toEqual({
+      kind: 'message',
+      id: 'original-message',
+    });
+  });
+
+  it('retries the original nested target after the caller changes it', async () => {
+    const { client, request } = setup();
+    request.mockRejectedValue(new Error('offline'));
+    const quote = {
+      author: 'Neo' as const,
+      text: 'Original quote',
+      anchor: 'source',
+      replyTo: { kind: 'message' as const, id: 'original-message' },
+    };
+    await expect(client.send({ sessionId: 'neo:root', text: 'Reply', quote })).rejects.toThrow(
+      'offline'
+    );
+    const first = structuredClone(request.mock.calls[0][1].input);
+    quote.replyTo.id = 'different-message';
+    await expect(client.retry(first.requestId)).rejects.toThrow('offline');
+    expect(request.mock.calls[1][1].input).toEqual(first);
+  });
+
+  it('isolates pending display snapshots from retained retry payloads', async () => {
+    const { request, getHub } = setup();
+    request.mockRejectedValue(new Error('offline'));
+    let shown: readonly NeoPendingAsk[] = [];
+    const client = createNeoIntakeClient(getHub, (asks) => {
+      shown = asks;
+    });
+    const context = {
+      artifactId: 'original-report',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Original report',
+      state: 'available' as const,
+    };
+    await expect(
+      client.send({
+        sessionId: 'neo:root',
+        text: 'Reply',
+        images: [{ ...image }],
+        quote: {
+          author: 'Neo',
+          text: 'Original quote',
+          anchor: 'source',
+          replyTo: { kind: 'message', id: 'original-message' },
+        },
+        previewContext: context,
+      })
+    ).rejects.toThrow('offline');
+    const first = structuredClone(request.mock.calls[0][1].input);
+    shown[0].quote!.text = 'Changed display quote';
+    shown[0].quote!.replyTo!.id = 'different-message';
+    shown[0].images[0].data = 'Y2hhbmdlZA==';
+    Object.assign(shown[0].previewContext!, { snapshot: 'b'.repeat(64) });
+    await expect(client.retry(first.requestId)).rejects.toThrow('offline');
+    expect(request.mock.calls[1][1].input).toEqual(first);
+  });
+
+  it.each([
+    { kind: 'todo' as const },
+    { id: 'different-message' },
+    { author: 'user' as const },
+    { excerpt: 'Different excerpt' },
+    { replyTo: undefined },
+  ])('gives a changed nested quote target its own request identity: %j', async (change) => {
+    const { client, request } = setup();
+    request.mockRejectedValue(new Error('offline'));
+    const quote = {
+      author: 'Neo' as const,
+      text: 'Original quote',
+      anchor: 'source',
+      replyTo: {
+        kind: 'message' as const,
+        id: 'original-message',
+        author: 'neo' as const,
+        excerpt: 'Original excerpt',
+      },
+    };
+    const draft = { sessionId: 'neo:root', text: 'Reply', quote };
+    await expect(client.send(draft)).rejects.toThrow('offline');
+    const first = request.mock.calls[0][1].input.requestId;
+    const replyTo = 'replyTo' in change ? undefined : { ...quote.replyTo, ...change };
+    await expect(client.send({ ...draft, quote: { ...quote, replyTo } })).rejects.toThrow(
+      'offline'
+    );
+    expect(request.mock.calls[1][1].input.requestId).not.toBe(first);
+    await expect(client.send({ ...draft, quote: { ...quote, replyTo } })).rejects.toThrow(
+      'offline'
+    );
+    expect(request.mock.calls[2][1].input.requestId).toBe(request.mock.calls[1][1].input.requestId);
+  });
+
   it('snapshots quote context and gives different sources different retry identities', async () => {
     const { client, request } = setup();
     request.mockRejectedValue(new Error('offline'));

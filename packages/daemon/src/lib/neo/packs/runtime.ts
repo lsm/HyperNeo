@@ -13,42 +13,63 @@ import { createCodingMergeReader } from './coding/merge-reader.ts';
 import { createCodingAncestryReader } from './coding/ancestry-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './coding/deploy-checks.ts';
 import { createCodingPack } from './coding/pack.ts';
+import { CodingAssignmentsRepository } from './coding/assignments.ts';
+import { createCodingMergeOperation } from './coding/merge-operation.ts';
+import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
+import type { NeoWorkPrReader } from './coding/work-prs.ts';
+import { createCodingResultOperation } from './coding/result-operation.ts';
+import { createCodingAssignmentOperation } from './coding/assign-operation.ts';
+import { invokeOperation } from '../../operations/invoke.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
 import { CodingPrLedgerRepository } from './coding/pr-ledger.ts';
 import { CodingPrSweepRepository } from './coding/pr-sweep.ts';
 import { createCodingQueryReader } from './coding/query-reader.ts';
 import { createCodingRefReader } from './coding/ref-reader.ts';
 import { createCodingWorkPrReader } from './coding/work-reader.ts';
+import { createCodingReviewThreadReader } from './coding/connector-review-thread-reader.ts';
+import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
+import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
+import { createCoreTodoPack } from '../core-todo-checks.ts';
 
 export function createNeoCodingReaders(db: () => Database) {
   const readMerge = createCodingMergeReader(db);
   const readAncestry = createCodingAncestryReader(db);
-  const readDeploys: NeoDeployReader = (urls) =>
+  const readPrs = createCodingWorkPrReader(db);
+  const readDeploys = (urls: readonly string[], heads?: NeoWorkPrReader) =>
     readGithubDeploys(
       urls,
       () =>
         readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons),
       undefined,
       readMerge,
-      readAncestry
+      readAncestry,
+      heads
     );
   return {
-    readPrs: createCodingWorkPrReader(db),
+    readPrState: createCodingPrStateReader(db),
+    readConnectorPr: createCodingConnectorPrReader(db),
+    readReviewThreads: createCodingReviewThreadReader(db),
+    readPrs,
     readBranchPrs: createCodingBranchPrReader(db),
     readRefStates: createCodingRefReader(() => new CodingPrLedgerRepository(db()).refFacts),
     listGithub: createCodingQueryReader(db),
     readDeploys,
+    readDeliveryDeploys: ((urls) => readDeploys(urls, readPrs)) as NeoDeployReader,
   };
 }
 
 export function createNeoBuiltinPacks(
   db: Database,
-  deps: Omit<Parameters<typeof createCodingPack>[0], 'prLedger' | 'prSweep' | 'prEvents'>
+  deps: Omit<
+    Parameters<typeof createCodingPack>[0],
+    'prLedger' | 'prSweep' | 'prEvents' | 'database'
+  >
 ) {
   return {
     coding: createCodingPack({
       ...deps,
+      database: () => db,
       prLedger: new CodingPrLedgerRepository(db),
       prSweep: new CodingPrSweepRepository(db),
       prEvents: new CodingPrEventRepository(db),
@@ -78,13 +99,53 @@ export function createNeoService(...args: NeoServiceArgs) {
         },
         projectRepos: () => configured.repo.allRepositories(),
       });
+      coding.operations = [
+        ...(coding.operations ?? []),
+        createCodingMergeOperation({
+          db: db.getDatabase(),
+          ledger: new CodingPrLedgerRepository(db.getDatabase()),
+          todos: todoPrs,
+          review: coding.review,
+          prepareMerge: coding.prepareMerge,
+        }),
+        createCodingAssignmentOperation({
+          db: db.getDatabase(),
+          ledger: new CodingPrLedgerRepository(db.getDatabase()),
+          todos: todoPrs,
+          review: coding.review,
+          invoke: (name, input, caller) =>
+            invokeOperation(core.sessions.getOperationRegistry(), name, input, caller),
+        }),
+        createCodingSmokeOperation(
+          todoPrs.deliveryFacts,
+          new CodingAssignmentsRepository(db.getDatabase()),
+          (urls) => configured.readDeliveryDeploys(urls)
+        ),
+        createCodingResultOperation(
+          new CodingAssignmentsRepository(db.getDatabase()),
+          new CodingPrLedgerRepository(db.getDatabase())
+        ),
+      ];
       coding.sessionLinks = async (ref) => {
         const localId = localCodingSessionId(ref);
         const branch = neoWorkBranch(localId ? db.getSession(localId) : null);
         return branch ? configured.readBranchPrs(branch) : [];
       };
       return {
-        packs: [coding, lifeAdmin],
+        packs: [
+          coding,
+          lifeAdmin,
+          createCoreTodoPack(db.getDatabase(), async (repo, sha, build) => {
+            const fact = await new CodingPrLedgerRepository(db.getDatabase()).ancestryFacts.refresh(
+              {
+                repo,
+                baseOid: sha,
+                headOid: build,
+              }
+            );
+            return fact.ancestry.status === 'known' && fact.ancestry.contains;
+          }),
+        ],
         defaults: NEO_DEFAULT_PACKS,
         operations: createNeoProjectTreeOperations(core.repo, (refs) =>
           configured.readRefStates(refs)

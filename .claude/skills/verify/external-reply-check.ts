@@ -127,7 +127,7 @@ try {
   const opened = await rpc('neo.open', {});
   const neo = String(opened.sessionId);
   assert(neo.startsWith('neo:'), JSON.stringify(opened));
-  const line = `Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send ${neo} "<text>" (not SendMessage). Keep working after you send.`;
+  const line = `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${neo} --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.`;
   const ref = { adapter: 'claude-code', id: peer.sessionId };
   const seed = new Database(join(data, 'daemon.db'));
   try {
@@ -178,7 +178,7 @@ try {
   assert(!received[2].includes('hyperneo send'));
   const reply = spawnSync(
     process.execPath,
-    ['packages/cli/main.ts', 'send', neo, 'Mid-work progress from the peer.'],
+    ['packages/cli/main.ts', 'send', neo, '--kind', 'blocked', 'Blocked: synthetic peer needs a decision.'],
     {
       cwd: root,
       env: {
@@ -193,26 +193,30 @@ try {
   assert.equal(JSON.parse(reply.stdout).kind, 'accepted');
   const db = new Database(join(data, 'daemon.db'), { readonly: true });
   let persisted = false;
+  let structured = false;
   try {
     for (let i = 0; i < 40; i++) {
       persisted = !!db
         .prepare(
           "SELECT 1 FROM sdk_messages WHERE session_id = ? AND message_type = 'user' AND sdk_message LIKE ? AND sdk_message LIKE ? LIMIT 1"
         )
-        .get(neo, '%Mid-work progress from the peer.%', `%claude-code:${peer.sessionId}%`);
+        .get(neo, '%Blocked: synthetic peer needs a decision.%', `%claude-code:${peer.sessionId}%`);
       if (persisted) break;
       await pause();
     }
+    structured = !!db.prepare("SELECT 1 FROM sdk_messages WHERE session_id = ? AND json_extract(sdk_message, '$.workerReportKind') = 'blocked' LIMIT 1").get(neo);
   } finally {
     db.close();
   }
-  assert(persisted, 'CLI progress did not reach Neo transcript');
+  assert(persisted, 'CLI blocker did not reach Neo transcript');
+  assert(structured, 'CLI blocker lost its structured report kind');
   const evidence = {
     neo,
     ref,
     received,
     reply: JSON.parse(reply.stdout),
     persisted,
+    structured,
     transport: 'real daemon RPC and Claude inbox socket; synthetic peer, no model or GUI',
   };
   writeFileSync(join(run, 'observed.json'), JSON.stringify(evidence, null, 2));

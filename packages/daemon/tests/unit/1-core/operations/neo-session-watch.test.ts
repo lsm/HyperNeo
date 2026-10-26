@@ -357,7 +357,7 @@ describe('getLatestSDKMessagesByType', () => {
   test('returns the newest rows of one subtype, oldest first', async () => {
     const db = await createTestDb();
     try {
-      db.createSession(createTestSession('neo:root'));
+      await db.createSession(createTestSession('neo:root'));
       const repo = db.getSDKMessageRepo();
       for (const id of ['g1', 'g2', 'g3'])
         repo.saveSDKMessage('neo:root', {
@@ -378,7 +378,7 @@ describe('getLatestSDKMessagesByType', () => {
   test('seeks the subtype instead of reading every system row of the session', async () => {
     const db = await createTestDb();
     try {
-      db.createSession(createTestSession('neo:root'));
+      await db.createSession(createTestSession('neo:root'));
       const repo = db.getSDKMessageRepo();
       for (let i = 0; i < 3000; i++)
         repo.saveSDKMessage('neo:root', {
@@ -433,7 +433,7 @@ describe('refreshDriverWork', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession('neo:root'));
+    await db.createSession(createTestSession('neo:root'));
     events.length = 0;
     listed = [];
     unreachable = [];
@@ -471,12 +471,12 @@ describe('refreshDriverWork', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
-    db.createSession(createTestSession('neo:inbox'));
+    await db.createSession(createTestSession('neo:inbox'));
     service.repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
   });
-  afterEach(() => {
-    service.dispose();
-    db.close();
+  afterEach(async () => {
+    await service.dispose();
+    await db.close();
   });
 
   test('keeps what it saw when a listing comes back partial', async () => {
@@ -601,7 +601,7 @@ describe('refreshDriverWork', () => {
         },
         () => clock
       );
-      service.dispose();
+      await service.dispose();
       const saved = db.getSDKMessagesByType('neo:root', 'system', 'session_notices');
       events.length = 0;
       await service.refreshDriverWork();
@@ -622,9 +622,11 @@ describe('refreshDriverWork', () => {
         },
         () => clock
       );
-      const save = spyOn(db.getSDKMessageRepo(), 'saveSDKMessage').mockReturnValue(false);
+      db.getDatabase().exec(
+        "CREATE TRIGGER fail_notice BEFORE INSERT ON sdk_messages WHEN NEW.message_subtype='session_notices' BEGIN SELECT RAISE(ABORT,'synthetic notice fault'); END"
+      );
       await service.refreshDriverWork();
-      save.mockRestore();
+      db.getDatabase().exec('DROP TRIGGER fail_notice');
       expect(events.filter(([name]) => name === 'neo.session.notices')).toEqual([]);
       expect(service.sessionNoticeGroups).toEqual([]);
     } finally {
@@ -638,7 +640,7 @@ describe('refreshDriverWork', () => {
     try {
       listed = [work({ lastActivityAt: clock - 1_000 })];
       await service.refreshDriverWork();
-      service.dispose();
+      await service.dispose();
       clock += RUN_MS;
       listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
       status = { status: 'failed', lastActivityAt: clock - 1_000 };
@@ -658,7 +660,7 @@ describe('refreshDriverWork', () => {
         expect(announced.filter((name) => name === 'neo.session.notice')).toHaveLength(1);
         expect(restarted.sessionNotices).toEqual([expect.objectContaining({ kind: 'failed' })]);
       } finally {
-        restarted.dispose();
+        await restarted.dispose();
       }
     } finally {
       time.mockRestore();
@@ -700,14 +702,14 @@ describe('refreshDriverWork', () => {
       await service.refreshDriverWork();
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([]);
 
-      service.dispose();
+      await service.dispose();
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toHaveLength(1);
       const restarted = createNeoService(
         db,
         {
           getOperationRegistry: () => createOperationRegistry([]),
           updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
-            db.updateSession(id, updates);
+            await db.updateSession(id, updates);
           },
         } as unknown as SessionManager,
         { event: mock(() => {}) } as unknown as MessageHub,
@@ -719,7 +721,7 @@ describe('refreshDriverWork', () => {
           expect.objectContaining({ notices: [expect.objectContaining({ kind: 'failed' })] }),
         ]);
       } finally {
-        restarted.dispose();
+        await restarted.dispose();
       }
     } finally {
       time.mockRestore();
@@ -825,7 +827,7 @@ describe('refreshDriverWork', () => {
         {
           getOperationRegistry: () => createOperationRegistry([]),
           updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
-            db.updateSession(id, updates);
+            await db.updateSession(id, updates);
           },
         } as unknown as SessionManager,
         { event: mock(() => {}) } as unknown as MessageHub,
@@ -835,7 +837,7 @@ describe('refreshDriverWork', () => {
         await restarted.recover();
         expect(restarted.sessionNoticeGroups).toEqual(service.sessionNoticeGroups);
       } finally {
-        restarted.dispose();
+        await restarted.dispose();
       }
     } finally {
       time.mockRestore();

@@ -1,4 +1,8 @@
-import { SessionEventWriter } from './lib/external-events/session-event-writer.ts';
+import {
+  GitHubWatchInventory,
+  reportGitHubWatchHealth,
+} from './lib/external-events/github/github-watch-inventory.ts';
+import { CodingPrLedgerRepository } from './lib/neo/packs/coding/pr-ledger.ts';
 import { createSessionScheduleFire } from './lib/scheduler/session-schedule-fire.ts';
 import { createScheduleDelivery } from './lib/scheduler/session-schedule-delivery.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
@@ -8,12 +12,14 @@ import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
+import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
-import { createRequestObserver } from './lib/pairing/origin-host.ts';
+import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
+import { migrateSessionToolSelections } from './storage/repositories/session-tool-selection-migration.ts';
 import { SessionManager } from './lib/session-manager.ts';
 import {
   hasRuntimeWorkerOperations,
@@ -46,7 +52,6 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
-import { isSessionTopicCovered } from './lib/external-events/topic-trie.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
 import { createWebSocketHandlers } from './routes/setup-websocket.ts';
@@ -56,8 +61,11 @@ import {
   ExternalEventStore,
   routeExternalEventPublisher,
   SessionExternalEventStore,
+  ingestSessionEvent,
 } from './lib/external-events/index.ts';
 import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
+import { readLatestSessionPrState } from './lib/external-events/session-external-event-store.ts';
+import { replaySessionTerminals } from './lib/external-events/session-terminal-replay.ts';
 import {
   routeSessionExternalEvent,
   type SessionEventRouteDeps,
@@ -140,7 +148,11 @@ import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
 import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
-import { JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
+import {
+  cleanupJobsInBatches,
+  JobQueueRepository,
+} from './storage/repositories/job-queue-repository.ts';
+import { purgeWorkFeedSessions } from './storage/work-feed.ts';
 import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler.ts';
 import {
@@ -160,6 +172,7 @@ import {
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
 import { registerMailboxJobs } from './lib/mailbox/registration.ts';
+import { boundDeliveryContent } from './lib/handoffs/bound-delivery.ts';
 import { resolveMailboxSession } from './lib/mailbox/session-lookup.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
@@ -183,7 +196,7 @@ import {
   seedDefaultMcpEntries,
 } from './lib/mcp/index.ts';
 import { FileIndex } from './lib/file-index.ts';
-import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
+import { Logger, installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
 import { EvolutionLogEvidenceService } from './lib/evolution/log-evidence-service.ts';
@@ -197,6 +210,8 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
+
+const mailboxLog = new Logger('mailbox');
 
 interface ReconcilePersistedDiscoveryDeps {
   credentialManager: ProviderCredentialManager;
@@ -351,7 +366,7 @@ export interface DaemonAppContext {
     req: Request,
     remoteAddress: string | null
   ) => Promise<UpgradeIdentity | null>;
-  observeRequest: (req: Request) => void;
+  guardRequest: (req: Request) => Response | null;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -397,8 +412,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
-  let sessionEventWriter: SessionEventWriter | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
+  let failedStartupCleanup: (() => Promise<void>) | null = null;
+  let startupAborted = false;
   let eventLoopLagLogStopped = false;
   let stopEventLoopLagLog = (): void => {
     eventLoopLagLogStopped = true;
@@ -474,7 +490,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await db.initialize(reactiveDb);
     if (process.env.NODE_ENV !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
-    const interruptedTurns = db.markRestartInterruptedTurns();
+    const interruptedTurns = await db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
     const earlyLogEvidenceService = new EvolutionLogEvidenceService({
@@ -521,27 +537,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
     const workflowHookRuntimeService = new WorkflowHookRuntimeService();
     const maxConcurrent = parsePositiveInt(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT, 5);
-    sessionEventWriter =
-      db.getDbPath() === ':memory:'
-        ? null
-        : new SessionEventWriter(
-            db.getDbPath(),
-            undefined,
-            undefined,
-            config.sqlQueryObservability
-          );
-    const claimJobs = sessionEventWriter
-      ? (request: Parameters<SessionEventWriter['claimJobs']>[0]) =>
-          sessionEventWriter!.claimJobs(request)
-      : undefined;
     const jobProcessor = new JobQueueProcessor(jobQueue, {
-      claimJobs,
+      db: db.gateway,
       pollIntervalMs: 1000,
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
-      claimJobs,
+      db: db.gateway,
       pollIntervalMs: 1000,
       maxConcurrent: 1,
       staleThresholdMs: 5 * 60 * 1000,
@@ -551,7 +554,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       64
     );
     const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
-      claimJobs,
+      db: db.gateway,
       pollIntervalMs: 1000,
       maxConcurrent: messageDeliveryMaxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
@@ -726,7 +729,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupTimer.start('mcp import sweep (.mcp.json)');
     if (process.env.NODE_ENV !== 'test') {
       try {
-        const { results, orphanPruned } = mcpImportService.refreshAll();
+        const { results, orphanPruned } = await mcpImportService.refreshAll();
         const added = results.reduce((s, r) => s + r.added, 0);
         const updated = results.reduce((s, r) => s + r.updated, 0);
         const removed = results.reduce((s, r) => s + r.removed, 0) + orphanPruned;
@@ -741,8 +744,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
-    skillsManager.initializeBuiltins();
+    const skillsManager = new SkillsManager(db.skills, db.appMcpServers, db, jobQueue);
+    await skillsManager.initializeBuiltins();
 
     try {
       startupTimer.start('skill plugin wrappers');
@@ -750,6 +753,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     } catch (err) {
       logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
     }
+
+    startupTimer.start('tool selection migration');
+    migrateSessionToolSelections(db.getDatabase(), {
+      skills: db.skills.findAll(),
+      registry: db.appMcpServers.list(),
+      overrides: db.mcpEnablement.listAll(),
+    });
 
     startupTimer.start('session manager');
     sessionManager = new SessionManager(
@@ -810,6 +820,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       );
     });
 
+    const collectGitHubPollPage = (
+      ...args: Parameters<CodingPollFactsRepository['collectExternalEventPage']>
+    ) =>
+      new CodingPollFactsRepository(
+        db.getDatabase(),
+        getGitHubPollingIntervalSeconds() * 1000
+      ).collectExternalEventPage(...args);
     startupTimer.start('github + external event setup');
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
@@ -841,6 +858,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           apiKey,
           apiKeyType,
           githubToken: process.env.GITHUB_TOKEN,
+          collectPollPage: collectGitHubPollPage,
           jobQueue,
           jobProcessor,
           getPollingIntervalSeconds: getGitHubPollingIntervalSeconds,
@@ -870,18 +888,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const sessionExternalEventService = new ExternalEventService(
       sessionExternalEventStore,
       internalEventBus,
-      sessionEventWriter ? (event) => sessionEventWriter!.ingest(event) : undefined
+      (event) => db.gateway.run(ingestSessionEvent, event)
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    const sessionTopicSources: (() => readonly { topic: string; session?: string | null }[])[] = [];
-    const followedSessionTopics = () =>
-      sessionTopicSources.flatMap((source) => source().map((row) => row.topic));
-    const coveredSessionTopic = (sessionId: string, topic: string) =>
-      isSessionTopicCovered(
-        sessionTopicSources.flatMap((source) => source()),
-        sessionId,
-        topic
-      );
     const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
       db.getDatabase()
     );
@@ -900,13 +909,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         'idle',
       deliver: async (delivery) => {
         const outcome = await mailSessionEvent(db.getJobQueueRepo(), delivery);
-        if (outcome.kind === 'rejected')
-          logError(
-            `[Daemon] External event for session ${delivery.sessionId} was rejected: ${outcome.reason}`
-          );
+        if (outcome.kind === 'rejected') {
+          const reason = `[Daemon] External event for session ${delivery.sessionId} was rejected: ${outcome.reason}`;
+          logError(reason);
+          throw new Error(reason);
+        }
       },
       removeSubscription: (sessionId, topic) => sessionEventSubscriptions.delete(sessionId, topic),
-      isTopicCovered: coveredSessionTopic,
     };
     internalEventBus.subscribe(
       'externalEvent.published',
@@ -916,11 +925,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
     const restartRecoveryDeps: RestartRecoveryDeps = {
-      readEvidence: (sessionId) => db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId),
+      readEvidence: async (sessionId) => {
+        await db.waitForSdkMessageColumns(sessionId);
+        return db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId);
+      },
       hasActiveDelivery: (sessionId, uuid) =>
         db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
-      resend: (sessionId, uuid, enqueueDelivery) => {
-        const reopenedId = db.getSDKMessageRepo().markDeliveryRetryableByUuid(sessionId, uuid);
+      resend: async (sessionId, uuid, enqueueDelivery) => {
+        const reopenedId = await db.writeSDKMessage('markDeliveryRetryableByUuid', sessionId, uuid);
         if (!reopenedId) return false;
         void internalEventBus
           .publish('messages.statusChanged', {
@@ -930,7 +942,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           })
           .catch(() => {});
         if (enqueueDelivery)
-          deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
+          await deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
         return true;
       },
       sendNote: async (sessionId, promptUuid) => {
@@ -945,6 +957,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             message: { role: 'user', content: RESTART_RECOVERY_NOTE },
             parent_tool_use_id: null,
             inputKind: 'system',
+            neoWakeEvent: true,
           },
           jobQueue: db.getJobQueueRepo(),
         });
@@ -970,32 +983,49 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     };
     const extensionManager = new ExternalEventExtensionManager();
+    const replayRecordedTerminals = (subject = '') =>
+      replaySessionTerminals({
+        listSubscriptions: () =>
+          sessionEventSubscriptions
+            .listAll()
+            .filter((subscription) => subscription.topic.toLowerCase().startsWith(subject)),
+        readLatestPrState: (subject) => db.gateway.run(readLatestSessionPrState, subject),
+        publish: (event) => sessionExternalEventService.publish(event),
+      });
+    const watchInventory = new GitHubWatchInventory(db.getDatabase(), sessionEventSubscriptions);
+    let wakePollingConcern = async (_key: string, _text: string): Promise<boolean> => false;
     const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
-        collectPollPage: (...args) =>
-          new CodingPollFactsRepository(
-            db.getDatabase(),
-            getGitHubPollingIntervalSeconds() * 1000
-          ).collectExternalEventPage(...args),
+        collectPollPage: collectGitHubPollPage,
+        replaySessionTerminals: replayRecordedTerminals,
+        recordSessionClosure: async (event) => {
+          const result = await db.gateway.run(ingestSessionEvent, event);
+          if (result.action === 'invalid') throw new Error(result.reason);
+          await replayRecordedTerminals(
+            event.topic.slice(0, event.topic.lastIndexOf('.') + 1).toLowerCase()
+          );
+        },
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,
         autoReconcileWebhooks: true,
-        sessionRepoReferenced: (owner, repo) =>
-          sessionEventSubscriptions.referencesRepo(owner, repo) ||
-          followedSessionTopics().some((topic) =>
-            topic.toLowerCase().startsWith(`github/${owner}/${repo}/`.toLowerCase())
+        sessionWatchRepos: () => watchInventory.list(),
+        sessionRepoReferenced: (owner, repo) => watchInventory.references(owner, repo),
+        reportPollingHealth: (repos, reached, now) =>
+          reportGitHubWatchHealth(
+            new CodingPrLedgerRepository(db.getDatabase()),
+            repos,
+            reached,
+            wakePollingConcern,
+            now
           ),
         subscribedPullRequests: (watched) =>
           pullRequestNumbersOfTopics(
             watched.spaceId === SESSION_EVENT_SCOPE
-              ? [
-                  ...sessionEventSubscriptions.listAll().map((subscription) => subscription.topic),
-                  ...followedSessionTopics(),
-                ]
+              ? sessionEventSubscriptions.listAll().map((subscription) => subscription.topic)
               : [
                   ...spaceSessionEventSubscriptions
                     .listBySpace(watched.spaceId)
@@ -1030,12 +1060,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let lastGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
     internalEventBus.subscribe(
       'settings.updated',
-      (event) => {
+      async (event) => {
         if (event.namespaceId !== 'global') return;
         const nextGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
         if (nextGitHubPollingIntervalSeconds === lastGitHubPollingIntervalSeconds) return;
-        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
-        gitHubService?.refreshPolling({ reschedulePending: true });
         void (async () => {
           await syncGitHubPollingCapability(
             extensionConfigStore,
@@ -1043,6 +1071,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           );
           await githubEventExtension?.refreshPollingInterval();
         })();
+        await gitHubService?.refreshPolling({ reschedulePending: true });
+        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
       },
       { subscriberName: 'github-polling-settings' }
     );
@@ -1080,15 +1110,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     startupTimer.start('rpc handlers + space runtime provision');
-    const rpcHandlers = setupRPCHandlers({
-      purgeClaudeFeed: sessionEventWriter
-        ? (sessionIds) => sessionEventWriter!.purgeClaudeFeed(sessionIds)
-        : undefined,
+    const rpcHandlers = await setupRPCHandlers({
+      purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
       deviceOf: (clientId) => transport.deviceOf(clientId),
       watchSessionRepo: async (owner, repo) =>
         (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
-      followSessionTopics: (source) => sessionTopicSources.push(source),
-      isSessionTopicCovered: coveredSessionTopic,
       messageHub,
       sessionManager,
       authManager,
@@ -1120,12 +1146,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
     const cooldownResumeTimers = db.listRestartCooldownResumes().map(({ sessionId, resumeAt }) => {
       const timer = setTimeout(
-        () => {
-          if (!db.takeRestartCooldownResume(sessionId)) return;
-          void recoverRestartCutTurns([sessionId], restartRecoveryDeps).catch((error) =>
-            logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
-          );
-        },
+        () =>
+          void db
+            .takeRestartCooldownResume(sessionId)
+            .then((taken) =>
+              taken ? recoverRestartCutTurns([sessionId], restartRecoveryDeps) : []
+            )
+            .catch((error) =>
+              logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
+            ),
         Math.max(0, resumeAt - Date.now())
       );
       timer.unref?.();
@@ -1140,6 +1169,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceAgentInactivityWatchdog,
       cancelInactivityWatchdog,
     } = rpcHandlers;
+    wakePollingConcern = rpcHandlers.wakePollingConcern;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
     startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
@@ -1156,7 +1186,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       db: () => db.gateway,
       now: Date.now,
     });
-    const observeRequest = createRequestObserver({
+    const guardRequest = createRequestGuard({
       db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
       exempt: (req) =>
@@ -1166,13 +1196,67 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
     });
 
-    const server = await createHttpWsServer({
+    let server: ServerHandle | undefined;
+    let removeRuntimeDescriptorFile = () => {};
+    let sessionDoor: Awaited<ReturnType<typeof startSessionDoor>> | null = null;
+    let reaperTimer: ReturnType<typeof setInterval> | null = null;
+    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+    let inactivityScan: Promise<void> | null = null;
+    let inactivityShutdownStarted = false;
+    failedStartupCleanup = async () => {
+      startupAborted = true;
+      inactivityShutdownStarted = true;
+      await releaseFailedStartup([
+        () => server?.stop(true),
+        () => removeRuntimeDescriptorFile(),
+        () => sessionDoor?.close(),
+        () => {
+          for (const timer of cooldownResumeTimers) clearTimeout(timer);
+          if (reaperTimer !== null) clearInterval(reaperTimer);
+          if (inactivityWatchdogTimer !== null) clearInterval(inactivityWatchdogTimer);
+        },
+        () => cancelInactivityWatchdog(),
+        () => db.stopSdkMessageColumnsBackfill(),
+        () => clientEventBridge.stop(),
+        () => processWatchdog.stop(),
+        () => jobProcessor.stopPolling(),
+        () => mailboxExpireProcessor.stopPolling(),
+        () => messageDeliveryProcessor.stopPolling(),
+        () => unsubscribeProviderFailureChanges?.(),
+        () => oauthRefreshScheduler.stop(),
+        () => jobProcessor.stop(),
+        () => mailboxExpireProcessor.stop(),
+        () => taskAgentManager?.cleanupAll(),
+        () => sessionManager?.cleanup(),
+        () => messageDeliveryProcessor.stop(),
+        () => messageHub.cleanup(),
+        () => rpcHandlerCleanup(),
+        () => spaceRuntimeService.stop(),
+        () => inactivityScan,
+        () => liveQueries.dispose(),
+        () => gitHubService?.stop(),
+        ...extensionManager
+          .getAll()
+          .map((extension) => () => extensionManager.stopExtension(extension.sourceId)),
+        () =>
+          Promise.allSettled(providerRegistry.getAll().map((provider) => provider.shutdown?.())),
+        () => fileIndex.dispose(),
+        () => {
+          const release = startupLogCaptureCleanup;
+          startupLogCaptureCleanup = null;
+          release?.();
+        },
+      ]);
+      await releaseFailedStartup([() => db.close()]);
+    };
+    server = await createHttpWsServer({
       hostname: config.host,
       port: config.port,
 
       async fetch(req, upgrade, client) {
         const url = new URL(req.url);
-        observeRequest(req);
+        const refused = guardRequest(req);
+        if (refused) return refused;
 
         if (req.method === 'OPTIONS') {
           return new Response(null, {
@@ -1203,6 +1287,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               name: 'HyperNeo Daemon',
               version: BUILD_METADATA.version,
               status: 'running',
+              dataMigration: db.getDataMigrationStatus(),
               protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
               endpoints: {
                 webSocket: '/ws',
@@ -1258,18 +1343,24 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     startupTimer.start('post-bind jobs + background services');
-    const removeRuntimeDescriptorFile =
+    void db.startSdkMessageColumnsBackfill(() => {
+      void stateManager.broadcastSystemChange();
+    });
+    removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     const openMessageSearchMergeGate = (): void => {
+      if (startupAborted) return;
       db.startMessageSearchMerges();
-      db.startSdkMessageBodyCopy();
+      void db.startSdkMessageColumnsBackfill().then((complete) => {
+        if (complete) db.startSdkMessageBodyCopy();
+      });
     };
     void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
       logInfo('[Daemon] Space runtime startup provisioning complete');
     });
     if (gitHubService && shouldEnableGitHub) {
-      gitHubService.start();
+      await gitHubService.start();
       logInfo('[Daemon] GitHub service started');
     }
 
@@ -1279,10 +1370,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
     jobProcessor.register(
       JOB_QUEUE_CLEANUP,
-      createCleanupHandler(
-        jobQueue,
-        sessionEventWriter ? (params) => sessionEventWriter!.cleanupJobs(params) : undefined
-      )
+      createCleanupHandler(jobQueue, (params) => cleanupJobsInBatches(db.gateway, params))
     );
     jobProcessor.register(
       MEMORY_CONSOLIDATION,
@@ -1300,7 +1388,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-      logError,
+      logError: (message) => mailboxLog.error(message),
     });
 
     messageDeliveryProcessor.register(
@@ -1326,11 +1414,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           taskAgentManager?.getRestoredRateLimitRetryAt(sessionId) ?? null,
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
+        prepareContent: (loaded, job) => boundDeliveryContent(db.getDatabase(), job, loaded),
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-        markDeliveryFailed: (sessionId: string, messageUuid: string) =>
-          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid) ??
-          null,
+        markDeliveryFailed: async (sessionId: string, messageUuid: string) =>
+          (await reactiveDb?.db.writeSDKMessage(
+            'markDeliveryFailedByUuid',
+            sessionId,
+            messageUuid
+          )) ?? null,
         publishStatusChanged: (sessionId: string, messageIds: string[]) =>
           internalEventBus.publish('messages.statusChanged', {
             sessionId,
@@ -1348,14 +1440,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);
           if (!payload) return;
-          const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
-          if (!sdkRepo) return;
+          const store = reactiveDb?.db;
+          if (!store) return;
           const session =
             taskAgentManager?.getSubSession(payload.sessionId) ??
             sessionManager?.getSession(payload.sessionId);
           void settleMessageDeliveryDeadLetter(payload, {
             markDeliveryFailedByUuid: (sid, uuid) =>
-              sdkRepo.markDeliveryFailedByUuidInclusive(sid, uuid),
+              store.writeSDKMessage('markDeliveryFailedByUuidInclusive', sid, uuid),
             publishStatusChanged: (sid, messageIds) =>
               internalEventBus.publish('messages.statusChanged', {
                 sessionId: sid,
@@ -1519,7 +1611,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
-    const sessionDoor =
+    sessionDoor =
       process.env.NODE_ENV === 'test' && !process.env.HYPERNEO_DATA_DIR
         ? null
         : await startSessionDoor(() => sessionManager.getOperationRegistry()).catch(
@@ -1533,7 +1625,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo('[Daemon] Process watchdog started');
     }
 
-    let reaperTimer: ReturnType<typeof setInterval> | null = null;
     if (process.env.NODE_ENV !== 'test') {
       const worktreeStartupCleanup = async () => {
         try {
@@ -1564,9 +1655,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       reaperTimer.unref();
     }
 
-    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
-    let inactivityScan: Promise<void> | null = null;
-    let inactivityShutdownStarted = false;
     if (process.env.NODE_ENV !== 'test') {
       const scanInactivityWatchdog = (): Promise<void> => {
         if (inactivityScan !== null) return inactivityScan;
@@ -1608,6 +1696,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return;
       }
       isCleanedUp = true;
+      db.stopSdkMessageColumnsBackfill();
       startupLogCaptureCleanup = null;
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
 
@@ -1713,9 +1802,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           await extensionManager.stopExtension(extension.sourceId);
         }
         logInfo('[Daemon] External event extensions stopped');
-        await sessionEventWriter
-          ?.close()
-          .catch((error) => logError('[Daemon] Session event writer close failed:', error));
 
         const providerRegistry = getProviderRegistry();
         await Promise.allSettled(
@@ -1768,7 +1854,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       server,
       handlePair,
       authenticateUpgrade,
-      observeRequest,
+      guardRequest,
       db,
       messageHub,
       sessionManager,
@@ -1803,12 +1889,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupTimer.finish();
+    await failedStartupCleanup?.();
     stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
     await invalidateInFlightModelLoads();
-    await sessionEventWriter?.close().catch(() => {});
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;
     throw error;

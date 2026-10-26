@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack, NeoTodoJudgement } from '../../../../src/lib/neo/pack-contract.ts';
+import type {
+  NeoPack,
+  NeoTodoCheckResult,
+  NeoTodoJudgement,
+} from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -15,7 +19,7 @@ afterEach(() => {
   for (const close of closing.splice(0).reverse()) close();
 });
 
-function fixture() {
+function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
   const directory = mkdtempSync(join(tmpdir(), 'neo-todo-plan-'));
   closing.push(() => rmSync(directory, { recursive: true, force: true }));
   let db: Database;
@@ -33,6 +37,7 @@ function fixture() {
     todos: {
       schema: () => {},
       check: async (todo: NeoTodo) => {
+        if (legacyResult) return legacyResult;
         const read = facts.get(todo.id);
         return {
           done: read?.state === 'done',
@@ -65,7 +70,7 @@ function fixture() {
     return createNeoTodoRunner({
       store,
       sessions,
-      packs: () => [pack],
+      packs: () => [legacyCheck ? { ...pack, readFacts: undefined, judge: undefined } : pack],
       invoke: async (_caller, name, input) => {
         if (name === 'work.start') {
           starts.push(String(input.message));
@@ -159,6 +164,42 @@ function fixture() {
 }
 
 describe('ordered ask progression from facts', () => {
+  test('failure wins when a legacy check also reports done', async () => {
+    const f = fixture(true, {
+      done: true,
+      failed: 'Observed failure',
+      evidence: 'Conflicting success',
+    });
+    f.add('first', 'doing');
+    await f.runner.checkNow(['first'], (_message, error) => {
+      throw error;
+    });
+    expect(f.store.getTodo('first')).toMatchObject({ state: 'failed', reason: 'Observed failure' });
+    expect(f.starts).toHaveLength(0);
+  });
+  test('a legacy pack check also supersedes a stale human hold', async () => {
+    const f = fixture(true);
+    f.add('first');
+    f.store.updateTodo(
+      f.store.getTodo('first')!,
+      {
+        state: 'blocked',
+        blockedBy: 'needs-human',
+        blockedReason: 'Old question',
+        nextAction: 'Answer',
+      },
+      2
+    );
+    f.facts.set('first', { state: 'done', evidence: 'Observed completion' });
+    await f.runner.checkNow(['first'], (_message, error) => {
+      throw error;
+    });
+    expect(f.store.getTodo('first')).toMatchObject({
+      state: 'done',
+      blockedBy: null,
+      evidence: 'Observed completion',
+    });
+  });
   test('done starts the next recorded todo through the existing dispatch path', async () => {
     const f = fixture();
     f.add('first');
@@ -174,6 +215,33 @@ describe('ordered ask progression from facts', () => {
     expect(f.starts[1]).toContain('Perform next');
   });
 
+  test.each(['done', 'closed_unverified'] as const)(
+    'a %s close does not answer the next start card',
+    async (state) => {
+      const f = fixture();
+      f.add('first');
+      f.add('next');
+      f.store.askQuestion(
+        'start-next',
+        'ask',
+        {
+          text: 'Start next?',
+          kind: 'start',
+          startTodos: ['next'],
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+        },
+        Date.now()
+      );
+      await f.runner.recompute(f.store.getTodo('first')!, { state });
+      expect(f.starts).toHaveLength(0);
+      expect(f.store.getTodo('next')?.state).not.toBe('doing');
+      expect(f.store.getQuestion('start-next')).toMatchObject({ state: 'open', answer: null });
+    }
+  );
+
   test('the final step completes without another start', async () => {
     const f = fixture();
     f.add('final');
@@ -184,19 +252,35 @@ describe('ordered ask progression from facts', () => {
     expect(f.starts).toHaveLength(1);
   });
 
-  test('restart completes the persisted handoff exactly once across repeated facts', async () => {
+  test('an unverified close advances the recorded next step without calling it done', async () => {
     const f = fixture();
-    f.add('first', 'done');
+    f.add('first');
     f.add('next');
-    f.restart();
-    await f.refresh();
-    await f.refresh();
-    f.restart();
-    await f.refresh();
+    await f.runner.recompute(f.store.getTodo('first')!, {
+      state: 'closed_unverified',
+      reason: 'Outcome not checked',
+    });
+    expect(f.store.getTodo('first')?.state).toBe('closed_unverified');
     expect(f.store.getTodo('next')?.state).toBe('doing');
     expect(f.starts).toHaveLength(1);
-    expect(f.store.getTodo('first')?.report).toBe('Retain these bytes 🦊');
   });
+
+  test.each(['done', 'closed_unverified'] as const)(
+    'restart completes a %s handoff exactly once across repeated facts',
+    async (state) => {
+      const f = fixture();
+      f.add('first', state);
+      f.add('next');
+      f.restart();
+      await f.refresh();
+      await f.refresh();
+      f.restart();
+      await f.refresh();
+      expect(f.store.getTodo('next')?.state).toBe('doing');
+      expect(f.starts).toHaveLength(1);
+      expect(f.store.getTodo('first')?.report).toBe('Retain these bytes 🦊');
+    }
+  );
 
   test.each(['failed', 'blocked'] as const)(
     '%s does not advance to a later todo',

@@ -1,3 +1,6 @@
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
+import { admitNeoPreviewContext } from './preview-context.ts';
 import { neoLocalTimeLine } from './local-time.ts';
 import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
@@ -47,6 +50,7 @@ const Input = z
       .max(20)
       .optional(),
     replyTo: NeoReplyRefSchema.optional(),
+    previewContext: NeoPreviewContextSchema.optional(),
   })
   .superRefine((input, context) => {
     const projected = toMailboxMessage({
@@ -62,6 +66,7 @@ const Result = z.discriminatedUnion('ok', [
     requestId: z.string(),
     messageId: z.string(),
     created: z.boolean(),
+    previewContext: NeoPreviewReferenceSchema.optional(),
   }),
   z.object({ ok: z.literal(false), reason: z.string() }),
 ]);
@@ -69,7 +74,7 @@ type IntakeInput = Omit<z.infer<typeof Input>, 'replyTo'> & { replyTo?: NeoReply
 type IntakeResult = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Extract<IntakeResult, { ok: false }> };
 type Target = Pick<Session, 'id' | 'status' | 'config'>;
-type NeoIntakeNotifier = (sessionId: string) => void;
+type NeoIntakeNotifier = (sessionId: string, questionId?: string) => void;
 
 const noNotification: NeoIntakeNotifier = () => {};
 
@@ -96,11 +101,13 @@ export function neoIntakeMessage(
   sessionId: string = input.sessionId,
   reply: NeoReply | null = null,
   localTime: string | null = null,
-  stored?: SDKMessage
+  stored?: SDKMessage,
+  previewContext: NeoPreviewReference | null = null
 ): SDKUserMessage & {
   uuid: UUID;
   inputKind: 'human';
   replyTo?: NeoReplyTo;
+  previewContext?: NeoPreviewReference;
   humanContent?: SDKUserMessage['message']['content'];
 } {
   const content =
@@ -117,7 +124,10 @@ export function neoIntakeMessage(
       : null;
   const identifier =
     !stored || (first?.type === 'text' && first.text === messageId) ? messageId : null;
-  const facts = [identifier, localTime, fact].flatMap((text) =>
+  const previewFact = previewContext
+    ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
+    : null;
+  const facts = [identifier, localTime, fact, previewFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
   );
   return {
@@ -131,6 +141,7 @@ export function neoIntakeMessage(
     },
     inputKind: 'human',
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+    ...(previewContext ? { previewContext } : {}),
     ...(facts.length ? { humanContent: content } : {}),
   };
 }
@@ -248,13 +259,13 @@ export function requireNeoRootTarget(
     : { reason: { ok: false, reason: 'This Neo conversation is no longer available.' } };
 }
 
-function persistNeoIntake(
+async function persistNeoIntake(
   message: ReturnType<typeof neoIntakeMessage>,
   session: Target,
   db: Database,
   conversationId: string
-): IntakeResult {
-  const receipt = new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
+): Promise<IntakeResult> {
+  const receipt = await new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
     conversationId,
     message,
     session.config.queryMode === 'manual' ? 'manual' : 'immediate',
@@ -262,7 +273,13 @@ function persistNeoIntake(
     db.getJobQueueRepo()
   );
   return receipt.accepted
-    ? { ok: true, requestId: message.uuid, messageId: message.uuid, created: receipt.created }
+    ? {
+        ok: true,
+        requestId: message.uuid,
+        messageId: message.uuid,
+        created: receipt.created,
+        ...(receipt.ask.previewContext ? { previewContext: receipt.ask.previewContext } : {}),
+      }
     : {
         ok: false,
         reason:
@@ -322,11 +339,13 @@ function neoAskText(content: IntakeInput['content'], separator = ' '): string {
 function notifyNeoIntakeAcceptance(
   receipt: IntakeResult,
   notify: NeoIntakeNotifier,
-  root: IntakeTarget
+  root: IntakeTarget,
+  reply: NeoReply | null
 ): IntakeResult {
   if (receipt.ok) {
     try {
-      notify(root.target.id);
+      if (reply?.question) notify(root.target.id, reply.question.id);
+      else notify(root.target.id);
     } catch {}
   }
   return receipt;
@@ -399,7 +418,7 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
             quoted: asks.find(admitted.conversationId, input.replyTo.id),
             stored: asks.find(admitted.conversationId, input.requestId),
           }
-        : { quoted: null, stored: null };
+        : { quoted: null, stored: asks.find(admitted.conversationId, input.requestId) };
     },
     ['input', 'receipt', 'db'],
     'asks'
@@ -426,7 +445,30 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   )
   .pipe((root: IntakeTarget) => root, 'receipt', 'root')
   .pipe(
-    (input: IntakeInput, root: IntakeTarget, reply: NeoReply | null, db: Database) => {
+    (
+      input: IntakeInput,
+      asks: { stored: NeoConversationAsk | null },
+      db: Database,
+      caller: OperationCaller
+    ) =>
+      admitNeoPreviewContext(
+        input.previewContext,
+        asks.stored?.previewContext,
+        db.getDatabase(),
+        caller
+      ),
+    ['input', 'asks', 'db', 'caller'],
+    'result:receipt'
+  )
+  .pipe((context: NeoPreviewReference | null) => context, 'receipt', 'previewContext')
+  .pipe(
+    (
+      input: IntakeInput,
+      root: IntakeTarget,
+      reply: NeoReply | null,
+      db: Database,
+      previewContext: NeoPreviewReference | null
+    ) => {
       const stored = db
         .getSDKMessageRepo()
         .getStoredPromptsByUuid(root.target.id, input.requestId)[0];
@@ -438,10 +480,11 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
           stored,
           neoLocalTimeLine(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)
         ),
-        stored
+        stored,
+        previewContext
       );
     },
-    ['input', 'root', 'reply', 'db'],
+    ['input', 'root', 'reply', 'db', 'previewContext'],
     'message'
   )
   .pipe(
@@ -467,7 +510,7 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     ['receipt', 'input', 'root', 'db'],
     'receipt'
   )
-  .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'root'], 'receipt')
+  .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'root', 'reply'], 'receipt')
   .endAsync('receipt') as (
   input: IntakeInput,
   caller: OperationCaller,

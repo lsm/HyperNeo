@@ -1,6 +1,6 @@
 {
   "name": "@hyperneo/desktop",
-  "version": "0.45.2",
+  "version": "0.49.0",
   "private": true,
   "description": "HyperNeo Desktop App - Tauri wrapper bundling the HyperNeo daemon as a sidecar",
   "scripts": {

@@ -1,3 +1,5 @@
+import { writeToolDefaults, writeSpaceMcpDefault } from '../tools/write-tool-defaults.ts';
+import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type {
   AppMcpServer,
@@ -11,7 +13,6 @@ import type {
   UpdateAppMcpServerRequest,
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { Database } from '../../storage/database.ts';
 import type {
   McpEnablementClearOverrideRequest,
@@ -26,7 +27,7 @@ import { Logger } from '../logger.ts';
 const log = new Logger('app-mcp-handlers');
 
 export interface AppMcpHandlerContext {
-  db: { appMcpServers: AppMcpServerRepository };
+  db: Pick<Database, 'appMcpServers' | 'gateway'>;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 }
 
@@ -63,7 +64,11 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
     }
     requireUnreservedName(params.name.trim());
 
-    const server = db.appMcpServers.create(params);
+    const result = await writeToolDefaults(db, {
+      mutations: [{ repository: 'registry', method: 'create', args: [params] }],
+      edits: [],
+    });
+    const server = result.results[0] as AppMcpServer;
     emitChanged(internalEventBus);
     log.info(`mcp.registry.create: created entry "${server.name}" (${server.id})`);
     return { server } satisfies { server: AppMcpServer };
@@ -78,11 +83,16 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 
     const { id, ...updates } = params;
     if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
-    const server = db.appMcpServers.update(id, updates);
-    if (!server) {
+    if (!db.appMcpServers.get(id)) {
       throw new Error(`MCP server not found: ${id}`);
     }
 
+    const result = await writeToolDefaults(db, {
+      mutations: [{ repository: 'registry', method: 'update', args: [id, updates] }],
+      edits:
+        updates.enabled === undefined ? [] : [{ key: `mcp:${id}`, selected: !!updates.enabled }],
+    });
+    const server = result.results[0] as AppMcpServer;
     if (Object.keys(updates).length > 0) {
       emitChanged(internalEventBus);
     }
@@ -97,11 +107,14 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
       throw new Error('id is required');
     }
 
-    const deleted = db.appMcpServers.delete(id);
-    if (!deleted) {
+    if (!db.appMcpServers.get(id)) {
       throw new Error(`MCP server not found: ${id}`);
     }
 
+    await writeToolDefaults(db, {
+      mutations: [{ repository: 'registry', method: 'delete', args: [id] }],
+      edits: [],
+    });
     emitChanged(internalEventBus);
     log.info(`mcp.registry.delete: deleted entry ${id}`);
     return { success: true } satisfies { success: boolean };
@@ -117,11 +130,15 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
       throw new Error('enabled must be a boolean');
     }
 
-    const server = db.appMcpServers.update(id, { enabled });
-    if (!server) {
+    if (!db.appMcpServers.get(id)) {
       throw new Error(`MCP server not found: ${id}`);
     }
 
+    const result = await writeToolDefaults(db, {
+      mutations: [{ repository: 'registry', method: 'update', args: [id, { enabled }] }],
+      edits: [{ key: `mcp:${id}`, selected: enabled }],
+    });
+    const server = result.results[0] as AppMcpServer;
     emitChanged(internalEventBus);
     log.info(`mcp.registry.setEnabled: set entry ${id} enabled=${enabled}`);
     return { server } satisfies { server: AppMcpServer };
@@ -140,9 +157,10 @@ function assertScopeType(value: unknown): asserts value is McpEnablementScopeTyp
 export function setupAppMcpHandlers(
   messageHub: MessageHub,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  db: Database
+  db: Database,
+  writePreferences: SessionToolPreferenceWriter
 ): void {
-  messageHub.onRequest('mcp.enablement.setOverride', (data) => {
+  messageHub.onRequest('mcp.enablement.setOverride', async (data) => {
     const { scopeType, scopeId, serverId, enabled } = data as McpEnablementSetOverrideRequest;
     assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
@@ -154,7 +172,13 @@ export function setupAppMcpHandlers(
       throw new Error(`MCP server not found: ${serverId}`);
     }
 
-    const override = db.mcpEnablement.setOverride(scopeType, scopeId, serverId, enabled);
+    const result =
+      scopeType === 'session'
+        ? await writePreferences(scopeId, { kind: 'mcp', serverId, enabled })
+        : undefined;
+    if (result && !result.ok) throw new Error(result.reason);
+    if (scopeType === 'space') await writeSpaceMcpDefault(db, scopeId, serverId, enabled);
+    const override = { scopeType, scopeId, serverId, enabled };
 
     internalEventBus
       .publish('mcp.registry.changed', { sessionId: 'global' })
@@ -163,14 +187,21 @@ export function setupAppMcpHandlers(
     return { override } satisfies McpEnablementSetOverrideResponse;
   });
 
-  messageHub.onRequest('mcp.enablement.clearOverride', (data) => {
+  messageHub.onRequest('mcp.enablement.clearOverride', async (data) => {
     const { scopeType, scopeId, serverId } = data as McpEnablementClearOverrideRequest;
     assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
     if (!serverId) throw new Error('serverId is required');
 
-    const deleted = db.mcpEnablement.clearOverride(scopeType, scopeId, serverId);
-    if (deleted) {
+    const result =
+      scopeType === 'session'
+        ? await writePreferences(scopeId, { kind: 'mcp', serverId, enabled: null })
+        : undefined;
+    if (result && !result.ok) throw new Error(result.reason);
+    const defaults =
+      scopeType === 'space' ? await writeSpaceMcpDefault(db, scopeId, serverId, null) : undefined;
+    const deleted = result?.ok ? !!result.deleted : !!defaults?.deleted;
+    if (deleted || (result?.ok && result.changed) || defaults?.changed) {
       internalEventBus
         .publish('mcp.registry.changed', { sessionId: 'global' })
         .catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));

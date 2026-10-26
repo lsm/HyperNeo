@@ -8,6 +8,7 @@ import {
 import { registerMcpHandlers } from '../../../../src/lib/rpc-handlers/mcp-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import type { SessionToolPreferenceWriter } from '../../../../src/lib/tools/write-session-tool-preferences.ts';
 import type { Session } from '@hyperneo/shared';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -99,13 +100,19 @@ function createMockSessionManager(): {
 
 describe('MCP/Tools RPC Handlers', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let writer: ReturnType<typeof mock<SessionToolPreferenceWriter>>;
   let sessionManagerData: ReturnType<typeof createMockSessionManager>;
 
   beforeEach(() => {
     messageHubData = createMockMessageHub();
     sessionManagerData = createMockSessionManager();
 
-    registerMcpHandlers(messageHubData.hub, sessionManagerData.sessionManager);
+    writer = mock<SessionToolPreferenceWriter>(async () => ({
+      ok: true,
+      changed: false,
+      selection: { version: 1, choices: {} },
+    }));
+    registerMcpHandlers(messageHubData.hub, sessionManagerData.sessionManager, writer);
   });
 
   describe('tools.save', () => {
@@ -122,7 +129,11 @@ describe('MCP/Tools RPC Handlers', () => {
 
       const result = await handler!(params, {});
 
-      expect(sessionManagerData.agentSessionData.mocks.updateToolsConfig).toHaveBeenCalled();
+      expect(writer).toHaveBeenCalledWith(
+        params.sessionId,
+        { kind: 'skills', disabledSkills: [] },
+        params.tools
+      );
       expect(result).toEqual({ success: true });
     });
 
@@ -156,14 +167,11 @@ describe('MCP/Tools RPC Handlers', () => {
       expect(result).toEqual({ success: true });
     });
 
-    it('handles updateToolsConfig error', async () => {
+    it('reports a preference refusal', async () => {
       const handler = messageHubData.handlers.get('tools.save');
       expect(handler).toBeDefined();
 
-      sessionManagerData.agentSessionData.mocks.updateToolsConfig.mockResolvedValueOnce({
-        success: false,
-        error: 'Failed to update tools',
-      });
+      writer.mockResolvedValueOnce({ ok: false, reason: 'superseded' });
 
       const params = {
         sessionId: 'session-123',
@@ -172,7 +180,7 @@ describe('MCP/Tools RPC Handlers', () => {
 
       const result = await handler!(params, {});
 
-      expect(result).toEqual({ success: false, error: 'Failed to update tools' });
+      expect(result).toEqual({ success: false, error: 'superseded' });
     });
   });
 

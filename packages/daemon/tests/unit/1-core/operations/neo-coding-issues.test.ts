@@ -30,7 +30,8 @@ function fixture() {
   let pack: ReturnType<typeof createCodingPack>, runner: ReturnType<typeof createNeoTodoRunner>;
   let now = 100_000,
     progress = now,
-    reachable = true;
+    reachable = true,
+    pending = false;
   vi.spyOn(Date, 'now').mockImplementation(() => now);
   let issue: (NeoRefState & { stateReason?: string; closingPrs?: string[] }) | null = null;
   const calls: string[] = [],
@@ -52,6 +53,7 @@ function fixture() {
         createdAt: now,
       });
     pack = createCodingPack({
+      database: () => db,
       todoPrs: new CodingTodoPrRepository(db),
       prLedger: new CodingPrLedgerRepository(db),
       prSweep: new CodingPrSweepRepository(db),
@@ -93,7 +95,16 @@ function fixture() {
             name === 'work.start'
               ? { ok: true, value: { ref, lastActivityAt: now } }
               : name === 'work.send'
-                ? { ok: reachable }
+                ? pending
+                  ? {
+                      ok: true,
+                      value: {
+                        delivered: false,
+                        unconfirmed: true,
+                        receipt: { executionId: 'cli-w', inputId: 'in-w' },
+                      },
+                    }
+                  : { ok: reachable }
                 : {
                     ok: true,
                     value: { status: 'stopped', lastActivityAt: progress, lastReplyAt: progress },
@@ -180,6 +191,9 @@ function fixture() {
     unreachable() {
       reachable = false;
     },
+    pending() {
+      pending = true;
+    },
     linked: () => new CodingTodoPrRepository(db).prs('first'),
   };
 }
@@ -250,7 +264,7 @@ test('GitHub closing links supply PR membership, not worker claims or PR merge a
   const f = fixture();
   const todo = f.add('first', true);
   f.issue('OPEN');
-  f.pack.todos!.openedPrs!(todo, ['https://github.com/synthetic/plan/pull/99']);
+  await f.pack.todos!.openedPrs!(todo, ['https://github.com/synthetic/plan/pull/99']);
   await f.at(1);
   expect(f.linked().map((row) => row.url)).toEqual([pr]);
   expect(f.store.getTodo('first')?.state).toBe('doing');
@@ -304,6 +318,17 @@ test('unreachable reminder delivery escalates without turning time into a block 
   expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(true);
 });
 
+test('a reminder sent but not yet confirmed counts as delivered: no resend and no unreachable', async () => {
+  const f = fixture();
+  f.add('first', true);
+  f.issue('OPEN', []);
+  f.pending();
+  await f.at(20);
+  await f.at(21);
+  expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(1);
+  expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(false);
+});
+
 test('a first refresh after 60 minutes escalates without inventing sent reminders', async () => {
   const f = fixture();
   f.add('first', true);
@@ -313,4 +338,40 @@ test('a first refresh after 60 minutes escalates without inventing sent reminder
   expect(f.notes.filter((text) => text.includes('without progress'))).toHaveLength(1);
   expect(f.notes.some((text) => text.includes('two reminders'))).toBe(false);
   expect(f.store.getTodo('first')?.state).toBe('doing');
+});
+
+test('issue judgement uses CLOSED/COMPLETED even without PR, review or deploy evidence', async () => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.issue('COMPLETED', []);
+  const facts = await f.pack.readFacts!(todo);
+  expect(facts).toMatchObject({ prs: [], issue: { state: 'CLOSED', stateReason: 'COMPLETED' } });
+  expect(f.pack.judge!(todo, facts)).toEqual({
+    state: 'done',
+    evidence: 'https://github.com/synthetic/plan/issues/1 completed',
+  });
+  expect(await f.pack.todos!.check(todo)).toEqual({
+    done: true,
+    evidence: 'https://github.com/synthetic/plan/issues/1 completed',
+  });
+  expect(f.store.getTodo(todo.id)?.state).toBe('doing');
+});
+
+test.each([
+  ['OPEN', 'COMPLETED', true],
+  ['CLOSED', undefined, true],
+  ['CLOSED', 'REOPENED', true],
+])('issue %s/%s ignores the reader done flag %s', async (state, stateReason, done) => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.issue('COMPLETED');
+  const facts = await f.pack.readFacts!(todo);
+  expect(facts).toMatchObject({ issue: { state: 'CLOSED' } });
+  const captured = facts as { issue: NeoRefState };
+  expect(
+    f.pack.judge!(todo, {
+      ...captured,
+      issue: { ...captured.issue, state, stateReason, done },
+    })
+  ).toEqual({ state: 'no_opinion' });
 });

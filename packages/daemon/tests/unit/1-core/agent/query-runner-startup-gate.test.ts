@@ -283,6 +283,191 @@ describe('QueryRunner startup gate', () => {
     resetSdkStartupGateForTests();
   });
 
+  async function startObservedRunner(id: string) {
+    const created = createRunner(id);
+    void created.runner.start();
+    await waitFor(() => spawned.length > 0 && spawned.at(-1)!.pendingNexts.length > 0);
+    const controlled = spawned.at(-1)!;
+    controlled.pendingNexts[0].resolve({
+      value: {
+        ...sdkMessage(),
+        tools: ['Read', 'mcp__browser__navigate'],
+        skills: ['browser-instructions'],
+        plugins: [{ name: 'browser-wrapper', path: '/private/plugin' }],
+        mcp_servers: [{ name: 'browser', status: 'connected' }],
+      } as SDKMessage,
+      done: false,
+    });
+    await waitFor(() => controlled.pendingNexts.length > 1);
+    return { ...created, controlled };
+  }
+
+  it('reads observed init and live server tools without restarting a query', async () => {
+    const { runner, controlled } = await startObservedRunner('observed-tools');
+    controlled.queryObject.mcpServerStatus = async () => [
+      {
+        name: 'browser',
+        status: 'connected',
+        tools: [{ name: 'navigate' }],
+        config: { env: { PRIVATE: 'secret' } },
+        error: 'secret diagnostic',
+      },
+    ];
+    const result = await runner.getToolInventory();
+    expect(result.state).toBe('observed');
+    expect(result.tools).toEqual(['Read', 'mcp__browser__navigate']);
+    expect(result.skills).toEqual(['browser-instructions']);
+    expect(result.mcpServers).toEqual([
+      { name: 'browser', status: 'connected', tools: ['navigate'] },
+    ]);
+    expect(JSON.stringify(result)).not.toMatch(/secret|private|config|error/);
+    expect(spawned.length).toBe(1);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('applies MCP choices to the owning query and refreshes observed status without interruption', async () => {
+    const { runner, controlled, ctx } = await startObservedRunner('activate-tools');
+    const servers = { selected: { command: 'synthetic-not-executed' } };
+    ctx.optionsBuilder.getEffectiveMcpServers = () => servers;
+    controlled.queryObject.setMcpServers = mock(async () => ({
+      added: ['selected'],
+      removed: [],
+      errors: {},
+    }));
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'selected', status: 'connected', tools: [{ name: 'navigate' }] },
+    ];
+    expect(await runner.applyToolChoice()).toEqual({ application: 'live' });
+    expect(controlled.queryObject.setMcpServers).toHaveBeenCalledWith(servers);
+    expect(controlled.queryObject.interrupt).not.toHaveBeenCalled();
+    expect(controlled.closeCount).toBe(0);
+    expect((await runner.getToolInventory()).mcpServers).toEqual([
+      { name: 'selected', status: 'connected', tools: ['navigate'] },
+    ]);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('does not certify an MCP application after its query owner is invalidated', async () => {
+    const { runner, controlled } = await startObservedRunner('late-activation');
+    const applied = defer<{ added: string[]; removed: string[]; errors: Record<string, string> }>();
+    controlled.queryObject.setMcpServers = () => applied.promise;
+    const pending = runner.applyToolChoice();
+    runner.invalidateAttemptTokens();
+    applied.resolve({ added: ['stale'], removed: [], errors: {} });
+    expect(await pending).toEqual({ application: 'unverified', reason: 'query_changed' });
+    expect((await runner.getToolInventory()).state).toBe('not_running');
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('discloses unsupported live application and SDK failures without leaking errors', async () => {
+    const { runner, controlled } = await startObservedRunner('unsupported-activation');
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'restart_required',
+      reason: 'live_mcp_unavailable',
+    });
+    controlled.queryObject.setMcpServers = async () => ({
+      added: [],
+      removed: [],
+      errors: { selected: 'private endpoint credential' },
+    });
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'application_failed',
+    });
+    controlled.queryObject.setMcpServers = async () => {
+      throw new Error('private error');
+    };
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'application_failed',
+    });
+    controlled.queryObject.setMcpServers = async () => ({ added: [], removed: [], errors: {} });
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'status_unavailable',
+    });
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'bad', status: 'connected', tools: [{ name: 42 }] },
+    ];
+    expect(await runner.applyToolChoice()).toEqual({
+      application: 'unverified',
+      reason: 'status_unavailable',
+    });
+    expect(controlled.queryObject.interrupt).not.toHaveBeenCalled();
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('reports not running without creating a query', async () => {
+    const { runner } = createRunner('stopped-tools');
+    expect((await runner.getToolInventory()).state).toBe('not_running');
+    expect(spawned.length).toBe(0);
+  });
+
+  it('drops late MCP status after its owner is invalidated', async () => {
+    const { runner, controlled } = await startObservedRunner('late-tools');
+    const status = defer<unknown[]>();
+    controlled.queryObject.mcpServerStatus = () => status.promise;
+    const pending = runner.getToolInventory();
+    runner.invalidateAttemptTokens();
+    status.resolve([{ name: 'stale', status: 'connected', tools: [{ name: 'leak' }] }]);
+    const result = await pending;
+    expect(result.state).toBe('not_running');
+    expect(result.mcpServers).toEqual([]);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('keeps a newer status read when an earlier refresh finishes later', async () => {
+    const { runner, controlled } = await startObservedRunner('status-order');
+    const first = defer<unknown[]>();
+    controlled.queryObject.mcpServerStatus = () => first.promise;
+    const earlier = runner.getToolInventory();
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'browser', status: 'disabled', tools: [] },
+    ];
+    const newer = await runner.getToolInventory();
+    expect(newer.mcpServers[0].status).toBe('disabled');
+    first.resolve([{ name: 'browser', status: 'connected', tools: [{ name: 'old' }] }]);
+    expect((await earlier).mcpServers[0].status).toBe('disabled');
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('shows unavailable status as unverified and recovers on a later read', async () => {
+    const { runner, controlled } = await startObservedRunner('failed-status');
+    controlled.queryObject.mcpServerStatus = async () => {
+      throw new Error('secret error');
+    };
+    const failed = await runner.getToolInventory();
+    expect(failed.mcpServers).toEqual([{ name: 'browser', status: 'unverified', tools: null }]);
+    expect(failed.tools).toEqual(['Read', 'mcp__browser__navigate']);
+    expect(JSON.stringify(failed)).not.toContain('secret');
+    controlled.queryObject.mcpServerStatus = undefined;
+    expect((await runner.getToolInventory()).tools).toEqual(['Read', 'mcp__browser__navigate']);
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'browser', status: 'connected', tools: [] },
+    ];
+    expect((await runner.getToolInventory()).mcpServers[0].tools).toEqual([]);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('does not retain tool attachment once the query stream finishes', async () => {
+    const { runner, controlled } = await startObservedRunner('ended-tools');
+    await completeQuery(controlled, waitFor);
+    await settle();
+    expect((await runner.getToolInventory()).state).toBe('not_running');
+    expect((await runner.getToolInventory()).tools).toEqual([]);
+  });
+
+  it('does not certify malformed SDK status payloads', async () => {
+    const { runner, controlled } = await startObservedRunner('malformed-tools');
+    controlled.queryObject.mcpServerStatus = async () => [
+      { name: 'browser', status: 'connected', tools: [{ name: 42 }] },
+    ];
+    const malformed = await runner.getToolInventory();
+    expect(malformed.mcpServers).toEqual([{ name: 'browser', status: 'unverified', tools: null }]);
+    expect(malformed.tools).toEqual(['Read', 'mcp__browser__navigate']);
+    await completeQuery(controlled, waitFor);
+  });
+
   it('bounds concurrent cold-starts at the configured cap', async () => {
     process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '2';
     const runners = ['s1', 's2', 's3', 's4', 's5'].map((id) => createRunner(id));
@@ -308,13 +493,31 @@ describe('QueryRunner startup gate', () => {
       return controlled.queryObject;
     };
     const { runner, ctx } = createRunner('neo:root', { messageQueue: queue });
+    const sqlite = new SQLite(':memory:');
+    createNeoTables(sqlite);
+    sqlite.exec(
+      "INSERT INTO neo_session_bindings(session_id,concern_id,kind) VALUES ('neo:root',NULL,'neo')"
+    );
+    Object.assign(ctx.db, {
+      getDatabase: () => sqlite,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) => ({
+          inputKind: uuid === 'human-input' ? 'human' : 'task',
+        }),
+      }),
+    });
     const first = queue.enqueueWithId('system-event', 'First', false, { durable: true });
     const second = queue.enqueueWithId('human-input', 'Second', false, { durable: true });
     try {
       await runner.start();
       await waitFor(() => spawned.length === 1);
-      expect((await inputs[0].next()).value?.uuid).toBe('system-event');
-      expect((await inputs[0].next()).value?.uuid).toBe('human-input');
+      const firstWire = (await inputs[0].next()).value!;
+      const secondWire = (await inputs[0].next()).value!;
+      expect(firstWire.uuid).not.toBe('system-event');
+      expect(secondWire.uuid).not.toBe('human-input');
+      expect(firstWire.uuid).not.toBe(secondWire.uuid);
+      expect(runner.retryPromptIdentity.incoming(firstWire).uuid).toBe('system-event');
+      expect(runner.retryPromptIdentity.incoming(secondWire).uuid).toBe('human-input');
       const end = inputs[0].next();
       await Promise.all([first, second]);
       deliverFirstMessage(spawned[0]);
@@ -329,6 +532,7 @@ describe('QueryRunner startup gate', () => {
       queue.clear();
       queue.stop();
       await Promise.allSettled([first, second, ctx.queryPromise]);
+      sqlite.close();
     }
   });
 
@@ -344,6 +548,41 @@ describe('QueryRunner startup gate', () => {
     deliverFirstMessage(spawned[1]);
     await waitFor(() => spawned.length === 4);
     expect(getSdkStartupGate().getStats().active).toBe(2);
+  });
+
+  it('does not log a slot release when the gate already released the permit', async () => {
+    process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
+    const gate = getSdkStartupGate();
+    const acquire = gate.acquire.bind(gate);
+    let firstPermit: Awaited<ReturnType<typeof acquire>> | undefined;
+    gate.acquire = async (options) => {
+      const permit = await acquire(options);
+      firstPermit ??= permit;
+      return permit;
+    };
+    const first = createRunner('expired-startup');
+    const second = createRunner('next-startup');
+    const warn = mock(() => {});
+    first.ctx.logger.warn = warn;
+    try {
+      first.runner.start();
+      await waitFor(() => spawned.length === 1 && spawned[0].pendingNexts.length === 1);
+      second.runner.start();
+      await waitFor(() => gate.getStats().queued === 1);
+      expect(firstPermit?.release()).toBe(true);
+      await waitFor(() => spawned.length === 2 && spawned[1].pendingNexts.length === 1);
+      deliverFirstMessage(spawned[0]);
+      await waitFor(() => first.ctx.firstMessageReceived);
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('slot released');
+      expect(gate.getStats().active).toBe(1);
+      deliverFirstMessage(spawned[1]);
+      await waitFor(() => gate.getStats().active === 0);
+    } finally {
+      gate.acquire = acquire;
+      first.ctx.queryAbortController?.abort();
+      second.ctx.queryAbortController?.abort();
+      await Promise.allSettled([first.ctx.queryPromise, second.ctx.queryPromise]);
+    }
   });
 
   it('does not starve queued starts while earlier sessions stream', async () => {
@@ -459,8 +698,10 @@ describe('QueryRunner startup gate', () => {
     });
   });
 
-  it('registers the AskUserQuestion hook and applies the deferred mode after spawn (runQuery wiring)', async () => {
-    const setPermissionMode = mock(async () => {});
+  it('registers the AskUserQuestion hook without changing the spawn permission mode', async () => {
+    const setPermissionMode = mock(async () => {
+      throw new Error('Bypass disabled by worker policy');
+    });
     const buildOverrides: Array<{ askUserQuestionHook?: unknown }> = [];
     const preToolUseHook = mock(async () => ({}));
     const createPreToolUseHook = mock(() => preToolUseHook);
@@ -475,12 +716,11 @@ describe('QueryRunner startup gate', () => {
       optionsBuilder: {
         build: async (overrides?: { askUserQuestionHook?: unknown }) => {
           buildOverrides.push(overrides ?? {});
-          return { model: 'claude-sonnet-4-20250514' };
+          return { model: 'claude-sonnet-4-20250514', permissionMode: 'default' };
         },
         addSessionStateOptions: (options: unknown) => options,
         setCanUseTool: () => {},
         setAskUserQuestionHook: () => {},
-        getDeferredPermissionMode: () => 'bypassPermissions',
         getEffectiveMcpServers: () => ({}),
       } as unknown as QueryOptionsBuilder,
       askUserQuestionHandler: {
@@ -492,7 +732,6 @@ describe('QueryRunner startup gate', () => {
     runner.start();
     await waitFor(() => spawned.length === 1);
     await waitFor(() => buildOverrides.some((overrides) => overrides.askUserQuestionHook));
-    await waitFor(() => setPermissionMode.mock.calls.length > 0);
     await settle();
 
     const installedHook = buildOverrides.find((overrides) => overrides.askUserQuestionHook)
@@ -512,7 +751,7 @@ describe('QueryRunner startup gate', () => {
       { signal: new AbortController().signal }
     );
     expect(preToolUseHook).toHaveBeenCalled();
-    expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+    expect(setPermissionMode).not.toHaveBeenCalled();
 
     await completeQuery(spawned[0], waitFor);
     await ctx.queryPromise;

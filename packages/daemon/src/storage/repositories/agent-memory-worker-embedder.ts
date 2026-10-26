@@ -1,11 +1,15 @@
+import { runtimeWorkerUrl } from '../../lib/runtime-worker-url.ts';
 import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
 import { DIMENSIONS, MODEL_ID } from './agent-memory-transformers.ts';
+import { Logger } from '../../lib/logger.ts';
+
+const log = new Logger('EmbeddingWorker');
 
 const EMBED_TIMEOUT_MS = 120_000;
 
 type EmbedResponse =
   | { ready: true }
-  | { loadError: string }
+  | { loadError: string; retryable?: boolean }
   | { vector: ArrayBuffer }
   | { error: string };
 type Running = {
@@ -16,9 +20,16 @@ type Running = {
 };
 
 function createEmbedWorker(): Worker {
-  return new Worker(new URL('./agent-memory-embed-worker.ts', import.meta.url).href, {
-    type: 'module',
-  });
+  return new Worker(
+    runtimeWorkerUrl(
+      './agent-memory-embed-worker.ts',
+      './daemon/src/storage/repositories/agent-memory-embed-worker.ts',
+      import.meta.url
+    ).toString(),
+    {
+      type: 'module',
+    }
+  );
 }
 
 export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
@@ -26,6 +37,10 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
   dimensions = DIMENSIONS;
   private running: Running | null = null;
   private queue: Promise<unknown> = Promise.resolve();
+  private retryAt = 0;
+  private failures = 0;
+  private unavailable: Error | null = null;
+  private loggedFailure: string | null = null;
 
   constructor(
     private readonly createWorker: () => Worker = createEmbedWorker,
@@ -41,6 +56,7 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
   }
 
   warm(): void {
+    if (Date.now() < this.retryAt) return;
     this.running ??= this.spawn();
   }
 
@@ -56,6 +72,7 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
   }
 
   private async request(kind: 'query' | 'passage', text: string): Promise<Float32Array> {
+    if (this.unavailable && Date.now() < this.retryAt) throw this.unavailable;
     const running = (this.running ??= this.spawn());
     await running.ready;
     return new Promise((resolve, reject) => {
@@ -98,15 +115,33 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
       crash: null,
     };
     running.ready.catch(() => {});
-    const lose = (error: Error) => {
+    let ready = false;
+    const lose = (error: Error, retryable = true) => {
+      if (!ready) {
+        this.unavailable = error;
+        this.retryAt = retryable
+          ? Date.now() + Math.min(300_000, 30_000 * 2 ** this.failures++)
+          : Infinity;
+        if (this.loggedFailure !== error.message) {
+          this.loggedFailure = error.message;
+          log.warn('Embeddings unavailable; initialization retry backed off:', error.message);
+        }
+      }
       if (this.running === running) this.stop();
       failed?.(error);
       running.crash?.(error);
     };
     worker.onmessage = ({ data }: MessageEvent<EmbedResponse>) => {
-      if ('ready' in data) loaded?.();
-      else if ('loadError' in data)
-        lose(new Error(`embedding model failed to load: ${data.loadError}`));
+      if ('ready' in data) {
+        ready = true;
+        this.unavailable = null;
+        this.retryAt = 0;
+        this.failures = 0;
+        this.loggedFailure = null;
+        log.info('Embeddings ready', this.model);
+        loaded?.();
+      } else if ('loadError' in data)
+        lose(new Error(`embedding model failed to load: ${data.loadError}`), data.retryable);
       else running.answer?.(data);
     };
     worker.onerror = (event) => {

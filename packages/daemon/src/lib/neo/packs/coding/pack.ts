@@ -1,4 +1,9 @@
+import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
+import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { createCodingPrFileOperation } from './pr-file-operation.ts';
+import { runCodingReview } from './review.ts';
 import { withCodingWorkGoal } from './work-goal.ts';
+import { withCodingWorkerProvenance } from './worker-provenance.ts';
 import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
 import { createCodingRefReader } from './ref-reader.ts';
@@ -18,6 +23,10 @@ import { type CodingPrEventRepository, deliverCodingPrEvents } from './pr-events
 import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } from './pr-sweep.ts';
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
+import { recordCodingSmoke } from './delivery-facts.ts';
+import { prepareCodingMerge } from './merge-gates.ts';
+import { deliverCodingHealth } from './health-delivery.ts';
+import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stage-preferences.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -26,6 +35,7 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
 };
 
 export function createCodingPack(deps: {
+  database: () => Database;
   readPrs: NeoWorkPrReader;
   readRefStates?: NeoRefStateReader;
   listGithub?: NeoGithubLister;
@@ -37,9 +47,12 @@ export function createCodingPack(deps: {
   projectRepos: () => string[];
   readLedgerRepo?: CodingLedgerRead;
   readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
-}): NeoPack {
+}): NeoPack & {
+  recordSmoke: typeof recordCodingSmoke;
+  prepareMerge: typeof prepareCodingMerge;
+  review: typeof runCodingReview;
+} {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
-  const ledgerSkips = new Map<string, number>();
   const todos = createCodingTodoPack(
     deps.todoPrs,
     deps.readPrs,
@@ -48,7 +61,11 @@ export function createCodingPack(deps: {
   );
   return {
     ...CODING_PACK_BRIEF,
+    recordSmoke: recordCodingSmoke,
+    prepareMerge: prepareCodingMerge,
     operations: [
+      createCodingWritePlanOperation(deps.database),
+      createCodingPrFileOperation(deps.database),
       createCodingGithubReadOperation({
         readPrs: deps.readPrs,
         readRefStates: deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
@@ -58,6 +75,26 @@ export function createCodingPack(deps: {
       }),
     ],
     preferences: {
+      watchedRepos: {
+        label: { en: 'Watched repositories', 'zh-Hans': '关注的仓库' },
+        valueLabels: {},
+        scope: 'global',
+        type: { kind: 'repositories' },
+        default: [],
+        ask: 'Which repositories should this instance watch?',
+      },
+      ...CODING_STAGE_PREFERENCES,
+      provenance: {
+        label: { en: 'Independent model provenance', 'zh-Hans': '独立模型来源' },
+        valueLabels: {
+          true: { en: 'Require independent model provenance', 'zh-Hans': '要求独立模型来源' },
+          false: { en: 'Disable model provenance requirements', 'zh-Hans': '关闭模型来源要求' },
+        },
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: true,
+        ask: 'Require author model and harness provenance and a different reviewer model? Until answered, this is on without saving a preference.',
+      },
       mergePolicy: {
         label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
         valueLabels: {
@@ -94,23 +131,46 @@ export function createCodingPack(deps: {
       },
     },
     prepareExecution: prepareCodingExecution,
-    todos,
+    review: runCodingReview,
+    todos: {
+      ...todos,
+      schema(db) {
+        todos.schema(db);
+        initializeCodingWatches(db, []);
+      },
+    },
     readFacts: todos.readFacts,
     judge: todos.judge,
-    observeSessions: (sessions, now) => deps.prLedger.observeSessions(sessions, now),
+    observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
-      deps.prLedger.observeSessions(await readClaudeOwners(), now);
+      await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
+      await deliverCodingPrEvents(deps.prEvents, [], deps.prSweepDeps);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
-        deps.projectRepos(),
+        codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
-        now,
-        ledgerSkips
+        now
       );
       await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
+      await deliverCodingHealth(
+        deps.prLedger,
+        codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
+        deps.prSweepDeps.wake,
+        now
+      );
       await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },
+    stats: (now) => ({
+      'ready to merge >1h': deps.prLedger
+        .list()
+        .filter(
+          (row) =>
+            row.state === 'approved_green' &&
+            row.closedAt === null &&
+            row.stateSince < now - 60 * 60 * 1000
+        ).length,
+    }),
     snapshotRows: (repos, now, openTodoIds) =>
       deps.prLedger.snapshot(
         repos,
@@ -121,6 +181,7 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
+    workerBrief: withCodingWorkerProvenance,
     workGoal: withCodingWorkGoal,
   };
 }

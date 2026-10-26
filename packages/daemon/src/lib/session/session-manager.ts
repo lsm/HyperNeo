@@ -19,6 +19,8 @@ import type { SessionInputDraftSnapshot } from '../../storage/repositories/sessi
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { sessionTitleEnqueueWrites } from '../../storage/repositories/session-title-enqueue-write.ts';
 import {
   AgentSession,
   type AgentSessionRuntimeOptions,
@@ -29,7 +31,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler.ts';
 import { SESSION_TITLE_GENERATION } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
-import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
+import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { listProcesses, type ProcessSnapshot } from '../process-watchdog.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
@@ -201,10 +203,10 @@ export class SessionManager {
     return agentSession;
   }
 
-  private preserveResetCostBaseline(
+  private async preserveResetCostBaseline(
     agentSession: AgentSession,
     persistedSession: Session
-  ): Session {
+  ): Promise<Session> {
     const currentSession = agentSession.getSessionData();
     const currentMetadata = currentSession.metadata ?? {};
     const lastSdkCost = currentMetadata.lastSdkCost || 0;
@@ -216,7 +218,7 @@ export class SessionManager {
       costBaseline: costBaseline + lastSdkCost,
       lastSdkCost: 0,
     };
-    this.db.updateSession(currentSession.id, { metadata });
+    await this.db.updateSession(currentSession.id, { metadata });
     return { ...persistedSession, metadata };
   }
 
@@ -277,32 +279,18 @@ export class SessionManager {
       if (!persistedSession) {
         throw new Error(`Session not found: ${sessionId}`);
       }
-      const sessionForFreshInstance = this.preserveResetCostBaseline(
+      const sessionForFreshInstance = await this.preserveResetCostBaseline(
         agentSession,
         persistedSession
       );
 
       if (!options.restartQuery) {
-        const failedDbIds: string[] = [];
-        materializeMailboxFailuresForSession(sessionId, {
+        const failedDbIds = await teardownSessionDeliveries(sessionId, {
           db: this.db,
           internalEventBus: this.internalEventBus,
           settleSkipped: (sid, messageUuid) =>
             this.getCachedSession(sid)?.settleSkippedDelivery(messageUuid) ?? Promise.resolve(),
         });
-        const jobQueue = this.db.getJobQueueRepo?.();
-        const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
-        const sdkRepo = this.db.getSDKMessageRepo?.();
-        for (const messageUuid of messageUuids) {
-          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
-          if (failedDbId) failedDbIds.push(failedDbId);
-        }
-        const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
-        for (const row of deferredRows) {
-          if (!row.uuid) continue;
-          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, row.uuid) ?? null;
-          if (failedDbId) failedDbIds.push(failedDbId);
-        }
         if (failedDbIds.length > 0) {
           await this.internalEventBus
             .publish('messages.statusChanged', {
@@ -379,7 +367,7 @@ export class SessionManager {
 
         try {
           if (needsWorkspaceInit) {
-            this.jobQueue.enqueue({
+            await gatewayFor(this.jobQueue.db).call(sessionTitleEnqueueWrites, 'enqueue', {
               queue: SESSION_TITLE_GENERATION,
               payload: { sessionId, userMessageText },
               maxRetries: 2,
@@ -666,8 +654,11 @@ export class SessionManager {
 
   async getSessionAsync(
     sessionId: string,
-    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {},
+    waitForHistory = true
   ): Promise<AgentSession | null> {
+    if (this.db.getDataMigrationStatus().state !== 'complete')
+      await this.db.waitForSdkMessageColumns(sessionId, waitForHistory);
     let session = await this.sessionCache.getAsync(sessionId);
     while (session) {
       await this.provisionWorkflowMcpServers(session, options);
@@ -679,6 +670,8 @@ export class SessionManager {
   }
 
   async getSessionForControl(sessionId: string): Promise<AgentSession | null> {
+    if (this.db.getDataMigrationStatus().state !== 'complete')
+      await this.db.waitForSdkMessageColumns(sessionId, false);
     let session = await this.sessionCache.getAsync(sessionId);
     while (session) {
       const inFlight = this.workflowMcpProvisioning.get(sessionId);
@@ -882,7 +875,7 @@ export class SessionManager {
   }
 
   private async interruptProviderSession(sessionId: string, session?: Session): Promise<void> {
-    this.db.updateSession(sessionId, {
+    await this.db.updateSession(sessionId, {
       acpSessionId: undefined,
       ...(session?.metadata?.acpContextUsageEstimate !== undefined
         ? {

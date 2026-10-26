@@ -12,7 +12,7 @@ import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src
 const [mode, scenario, portText, runText] = process.argv.slice(2);
 const port = Number(portText), run = resolve(runText);
 assert(['reproduce', 'verify'].includes(mode));
-assert(['private', 'exhausted', 'secondary'].includes(scenario));
+assert(['private', 'exhausted', 'secondary', 'stale'].includes(scenario));
 assert(port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -27,6 +27,7 @@ const repos = ['a-public', 'b-public', 'c-public', 'd-phone', 'e-qlark', 'f-mone
 const calls: { path: string; authenticated: boolean; limit: number; resource: string; status: number }[] = [];
 const api = (url: URL, authenticated: boolean) => {
   const repo = url.pathname.split('/')[3];
+  const stale = authenticated && scenario === 'stale' && calls.length === 0;
   const secondary = authenticated && scenario === 'secondary' && calls.length === 0;
   const status = secondary ? 403 : authenticated || repos.indexOf(repo) < 3 ? 200 : scenario === 'private' ? 404 : 403;
   let body: unknown = [];
@@ -36,7 +37,7 @@ const api = (url: URL, authenticated: boolean) => {
   if (url.pathname === '/user') body = { login: 'synthetic-human' };
   const limit = authenticated ? 5000 : 60;
   calls.push({ path: url.pathname, authenticated, limit, resource: 'core', status });
-  return Response.json(body, { status, headers: { 'X-RateLimit-Limit': String(limit), 'X-RateLimit-Remaining': authenticated ? '4900' : scenario === 'exhausted' ? '0' : '59', 'X-RateLimit-Reset': String(Math.ceil(Date.now() / 1000) + 3600), 'X-RateLimit-Resource': 'core', ...(secondary ? { 'Retry-After': '2' } : {}) } });
+  return Response.json(body, { status, headers: { 'X-RateLimit-Limit': String(limit), 'X-RateLimit-Remaining': stale ? '0' : authenticated ? '4900' : scenario === 'exhausted' ? '0' : '59', 'X-RateLimit-Reset': String(Math.floor(Date.now() / 1000) + (stale ? 0 : 3600)), 'X-RateLimit-Resource': 'core', ...(secondary ? { 'Retry-After': '2' } : {}) } });
 };
 const ledgerCalls: unknown[] = [];
 const mock = createServer(async (req, res) => {
@@ -50,8 +51,13 @@ const mock = createServer(async (req, res) => {
     if (args.includes('graphql')) {
       const budget = { cost: 7, remaining: 4866, resetAt: new Date(Date.now() + 3600_000).toISOString() };
       ledgerCalls.push({ resource: 'graphql', ...budget });
-      res.end(`HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ data: { rateLimit: budget } })}`);
+      const node = { number: 1, title: 'Synthetic', headRefName: 'fixture', headRefOid: 'head', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null, closedAt: null };
+      res.end(`HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ data: { rateLimit: budget, repository: { nameWithOwner: 'synthetic/a-public', p1: node } } })}`);
       return;
+    }
+    if (args[1].startsWith('repos/synthetic/a-public/pulls?')) {
+      const body = args[1].includes('state=closed') ? [] : [{ number: 1, title: 'Synthetic', head: { ref: 'fixture', sha: 'head' }, updated_at: 'initial', created_at: '2026-01-01T00:00:00Z', closed_at: null, draft: false, base: { repo: { full_name: 'synthetic/a-public' } } }];
+      res.end(`HTTP/2.0 200 OK\r\n\r\n${JSON.stringify(body)}`); return;
     }
     const path = args.find(arg => arg.startsWith('/repos/') || arg === '/user');
     assert(path);
@@ -80,7 +86,7 @@ try {
   const config = new ExternalEventExtensionConfigStore(db);
   await config.setGlobalConfig('github', { source: 'github', globallyEnabled: true, capabilities: { polling: true, rpcConfig: true } });
   const sessionId = 'synthetic-private-owner';
-  app.db.createSession({ id: sessionId, title: 'Synthetic private PR owner', workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: {}, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  await app.db.createSession({ id: sessionId, title: 'Synthetic private PR owner', workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: {}, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const subscriptions = new SessionEventSubscriptionRepository(db);
   for (const repo of repos) {
     const row = github.repo.upsertWatchedRepo({ spaceId: 'sessions', owner: 'synthetic', repo, pollingEnabled: true });

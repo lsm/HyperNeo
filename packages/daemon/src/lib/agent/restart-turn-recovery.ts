@@ -11,9 +11,11 @@ export interface RestartRecoveryEvidence {
 }
 
 export interface RestartRecoveryDeps {
-  readEvidence(sessionId: string): RestartRecoveryEvidence | null;
+  readEvidence(
+    sessionId: string
+  ): RestartRecoveryEvidence | null | Promise<RestartRecoveryEvidence | null>;
   hasActiveDelivery(sessionId: string, uuid: string): boolean;
-  resend(sessionId: string, uuid: string, enqueueDelivery: boolean): boolean;
+  resend(sessionId: string, uuid: string, enqueueDelivery: boolean): Promise<boolean>;
   sendNote(sessionId: string, promptUuid: string): Promise<boolean>;
 }
 
@@ -38,8 +40,8 @@ export function planRestartRecovery(
       };
 }
 
-function readRecoveryEvidence(sessionId: string, deps: RestartRecoveryDeps) {
-  const evidence = deps.readEvidence(sessionId);
+async function readRecoveryEvidence(sessionId: string, deps: RestartRecoveryDeps) {
+  const evidence = await deps.readEvidence(sessionId);
   return {
     evidence,
     deliveryActive: evidence ? deps.hasActiveDelivery(sessionId, evidence.promptUuid) : false,
@@ -53,7 +55,7 @@ async function applyRecoveryPlan(
   deps: RestartRecoveryDeps
 ): Promise<RestartRecoveryResult> {
   if (plan.kind === 'resend')
-    return { ...plan, resumed: deps.resend(plan.sessionId, plan.uuid, plan.enqueueDelivery) };
+    return { ...plan, resumed: await deps.resend(plan.sessionId, plan.uuid, plan.enqueueDelivery) };
   if (plan.kind === 'continue')
     return { ...plan, resumed: await deps.sendNote(plan.sessionId, plan.promptUuid) };
   return { ...plan, resumed: false };

@@ -1,3 +1,4 @@
+import type { DataMigrationStatus } from '@hyperneo/shared';
 import { runLagPhase } from '../lib/event-loop-activity.ts';
 import {
   copyFileSync,
@@ -64,6 +65,15 @@ export class DatabaseCore {
   private messageSearchMergeWorkerFailures = 0;
   private messageSearchMergeStarted = false;
   private messageSearchMergeIntervalMs = MESSAGE_SEARCH_MERGE_INTERVAL_MS;
+  private sdkMigration: DataMigrationStatus = {
+    name: 'sdk_message_columns_backfill_v2',
+    state: 'complete',
+    through: 0,
+    total: 0,
+  };
+  private sdkMigrationAbort: AbortController | null = null;
+  private sdkMigrationRun: Promise<boolean> | null = null;
+  private sdkMigrationClosed = false;
   private bodyCopyAbort: AbortController | null = null;
   private bodyCopyRetry: ReturnType<typeof setTimeout> | null = null;
   private bodyCopyClosed = false;
@@ -124,7 +134,26 @@ export class DatabaseCore {
       this.db.exec('PRAGMA mmap_size = 0');
 
       createTables(this.db);
-      await backfillSdkMessageColumns(this.db, (progress) => this.logger.info(progress));
+      const total = (
+        this.db.prepare('SELECT COALESCE(MAX(seq),0) AS n FROM sdk_messages').get() as { n: number }
+      ).n;
+      const done = Boolean(
+        this.db
+          .prepare("SELECT 1 FROM migration_markers WHERE key='sdk_message_columns_backfilled_v2'")
+          .get()
+      );
+      const cursor = this.db
+        .prepare(
+          "SELECT key FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'"
+        )
+        .get() as { key: string } | null;
+      this.sdkMigration = {
+        name: 'sdk_message_columns_backfill_v2',
+        state: done || total === 0 ? 'complete' : 'pending',
+        through: done ? total : Number(cursor?.key.split(':')[1] ?? 0),
+        total,
+      };
+      if (!done && total === 0) await backfillSdkMessageColumns(this.db, () => {});
 
       const reportBodyMode = (mode: Awaited<ReturnType<typeof selectSdkBodyWriteMode>>) =>
         this.logger.warn(`SDK body startup mode selected: ${JSON.stringify(mode)}`);
@@ -144,6 +173,74 @@ export class DatabaseCore {
       this.lock.release();
       throw error;
     }
+  }
+
+  getDataMigrationStatus(): DataMigrationStatus {
+    return { ...this.sdkMigration };
+  }
+
+  async waitForSdkMessageColumns(sessionId?: string, wait = true): Promise<void> {
+    if (this.getDataMigrationStatus().state === 'complete') return;
+    if (
+      sessionId &&
+      !this.db
+        .prepare('SELECT 1 FROM sdk_messages WHERE session_id=? AND seq<=? LIMIT 1')
+        .get(sessionId, this.sdkMigration.total)
+    )
+      return;
+    while (this.sdkMigration.state !== 'complete') {
+      if (this.sdkMigrationClosed) throw new Error('Message history preparation stopped');
+      if (this.sdkMigration.state === 'failed')
+        throw new Error('Message history preparation failed; restart to resume');
+      if (!wait)
+        throw new Error('Message history is being prepared. Try again when preparation completes.');
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  startSdkMessageColumnsBackfill(changed: () => void = () => {}): Promise<boolean> {
+    if (this.sdkMigration.state === 'complete') return Promise.resolve(true);
+    if (this.sdkMigrationClosed) return Promise.resolve(false);
+    if (this.sdkMigrationRun) return this.sdkMigrationRun;
+    const abort = (this.sdkMigrationAbort = new AbortController());
+    this.sdkMigration.state = 'running';
+    let last = 0;
+    this.sdkMigrationRun = backfillSdkMessageColumns(
+      this.db,
+      (progress) => this.logger.info(progress),
+      {
+        signal: abort.signal,
+        ceiling: this.sdkMigration.total,
+        onProgress: (through) => {
+          this.sdkMigration.through = through;
+          if (Date.now() - last >= 1000) {
+            last = Date.now();
+            changed();
+          }
+        },
+      }
+    )
+      .then(() => {
+        if (abort.signal.aborted) return false;
+        this.sdkMigration.state = 'complete';
+        this.sdkMigration.through = this.sdkMigration.total;
+        changed();
+        return true;
+      })
+      .catch((error) => {
+        if (!abort.signal.aborted) {
+          this.sdkMigration.state = 'failed';
+          this.logger.error('Message history preparation failed', error);
+          changed();
+        }
+        return false;
+      });
+    return this.sdkMigrationRun;
+  }
+
+  stopSdkMessageColumnsBackfill(): void {
+    this.sdkMigrationClosed = true;
+    this.sdkMigrationAbort?.abort();
   }
 
   startMessageSearchMerges(): void {
@@ -268,6 +365,7 @@ export class DatabaseCore {
   }
 
   close(): void {
+    this.stopSdkMessageColumnsBackfill();
     this.bodyAdmissionCancel?.();
     this.bodyCopyClosed = true;
     this.bodyCopyAbort?.abort();

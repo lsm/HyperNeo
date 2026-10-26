@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { NeoPreviewContext } from '@hyperneo/shared/types/neo-preview-context';
 import type { Session, SessionMetadata } from '@hyperneo/shared';
 import { DRAFT_CHAR_LIMIT } from '@hyperneo/shared';
 import {
@@ -110,7 +111,11 @@ describe('neo.draft.recover', () => {
       input,
       caller
     );
-  function send(text: string | { type: string; text?: string }[], origin = ROOT) {
+  function send(
+    text: string | { type: string; text?: string }[],
+    origin = ROOT,
+    previewContext?: NeoPreviewContext
+  ) {
     asked += 1;
     const requestId = `20000000-0000-4000-8000-${String(asked).padStart(12, '0')}`;
     expect(
@@ -119,10 +124,74 @@ describe('neo.draft.recover', () => {
         requestId,
         askOrigin: { sessionId: origin, messageId: requestId },
         content: text,
+        ...(previewContext
+          ? {
+              previewContext: {
+                ...previewContext,
+                displayName: 'Synthetic report',
+                state: 'available' as const,
+              },
+            }
+          : {}),
       }).accepted
     ).toBe(true);
   }
 
+  test.each([
+    [undefined, { artifactId: 'report-a', snapshot: 'a'.repeat(64) }, true],
+    [{ artifactId: 'report-a', snapshot: 'a'.repeat(64) }, null, true],
+    [
+      { artifactId: 'report-a', snapshot: 'a'.repeat(64) },
+      { artifactId: 'report-a', snapshot: 'b'.repeat(64) },
+      true,
+    ],
+    [
+      { artifactId: 'report-a', snapshot: 'a'.repeat(64) },
+      { artifactId: 'report-a', snapshot: 'a'.repeat(64) },
+      false,
+    ],
+  ] as const)(
+    'distinguishes equal text with original context %j and recovered context %j',
+    async (sentContext, previewContext, accepted) => {
+      send('Same words', ROOT, sentContext);
+      expect(
+        await recover({
+          sessionId: ROOT,
+          text: 'Same words',
+          base: 'saved root',
+          ...(previewContext === undefined ? {} : { previewContext }),
+        })
+      ).toMatchObject({ value: accepted ? { ok: true } : { ok: false, reason: 'submitted' } });
+      expect(draft().inputDraft).toBe(accepted ? 'Same words' : 'saved root');
+    }
+  );
+  test('the submitted gate admits equal text with a different explicit association', () => {
+    send('Same words', ROOT, { artifactId: 'report-a', snapshot: 'a'.repeat(64) });
+    const recovery = {
+      sessionId: ROOT,
+      text: 'Same words',
+      base: 'saved root',
+      previewContext: null,
+    };
+    expect(
+      requireUnsubmitted({ recovery, snapshot: sessions.captureSessionInputDraft(ROOT)! }, service)
+    ).toHaveProperty('value');
+  });
+  test('preserves text-only submitted detection for legacy recovery requests', async () => {
+    send('Legacy same words', ROOT, { artifactId: 'report-a', snapshot: 'a'.repeat(64) });
+    expect(
+      await recover({ sessionId: ROOT, text: 'Legacy same words', base: 'saved root' })
+    ).toMatchObject({ value: { ok: false, reason: 'submitted' } });
+  });
+  test('retains a capture whose exact text was already saved before reload', async () => {
+    sessions.updateSession(ROOT, {
+      metadata: { inputDraft: 'Already saved edit' } as SessionMetadata,
+    });
+    expect(
+      await recover({ sessionId: ROOT, text: 'Already saved edit', base: 'older base' })
+    ).toMatchObject({ value: { ok: true } });
+    expect(draft().inputDraft).toBe('Already saved edit');
+  });
   test('restores an edit made on top of the unchanged saved draft', async () => {
     expect(await recover({ sessionId: ROOT, text: 'newest edit', base: 'saved root' })).toEqual({
       kind: 'completed',
@@ -245,6 +314,22 @@ describe('neo.draft.recover', () => {
     { sessionId: ROOT, text: 'x', base: 'x'.repeat(DRAFT_CHAR_LIMIT + 1) },
     { sessionId: ROOT, text: 'x' },
     { sessionId: ROOT, text: 'x', base: null, extra: true },
+    {
+      sessionId: ROOT,
+      text: 'x',
+      base: null,
+      previewContext: { artifactId: 'report-a', snapshot: 'bad' },
+    },
+    {
+      sessionId: ROOT,
+      text: 'x',
+      base: null,
+      previewContext: {
+        artifactId: 'report-a',
+        snapshot: 'a'.repeat(64),
+        sourcePath: '/untrusted/path',
+      },
+    },
   ])('rejects malformed input %#', async (input) => {
     expect(await recover(input)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
     expect(draft().inputDraft).toBe('saved root');

@@ -40,6 +40,8 @@ import {
   runStartupWatch,
 } from '../agent/startup-watch-pipeline.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from '../agent/query-attempt-token.ts';
+import { QuestionInputScope } from '../agent/question-input-origin.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -500,6 +502,7 @@ export class AcpQueryRunner {
       attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
     const ownsSessionWrite = () =>
       attemptOwnsRun() && !runAbortController.signal.aborted && !this.ctx.isCleaningUp();
+    const humanInputs = new QuestionInputScope(session.id, ownsSessionWrite);
     const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
       const yieldedUuid = yieldedMessage.uuid;
       if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
@@ -664,7 +667,9 @@ export class AcpQueryRunner {
           }
           assertActiveAcpStartup();
 
-          let queryOptions = await optionsBuilder.build();
+          let queryOptions = await optionsBuilder.build({
+            operationInputOrigin: () => humanInputs.origin(),
+          });
           assertActiveAcpStartup();
 
           const acpCommand =
@@ -866,7 +871,7 @@ export class AcpQueryRunner {
         try {
           const result = await acpClient.loadSession(existingAcpSessionId, cwd, acpMcpServers);
           if (ownsSessionWrite()) {
-            this.persistAcpSessionId(result.sessionId);
+            await this.persistAcpSessionId(result.sessionId);
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           }
         } catch (loadError) {
@@ -874,7 +879,7 @@ export class AcpQueryRunner {
           try {
             const result = await acpClient.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             if (ownsSessionWrite()) {
-              this.persistAcpSessionId(result.sessionId);
+              await this.persistAcpSessionId(result.sessionId);
               this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
             }
           } catch (resumeError) {
@@ -895,7 +900,7 @@ export class AcpQueryRunner {
       } else {
         const result = await acpClient.createSession(cwd, acpMcpServers);
         if (ownsSessionWrite()) {
-          this.persistAcpSessionId(result.sessionId);
+          await this.persistAcpSessionId(result.sessionId);
           this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         }
         createdAcpSessionDuringRun = true;
@@ -962,6 +967,16 @@ export class AcpQueryRunner {
         }
 
         assertActiveAcpStartup();
+        if (
+          message.uuid &&
+          !queuedMessage.internal &&
+          neoCoordinatorBinding(this.ctx.db, session.id)
+        ) {
+          const prompt = this.ctx.db
+            .getSDKMessageRepo()
+            .getDeliveryContent(session.id, message.uuid);
+          if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
+        }
         const promptContext = await acpPromptContext(promptHooks, session.id);
         const promptContent = [
           ...(prependInstructionsToNextPrompt ? instructionBlocks : []),
@@ -976,29 +991,34 @@ export class AcpQueryRunner {
           contextWindow: getAcpContextWindow(),
           initialUsageEstimate: getAcpContextUsageEstimate(session),
           onContextUsageUpdate: (used) => {
-            if (attemptOwnsRun()) this.persistAcpContextUsageEstimate(used);
+            if (attemptOwnsRun())
+              this.persistAcpContextUsageEstimate(used).catch((error) =>
+                this.ctx.logger.warn('Failed to persist ACP context usage:', error)
+              );
           },
           onConfigOptionsUpdate: (configOptions) => {
             if (!ownsSessionWrite()) return;
             this.updateAcpModelCache(configOptions);
           },
-          onSubmitted: () => {
+          onSubmitted: async () => {
             if (submitted) return;
             if (!attemptOwnsRun()) {
               requeueYieldedPrompt(message);
               return;
             }
-            const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
+            const persisted = await this.ctx.messageHandler.markMessageSubmitted(
+              message.uuid ?? ''
+            );
             if (!persisted) {
               throw new Error('ACP prompt was revoked before submission');
             }
             submitted = true;
             onSent();
           },
-          onAccepted: () => {
+          onAccepted: async () => {
             if (!attemptOwnsRun()) return;
-            this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
             accepted = true;
+            await this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
           },
         });
         this.ctx.queryObject = adapter;
@@ -1027,7 +1047,7 @@ export class AcpQueryRunner {
                 startupWatchFirstMessageSeen = true;
                 receivedAcpMessageDuringRun = true;
                 if (shouldPersistInstructionsSent) {
-                  this.persistAcpInstructionsSent();
+                  await this.persistAcpInstructionsSent();
                 }
                 this.clearStartupTimer();
               } else if (isAcpErrorResultMessage(acpMessage as SDKMessage)) {
@@ -1037,6 +1057,7 @@ export class AcpQueryRunner {
             this.ctx.firstMessageReceived = true;
 
             const sdkMessage = acpMessage as SDKMessage & { user_message_uuid?: string };
+            if (sdkMessage.type === 'result') humanInputs.endTurn();
             if (sdkMessage.type === 'result' && !sdkMessage.user_message_uuid) {
               sdkMessage.user_message_uuid = message.uuid;
             }
@@ -1098,8 +1119,9 @@ export class AcpQueryRunner {
             throw new Error('ACP startup timeout - query aborted');
           }
         } finally {
+          humanInputs.endTurn();
           if (!accepted && attemptOwnsRun()) {
-            this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
+            await this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
           }
         }
       }
@@ -1202,17 +1224,17 @@ export class AcpQueryRunner {
     }
   }
 
-  private reopenConsumedDelivery(messageUuid: string): boolean {
+  private async reopenConsumedDelivery(messageUuid: string): Promise<boolean> {
     const sessionId = this.ctx.session.id;
-    const deliveryRepo = this.ctx.db.getSDKMessageRepo?.();
+    const { db } = this.ctx;
     const batchMembers =
       this.ctx.db.getJobQueueRepo?.()?.getActiveDeliveryBatchUuids?.(sessionId, messageUuid) ?? [];
     const uuidsToRestore = [messageUuid, ...batchMembers.filter((u) => u !== messageUuid)];
     const restoredIds: string[] = [];
     for (const uuid of uuidsToRestore) {
       const restoredId =
-        deliveryRepo?.reopenDeliveryByUuid(sessionId, uuid) ??
-        deliveryRepo?.markDeliveryRetryableByUuid(sessionId, uuid) ??
+        (await db.writeSDKMessage?.('reopenDeliveryByUuid', sessionId, uuid)) ??
+        (await db.writeSDKMessage?.('markDeliveryRetryableByUuid', sessionId, uuid)) ??
         null;
       if (restoredId) restoredIds.push(restoredId);
     }
@@ -1271,7 +1293,7 @@ export class AcpQueryRunner {
       logger.warn(`Model provider unreachable; pausing the ACP turn: ${errorMessage}`);
       const heldPrompt = this._lastConsumedUserMessage;
       if (await this.ctx.onNetworkOutage?.(errorMessage, heldPrompt, queryGeneration)) {
-        if (heldPrompt) this.reopenConsumedDelivery(heldPrompt.uuid);
+        if (heldPrompt) await this.reopenConsumedDelivery(heldPrompt.uuid);
         recoveryState.rateLimitCooldownScheduled = true;
         return;
       }
@@ -1296,12 +1318,12 @@ export class AcpQueryRunner {
         !receivedAcpMessageDuringRun &&
         !(client?.canLoadSession() ?? false)
       ) {
-        this.clearAcpSessionState();
+        await this.clearAcpSessionState();
       }
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
-        if (this.reopenConsumedDelivery(lastMsg.uuid)) {
+        if (await this.reopenConsumedDelivery(lastMsg.uuid)) {
           messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
         } else if (messageQueue.requeueYielded(lastMsg.uuid)) {
@@ -1474,19 +1496,19 @@ export class AcpQueryRunner {
     await this.ctx.onMarkApiSuccess(message, queryGeneration);
   }
 
-  private persistAcpSessionId(acpSessionId: string): void {
+  private async persistAcpSessionId(acpSessionId: string): Promise<void> {
     const { session, db } = this.ctx;
     if (session.acpSessionId === acpSessionId && !this.pendingAcpIdentityMetadata) return;
     session.acpSessionId = acpSessionId;
     if (this.pendingAcpIdentityMetadata) {
       this.pendingAcpIdentityMetadata = false;
-      db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
+      await db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
       return;
     }
-    db.updateSession(session.id, { acpSessionId });
+    await db.updateSession(session.id, { acpSessionId });
   }
 
-  private clearAcpSessionState(): void {
+  private async clearAcpSessionState(): Promise<void> {
     const { session, db } = this.ctx;
     session.acpSessionId = undefined;
     session.metadata = {
@@ -1494,20 +1516,20 @@ export class AcpQueryRunner {
       acpInstructionsSent: undefined,
       acpContextUsageEstimate: undefined,
     };
-    db.updateSession(session.id, {
+    await db.updateSession(session.id, {
       acpSessionId: undefined,
       metadata: session.metadata,
     });
   }
 
-  private persistAcpInstructionsSent(): void {
+  private async persistAcpInstructionsSent(): Promise<void> {
     const { session, db } = this.ctx;
     if (session.metadata?.acpInstructionsSent) return;
     session.metadata = {
       ...session.metadata,
       acpInstructionsSent: true,
     };
-    db.updateSession(session.id, { metadata: session.metadata });
+    await db.updateSession(session.id, { metadata: session.metadata });
   }
 
   private async applyStoredAcpModel(
@@ -1543,7 +1565,7 @@ export class AcpQueryRunner {
     if (ownsRun()) this.updateAcpModelCache(configOptions);
   }
 
-  private persistAcpContextUsageEstimate(used: number): void {
+  private async persistAcpContextUsageEstimate(used: number): Promise<void> {
     const { session, db } = this.ctx;
     const metadata = session.metadata as { acpContextUsageEstimate?: number } | undefined;
     if (metadata?.acpContextUsageEstimate === used) return;
@@ -1552,16 +1574,16 @@ export class AcpQueryRunner {
       ...session.metadata,
       acpContextUsageEstimate: used,
     } as Session['metadata'];
-    db.updateSession(session.id, { metadata: session.metadata });
+    await db.updateSession(session.id, { metadata: session.metadata });
   }
 
-  private syncAcpSessionModel(configOptions: AcpConfigOption[]): void {
+  private async syncAcpSessionModel(configOptions: AcpConfigOption[]): Promise<void> {
     const modelOption = configOptions.find((option) => option.category === 'model');
     const currentValue = modelOption?.currentValue ?? 'acp-default';
     if (this.ctx.session.config.model === currentValue) return;
 
     this.ctx.session.config.model = currentValue;
-    this.ctx.db.updateSession(this.ctx.session.id, {
+    await this.ctx.db.updateSession(this.ctx.session.id, {
       config: {
         model: currentValue,
         provider: 'acp',
@@ -1579,7 +1601,9 @@ export class AcpQueryRunner {
     options: { syncSessionModel?: boolean } = {}
   ): void {
     if (options.syncSessionModel !== false) {
-      this.syncAcpSessionModel(configOptions);
+      this.syncAcpSessionModel(configOptions).catch((error) =>
+        this.ctx.logger.warn('Failed to persist the ACP session model:', error)
+      );
     }
 
     const provider = getProviderRegistry().get('acp');
@@ -1728,7 +1752,7 @@ export class AcpQueryRunner {
 
     let persisted = false;
     try {
-      persisted = db.saveSDKMessage(session.id, assistantMessage);
+      persisted = await db.saveSDKMessage(session.id, assistantMessage);
     } catch (error) {
       logger.warn('Failed to persist ACP assistant error message:', error);
     }

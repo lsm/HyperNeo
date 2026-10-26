@@ -22,7 +22,7 @@ stop_and_wait() {
   while lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; do sleep 1; done
 }
 [ -e "$OLD/packages/web/dist" ] || ln -s "$NEW/packages/web/dist" "$OLD/packages/web/dist"
-"$OLD/.claude/skills/verify/launch.sh" "$PORT" "$RUN"
+VERIFY_REPO="$OLD" "$NEW/.claude/skills/verify/launch.sh" "$PORT" "$RUN"
 stop_and_wait
 report "old ($(git -C "$OLD" rev-parse --short HEAD))"
 "$NEW/.claude/skills/verify/launch.sh" "$PORT" "$RUN"

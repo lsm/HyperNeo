@@ -1,4 +1,6 @@
+import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { planNudge } from '../../../../src/lib/neo/nudge.ts';
+import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +20,10 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
+import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const receipt = { executionId: ref.id, inputId: 'input-1' };
@@ -34,11 +39,16 @@ const completed = (value: unknown): OperationOutcome =>
 function setup(
   packDone: boolean | null = null,
   dbPath = ':memory:',
-  beforeInvoke?: (name: string) => void
+  beforeInvoke?: (name: string) => void | Promise<void>,
+  beforeTell?: () => void
 ) {
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
+  db.prepare(
+    "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
+  ).run();
+  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   store.openAsk({
@@ -53,7 +63,7 @@ function setup(
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   const toldKeys: (string | undefined)[] = [];
-  let prOpen = false;
+  let prOpen: boolean | Promise<boolean> = false;
   const checkedTodos: string[] = [];
   let status: unknown = null;
   let sendResult: unknown;
@@ -63,6 +73,7 @@ function setup(
     describe: 'coding',
     instructions: () => null,
     workerRules: 'Rules for this work: prove it by running it.',
+    workerBrief: withCodingWorkerProvenance,
     todos: {
       schema: () => {},
       check: async (todo: NeoTodo) => {
@@ -74,11 +85,12 @@ function setup(
       waiting: () => prOpen,
     },
   } satisfies NeoPack;
+  const packs: NeoPack[] = [pack];
   const runner = createNeoTodoRunner({
     store,
     sessions,
     invoke: async (_caller, name, input) => {
-      beforeInvoke?.(name);
+      await beforeInvoke?.(name);
       calls.push({ name, input });
       if (name === 'work.start')
         return completed({
@@ -89,8 +101,9 @@ function setup(
         return completed(sendResult ?? { ok: true, value: { delivered: true, receipt } });
       return completed(status);
     },
-    packs: () => [pack],
+    packs: () => packs,
     tell: async (_ask, _todo, note, key) => {
+      beforeTell?.();
       told.push(note);
       toldKeys.push(key);
     },
@@ -120,11 +133,12 @@ function setup(
     told,
     toldKeys,
     checkedTodos,
+    packs,
     add,
     setStatus: (value: unknown) => {
       status = value;
     },
-    setPrOpen: (value: boolean) => {
+    setPrOpen: (value: boolean | Promise<boolean>) => {
       prOpen = value;
     },
     setSend: (value: unknown) => {
@@ -137,6 +151,79 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('a refused check stamp preserves the prior worker status and needs-you incident', async () => {
+    const h = setup();
+    try {
+      const todo = h.add(null, null);
+      h.sessions.recordRef(todo.id, ref, 1_000);
+      h.store.updateTodo(todo, { state: 'doing', startedAt: 1_000 }, 1_000);
+      h.sessions.recordLive(todo.id, 'needs_you', undefined);
+      h.sessions.recordNeedsYouSince(todo.id, 900);
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1_001 } });
+      h.db.exec(
+        "CREATE TRIGGER reject_check BEFORE UPDATE OF checked_at ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic check refusal'); END"
+      );
+      const warnings: string[] = [];
+      await h.runner.refresh((_message, error) => warnings.push(String(error)));
+      expect(warnings.some((warning) => warning.includes('synthetic check refusal'))).toBe(true);
+      const afterRefusal = {
+        live: h.sessions.readLiveStatus(todo.id),
+        needsYouSince: h.sessions.readNeedsYouSince(todo.id),
+        check: h.sessions.readCardCheck(todo.id),
+      };
+      h.db.exec('DROP TRIGGER reject_check');
+      h.setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 1_002 } });
+      await h.runner.refresh((_message, error) => warnings.push(String(error)));
+      expect(h.told).toEqual([]);
+      expect(afterRefusal).toEqual({ live: 'needs_you', needsYouSince: 900, check: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a refused receipt save leaves no partially recorded worker assignment', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.db.exec(
+        "CREATE TRIGGER reject_receipt BEFORE UPDATE OF sent_opening ON neo_todo_sessions BEGIN SELECT RAISE(ABORT, 'synthetic receipt refusal'); END"
+      );
+      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic receipt refusal');
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+      expect(h.sessions.readRef(todo.id)).toBeNull();
+      expect(h.sessions.readSent(todo.id)).toBeNull();
+      expect(h.sessions.inputs.list(todo.id)).toHaveLength(1);
+      expect(h.sessions.inputs.list(todo.id)[0].outcome).toMatchObject({ ref, receipt });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
+    const h = setup();
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr', params: {} });
+      await h.runner.start(todo.id);
+      const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
+      expect(opening).toContain('Agent: <exact model id> (effort: <effort>) via HyperNeo');
+      expect(opening).toContain('Never guess');
+      expect(opening).toContain('Even when told to stay quiet');
+      expect(opening).toContain(`todoId: "${todo.id}"`);
+      expect(opening).toContain('2–6 short options');
+      h.sessions.recordRef(todo.id, ref, 1_000, undefined, {
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+      });
+      await h.runner.proceed(todo.id, 'Write the PR body.');
+      const followup = h.calls.findLast((call) => call.name === 'work.send')!.input
+        .message as string;
+      expect(followup).toContain('Agent: gpt-6.1-sol (effort: high) via HyperNeo');
+      expect(followup).not.toContain('<effort>');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+    } finally {
+      h.db.close();
+    }
+  });
   test('refuses the external effect if accepting its durable input fails', async () => {
     const h = setup();
     try {
@@ -355,6 +442,172 @@ describe('neo todo runner', () => {
     expect(told).toEqual([]);
     db.close();
   });
+  test.each([false, true])(
+    'delivers one input per shared worker turn, explicit send: %s',
+    async (sent) => {
+      const h = setup(false);
+      try {
+        const todos = [
+          h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+          h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+        ];
+        for (const todo of todos) await h.runner.start(todo.id);
+        const startedAt = Date.now() + 10;
+        if (sent)
+          h.db
+            .prepare(`INSERT INTO neo_session_messages
+        (conversation_id,message_id,from_session,to_session,text,created_at)
+        VALUES ('conversation','explicit','worker-1','neo','PR opened',?)`)
+            .run(new Date(startedAt + 10).toISOString());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            turnEnds: [{ id: 'shared-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(
+          sent ? 0 : 1
+        );
+        for (const todo of todos) expect(h.store.getTodo(todo.id)?.state).toBe('doing');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('delivers one shared turn when bound todos first observe different live statuses', async () => {
+    let startedAt: number | null = null;
+    let reads = 0;
+    const h = setup(false, ':memory:', (name) => {
+      if (name !== 'work.status' || startedAt === null) return;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: ++reads === 1 ? 'done' : 'running',
+          lastActivityAt: startedAt + 100,
+          turnEnds: [{ id: 'shared-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+        },
+      });
+    });
+    try {
+      const todos = [
+        h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+        h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+      ];
+      for (const todo of todos) await h.runner.start(todo.id);
+      startedAt = Date.now() + 10;
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(reads).toBeGreaterThan(1);
+      expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each([
+    ['hyperneo', undefined, false],
+    ['codex-desktop', undefined, false],
+    ['claude-code', undefined, false],
+    ['hyperneo', 'attached-alias', false],
+    ['codex-desktop', 'attached-alias', false],
+    ['claude-code', 'attached-alias', false],
+    ['hyperneo', 'attached-alias', true],
+  ] as const)(
+    'matches a send from %s routed via %s using its recorded identity, other host: %s',
+    async (adapter, daemon, otherHost) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const source = { adapter, id: 'source-worker', ...(daemon ? { daemon } : {}) };
+        const startedAt = Date.now() + 10;
+        h.sessions.recordRef(todo.id, source, startedAt);
+        const dispatch = await h.sessions.inputs.accept(
+          todo.id,
+          'neo',
+          { verb: 'send', ref: source },
+          'Observe source',
+          startedAt
+        );
+        await h.sessions.inputs.recordOutcome(dispatch, { ref: source }, startedAt);
+        const localId = adapter === 'hyperneo' ? source.id : `${adapter}:${source.id}`;
+        const origin = renderAddress({ kind: 'session', sessionId: localId });
+        const sender = sessionSender(
+          daemon
+            ? qualifyRemoteOrigin(origin, otherHost ? 'another-host' : 'remote-self-name')
+            : origin
+        );
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+        (conversation_id,message_id,from_session,to_session,text,created_at)
+        VALUES ('conversation','source-send',?,'neo','PR opened',?)`)
+          .run(sender, new Date(startedAt + 10).toISOString());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            place: { machine: 'remote-self-name', name: 'Synthetic' },
+            turnEnds: [{ id: 'source-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(
+          otherHost ? 1 : 0
+        );
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
+    'does not silence a new worker report for an unrelated send: %s',
+    async (scenario) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const startedAt = Date.now() + 100;
+        const sentAt = startedAt + (scenario === 'earlier' ? -10 : scenario === 'later' ? 200 : 10);
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+          (conversation_id,message_id,from_session,to_session,text,created_at)
+          VALUES ('conversation','unrelated',?,?, 'Old milestone',?)`)
+          .run(
+            scenario === 'other-sender' ? 'another-worker' : ref.id,
+            scenario === 'other-recipient' ? 'another-neo' : 'neo',
+            new Date(sentAt).toISOString()
+          );
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: startedAt + 100,
+            turnEnds: [
+              {
+                id: 'new-turn',
+                ...(scenario === 'unknown-start' ? {} : { startedAt }),
+                at: startedAt + 100,
+                message: 'Blocked for a new reason',
+              },
+            ],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+        expect(h.told.at(-1)).toContain('Blocked for a new reason');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
     'relays a terminal message verbatim as a report without changing the todo result: %s',
     async (message) => {
@@ -376,10 +629,66 @@ describe('neo todo runner', () => {
         });
         await h.runner.refresh(() => {});
         expect(h.told).toContain(
-          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}):\n\n${message || 'worker ended its turn with no reply'}`
+          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}, status done):\n\n${message || 'worker ended its turn with no reply'}`
         );
-        expect(h.toldKeys).toContain(`neo-todo-turn:${todo.id}:${dispatch.id}:turn-1`);
         expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: prior });
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test.each(['', 'Approve it and start implementation.\nVerbatim discussion text.'])(
+    'labels focused discussion turns as status only without changing their bytes or results: %s',
+    async (message) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const op = createNeoQuestionOperations(
+          h.store,
+          async () => {},
+          async () => ({ ok: true }),
+          undefined,
+          undefined,
+          async (source) => ({
+            ...source,
+            name: 'Discussion',
+            label: 'Discussion',
+            provider: 'Anthropic',
+            link: '/session/worker-1',
+          })
+        ).find((op) => op.name === 'neo.question.ask')!;
+        const input = {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Prepared',
+          focused: true,
+          sourceSession: ref,
+        };
+        await op.execute(op.inputSchema.parse(input), {
+          source: 'mcp',
+          sessionId: 'neo',
+          role: 'neo',
+        });
+        const dispatch = h.sessions.inputs.list(todo.id)[0];
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: dispatch.acceptedAt + 100,
+            turnEnds: [{ id: 'focused-turn', at: dispatch.acceptedAt + 100, message }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        const content = message || 'worker ended its turn with no reply';
+        const report = h.told.find((note) => note.includes(content));
+        expect(report).toContain('Focused discussion status only');
+        expect(report).toContain('Do not act, reply, forward or treat this as approval.');
+        expect(report).toContain(`ask ask, todo ${todo.id}, dispatch ${dispatch.id}`);
+        expect(report?.endsWith(content)).toBe(true);
+        expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: null });
+        expect(h.store.getAsk('ask')).toMatchObject({ status: 'open', outcome: null });
       } finally {
         h.db.close();
       }
@@ -553,6 +862,64 @@ describe('neo todo runner', () => {
     expect(calls.at(-1)).toBe('work.stop');
   });
 
+  test('a ref recorded while recovery reads are in flight keeps the started todo doing', async () => {
+    const { db, store, sessions, runner, told, add, setStatus } = setup();
+    try {
+      const todo = add();
+      store.claimStart(todo, 2);
+      setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1000 } });
+      const read = vi.spyOn(sessions, 'read').mockImplementationOnce((async () => {
+        const stale = sessions.unrecordedStarts();
+        sessions.recordRef(todo.id, ref, 1000);
+        return stale;
+      }) as typeof sessions.read);
+      try {
+        await runner.refresh(() => {});
+        expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', reason: null });
+        expect(sessions.readRef(todo.id)).toEqual(ref);
+        expect(told).toEqual([]);
+      } finally {
+        read.mockRestore();
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  for (const state of ['done', 'blocked', 'failed', 'removed'] as const) {
+    test(`a todo changed to ${state} during recovery keeps the recorded decision`, async () => {
+      const { db, store, sessions, runner, told, add } = setup();
+      try {
+        const todo = add();
+        store.claimStart(todo, 2);
+        const read = vi.spyOn(sessions, 'read').mockImplementationOnce((async () => {
+          const stale = sessions.unrecordedStarts();
+          store.updateTodo(
+            todo,
+            {
+              state,
+              reason: 'Human decision',
+              ...(state === 'blocked'
+                ? ({ blockedBy: 'failure', blockedReason: 'Human decision' } as const)
+                : {}),
+            },
+            3
+          );
+          return stale;
+        }) as typeof sessions.read);
+        try {
+          await runner.refresh(() => {});
+          expect(store.getTodo(todo.id)).toMatchObject({ state, reason: 'Human decision' });
+          expect(told).toEqual([]);
+        } finally {
+          read.mockRestore();
+        }
+      } finally {
+        db.close();
+      }
+    });
+  }
+
   test('a start a restart interrupted fails the todo on the next refresh', async () => {
     const { store, runner, told, add } = setup();
     const todo = add();
@@ -687,9 +1054,10 @@ describe('neo todo runner follow-ups', () => {
   test('continue sends the next step and reopens the todo; retry goes again only before a session', async () => {
     const { store, runner, calls, add, setStatus } = setup();
     const todo = add();
-    expect(await runner.proceed(todo.id, 'next')).toEqual({
-      ok: false,
-      reason: 'not_started: this todo is todo and has no session to continue.',
+    expect(await runner.proceed(todo.id, 'next')).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'todo' },
+      records: [expect.stringContaining('not_started:')],
     });
     await runner.start(todo.id);
     store.updateTodo(store.getTodo(todo.id)!, { state: 'done', report: 'Done' }, 3);
@@ -698,9 +1066,10 @@ describe('neo todo runner follow-ups', () => {
     expect(continued.ok && continued.todo).toMatchObject({ state: 'doing', report: null });
     expect(calls.at(-1)).toMatchObject({ name: 'work.send', input: { ref } });
     expect(String(calls.at(-1)?.input.message)).toContain('Now add tests.');
-    expect(await runner.retry(todo.id)).toEqual({
-      ok: false,
-      reason: 'not_retryable: only a failed todo with a worker target can be retried.',
+    expect(await runner.retry(todo.id)).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'doing' },
+      records: [expect.stringContaining('not_retryable:')],
     });
   });
 });
@@ -938,7 +1307,19 @@ describe('planNeoTodoCheck', () => {
 });
 
 describe('neoTodoNote', () => {
-  test('passes on the report of a doing todo nothing checks, asking Neo to tick it', () => {
+  test('an unverified closure is disclosed instead of described as done or blocked', () => {
+    const note = neoTodoNote({
+      title: 'T',
+      state: 'closed_unverified',
+      reason: 'Outcome not checked',
+    } as NeoTodo);
+    expect(note).toContain('closed unverified');
+    expect(note).toContain('Outcome not checked');
+    expect(note).not.toContain('is done');
+    expect(note).not.toContain('is blocked');
+  });
+
+  test('passes on the report without promising Done for an unchecked close', () => {
     expect(
       neoTodoNote({
         title: 'T',
@@ -948,7 +1329,7 @@ describe('neoTodoNote', () => {
         report: 'Waiting on CI',
       } as NeoTodo)
     ).toBe(
-      'Todo "T" reported, and nothing checks it: tick it done with evidence once "Lane merged" holds, or let it go on.\nIts report:\nWaiting on CI'
+      'Todo "T" reported, and nothing checks it: record evidence for "Lane merged"; closing it without a passed outcome check is closed unverified, never done.\nIts report:\nWaiting on CI'
     );
   });
 
@@ -1193,9 +1574,11 @@ describe('stopped worker ladder', () => {
 
   async function stopped(
     check: NeoTodo['check'] = { pack: 'coding', kind: 'pr_merged', params: {} },
-    instruction: string | null = 'Build the rows.'
+    instruction: string | null = 'Build the rows.',
+    beforeInvoke?: (name: string) => void | Promise<void>,
+    beforeTell?: () => void
   ) {
-    const harness = setup();
+    const harness = setup(null, ':memory:', beforeInvoke, beforeTell);
     const todo = harness.add(check, instruction);
     if (instruction) await harness.runner.start(todo.id);
     else {
@@ -1217,27 +1600,136 @@ describe('stopped worker ladder', () => {
     await harness.runner.refresh(() => {});
     const base = Date.now();
     const clock = vi.spyOn(Date, 'now');
+    const warnings: string[] = [];
     const at = async (minutes: number) => {
       clock.mockReturnValue(base + minutes * MIN);
-      await harness.runner.refresh(() => {});
+      await harness.runner.refresh((message, error) => warnings.push(`${message}: ${error}`));
     };
     const sends = () =>
       harness.calls
         .filter((call) => call.name === 'work.send')
         .map((call) => String(call.input.message));
-    return { ...harness, todo, at, sends, clock };
+    return { ...harness, todo, at, sends, clock, warnings };
   }
+
+  test('overlapping refreshes send one reminder while delivery is pending', async () => {
+    let entered = 0;
+    let release!: () => void;
+    let firstSend!: () => void;
+    let secondSend!: () => void;
+    const delivery = new Promise<void>((done) => {
+      release = done;
+    });
+    const firstEntered = new Promise<void>((done) => {
+      firstSend = done;
+    });
+    const secondEntered = new Promise<void>((done) => {
+      secondSend = done;
+    });
+    const h = await stopped(null, 'Build the rows.', async (name) => {
+      if (name !== 'work.send') return;
+      if (++entered === 1) firstSend();
+      else secondSend();
+      await delivery;
+    });
+    try {
+      const first = h.at(20);
+      await firstEntered;
+      const second = h.at(20);
+      await Promise.race([second, secondEntered]);
+      release();
+      await Promise.all([first, second]);
+      expect(h.sends()).toHaveLength(1);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
+    } finally {
+      release();
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a late reminder completion preserves a newer activity incident', async () => {
+    let release!: () => void;
+    let sending!: () => void;
+    const delivery = new Promise<void>((done) => {
+      release = done;
+    });
+    const entered = new Promise<void>((done) => {
+      sending = done;
+    });
+    const h = await stopped(null, 'Build the rows.', async (name) => {
+      if (name !== 'work.send') return;
+      sending();
+      await delivery;
+    });
+    try {
+      const pending = h.at(20);
+      await entered;
+      const newer = { since: Date.now(), nudges: 0 };
+      h.sessions.recordNudge(h.todo.id, newer);
+      release();
+      await pending;
+      expect(h.sends()).toHaveLength(1);
+      expect(h.sessions.readNudge(h.todo.id)).toEqual(newer);
+    } finally {
+      release();
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a refused escalation releases its reservation so notification can retry', async () => {
+    let refused = true;
+    const h = await stopped(null, 'Build the rows.', undefined, () => {
+      if (refused) throw new Error('synthetic notification refusal');
+    });
+    try {
+      await h.at(60);
+      expect(h.told).toEqual([]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(0);
+      refused = false;
+      await h.at(60);
+      await h.at(60);
+      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed')]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(3);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
 
   test('a stopped worker is reminded at 20 and 40, escalated at 60, and never blocked', async () => {
     const h = await stopped();
     try {
       for (const minutes of [19, 20, 39, 40, 59, 60, 90]) await h.at(minutes);
+      expect(h.warnings).toEqual([]);
       expect(h.sends()).toEqual([
         expect.stringContaining('stopped for 20 min'),
         expect.stringContaining('stopped for 40 min'),
       ]);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
       expect(h.told).toEqual([expect.stringContaining('reminder window elapsed without progress')]);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a refused completion stamp does not replay the delivered reminder or notice', async () => {
+    const h = await stopped(null);
+    try {
+      h.setSend({ ok: false, reason: 'not_open' });
+      h.db.exec(
+        "CREATE TRIGGER reject_nudge_completion BEFORE INSERT ON pack_facts WHEN NEW.pack='core' AND NEW.key='nudge' AND json_extract(NEW.value_json,'$.nudges')=3 BEGIN SELECT RAISE(ABORT, 'synthetic completion refusal'); END"
+      );
+      await h.at(20);
+      await h.at(20);
+      expect(h.sends()).toHaveLength(1);
+      expect(h.told.filter((note) => note.includes('has made no progress'))).toEqual([
+        expect.stringContaining('its worker could not be reached'),
+      ]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
+      expect(h.warnings).toEqual([expect.stringContaining('synthetic completion refusal')]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1266,6 +1758,74 @@ describe('stopped worker ladder', () => {
       expect(h.sends()).toHaveLength(0);
       expect(h.told).toHaveLength(count);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('an asynchronous false waiting result permits the worker reminder ladder', async () => {
+    const h = await stopped(null);
+    try {
+      h.setPrOpen(Promise.resolve(false));
+      for (const minutes of [20, 40, 60]) await h.at(minutes);
+      expect(h.warnings).toEqual([]);
+      expect(h.sends()).toHaveLength(2);
+      expect(h.told.filter((note) => note.includes('reminder window elapsed'))).toHaveLength(1);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a waiting decision is awaited and short-circuits later pack hooks', async () => {
+    const h = await stopped(null);
+    let release!: (waiting: boolean) => void;
+    const waiting = new Promise<boolean>((done) => {
+      release = done;
+    });
+    const later: string[] = [];
+    h.packs.push({
+      ...h.packs[0],
+      id: 'later',
+      todos: {
+        ...h.packs[0].todos!,
+        waiting: () => {
+          later.push('called');
+          return false;
+        },
+      },
+    });
+    try {
+      h.setPrOpen(waiting);
+      let settled = false;
+      const pending = h.at(20).then(() => {
+        settled = true;
+      });
+      await new Promise((done) => setImmediate(done));
+      const beforeReply = { settled, sends: h.sends().length, later: [...later] };
+      release(true);
+      await pending;
+      expect(beforeReply).toEqual({ settled: false, sends: 0, later: [] });
+      expect(later).toEqual([]);
+      expect(h.sends()).toEqual([]);
+      expect(h.warnings).toEqual([]);
+    } finally {
+      release(true);
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a failed waiting read sends no worker reminder and reports the failure', async () => {
+    const h = await stopped(null);
+    try {
+      h.packs[0].todos!.waiting = async () => {
+        throw new Error('synthetic waiting read refusal');
+      };
+      await h.at(20);
+      expect(h.sends()).toEqual([]);
+      expect(h.warnings).toEqual([expect.stringContaining('synthetic waiting read refusal')]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1401,8 +1961,14 @@ describe('current explicit removal behavior before recompute', () => {
         await runner.refresh(() => {});
         await runner.refresh(() => {});
         expect(await runner.start(todo.id)).toMatchObject({ ok: false });
-        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({ ok: false });
-        expect(await runner.retry(todo.id)).toMatchObject({ ok: false });
+        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_started:')],
+        });
+        expect(await runner.retry(todo.id)).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_retryable:')],
+        });
         expect(store.getTodo(todo.id)).toEqual(removed);
         expect(store.getTodo(todo.id)?.report).toBe(report);
         expect(store.getTodo(sibling.id)?.state).toBe('doing');

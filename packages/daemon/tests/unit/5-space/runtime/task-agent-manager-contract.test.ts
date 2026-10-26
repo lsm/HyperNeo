@@ -7,7 +7,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
   function makeManager(): TaskAgentManager {
     const db = new BunDatabase(':memory:');
     return new TaskAgentManager({
-      db: { getDatabase: () => db },
+      db: { getDatabase: () => db, waitForSdkMessageColumns: async () => {} },
       internalEventBus: { subscribe: () => () => {} },
     } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
   }
@@ -136,7 +136,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
       const listExecutionsMock = mock(() => [execution]);
       const db = new BunDatabase(':memory:');
       const manager = new TaskAgentManager({
-        db: { getDatabase: () => db },
+        db: { getDatabase: () => db, waitForSdkMessageColumns: async () => {} },
         internalEventBus: { subscribe: () => () => {} },
         taskRepo: {
           listActive: () => [task],

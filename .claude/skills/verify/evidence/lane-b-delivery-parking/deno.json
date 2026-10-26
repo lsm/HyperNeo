@@ -1,0 +1,59 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 746,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "job": {
+    "id": "6e030aa0-e694-48ac-b5fb-dfe28b127e46",
+    "queue": "message_delivery",
+    "status": "pending",
+    "payload": {
+      "sessionId": "577dd87d-92ce-41a0-9316-764c051b7fea",
+      "messageUuid": "synthetic-parking",
+      "origin": "chat",
+      "__parkCount": 1,
+      "__parkedSince": 1792959460515
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792959519543,
+    "createdAt": 1792959459549,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": "fafad62c-c10d-4027-b0b2-c50ddecf70ff"
+  },
+  "status": {
+    "status": "queued"
+  },
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 1735,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 0
+}

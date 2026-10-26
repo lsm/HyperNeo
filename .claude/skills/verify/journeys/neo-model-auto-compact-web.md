@@ -10,7 +10,7 @@ thinking level, saves 70%, and shows the target calculated from the daemon catal
 catalog currently returns 200,000, so 70% is 140,000 tokens). The helper checks real daemon `neo.snapshot` returns 70 after both
 1280px and 390px reloads, and captures screenshots. It resets to 90 and confirms
 the daemon omits `autoCompactPercent`, preserving native provider defaults.
-Finally it follows the minimal Neo popover link and checks the ordinary Models
+Finally it opens the Neo popover's model list and checks the ordinary Models
 page contains no Neo editor. Fallback editing/reordering remains covered.
 
 Evidence: `$RUN/evidence/neo-model-settings.json` plus desktop/mobile PNGs.

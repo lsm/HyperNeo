@@ -23,7 +23,7 @@ const raw = { url, title: 'Synthetic design PR', body: '# Complete untrusted bod
 const fixture = (value: unknown) => writeFileSync(join(root, 'pr.json'), JSON.stringify(value)); fixture(raw);
 if (process.argv[3] === 'seed') { db.close(); console.log('seeded bound PR fixture'); process.exit(0); }
 const human = { source: 'rpc' as const, principal: 'local' as const };
-const request = { sourceMessageOrCard: { kind: 'message' as const, id: 'source' }, reference: url };
+const request = { sourceMessageOrCard: { kind: 'message' as const, id: 'source' }, reference: url, requestId: '11111111-1111-4111-8111-111111111111' };
 let registry = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'))]);
 async function call(input = request, catalog = registry) {
  const result = await invokeOperation(catalog, 'artifact.reference.resolve', input, human);

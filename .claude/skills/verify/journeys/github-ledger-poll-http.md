@@ -1,4 +1,4 @@
-# Ledger HTTP page response adapter (Build)
+# Ledger HTTP page response adapter
 
 Use shared isolation rules in `../SKILL.md`. Metadata is separate from fact
 values, so cycle IDs, status and rate/validator headers do not masquerade as
@@ -20,7 +20,10 @@ daemon and loopback HTTP fixture on ephemeral ports. Migration/reopen must keep
 old rows/raw JSON/revisions unchanged and new metadata NULL. Three sequential
 local calls in one cycle make one HTTP request. A later cycle validates with
 304, retains known body/rate coverage without a fact change, and exposes a 503
-as unknown. Daemon restart retains that failure and recovery preserves the fact
+as unknown. Two overlapping distinct cycles must also both consume one complete
+observation from one upstream request, without a superseded-record failure.
+An already-covered cycle beside a fresh cycle must still make the required refresh.
+Daemon restart retains that failure and recovery preserves the fact
 revision. Inspect `evidence/poll-http.json`; no credentials, auth files, real
 GitHub, model, GUI, live DB or port 8399 are used. Resources close in finally.
 
@@ -31,7 +34,6 @@ CAS, superseded responses and oversized valid JSON remaining partial.
 
 Repeat the normal/conditional/failure public-RPC polling journey and compare
 actual counts against the historical 18 initial / 18 repeat GETs (eight failure,
-18 recovery). At this Build rung, no production caller used the adapter. The local
-three-to-one proof is not an aggregate quota-saving claim. The later Wire journey
-is `github-ledger-poll-wire.md`, preserving destination cursors, cutoffs, fairness and existing error visibility.
+18 recovery). This helper exercises the collector directly; its local three-to-one proof is
+not an aggregate quota-saving claim. The production polling journey is `github-ledger-poll-wire.md`, preserving destination cursors, cutoffs, fairness and existing error visibility.
 After merge, verify automatic rollout via owner RPC; never deploy/restart.

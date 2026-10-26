@@ -1,0 +1,36 @@
+{
+  "base": "4a3e56cf85ae9aa237a6539cf2d4e710a7d7e503",
+  "redCommit": "4d9e52af7aded02ddc32345d361ce0f452c03665",
+  "productionChangedLines": 34,
+  "productionBudget": 80,
+  "smokeRegistrationLines": 1,
+  "testChangedLines": 141,
+  "helperJourneyLines": 162,
+  "testHelperBudget": 350,
+  "baselineUnitFailures": 4,
+  "baselineMainSqlAttempts": 1,
+  "focusedTests": 354,
+  "fullRepositoryCheck": "passed",
+  "changedCallGraph": [
+    "message.sdkMessage retains main parameter/database validation and awaits a typed gateway read",
+    "SingleMessageReader.read reuses sessionExists and getMessageByUuid then optionally applies the existing pure output cap",
+    "session existence and body lookup execute in one readonly gateway transaction",
+    "only strings and a boolean cross the worker boundary; RPC network delivery follows the result receipt"
+  ],
+  "observed": [
+    "real WebSocket full/capped RPCs and missing/invalid/other-session errors",
+    "cached main target statements denied from before daemon startup",
+    "half-megabyte complete reply preserved, cap remains 16 KiB and original stored body hash unchanged",
+    "ten concurrent warm mixed capped/full requests",
+    "held WAL writer: outside/inside 0/1 before and after reads",
+    "later committed message visible on next reader snapshot",
+    "native read worker failure rejects; health works and later read recreates reader",
+    "actor cache empty; owned daemons closed and temporary data removed after saving JSON"
+  ],
+  "timingLimits": [
+    "worker round-trip combines queue, SQL, assembly and clone scheduling",
+    "reply encoding is measured on main; no separate worker-SQL or clone-only timing",
+    "synthetic source proof does not establish production-scale or served-build UI/deployment behavior"
+  ],
+  "exactSmokeLineVerified": true
+}

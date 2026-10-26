@@ -1,3 +1,4 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import {
   ModelChevronUpIcon as ChevronUpIcon,
   ModelChevronDownIcon as ChevronDownIcon,
@@ -12,8 +13,10 @@ import {
   AUTO_COMPACT_PERCENT_MAX,
   resolveAutoCompactPercent,
   findSameModel,
-  getThinkingOptionsForProvider,
+  normalizeThinkingLevel,
+  PROVIDER_THINKING_MODES,
   THINKING_LEVEL_LABELS,
+  THINKING_OPTIONS,
   type FallbackModelEntry,
   type ModelInfo,
   type NeoModelPreference,
@@ -47,7 +50,6 @@ interface RawModelEntry {
   description: string;
   alias?: string;
   provider?: string;
-  thinkingLevels?: ThinkingLevel[];
   autoCompactPercent?: number;
 }
 
@@ -167,9 +169,7 @@ function FallbackChainEditor({
   controls,
 }: FallbackChainEditorProps) {
   const getDisplayInfo = (entry: FallbackModelEntry) => {
-    const model = availableModels.find(
-      (m) => m.id === entry.model && m.provider === entry.provider
-    );
+    const model = findSameModel(availableModels, entry);
     return { name: model?.name ?? entry.model, family: model?.family ?? 'sonnet' };
   };
 
@@ -255,7 +255,7 @@ function OverrideEditorModal({
   const getDisplayInfo = (key: string) => {
     const [provider, ...rest] = key.split('/');
     const modelId = rest.join('/');
-    const model = availableModels.find((m) => m.id === modelId && m.provider === provider);
+    const model = findSameModel(availableModels, { model: modelId, provider });
     return model
       ? { name: model.name, family: model.family, provider }
       : { name: modelId || key, family: 'sonnet', provider };
@@ -412,7 +412,7 @@ function OverrideEditorModal({
   );
 }
 
-type SettingsModel = ModelInfo & { thinkingLevels?: ThinkingLevel[] };
+type SettingsModel = ModelInfo;
 type NeoModelEntry = NonNullable<NeoModelPreference['fallbacks']>[number];
 const entryKey = (entry: { provider: string; model: string }) => `${entry.provider}/${entry.model}`;
 function percentTexts(preference?: NeoModelPreference | null): Record<string, string> {
@@ -492,10 +492,7 @@ function NeoModelSettings({
     label: string,
     change: (thinkingLevel: ThinkingLevel) => void
   ) {
-    const info = findSameModel(availableModels, entry);
-    const options = info?.thinkingLevels
-      ? info.thinkingLevels.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }))
-      : getThinkingOptionsForProvider(entry.provider, info?.thinkingModes);
+    const options = THINKING_OPTIONS;
     return (
       <select
         aria-label={label}
@@ -553,26 +550,33 @@ function NeoModelSettings({
       <div>
         <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
         <p class="text-xs text-fg-faint mt-0.5">
-          Models Neo and its projects use, in order: the primary first, then the fallbacks. Neo
-          returns to the primary after recovery.
+          Saved Neo model preference: the primary first, then the fallbacks. Recovery uses the
+          ordinary session policy and does not follow this list.
         </p>
       </div>
       <p class="text-xs text-fg-faint">
         Auto-compact is set per model and shown against that model’s context window. 90% keeps the
-        provider default; at 100%, compaction follows the provider’s limits. Changes apply after the
-        current reply.
+        provider default; at 100%, compaction follows the provider’s limits. Percentage changes
+        apply when Neo is idle.
       </p>
       <p class="text-xs text-fg-faint">
-        Usable fallback providers: {providers.join(', ') || 'None available'}
+        Providers with usable models: {providers.join(', ') || 'None available'}
       </p>
       {!draft ? (
-        <p class="text-xs text-fg-faint">Add a model. The first one in the list is the primary.</p>
+        <>
+          <p class="text-xs text-fg-faint">
+            Follows default (current: {globalSettings.value?.model ?? 'none'})
+          </p>
+          <p class="text-xs text-fg-faint">
+            Add a model to save a Neo preference. The first one is the primary.
+          </p>
+        </>
       ) : draft.fallbacks === undefined ? (
         <p class="text-xs text-fg-faint">
           Uses the general session fallback chain until you save a Neo chain.
         </p>
       ) : draft.fallbacks.length === 0 ? (
-        <p class="text-xs text-fg-faint">Neo fallbacks disabled.</p>
+        <p class="text-xs text-fg-faint">No saved fallbacks.</p>
       ) : null}
       <FallbackChainEditor
         models={list}
@@ -635,7 +639,7 @@ function NeoModelSettings({
           disabled={busy || !draft}
           onClick={() => draft && setDraft({ ...draft, fallbacks: [] })}
         >
-          Disable Neo fallbacks
+          Clear saved fallbacks
         </Button>
         <Button size="xs" disabled={busy || !draft} onClick={save}>
           Save Neo models
@@ -660,6 +664,56 @@ function NeoModelSettings({
         />
       )}
     </section>
+  );
+}
+
+function DefaultThinkingSelect({ model }: { model: ModelInfo | null }) {
+  const saved = normalizeThinkingLevel(globalSettings.value?.thinkingLevel);
+  const [level, setLevel] = useState<ThinkingLevel>(saved);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setLevel(saved), [saved]);
+  const mode =
+    model?.thinkingModes ??
+    PROVIDER_THINKING_MODES[model?.provider as keyof typeof PROVIDER_THINKING_MODES];
+  const options = mode === 'off' ? THINKING_OPTIONS.slice(0, 1) : THINKING_OPTIONS;
+  const unsupported = !options.some((option) => option.value === level);
+  const change = async (next: ThinkingLevel) => {
+    setLevel(next);
+    setSaving(true);
+    try {
+      await updateGlobalSettings({ thinkingLevel: next });
+    } catch {
+      toast.error('Failed to update thinking level');
+      setLevel(saved);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div class="flex flex-wrap items-center gap-2">
+      <label class="text-xs text-fg-muted" for="default-thinking">
+        Thinking
+      </label>
+      <select
+        id="default-thinking"
+        aria-label="Default thinking"
+        class="rounded border border-line bg-surface px-2 py-1 text-xs text-fg"
+        value={level}
+        disabled={saving}
+        onChange={(event) => change(event.currentTarget.value as ThinkingLevel)}
+      >
+        {options.map((option) => (
+          <option value={option.value}>{option.label}</option>
+        ))}
+        {unsupported && <option value={level}>{THINKING_LEVEL_LABELS[level]}</option>}
+      </select>
+      {unsupported && (
+        <span class="text-xs text-warning">Saved level is not supported by this model.</span>
+      )}
+      {model && !mode && (
+        <span class="text-xs text-fg-faint">Thinking support for this model is unknown.</span>
+      )}
+    </div>
   );
 }
 
@@ -720,19 +774,15 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
       }
 
       const [modelsResponse, authResponse] = await Promise.all([
-        hub.request(
-          'models.list',
-          forceRefresh ? { forceRefresh: true } : { useCache: true }
-        ) as Promise<{ models: RawModelEntry[] }>,
+        hub.request('models.list', forceRefresh ? { forceRefresh: true } : { useCache: true }, {
+          timeout: MODEL_LIST_REQUEST_TIMEOUT_MS,
+        }) as Promise<{ models: RawModelEntry[] }>,
         listProviderAuthStatus().catch(() => ({ providers: [] })),
       ]);
 
       setAvailableModels(
         mapRawModelsToModelInfos(modelsResponse.models).map((model) => ({
           ...model,
-          thinkingLevels: modelsResponse.models.find(
-            (raw) => raw.id === model.id && (raw.provider ?? model.provider) === model.provider
-          )?.thinkingLevels,
           autoCompactPercent: modelsResponse.models.find(
             (raw) => raw.id === model.id && (raw.provider ?? model.provider) === model.provider
           )?.autoCompactPercent,
@@ -905,16 +955,14 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
   };
 
   const getModelDisplayInfo = (entry: FallbackModelEntry): { name: string; family: string } => {
-    const model = availableModels.find(
-      (m) => m.id === entry.model && m.provider === entry.provider
-    );
+    const model = findSameModel(availableModels, entry);
     return { name: model?.name ?? entry.model, family: model?.family ?? 'sonnet' };
   };
 
   const getKeyDisplayInfo = (key: string) => {
     const [provider, ...rest] = key.split('/');
     const modelId = rest.join('/');
-    const model = availableModels.find((m) => m.id === modelId && m.provider === provider);
+    const model = findSameModel(availableModels, { model: modelId, provider: provider ?? '' });
     return model
       ? { name: model.name, family: model.family, provider }
       : { name: modelId || key, family: 'sonnet', provider: provider ?? '' };
@@ -929,7 +977,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
     return (
       <SettingsSection
         title="Neo model"
-        description="Model, provider, thinking and compaction for Neo and its projects. Changes apply after the current reply."
+        description="Model, provider, thinking and compaction for Neo and its projects. Compaction changes apply when Neo is idle."
       >
         {loadError && (
           <p role="alert" class="text-sm text-danger">
@@ -944,6 +992,9 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
         >
           Refresh models
         </Button>
+        <p class="text-xs text-fg-faint">
+          Refresh reloads the model list only; it does not change saved defaults.
+        </p>
         <NeoModelSettings
           availableModels={availableModels}
           groupedModels={groupedModels}
@@ -1036,6 +1087,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
               Change
             </Button>
           </div>
+          <DefaultThinkingSelect model={defaultModel} />
         </div>
 
         <div class="space-y-3 rounded-xl border border-line bg-surface p-4">

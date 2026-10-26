@@ -13,7 +13,6 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { isSessionTopicCovered } from '../../../../src/lib/external-events/topic-trie.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   createOperationRegistry,
@@ -32,20 +31,6 @@ const open = {
   review: 'none' as const,
 };
 
-describe('isSessionTopicCovered', () => {
-  const followed = [{ session: 's9', topic: 'github/lsm/HyperNeo/pull_request/7.*' }];
-  test.each([
-    ['the same PR pattern', 's9', 'github/lsm/hyperneo/pull_request/7.*', true],
-    ['one of its events', 's9', 'github/lsm/hyperneo/pull_request/7.review_submitted', true],
-    ['a narrower pattern', 's9', 'github/lsm/hyperneo/pull_request/7.review_*', true],
-    ['another PR', 's9', 'github/lsm/hyperneo/pull_request/8.*', false],
-    ['every PR', 's9', 'github/lsm/hyperneo/pull_request/*', false],
-    ['another session', 's1', 'github/lsm/hyperneo/pull_request/7.*', false],
-  ] as const)('%s: %s', (_label, session, topic, covered) => {
-    expect(isSessionTopicCovered(followed, session, topic)).toBe(covered);
-  });
-});
-
 describe('Neo todo pull request events', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: ReturnType<typeof createNeoService>;
@@ -56,7 +41,7 @@ describe('Neo todo pull request events', () => {
 
   beforeEach(async () => {
     db = await createTestDb();
-    db.createSession(createTestSession('root'));
+    await db.createSession(createTestSession('root'));
     sent = [];
     prs = [open];
     sendFails = false;
@@ -144,15 +129,15 @@ describe('Neo todo pull request events', () => {
   }
 
   test('archived local workers are never card-event targets', async () => {
-    db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
+    await db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
     todo({ adapter: 'hyperneo', id: 'archived-worker' });
     await event('review_submitted', { body: 'Fresh review' });
     expect(sent).toHaveLength(0);
     expect(db.getSession('archived-worker')?.status).toBe('archived');
   });
 
-  test('archived subscriptions remain stored but are not delivery targets', () => {
-    db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
+  test('archived subscriptions remain stored but are not delivery targets', async () => {
+    await db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
     const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     subscriptions.upsert({
       sessionId: 'archived-worker',

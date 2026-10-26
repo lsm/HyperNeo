@@ -10,11 +10,11 @@ import type {
   ListRemoteModelsOptions,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
-import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { providerEnvCoordinator } from './provider-env-enrollment.ts';
-import { isAnthropicSdkModelId } from './anthropic-sdk-models.js';
+import { anthropicContextWindow, isAnthropicSdkModelId } from './anthropic-sdk-models.js';
 import {
   CLAUDE_SUBSCRIPTION_OAUTH_CONFIG,
   buildClaudeSubscriptionAuthorizeUrl,
@@ -26,6 +26,7 @@ import {
   type ClaudeSubscriptionTokenResponse,
 } from './anthropic-subscription-oauth.js';
 import { Logger } from '../logger.js';
+import { PROVIDER_MODEL_LOAD_TIMEOUT_MS } from './discovery-refresh-pipeline.js';
 
 const logger = new Logger('anthropic-provider');
 
@@ -71,6 +72,7 @@ export class AnthropicProvider implements Provider {
   };
 
   private modelCache: ModelInfo[] | null = null;
+  private readonly sdkModelResolutions = new Map<string, string>();
   private credentials: ProviderCredentials | null = null;
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
@@ -348,7 +350,9 @@ export class AnthropicProvider implements Provider {
     return models;
   }
 
-  private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
+  private async loadModelsFromSdk(
+    timeout: number = PROVIDER_MODEL_LOAD_TIMEOUT_MS
+  ): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const env: Record<string, string | undefined> = { ...this.env };
     for (const [key, value] of Object.entries(this.buildSdkConfig().envVars)) {
@@ -361,7 +365,7 @@ export class AnthropicProvider implements Provider {
         env,
         cwd: process.cwd(),
         maxTurns: 0,
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        pathToClaudeCodeExecutable: await awaitSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
       },
@@ -381,17 +385,22 @@ export class AnthropicProvider implements Provider {
   }
 
   convertSdkModels(sdkModels: SdkModelRow[]): ModelInfo[] {
-    return sdkModels
+    for (const model of sdkModels) {
+      this.sdkModelResolutions.set(model.value, model.resolvedModel ?? model.value);
+    }
+    const models = sdkModels
       .filter((sdkModel) => isAnthropicSdkModelId(sdkModel.value))
       .map((sdkModel) => ({
-        id: sdkModel.value,
+        id: sdkModel.value === 'default' ? 'default' : (sdkModel.resolvedModel ?? sdkModel.value),
         name: sdkModel.displayName || sdkModel.value,
         alias: sdkModel.value,
         family: anthropicFamily(
           `${sdkModel.resolvedModel ?? sdkModel.value} ${sdkModel.displayName}`
         ),
         provider: 'anthropic',
-        contextWindow: /\[1m\]$/i.test(sdkModel.value) ? 1_000_000 : 200000,
+        contextWindow: /\[1m\]$/i.test(sdkModel.value)
+          ? 1_000_000
+          : anthropicContextWindow(sdkModel.resolvedModel ?? sdkModel.value),
         description: sdkModel.description || '',
         releaseDate: '',
         available: true,
@@ -399,6 +408,20 @@ export class AnthropicProvider implements Provider {
           ? { effortLevels: sdkModel.supportedEffortLevels }
           : {}),
       }));
+    return models.filter((model) => {
+      const same = models.filter(({ id }) => id === model.id);
+      return (same.find(({ alias }) => alias !== model.id) ?? same[0]) === model;
+    });
+  }
+
+  translateModelIdForSdk(modelId: string): string {
+    const resolved =
+      this.sdkModelResolutions.get(modelId) ??
+      this.modelCache?.find((model) => model.id === modelId || model.alias === modelId)?.id ??
+      modelId;
+    return anthropicContextWindow(resolved) === 1_000_000 && !/\[1m\]$/i.test(modelId)
+      ? `${resolved}[1m]`
+      : modelId;
   }
 
   getModelEffortLevels(modelId: string): ModelInfo['effortLevels'] {
@@ -471,6 +494,7 @@ export class AnthropicProvider implements Provider {
 
   clearModelCache(): void {
     this.modelCache = null;
+    this.sdkModelResolutions.clear();
   }
 }
 

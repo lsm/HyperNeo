@@ -133,14 +133,16 @@ describe('Daemon App Cleanup', () => {
       standalone: false,
     });
 
-    const pending = daemonContext.jobQueue.listJobs({
-      queue: MAILBOX_EXPIRE_FIRE,
-      status: 'pending',
-      limit: 10,
-    });
-    expect(pending).toHaveLength(1);
-
-    await daemonContext.cleanup();
+    try {
+      const live = daemonContext.jobQueue.listJobs({
+        queue: MAILBOX_EXPIRE_FIRE,
+        status: ['pending', 'processing'],
+        limit: 10,
+      });
+      expect(live).toHaveLength(1);
+    } finally {
+      await daemonContext.cleanup();
+    }
   });
 
   describe('pending RPC calls timeout', () => {

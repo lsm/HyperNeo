@@ -1,3 +1,15 @@
+import { runMigration459 } from './m459-operation-accepted-records.ts';
+import { runMigration460 } from './m460-neo-session-message-kind.ts';
+import { runMigration458 } from './m458-neo-todo-closed-unverified.ts';
+import { runMigration457 } from './m457-neo-question-answers.ts';
+import { runMigration456 } from './m456-neo-todo-query-indexes.ts';
+import { runMigration455 } from './m455-work-started-sessions.ts';
+import { runMigration454 } from './m454-coding-repo-health.ts';
+import { runMigration453 } from './m453-neo-ask-focused-session.ts';
+import { runMigration452 } from './m452-neo-question-source.ts';
+import { runMigration451 } from './m451-stalled-ask-wake.ts';
+import { runMigration450 } from './m450-neo-question-artifacts.ts';
+import { runMigration449 } from './m449-retire-stale-sdk-indexes.ts';
 import { runMigration448 } from './m448-session-schedule-quiet-count.ts';
 import { runMigration447 } from './m447-neo-todo-removed-index.ts';
 import { runMigration446 } from './m446-neo-question-todo.ts';
@@ -951,6 +963,18 @@ export function runMigrations(
   run(migrationMarkerKey(446), () => runMigration446(db));
   run(migrationMarkerKey(447), () => runMigration447(db));
   run(migrationMarkerKey(448), () => runMigration448(db));
+  run(migrationMarkerKey(449), () => runMigration449(db));
+  run(migrationMarkerKey(450), () => runMigration450(db));
+  run(migrationMarkerKey(451), () => runMigration451(db));
+  run(migrationMarkerKey(452), () => runMigration452(db));
+  run(migrationMarkerKey(453), () => runMigration453(db));
+  run(migrationMarkerKey(454), () => runMigration454(db));
+  run(migrationMarkerKey(455), () => runMigration455(db));
+  run(migrationMarkerKey(456), () => runMigration456(db));
+  run(migrationMarkerKey(457), () => runMigration457(db));
+  run(migrationMarkerKey(458), () => runMigration458(db));
+  run(migrationMarkerKey(459), () => runMigration459(db));
+  run(migrationMarkerKey(460), () => runMigration460(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
@@ -6469,8 +6493,6 @@ export function runMigration113(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
-		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
 }
 
 export function runMigration114(db: BunDatabase): void {
@@ -6672,7 +6694,6 @@ export function runMigration122(db: BunDatabase): void {
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`
     );
-
     if (tableExists(db, 'sessions')) {
       db.exec(`
 				UPDATE sdk_messages
@@ -8576,9 +8597,6 @@ function migrateNeoMessageOrigins(db: BunDatabase): void {
     db.exec(`DROP TABLE sdk_messages`);
     db.exec(`ALTER TABLE sdk_messages_m131_new RENAME TO sdk_messages`);
     db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_sdk_messages_session ON sdk_messages(session_id, timestamp)`
-    );
-    db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id ON sdk_messages(session_id, timestamp DESC, id DESC)`
     );
     db.exec(
@@ -8586,9 +8604,6 @@ function migrateNeoMessageOrigins(db: BunDatabase): void {
     );
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`
     );
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_type ON sdk_messages(message_type, message_subtype)`

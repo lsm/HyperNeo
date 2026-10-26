@@ -7,6 +7,7 @@ import {
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
+import { attachProviderWriter } from '../../../helpers/provider-rpc-writes';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
@@ -31,7 +32,7 @@ function makeRepo(
   throws = false,
   readThrows = false
 ): ProviderRepository {
-  return {
+  const repository = {
     getProviderByProviderId: readThrows
       ? mock(() => {
           throw new Error('db read failed');
@@ -47,6 +48,8 @@ function makeRepo(
         })
       : mock(() => null),
   } as unknown as ProviderRepository;
+  attachProviderWriter(repository);
+  return repository;
 }
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;

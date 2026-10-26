@@ -121,12 +121,12 @@ export async function migrateLiveWorkspaceSession(
 ): Promise<LiveWorkspaceSyncMigration> {
   const live = getSubSession(migration.subSessionId);
   if (!live) return migration;
-  live.updateMetadata({ workspacePath: migration.workspacePath });
+  await live.updateMetadata({ workspacePath: migration.workspacePath });
   try {
     await reinjectNodeAgentMcpServer(live, migration);
   } catch (error) {
     if (migration.previousWorkspacePath !== undefined) {
-      live.updateMetadata({ workspacePath: migration.previousWorkspacePath });
+      await live.updateMetadata({ workspacePath: migration.previousWorkspacePath });
     }
     throw error;
   }

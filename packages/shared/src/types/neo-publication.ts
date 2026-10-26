@@ -2,6 +2,13 @@ import type { ArtifactProjection } from './artifact-file.ts';
 
 import type { NeoInputOrigin } from './neo-message.ts';
 
+export interface NeoCardReply {
+  readonly sourceMessageIds: readonly string[];
+  readonly askId: string;
+  readonly questionId: string;
+  readonly mutationId: string;
+}
+
 export interface NeoPublicationLink {
   readonly label: string;
   readonly kind: 'project' | 'work' | 'consultation';
@@ -19,6 +26,7 @@ export interface NeoPublicationRevision {
 }
 
 export interface NeoPublicationInput extends ArtifactProjection {
+  readonly cardReply?: NeoCardReply;
   readonly conversationId: string;
   readonly publicationId: string;
   readonly askOrigin?: NeoInputOrigin;

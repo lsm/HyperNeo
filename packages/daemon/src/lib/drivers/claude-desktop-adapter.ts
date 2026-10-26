@@ -1,4 +1,9 @@
-import { collectDescendantPids, listProcesses } from '../process-watchdog.ts';
+import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
+import { createHash } from 'node:crypto';
+import { getDataDir } from '../data-dir.ts';
+import { installClaudeNativeWrites, readClaudeWorkerSandbox } from './claude-native-writes.ts';
+import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
+import { readClaudeReceiverMode } from './claude-receiver-mode.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import type { createClaudeDesktopModsDriver } from './claude-desktop-mods-driver.ts';
@@ -55,7 +60,7 @@ import {
 import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
-import { claudeInboxText } from './claude-inbox.ts';
+import { claudeInboxText, type ClaudeInboxSubmission } from './claude-inbox.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 import {
   readClaudeSessionOwner,
@@ -132,13 +137,15 @@ export interface ClaudeDesktopAdapterDeps {
   sendInbox?: (
     sessionId: string,
     message: string,
-    context: WorkCallContext
+    context: WorkCallContext,
+    fromMode?: ClaudeInboxSubmission['fromMode']
   ) => Promise<Result<WorkDelivery>>;
   prepareExecution?: WorkExecutionPreparer;
   sessionsDir: string;
   projectsDir: string;
   machine: string;
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
+  listProcesses?: ProcessLister;
   spawn: SpawnFn;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
@@ -495,6 +502,7 @@ export function claudeTranscriptState(
   let replyAt: number | undefined;
   let lastAt = 0;
   let earliest: number | undefined;
+  let startedAt: number | undefined;
   for (const line of lines) {
     let entry: ClaudeTranscriptEntry | null;
     try {
@@ -506,6 +514,7 @@ export function claudeTranscriptState(
     const at = workEntryTime(entry.timestamp);
     if (at !== undefined) lastAt = Math.max(lastAt, at);
     earliest ??= at;
+    if (entry.type === 'user' && entry.isSidechain !== true && ended) startedAt = at;
     const said = assistantText(line);
     if (said && entry.isSidechain !== true) {
       turn = fresh ? [said] : [...turn, said];
@@ -523,6 +532,7 @@ export function claudeTranscriptState(
       turnEnds.push({
         id: typeof entry.uuid === 'string' && entry.uuid ? entry.uuid : String(at),
         at,
+        startedAt,
         message: Array.isArray(content)
           ? content
               .flatMap((part: { type?: unknown; text?: unknown }) =>
@@ -531,6 +541,7 @@ export function claudeTranscriptState(
               .join('\n')
           : '',
       });
+      startedAt = undefined;
     }
     if (entry.type === 'assistant' && entry.isSidechain !== true) ended = claudeTurnEnded(entry);
     const text = claudeInputText(entry);
@@ -823,6 +834,30 @@ export async function readClaudeInputEvidence(
   const path = claudeTranscriptPath(deps.projectsDir, record);
   if (!path) return { receipt, state: 'unavailable' };
   try {
+    const pending = /^desktop-pending:(\d+):([a-f0-9]{64})$/.exec(receipt.inputId);
+    if (pending && receipt.executionId === record.cliSessionId) {
+      const lines = await readLinesAfter(path, Number(pending[1]), true);
+      const input = lines.map(parseClaudeEntry).find((entry) => {
+        const text = entry?.type === 'user' ? claudeInputText(entry) : null;
+        const native =
+          text &&
+          /<cross-session-message from="([^"]+)"[^>]*>\n([\s\S]*)\n<\/cross-session-message>$/.exec(
+            text
+          );
+        return (
+          typeof entry?.uuid === 'string' &&
+          native &&
+          nativeInputFingerprint(native[1], native[2]) === pending[2]
+        );
+      });
+      if (!input) return { receipt, state: 'pending' };
+      const evidence = claudeInputEvidence(
+        lines,
+        { ...receipt, inputId: input.uuid as string },
+        record.cliSessionId
+      );
+      return { ...evidence, receipt };
+    }
     const { lines } = await readTailLines(path, TRANSCRIPT_TAIL_BYTES);
     return claudeInputEvidence(lines, receipt, record.cliSessionId);
   } catch {
@@ -878,15 +913,20 @@ async function transcriptSize(path: string | null): Promise<number> {
   );
 }
 
-async function readLinesAfter(path: string | null, offset: number): Promise<string[]> {
+async function readLinesAfter(
+  path: string | null,
+  offset: number,
+  tail = false
+): Promise<string[]> {
   if (!path) return [];
   const handle = await open(path, 'r');
   try {
     const { size } = await handle.stat();
-    const start = Math.min(offset, size);
+    const start = Math.min(tail ? Math.max(offset, size - TRANSCRIPT_TAIL_BYTES) : offset, size);
     const buffer = Buffer.alloc(Math.min(size - start, TRANSCRIPT_TAIL_BYTES));
     await handle.read(buffer, 0, buffer.length, start);
-    return buffer.toString('utf8').split('\n');
+    const lines = buffer.toString('utf8').split('\n');
+    return start > offset ? lines.slice(1) : lines;
   } finally {
     await handle.close();
   }
@@ -959,6 +999,12 @@ async function relayClaudeMessage(
   }
 }
 
+function nativeInputFingerprint(helperSessionId: string, message: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify([helperSessionId, message]))
+    .digest('hex');
+}
+
 export async function relayNativeDesktopMessage(
   target: ClaudeDesktopRecord & { cliSessionId: string },
   helper: ClaudeDesktopRecord & { cliSessionId: string },
@@ -992,10 +1038,17 @@ export async function relayNativeDesktopMessage(
           confirmedAt: confirmed.at ?? deps.now(),
         },
       }
-    : reject(
-        'not_delivered',
-        `No native task input was confirmed in ${target.sessionId} (${target.permissionMode ?? 'unknown'}). Inspect desktop-wake and the target for a native permission wait, hold or refusal; no headless task was run.`
-      );
+    : {
+        ok: true,
+        value: {
+          delivered: false,
+          unconfirmed: true,
+          receipt: {
+            executionId: target.cliSessionId,
+            inputId: `desktop-pending:${before}:${nativeInputFingerprint(helper.sessionId, message)}`,
+          },
+        },
+      };
 }
 
 export function claudeNativeInput(
@@ -1026,6 +1079,16 @@ export function claudeNativeInput(
   return undefined;
 }
 
+async function readCurrentDesktopReceiver(
+  record: ClaudeDesktopRecord & { cliSessionId: string },
+  deps: ClaudeDesktopAdapterDeps
+) {
+  return (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+    (candidate) =>
+      candidate.sessionId === record.sessionId && candidate.cliSessionId === record.cliSessionId
+  );
+}
+
 async function sendOwnedClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
@@ -1033,13 +1096,33 @@ async function sendOwnedClaudeMessage(
   deps: ClaudeDesktopAdapterDeps,
   context?: WorkCallContext
 ): Promise<Result<WorkDelivery>> {
-  if (!deps.sendInbox)
+  const desktop = liveSessions.some(
+    (session) => session.sessionId === record.cliSessionId && session.owner === 'desktop'
+  );
+  if (!desktop && !deps.sendInbox)
     return reject('unsupported', 'The direct Claude inbox transport is unavailable.');
-  if (!context)
+  if (!desktop && !context)
     return reject('unsupported', 'The Claude inbox requires a session reply destination.');
   const path = await locateClaudeTranscript(deps.projectsDir, record);
   const before = await transcriptSize(path);
-  const direct = await deps.sendInbox(record.cliSessionId, message, context);
+  const receiver = desktop ? await readCurrentDesktopReceiver(record, deps) : record;
+  const direct =
+    deps.sendInbox && context && receiver
+      ? await deps
+          .sendInbox(
+            record.cliSessionId,
+            message,
+            context,
+            desktop
+              ? receiver.permissionMode === 'bypassPermissions'
+                ? 'bypass'
+                : 'prompting'
+              : undefined
+          )
+          .catch((error: unknown) =>
+            reject('not_delivered', error instanceof Error ? error.message : String(error))
+          )
+      : reject('unsupported', 'No direct inbox with a session reply destination.');
   const receipt = direct.ok ? direct.value.receipt : undefined;
   const confirmed =
     receipt &&
@@ -1053,7 +1136,31 @@ async function sendOwnedClaudeMessage(
       ok: true,
       value: { delivered: true, receipt, confirmedAt: confirmed.at ?? deps.now() },
     };
-  const relayed = await relayClaudeMessage(record, liveSessions, message, path, deps);
+  if (receipt && !desktop)
+    return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
+  const current = desktop ? await readCurrentDesktopReceiver(record, deps) : record;
+  if (!current)
+    return reject(
+      'not_delivered',
+      `${record.title}: receiver mode unknown; current Desktop metadata is unavailable, so no relay was sent.`
+    );
+  const receiverMode =
+    (desktop
+      ? await readClaudeReceiverMode(
+          record.cliSessionId,
+          deps.liveSessions,
+          deps.listProcesses ?? listProcesses
+        )
+      : null) ??
+    current.permissionMode ??
+    'default';
+  const relayRecord = desktop
+    ? {
+        ...record,
+        permissionMode: receiverMode === 'bypassPermissions' ? 'bypassPermissions' : 'auto',
+      }
+    : record;
+  const relayed = await relayClaudeMessage(relayRecord, liveSessions, message, path, deps);
   if (relayed.ok)
     return {
       ok: true,
@@ -1065,12 +1172,9 @@ async function sendOwnedClaudeMessage(
         confirmedAt: relayed.value.at ?? deps.now(),
       },
     };
-  const first = direct.ok
-    ? `the direct inbox message did not appear in its transcript within ${(DELIVERY_POLLS * DELIVERY_POLL_MS) / 1000} s and may still be held for approval there`
-    : `the direct inbox message failed (${direct.detail})`;
   return reject(
     relayed.reason === 'claude_cli_login_expired' ? relayed.reason : 'not_delivered',
-    `${record.title} did not receive the message: ${first}; the relay failed: ${relayed.detail}`
+    `${record.title} did not receive the message${desktop ? ` (receiver mode: ${receiverMode})` : ''}: the direct inbox message failed (${direct.ok ? (receipt ? 'not confirmed in receiver transcript' : 'no receipt') : direct.detail}); the relay failed: ${relayed.detail}`
   );
 }
 
@@ -1115,8 +1219,9 @@ export async function resumeIdleClaudeSession(
 ): Promise<{ value: readonly ClaudeLiveSession[] } | { reason: Result<WorkDelivery> }> {
   const running = (sessions: readonly ClaudeLiveSession[]) =>
     sessions.some((session) => session.sessionId === record.cliSessionId && session.pid);
-  if (running(liveSessions)) return { value: liveSessions };
   const folder = record.cwd ?? record.originCwd ?? deps.homeDir;
+  const sandbox = await readClaudeWorkerSandbox(folder);
+  if (running(liveSessions)) return { value: liveSessions };
   if (!deps.folderExists(folder))
     return {
       reason: reject(
@@ -1125,8 +1230,9 @@ export async function resumeIdleClaudeSession(
       ),
     };
   const path = await locateClaudeTranscript(deps.projectsDir, record);
-  const mode =
-    record.permissionMode && HEADLESS_PERMISSION_MODES.has(record.permissionMode)
+  const mode = record.desktopRegistered
+    ? 'auto'
+    : record.permissionMode && HEADLESS_PERMISSION_MODES.has(record.permissionMode)
       ? record.permissionMode
       : claudeHeadlessStartMode(await readHeadLines(path));
   if (!mode)
@@ -1139,13 +1245,34 @@ export async function resumeIdleClaudeSession(
   const recheck = await deps.liveSessions().catch(() => liveSessions);
   if (running(recheck)) return { value: recheck };
   const turn = await runClaudeTurn(
-    ['claude', '-p', '--resume', record.cliSessionId, '--permission-mode', mode, '--', message],
+    [
+      'claude',
+      '-p',
+      '--resume',
+      record.cliSessionId,
+      '--permission-mode',
+      mode,
+      ...(sandbox ? ['--settings', join(folder, '.claude/settings.local.json')] : []),
+      '--',
+      message,
+    ],
     folder,
     record,
     message,
     deps,
     DELIVERY_POLLS
   );
+  if (!turn.ok && record.desktopRegistered) {
+    const current = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+      (candidate) => candidate.sessionId === record.sessionId
+    );
+    return {
+      reason: reject(
+        turn.reason,
+        `${record.title} (receiver mode: ${current?.permissionMode ?? 'unknown'}): auto headless turn failed: ${turn.detail} Desktop warm spawn was not attempted because its process cap can refuse stopped sessions.`
+      ),
+    };
+  }
   return {
     reason: turn.ok
       ? {
@@ -1300,9 +1427,19 @@ export async function launchInClaudeDesktop(
   deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
 ): Promise<number> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const sandbox = await readClaudeWorkerSandbox(cwd);
   try {
     const proc = deps.spawn(
-      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId],
+      [
+        'script',
+        '-q',
+        '/dev/null',
+        'claude',
+        '--desktop',
+        '--resume',
+        cliSessionId,
+        ...(sandbox ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
+      ],
       {
         cwd,
         stdout: 'ignore',
@@ -1433,15 +1570,29 @@ export async function startClaudeSession(
   const prepared = request.preparation
     ? await deps.prepareExecution!(request.preparation, {
         directory: folder,
-        destination: join(folder, '.claude', 'worktrees', `neo-${cliSessionId.slice(0, 8)}`),
+        destination: join(getDataDir(), 'claude-worktrees', basename(folder), cliSessionId),
       })
     : null;
   if (prepared && !prepared.ok) return prepared;
+  const sandboxed = !!prepared && workerSandboxOn();
+  if (prepared && sandboxed) {
+    try {
+      const checkout = await deps.gitCheckout(folder);
+      await installClaudeNativeWrites(prepared.value.directory, [folder, checkout?.repo ?? folder]);
+    } catch (error) {
+      await prepared.value.release();
+      await releaseWorkerSandbox(prepared.value.directory);
+      return reject(
+        'preparation_failed',
+        `Could not install native write policy: ${String(error)}`
+      );
+    }
+  }
   const placement = planWorkPlacement(
-    prepared ? null : await deps.gitCheckout(folder).catch(() => null)
+    prepared || request.inPlace ? null : await deps.gitCheckout(folder).catch(() => null)
   );
   const worktree = placement.kind === 'worktree' ? `neo-${cliSessionId.slice(0, 8)}` : null;
-  const permissionMode = deps.permissionMode?.() ?? 'bypassPermissions';
+  const permissionMode = deps.permissionMode?.() ?? 'auto';
   const cwd =
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
@@ -1465,6 +1616,7 @@ export async function startClaudeSession(
       '--mcp-config',
       '{"mcpServers":{}}',
       ...(worktree ? ['--worktree', worktree] : []),
+      ...(sandboxed ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],
@@ -1484,6 +1636,7 @@ export async function startClaudeSession(
         : reject('not_delivered', 'the message did not appear in the session transcript');
   if (!started.ok) {
     await prepared?.value.release();
+    if (prepared) await releaseWorkerSandbox(prepared.value.directory);
     return started;
   }
   const record: ClaudeDesktopRecord = {
@@ -1605,6 +1758,7 @@ async function archiveClaudeSession(
     return reject('busy', 'The Claude session still has a live turn.');
   const refused = admit();
   if (refused) return refused;
+  await releaseWorkerSandbox(record.cwd);
   if (record.isArchived) return { ok: true, value: { archived: false } };
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   try {

@@ -1,0 +1,595 @@
+{
+  "mode": "verify",
+  "fanout": [
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    },
+    {
+      "ok": true,
+      "kind": "pr",
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "approved",
+      "blockers": [
+        "1 unresolved review thread"
+      ],
+      "title": "Synthetic shared fact"
+    }
+  ],
+  "initialRequests": [
+    {
+      "phase": "initial",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-rules",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/rules/branches/dev",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    }
+  ],
+  "workLookups": 1,
+  "referenceLookups": 0,
+  "firstStored": {
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "value_json": "{\"url\":\"https://github.com/synthetic/ledger/pull/7\",\"state\":\"OPEN\",\"checks\":\"passing\",\"review\":\"approved\",\"createdAt\":1792955074834,\"title\":\"Synthetic shared fact\",\"branch\":\"synthetic-branch\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"refs\":[3],\"blockers\":[\"1 unresolved review thread\"]}",
+    "observed_at": 1792962276101,
+    "attempted_at": 1792962276101,
+    "reason": null
+  },
+  "changed": {
+    "ok": true,
+    "kind": "pr",
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "state": "OPEN",
+    "checks": "passing",
+    "review": "none",
+    "blockers": [
+      "1 unresolved review thread"
+    ],
+    "title": "Synthetic shared fact"
+  },
+  "changedStored": {
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "fact_revision": 2,
+    "observation_revision": 2,
+    "value_json": "{\"url\":\"https://github.com/synthetic/ledger/pull/7\",\"state\":\"OPEN\",\"checks\":\"passing\",\"review\":\"none\",\"createdAt\":1792955074834,\"title\":\"Synthetic shared fact\",\"branch\":\"synthetic-branch\",\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"refs\":[3],\"blockers\":[\"1 unresolved review thread\"]}",
+    "observed_at": 1792962276443,
+    "attempted_at": 1792962276443,
+    "reason": null
+  },
+  "failed": {
+    "ok": false,
+    "reason": "unreadable: the checks and review of https://github.com/synthetic/ledger/pull/7 could not be read from GitHub just now; try again later."
+  },
+  "failedStored": {
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "fact_revision": 2,
+    "observation_revision": 3,
+    "value_json": "{\"url\":\"https://github.com/synthetic/ledger/pull/7\",\"state\":\"OPEN\",\"checks\":\"passing\",\"review\":\"none\",\"createdAt\":1792955074834,\"title\":\"Synthetic shared fact\",\"branch\":\"synthetic-branch\",\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"refs\":[3],\"blockers\":[\"1 unresolved review thread\"]}",
+    "observed_at": 1792962276443,
+    "attempted_at": 1792962276764,
+    "reason": "failed"
+  },
+  "retained": {
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "fact_revision": 2,
+    "observation_revision": 3,
+    "value_json": "{\"url\":\"https://github.com/synthetic/ledger/pull/7\",\"state\":\"OPEN\",\"checks\":\"passing\",\"review\":\"none\",\"createdAt\":1792955074834,\"title\":\"Synthetic shared fact\",\"branch\":\"synthetic-branch\",\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"refs\":[3],\"blockers\":[\"1 unresolved review thread\"]}",
+    "observed_at": 1792962276443,
+    "attempted_at": 1792962276764,
+    "reason": "failed"
+  },
+  "reopened": {
+    "ok": true,
+    "kind": "pr",
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "state": "OPEN",
+    "checks": "passing",
+    "review": "none",
+    "blockers": [
+      "1 unresolved review thread"
+    ],
+    "title": "Synthetic shared fact"
+  },
+  "reopenedStored": {
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "fact_revision": 2,
+    "observation_revision": 4,
+    "value_json": "{\"url\":\"https://github.com/synthetic/ledger/pull/7\",\"state\":\"OPEN\",\"checks\":\"passing\",\"review\":\"none\",\"createdAt\":1792955074834,\"title\":\"Synthetic shared fact\",\"branch\":\"synthetic-branch\",\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"refs\":[3],\"blockers\":[\"1 unresolved review thread\"]}",
+    "observed_at": 1792962277562,
+    "attempted_at": 1792962277562,
+    "reason": null
+  },
+  "hostAlias": {
+    "ok": true,
+    "kind": "pr",
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "state": "OPEN",
+    "checks": "passing",
+    "review": "approved",
+    "blockers": [
+      "1 unresolved review thread"
+    ],
+    "title": "Synthetic shared fact"
+  },
+  "issue": {
+    "ok": true,
+    "kind": "issue",
+    "url": "https://github.com/synthetic/ledger/issues/3",
+    "state": "CLOSED",
+    "closedAs": "completed",
+    "closedBy": "https://github.com/synthetic/ledger/pull/7",
+    "parent": "https://github.com/synthetic/ledger/issues/1"
+  },
+  "redirect": {
+    "ok": true,
+    "kind": "pr",
+    "url": "https://github.com/synthetic/ledger/pull/7",
+    "state": "OPEN",
+    "checks": "passing",
+    "review": "approved",
+    "blockers": [
+      "1 unresolved review thread"
+    ],
+    "title": "Synthetic shared fact"
+  },
+  "requests": [
+    {
+      "phase": "initial",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-rules",
+      "args": [
+        "api",
+        "repos/synthetic/ledger/rules/branches/dev",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "initial",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "changed",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "changed",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "detail-failed",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "reopen",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "reopen",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "host-alias",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "host-alias",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "issue",
+      "family": "issue-reference",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged mergedAt baseRefName}}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=3",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "redirect",
+      "family": "ask-reference",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged mergedAt baseRefName}}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "redirect",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "redirect",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "late",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "late",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "held",
+      "family": "work-detail",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ],
+      "graphqlCost": null
+    },
+    {
+      "phase": "held",
+      "family": "work-blockers",
+      "args": [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}",
+        "-f",
+        "o=synthetic",
+        "-f",
+        "n=ledger",
+        "-F",
+        "p=7",
+        "--include"
+      ],
+      "graphqlCost": null
+    }
+  ],
+  "counts": {
+    "initial": 1,
+    "changed": 1,
+    "detail-failed": 1,
+    "reopen": 1
+  },
+  "fence": {
+    "before": 6,
+    "after": 7,
+    "winningValue": {
+      "url": "https://github.com/synthetic/ledger/pull/7",
+      "state": "OPEN",
+      "checks": "passing",
+      "review": "none",
+      "head": "cccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "health": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 4299,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "contention": {
+    "healthMs": 0.670999999999367,
+    "writeMs": 1269.509083,
+    "affectedWriteUnder250ms": false
+  },
+  "mainSql": [],
+  "commands": [
+    "coding.work.snapshot",
+    "coding.work.observe",
+    "coding.work.snapshot",
+    "coding.work.observe",
+    "coding.work.snapshot",
+    "coding.work.observe",
+    "coding.work.snapshot",
+    "coding.work.observe",
+    "coding.work.snapshot",
+    "coding.work.observe",
+    "coding.work.snapshot",
+    "coding.work.observe",
+    "coding.work.snapshot",
+    "coding.work.snapshot",
+    "coding.work.observe",
+    "coding.work.observe",
+    "coding.work.snapshot",
+    "coding.work.observe"
+  ],
+  "rpcMetrics": [
+    {
+      "name": "neo.github.read",
+      "durationMs": 670.3291670000003
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 670.0416660000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 669.9949580000002
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 669.9923330000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 669.9947500000001
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 340.187625
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 320.77779199999986
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 475.19958399999996
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 341.32779200000004
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 26.80208300000004
+    },
+    {
+      "name": "neo.github.read",
+      "durationMs": 359.9869579999995
+    },
+    {
+      "name": "system.health",
+      "durationMs": 0.6570410000003903
+    }
+  ],
+  "maxLagMs": 25.905624999999873,
+  "verified": true
+}

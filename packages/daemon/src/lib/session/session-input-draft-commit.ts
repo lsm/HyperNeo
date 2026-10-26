@@ -12,13 +12,13 @@ type DraftCache = Pick<SessionCache, 'has' | 'get'>;
 type DraftPublisher = (sessionId: string, text: string | null) => Promise<void>;
 type CommittedDraft = { sessionId: string; text: string | null };
 
-function commitInputDraftStage(
+async function commitInputDraftStage(
   snapshot: SessionInputDraftSnapshot,
   text: string | null,
   db: DraftDatabase,
   cache: DraftCache
-): { value: CommittedDraft } | { reason: SessionInputDraftCommitOutcome } {
-  const outcome = db.casSessionInputDraft(snapshot, text);
+): Promise<{ value: CommittedDraft } | { reason: SessionInputDraftCommitOutcome }> {
+  const outcome = await db.casSessionInputDraft(snapshot, text);
   if (outcome !== 'won') return { reason: { kind: outcome } };
   const agent = cache.has(snapshot.id) ? cache.get(snapshot.id) : null;
   agent?.applyCommittedInputDraft(text);

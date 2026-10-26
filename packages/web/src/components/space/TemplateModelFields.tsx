@@ -1,10 +1,5 @@
-import type { ModelInfo, ThinkingLevel } from '@hyperneo/shared';
-import {
-  getThinkingOptionsForProvider,
-  normalizeThinkingLevel,
-  THINKING_LEVEL_LABELS,
-} from '@hyperneo/shared';
-import { useMemo, useState } from 'preact/hooks';
+import type { ThinkingLevel } from '@hyperneo/shared';
+import { normalizeThinkingLevel, THINKING_OPTIONS } from '@hyperneo/shared';
 import {
   WorkflowModelSelect,
   type WorkflowModelSelection,
@@ -32,40 +27,7 @@ export function TemplateModelFields({
   const modelSelectId = `${testId}-model-select`;
   const thinkingSelectId = `${testId}-thinking-level`;
 
-  const [models, setModels] = useState<ModelInfo[]>([]);
-
-  const resolvedModel = useMemo(() => {
-    if (!value.model) return undefined;
-    return models.find(
-      (model) => model.id === value.model && (!value.provider || model.provider === value.provider)
-    );
-  }, [models, value.model, value.provider]);
-
-  const baseThinkingOptions = useMemo(
-    () =>
-      getThinkingOptionsForProvider(
-        value.provider ?? undefined,
-        resolvedModel?.thinkingModes ?? undefined
-      ),
-    [value.provider, resolvedModel]
-  );
-
-  const thinkingOptions = useMemo(() => {
-    if (
-      value.thinkingLevel &&
-      !baseThinkingOptions.some((option) => option.value === value.thinkingLevel)
-    ) {
-      return [
-        ...baseThinkingOptions,
-        { value: value.thinkingLevel, label: THINKING_LEVEL_LABELS[value.thinkingLevel] },
-      ];
-    }
-    return baseThinkingOptions;
-  }, [baseThinkingOptions, value.thinkingLevel]);
-
-  function handleModelsLoad(loaded: ModelInfo[]) {
-    setModels(loaded);
-  }
+  const thinkingOptions = THINKING_OPTIONS;
 
   function handleModelChange(model: string | undefined, selection?: WorkflowModelSelection) {
     if (!model) {
@@ -74,24 +36,7 @@ export function TemplateModelFields({
     }
 
     const nextProvider = selection?.provider || value.provider;
-    const match = models.find(
-      (m) => m.id === model && (!nextProvider || m.provider === nextProvider)
-    );
-    const nextOptions = getThinkingOptionsForProvider(
-      nextProvider ?? undefined,
-      match?.thinkingModes ?? undefined
-    ).map((option) => option.value);
-    const nextThinkingLevel =
-      match && value.thinkingLevel && !nextOptions.includes(value.thinkingLevel)
-        ? null
-        : value.thinkingLevel;
-
-    onChange({
-      ...value,
-      model,
-      provider: nextProvider,
-      thinkingLevel: nextThinkingLevel,
-    });
+    onChange({ ...value, model, provider: nextProvider });
   }
 
   function handleThinkingLevelChange(e: Event) {
@@ -114,7 +59,6 @@ export function TemplateModelFields({
           value={value.model || undefined}
           provider={value.provider || undefined}
           onChange={handleModelChange}
-          onModelsLoad={handleModelsLoad}
           testId={modelSelectId}
         />
         <p class="mt-1.5 text-xs text-fg-faint leading-snug">

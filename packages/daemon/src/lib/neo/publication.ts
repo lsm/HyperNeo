@@ -11,12 +11,21 @@ const origin = z.object({ sessionId: text(160), messageId: text(160) }).strict()
 
 export const NeoPublicationSchema = z
   .object({
+    cardReply: z
+      .object({
+        sourceMessageIds: z.array(z.uuid()).min(1).max(100),
+        askId: text(160),
+        questionId: text(160),
+        mutationId: z.uuid(),
+      })
+      .strict()
+      .optional(),
     conversationId: z.string().uuid(),
     publicationId: z.string().uuid(),
     askOrigin: origin.optional(),
     producerInput: origin.optional(),
     shortText: text(2000).describe(
-      'What the human reads first; it must stand alone. One topic per publication: publish unrelated topics separately, and when fullText covers more than one topic, name each one here.'
+      'What the human reads first; it must stand alone and summarize the message.'
     ),
     fullText: text(16000).describe('The details of the topic(s) shortText names.'),
     links: z

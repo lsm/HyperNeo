@@ -1,0 +1,290 @@
+{
+  "scope": "reference snapshot/cache reads and revision-fenced persistence",
+  "productionLinesChanged": 166,
+  "checks": {
+    "productionCheck": "passed",
+    "focusedUnitCasesPassed": 16,
+    "installs": 0,
+    "worktreesCreated": 0
+  },
+  "runs": {
+    "bun-before-1": {
+      "mainReferenceSql": 55,
+      "completedGatewayCommands": 0,
+      "acquisitionCounts": {
+        "initial": 1,
+        "changed": 1,
+        "failed": 1,
+        "reopen": 1
+      },
+      "issueLookups": 1,
+      "maxLoopLagMs": 32.413458999999875,
+      "rpcMetrics": [
+        {
+          "name": "neo.github.read",
+          "durationMs": 538.276708
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 538.2405
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 538.2298750000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 538.2246250000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 538.218125
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 324.8177089999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 324.7907090000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 375.3375000000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 325.54391699999996
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 375.84191599999986
+        }
+      ],
+      "temporaryDaemonDataRemoved": true
+    },
+    "bun-verify-1": {
+      "mainReferenceSql": 0,
+      "completedGatewayCommands": 16,
+      "acquisitionCounts": {
+        "initial": 1,
+        "changed": 1,
+        "failed": 1,
+        "reopen": 1
+      },
+      "issueLookups": 1,
+      "maxLoopLagMs": 7.852499999999964,
+      "rpcMetrics": [
+        {
+          "name": "neo.github.read",
+          "durationMs": 578.0824579999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 578.063917
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 578.0526249999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 578.0501659999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 578.0471660000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 325.830416
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 325.81391699999995
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 363.2805830000002
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 323.926833
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 423.66145800000004
+        },
+        {
+          "name": "system.health",
+          "durationMs": 0.5210419999998521
+        }
+      ],
+      "temporaryDaemonDataRemoved": true,
+      "contention": {
+        "healthMs": 0.5320830000000569,
+        "writeMs": 1206.0971250000002,
+        "affectedWriteUnder250ms": false
+      },
+      "fence": {
+        "before": 4,
+        "after": 5,
+        "winningValue": {
+          "url": "https://github.com/synthetic/ledger/pull/7",
+          "kind": "pr",
+          "state": "OPEN",
+          "at": null,
+          "done": false,
+          "closedBy": null,
+          "defaultBase": "winning-base"
+        }
+      }
+    },
+    "deno-before-1": {
+      "mainReferenceSql": 55,
+      "completedGatewayCommands": 0,
+      "acquisitionCounts": {
+        "initial": 1,
+        "changed": 1,
+        "failed": 1,
+        "reopen": 1
+      },
+      "issueLookups": 1,
+      "maxLoopLagMs": 12.743625000000065,
+      "rpcMetrics": [
+        {
+          "name": "neo.github.read",
+          "durationMs": 563.7128339999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 563.5974170000002
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 563.5899169999998
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 563.5917919999997
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 563.5896250000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 321.15070799999967
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 321.1256250000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 352.68008299999974
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 318.86537499999986
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 359.31275000000005
+        }
+      ],
+      "temporaryDaemonDataRemoved": true
+    },
+    "deno-verify-1": {
+      "mainReferenceSql": 0,
+      "completedGatewayCommands": 16,
+      "acquisitionCounts": {
+        "initial": 1,
+        "changed": 1,
+        "failed": 1,
+        "reopen": 1
+      },
+      "issueLookups": 1,
+      "maxLoopLagMs": 11.50479200000018,
+      "rpcMetrics": [
+        {
+          "name": "neo.github.read",
+          "durationMs": 710.6379159999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 710.5653750000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 710.5602079999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 710.564042
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 710.5669169999999
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 323.3528330000004
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 323.33574999999973
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 371.2913330000001
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 319.23558300000013
+        },
+        {
+          "name": "neo.github.read",
+          "durationMs": 512.2649160000001
+        },
+        {
+          "name": "system.health",
+          "durationMs": 0.6133330000002388
+        }
+      ],
+      "temporaryDaemonDataRemoved": true,
+      "contention": {
+        "healthMs": 0.6267079999997804,
+        "writeMs": 1218.3344580000003,
+        "affectedWriteUnder250ms": false
+      },
+      "fence": {
+        "before": 4,
+        "after": 5,
+        "winningValue": {
+          "url": "https://github.com/synthetic/ledger/pull/7",
+          "kind": "pr",
+          "state": "OPEN",
+          "at": null,
+          "done": false,
+          "closedBy": null,
+          "defaultBase": "winning-base"
+        }
+      }
+    }
+  },
+  "knownBaselineIssue": {
+    "issue": 8792,
+    "description": "Deno legacy section admission fails before and after this migration because text alias decoding truncates at NUL; the stored hex retains the suffix.",
+    "diagnosticFolders": [
+      "deno-before",
+      "deno-verify"
+    ],
+    "bunSectionIntegration": "bun-verify"
+  },
+  "limitations": [
+    "The mock upstream deliberately waits 300 ms; affected RPCs miss the 250 ms target.",
+    "A held writer lock delays the affected write about 1.2 seconds, also missing 250 ms.",
+    "Deno section integration remains blocked by the independent baseline issue #8792."
+  ]
+}

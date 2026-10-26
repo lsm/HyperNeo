@@ -110,7 +110,7 @@ try {
   if (!waitMs) assert(rpcMs < 250, 'ordinary-data work.find exceeded250ms');
   const {sessionId} = await hub.request<{sessionId:string}>('session.create', {workspacePath:run,config:{queryMode:'manual'}});
   const full = 'Complete unrelated SDK text 🦊\n'.repeat(100);
-  app.db.saveUserMessage(sessionId, {type:'user',uuid:'surviving-sdk',parent_tool_use_id:null,message:{role:'user',content:full}} as never, 'consumed');
+  await app.db.saveUserMessage(sessionId, {type:'user',uuid:'surviving-sdk',parent_tool_use_id:null,message:{role:'user',content:full}} as never, 'consumed');
   const admitted = new Set<string>();
   for (const method of ['getUserMessagesByStatusAsync','getSDKMessagePageAsync','searchWorkChatsAsync']) {
     const original = Reflect.get(app.db, method);

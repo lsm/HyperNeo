@@ -1,4 +1,5 @@
 import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
+import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import type {
@@ -24,7 +25,7 @@ import { neoSessionKind } from './work-driver.ts';
 import { NEO_DONE_SHOWN, type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
-import { neoQuestionText, neoTodoDetail, neoTodoStatus } from './todo-status.ts';
+import { neoQuestionText, neoTodoDetail, neoTodoHasMore, neoTodoStatus } from './todo-status.ts';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
@@ -39,6 +40,7 @@ const marks = {
   doing: ['●', 'text-accent'],
   blocked: ['!', 'text-warning'],
   done: ['✓', 'text-success'],
+  closed_unverified: ['?', 'text-warning'],
   failed: ['✕', 'text-danger'],
   removed: ['', 'text-fg-faint'],
 } as const;
@@ -119,14 +121,32 @@ function TodoRow({
   const [mark, color] = marks[todo.state];
   const detailId = `neo-todo-detail-${todo.id}`;
   const detail = neoTodoDetail(todo);
-  const control = onToggle && (
-    <ContentDisclosureControl
-      iconOnly
-      expanded={expanded}
-      onToggle={onToggle}
-      aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', { title: todo.title })}
-      aria-controls={detailId}
-    />
+  const head = (
+    <>
+      <span
+        class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
+      >
+        {todo.title}
+      </span>
+      {todo.addedAfterStart && todo.state !== 'removed' && (
+        <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
+          {t('todo.new')}
+        </span>
+      )}
+      {todo.worker && (
+        <span data-worker-label class="block break-words text-xs text-fg-muted">
+          {todo.worker.label}
+        </span>
+      )}
+      <span
+        data-todo-status
+        class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
+      >
+        {number === undefined
+          ? neoTodoStatus(todo)
+          : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
+      </span>
+    </>
   );
   return (
     <div
@@ -149,33 +169,30 @@ function TodoRow({
         </span>
       )}
       <div class="min-w-0 flex-1">
-        <div class="block w-full min-w-0 text-left">
-          <span
-            class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
+        {onToggle ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={detailId}
+            aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', {
+              title: todo.title,
+            })}
+            onClick={onToggle}
+            class="block w-full min-w-0 rounded text-left focus-visible:outline-accent"
           >
-            {todo.title}
-          </span>
-          {todo.addedAfterStart && todo.state !== 'removed' && (
-            <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
-              {t('todo.new')}
-            </span>
-          )}
-          {todo.worker && (
-            <span data-worker-label class="block break-words text-xs text-fg-muted">
-              {todo.worker.label}
-            </span>
-          )}
-          <div class="flow-root">
-            <span
-              data-todo-status
-              class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
-            >
-              {number === undefined
-                ? neoTodoStatus(todo)
-                : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
-            </span>
-          </div>
-        </div>
+            <ChevronRightGlyph
+              aria-hidden="true"
+              data-todo-hint
+              class={`-ml-0.5 mr-1 inline-block h-3.5 w-3.5 align-[-2px] text-fg-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            />
+            {head}
+          </button>
+        ) : (
+          <div class="block w-full min-w-0 text-left">{head}</div>
+        )}
         {(!onToggle || expanded) && (
           <div id={detailId} data-todo-details={onToggle ? '' : undefined} class="flow-root">
             <div class="contents [&>p:last-child]:inline [&>span:last-child]:inline">
@@ -195,20 +212,17 @@ function TodoRow({
           </div>
         )}
       </div>
-      {(control || (todo.link && todo.state !== 'removed' && onOpen)) && (
+      {todo.link && todo.state !== 'removed' && onOpen && (
         <div class="flex shrink-0 items-center justify-end gap-2 self-start">
-          {todo.link && todo.state !== 'removed' && onOpen && (
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              aria-label={t('todo.openTitle', { title: todo.title })}
-              onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
-            >
-              <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
-              {t('todo.open')}
-            </button>
-          )}
-          {control}
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            aria-label={t('todo.openTitle', { title: todo.title })}
+            onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
+          >
+            <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
+            {t('todo.open')}
+          </button>
         </div>
       )}
     </div>
@@ -236,12 +250,14 @@ function QuestionBox({
   disabled,
   onAnswer,
   onReply,
+  onOpen,
 }: {
   question: NeoQuestionEntry;
   todos: readonly NeoTodoEntry[];
   disabled?: boolean;
   onAnswer: (answer: NeoQuestionAnswer) => void;
   onReply?: () => void;
+  onOpen?: (link: string, title: string) => void;
 }) {
   const listed = (question.startTodos ?? []).flatMap(
     (id) => todos.find((todo) => todo.id === id) ?? []
@@ -271,11 +287,26 @@ function QuestionBox({
       data-question-kind={question.kind}
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
+      {question.sourceSession?.link && onOpen && (
+        <div class="mb-2 flex justify-end" data-question-source>
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            aria-label={t('question.openSessionTitle', {
+              name: question.sourceSession.name ?? question.sourceSession.id,
+            })}
+            onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
+          >
+            {t('question.open')}
+          </button>
+        </div>
+      )}
       <MarkdownRenderer
         content={neoQuestionText(question)}
         class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
       />
       <QuestionDocument question={question} />
+      <ArtifactCards artifacts={question.artifacts} />
       {question.kind === 'start' &&
         listed.map((todo) => (
           <TodoRow
@@ -383,23 +414,68 @@ function QuestionBox({
 }
 
 export function NeoAskTodos({
-  entry,
+  entry: received,
+  focusedQuestion,
   disabled,
   onAnswer,
   onReply,
+  onReplyAsk,
   onOpen,
   onSettle,
   onLoadDone,
+  onLoadDetails,
 }: {
   entry: NeoAskEntry;
+  focusedQuestion?: { questionId: string };
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onReply?: (question: NeoQuestionEntry) => void;
+  onReplyAsk?: () => void;
   onOpen?: (link: string, title: string) => void;
   onSettle?: (status: 'done' | 'dropped') => void | Promise<void>;
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
+  onLoadDetails?: (askId: string) => Promise<NeoAskEntry>;
 }) {
+  const [details, setDetails] = useState<NeoAskEntry | null>(null);
+  const [readRevision, setReadRevision] = useState<number | null>(null);
+  const pendingDetail = useRef<{ revision: number } | null>(null);
+  const entry =
+    received.summary && details?.ask.id === received.ask.id
+      ? {
+          ...details,
+          state: received.state,
+          doneCount: received.doneCount,
+          ask: { ...details.ask, title: received.ask.title, status: received.ask.status },
+        }
+      : received;
+  const [detailError, setDetailError] = useState('');
+  const cardRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
+  const focusedQuestionId = focusedQuestion?.questionId;
+  useEffect(() => {
+    if (focusedQuestionId) setOpen(true);
+  }, [focusedQuestion]);
+  useEffect(() => {
+    if (!open || !focusedQuestionId) return;
+    const target = document.getElementById(`neo-ref-question-${focusedQuestionId}`);
+    if (!target || !cardRef.current?.contains(target)) return;
+    const tabIndex = target.getAttribute('tabindex');
+    target.tabIndex = -1;
+    target.dataset.cardReplyFocus = 'true';
+    target.classList.add('ring-2', 'ring-accent');
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ block: 'center' });
+    return () => {
+      delete target.dataset.cardReplyFocus;
+      target.classList.remove('ring-2', 'ring-accent');
+      if (tabIndex === null) target.removeAttribute('tabindex');
+      else target.setAttribute('tabindex', tabIndex);
+    };
+  }, [
+    open,
+    focusedQuestion,
+    entry.questions.find((question) => question.id === focusedQuestionId)?.state,
+  ]);
   const [doneOpen, setDoneOpen] = useState(false);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
   const [stalled, setStalled] = useState(false);
@@ -416,6 +492,47 @@ export function NeoAskTodos({
   };
   const { ask, todos } = entry;
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
+  const readingDetails = open || expanded.length > 0;
+  useEffect(() => {
+    setReadRevision(null);
+    return () => {
+      pendingDetail.current = null;
+    };
+  }, [received.ask.id, readingDetails]);
+  useEffect(() => {
+    if (
+      !received.summary ||
+      !onLoadDetails ||
+      !readingDetails ||
+      pendingDetail.current ||
+      (readRevision !== null && readRevision >= received.ask.updatedAt)
+    )
+      return;
+    const ticket = { revision: received.ask.updatedAt };
+    pendingDetail.current = ticket;
+    setDetailError('');
+    void onLoadDetails(received.ask.id).then(
+      (value) => {
+        if (pendingDetail.current !== ticket) return;
+        pendingDetail.current = null;
+        setDetails(value);
+        setReadRevision(Math.max(ticket.revision, value.ask.updatedAt));
+      },
+      (cause) => {
+        if (pendingDetail.current !== ticket) return;
+        pendingDetail.current = null;
+        setDetailError(cause instanceof Error ? cause.message : t('ask.moreDoneFailed'));
+        setReadRevision(ticket.revision);
+      }
+    );
+  }, [
+    received.ask.id,
+    received.ask.updatedAt,
+    !!received.summary,
+    readingDetails,
+    onLoadDetails,
+    readRevision,
+  ]);
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
@@ -449,13 +566,33 @@ export function NeoAskTodos({
       .finally(() => setPaging(false));
   };
   const listed = live.filter((todo) => !inQuestion.has(todo.id));
-  const allExpanded = listed.every((todo) => expanded.includes(todo.id));
+  const expandable = listed.filter(neoTodoHasMore);
+  const allExpanded = expandable.every((todo) => expanded.includes(todo.id));
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
   const hasDetails =
-    answered.length > 0 || retired.length > 0 || !!ask.outcome || removed.length > 0;
+    !!entry.summary ||
+    answered.length > 0 ||
+    retired.length > 0 ||
+    !!ask.outcome ||
+    removed.length > 0;
+  const everything = allExpanded && (open || !hasDetails);
+  const toggleEverything = () => {
+    setExpanded(
+      everything
+        ? []
+        : listed.filter((todo) => entry.summary || neoTodoHasMore(todo)).map((todo) => todo.id)
+    );
+    setOpen(!everything);
+    if (everything)
+      requestAnimationFrame(() => {
+        const card = cardRef.current;
+        if (card && card.getBoundingClientRect().top < 0) card.scrollIntoView({ block: 'start' });
+      });
+  };
   const [label, tone] = states[entry.state];
   return (
     <article
+      ref={cardRef}
       aria-label={ask.title}
       id={`neo-ref-ask-${ask.id}`}
       data-ask={ask.id}
@@ -465,17 +602,22 @@ export function NeoAskTodos({
       <div class="flex min-h-7 items-center gap-2">
         <span class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{t(label)}</span>
         <span class="flex-1" />
-        {onSettle && ask.status === 'open' && (
+        {(onReplyAsk || (onSettle && ask.status === 'open')) && (
           <Dropdown
             position="right"
             items={[
-              { label: t('ask.markDone'), onClick: () => void settle('done'), disabled },
-              {
-                label: t('ask.drop'),
-                onClick: () => void settle('dropped'),
-                danger: true,
-                disabled,
-              },
+              ...(onReplyAsk ? [{ label: t('chat.reply'), onClick: onReplyAsk, disabled }] : []),
+              ...(onSettle && ask.status === 'open'
+                ? [
+                    { label: t('ask.markDone'), onClick: () => void settle('done'), disabled },
+                    {
+                      label: t('ask.drop'),
+                      onClick: () => void settle('dropped'),
+                      danger: true,
+                      disabled,
+                    },
+                  ]
+                : []),
             ]}
             trigger={
               <IconButton title={t('ask.actions')} size="sm" class="text-fg-faint">
@@ -488,6 +630,44 @@ export function NeoAskTodos({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
+      {detailError && (
+        <p role="alert" class="mt-2 text-sm text-danger">
+          {detailError}
+        </p>
+      )}
+      {entry.summary && (
+        <p class="mt-1 text-xs text-fg-muted">
+          {t('ask.todos')} · {entry.summary.todoCount}
+          {entry.summary.openQuestionCount > 0 && (
+            <>
+              {' '}
+              · {t('ask.state.waiting')} · {entry.summary.openQuestionCount}
+            </>
+          )}
+        </p>
+      )}
+      {ask.focusedSession && (
+        <div class="mt-2 flex flex-wrap items-center justify-end gap-2" data-ask-focused-session>
+          <span class="min-w-0 break-words text-right text-xs text-fg-muted">
+            {ask.focusedSession.name ?? ask.focusedSession.id} · {ask.focusedSession.provider}
+          </span>
+          {ask.focusedSession.link && onOpen && (
+            <button
+              type="button"
+              class={neoSecondaryClass}
+              aria-label={t('question.openSessionTitle', {
+                name: ask.focusedSession.name ?? ask.focusedSession.id,
+              })}
+              onClick={() => onOpen(ask.focusedSession!.link!, ask.focusedSession!.label)}
+            >
+              <NeoSessionMark
+                kind={neoSessionKind(ask.focusedSession.adapter, ask.focusedSession.link)}
+              />
+              {t('question.openSession')}
+            </button>
+          )}
+        </div>
+      )}
       {settleError && (
         <p role="alert" class="mt-2 break-words text-sm text-danger">
           {settleError}
@@ -497,6 +677,7 @@ export function NeoAskTodos({
         <QuestionBox
           key={question.id}
           question={question}
+          onOpen={onOpen}
           todos={todos}
           disabled={disabled}
           onAnswer={(answer) => onAnswer(question.id, answer)}
@@ -505,27 +686,21 @@ export function NeoAskTodos({
       ))}
       {listed.length > 0 && (
         <div class="mt-3" aria-label={t('ask.todos')}>
-          <div class="mb-1 flex justify-end">
-            <button
-              type="button"
-              class={neoPlainClass}
-              onClick={() => setExpanded(allExpanded ? [] : listed.map((todo) => todo.id))}
-            >
-              {t(allExpanded ? 'todo.collapseAll' : 'todo.expandAll')}
-            </button>
-          </div>
           {listed.map((todo) => (
             <TodoRow
               key={todo.id}
               todo={todo}
               onOpen={onOpen}
               expanded={expanded.includes(todo.id)}
-              onToggle={() =>
-                setExpanded(
-                  expanded.includes(todo.id)
-                    ? expanded.filter((id) => id !== todo.id)
-                    : [...expanded, todo.id]
-                )
+              onToggle={
+                entry.summary || neoTodoHasMore(todo)
+                  ? () =>
+                      setExpanded(
+                        expanded.includes(todo.id)
+                          ? expanded.filter((id) => id !== todo.id)
+                          : [...expanded, todo.id]
+                      )
+                  : undefined
               }
             />
           ))}
@@ -578,6 +753,7 @@ export function NeoAskTodos({
                       class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
                     />
                     <QuestionDocument question={question} />
+                    <ArtifactCards artifacts={question.artifacts} />
                     <p>
                       — {neoQuestionAnswerLabel(question, todos)}
                       {question.answeredAt
@@ -600,6 +776,7 @@ export function NeoAskTodos({
                       class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
                     />
                     <QuestionDocument question={question} />
+                    <ArtifactCards artifacts={question.artifacts} />
                     <p>
                       {t('question.retired', { question: '' })}
                       {question.retiredReason ? `: ${question.retiredReason}` : ''}
@@ -612,18 +789,21 @@ export function NeoAskTodos({
           {ask.outcome && (
             <div>
               <p class="text-xs font-medium text-fg-faint">{t('ask.outcome')}</p>
-              <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
+              <MarkdownRenderer
+                content={ask.outcome}
+                class="neo-markdown neo-markdown-assistant mt-1 min-w-0 text-sm leading-relaxed"
+              />
             </div>
           )}
         </div>
       )}
-      {hasDetails && (
+      {(hasDetails || expandable.length > 1) && (
         <div class={neoFooterClass}>
           <span class="flex-1" />
           <ContentDisclosureControl
             data-ask-details-toggle
-            expanded={open}
-            onToggle={() => setOpen(!open)}
+            expanded={everything}
+            onToggle={toggleEverything}
             aria-label={t('ask.details')}
           />
         </div>

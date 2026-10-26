@@ -2,10 +2,12 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { nativeFeedEnqueueWrites } from '../../storage/repositories/native-feed-enqueue-write.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import {
-  purgeWorkFeedSessions,
+  deleteWorkFeedSessions,
   readWorkFeedOffsets,
   type WorkFeedTurn,
 } from '../../storage/work-feed.ts';
@@ -18,6 +20,8 @@ import {
   listFeedFilesAsync,
   pendingFeedPaths,
   pruneVanishedFeeds,
+  dropForeignFeeds,
+  ownFeedFiles,
   withKnownFeedFiles,
 } from './work-feed.ts';
 
@@ -152,8 +156,8 @@ export function claudeFeedSource(hyperneo: ReadonlySet<string>): FeedSource<Feed
   };
 }
 
-export function scheduleClaudeFeed(queue: JobQueueRepository): void {
-  queue.enqueueUniquePending({
+export async function scheduleClaudeFeed(queue: JobQueueRepository): Promise<void> {
+  await gatewayFor(queue.db).call(nativeFeedEnqueueWrites, 'enqueueUniquePending', {
     queue: WORK_FEED_CLAUDE,
     payload: { scope: 'claude' },
     matchPayload: { scope: 'claude' },
@@ -163,7 +167,7 @@ export function scheduleClaudeFeed(queue: JobQueueRepository): void {
 }
 
 export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
-  .input(['queue', 'db', 'root', 'now', 'purge'])
+  .input(['queue', 'db', 'root', 'now', 'purge', 'own'])
   .pipe(scheduleClaudeFeed, 'queue')
   .pipe(readHyperneoSdkSessions, 'db', 'hyperneo')
   .pipe(
@@ -173,7 +177,7 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
       purge?: (sessionIds: string[]) => Promise<void>
     ) =>
       runLagPhase('feed:claude:purge', () =>
-        purge ? purge([...hyperneo]) : purgeWorkFeedSessions(db, 'claude', [...hyperneo])
+        purge ? purge([...hyperneo]) : deleteWorkFeedSessions(db, 'claude', [...hyperneo])
       ),
     ['db', 'hyperneo', 'purge'],
     'purged'
@@ -185,6 +189,16 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
       ),
     ['db', 'root', 'hyperneo'],
     'pruned'
+  )
+  .pipe(
+    (
+      db: BunDatabase,
+      root: string,
+      hyperneo: ReadonlySet<string>,
+      own: ReadonlySet<string> | null
+    ) => dropForeignFeeds(db, root, claudeFeedSource(hyperneo), own),
+    ['db', 'root', 'hyperneo', 'own'],
+    'foreign'
   )
   .pipe(
     (db: BunDatabase, root: string, now: number) =>
@@ -204,9 +218,16 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
     'changed'
   )
   .pipe(
-    (db: BunDatabase, changed: FeedFile[], hyperneo: ReadonlySet<string>) =>
-      feedWorkFiles(db, changed, claudeFeedSource(hyperneo)),
-    ['db', 'changed', 'hyperneo'],
+    (
+      db: BunDatabase,
+      changed: FeedFile[],
+      hyperneo: ReadonlySet<string>,
+      own: ReadonlySet<string> | null
+    ) => {
+      const source = claudeFeedSource(hyperneo);
+      return feedWorkFiles(db, ownFeedFiles(changed, source, own), source);
+    },
+    ['db', 'changed', 'hyperneo', 'own'],
     'result'
   )
   .endAsync('result') as (
@@ -214,5 +235,6 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
   db: BunDatabase,
   root: string,
   now: number,
-  purge?: (sessionIds: string[]) => Promise<void>
+  purge?: (sessionIds: string[]) => Promise<void>,
+  own?: ReadonlySet<string> | null
 ) => Promise<{ files: number; turns: number }>;

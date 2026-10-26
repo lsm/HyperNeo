@@ -16,11 +16,12 @@ import {
   type MessageSearchResponse,
 } from '../../storage/message-search.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
+import { singleMessageReads } from '../../storage/repositories/sdk-single-message-read.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
 import { sessionSdkPath } from '../session/sdk-path.ts';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
 import type { SessionManager } from '../session-manager.ts';
-import { capSdkMessage } from './message-output-cap.ts';
 
 export function setupMessageHandlers(
   messageHub: MessageHub,
@@ -50,6 +51,7 @@ export function setupMessageHandlers(
     if (query.length < MESSAGE_SEARCH_MIN_TERM_LENGTH) {
       return { results: [], limit, offset };
     }
+    await db.waitForSdkMessageColumns(request.sessionId, false);
     const params = {
       query,
       sessionId: request.sessionId,
@@ -124,11 +126,8 @@ export function setupMessageHandlers(
       sinceRowid?: number;
     };
 
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-
-    if (!agentSession && !(targetSessionId.startsWith('conv:') && db))
-      throw new Error('Session not found');
     return (db ?? sessionManager.getDatabase()).getSDKMessagePageAsync(targetSessionId, {
+      requireSession: !(targetSessionId.startsWith('conv:') && db),
       limit,
       before,
       since,
@@ -149,13 +148,13 @@ export function setupMessageHandlers(
     };
     if (!targetSessionId || !messageUuid) throw new Error('sessionId and messageUuid are required');
     if (!db) throw new Error('Message store unavailable');
-    if (!db.getSession(targetSessionId)) throw new Error('Session not found');
-    const sdkMessage = new SDKMessageRepository(db.getDatabase()).getMessageByUuid(
+    return gatewayFor(db.getDatabase()).call(
+      singleMessageReads,
+      'read',
       targetSessionId,
-      messageUuid
+      messageUuid,
+      capped
     );
-    if (!sdkMessage) throw new Error('Message not found');
-    return { sdkMessage: capped ? capSdkMessage(sdkMessage) : sdkMessage };
   });
 
   messageHub.onRequest('message.count', async (data) => {

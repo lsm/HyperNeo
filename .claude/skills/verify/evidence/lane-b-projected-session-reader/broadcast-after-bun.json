@@ -1,0 +1,62 @@
+{
+  "fatalExitObservedThroughInjectedHook": true,
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 386,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "actualAppCallbackCaptured": true,
+  "attemptsAfterFailure": 1,
+  "eventsAfterFailure": 0,
+  "exitRequestsAfterFailure": [],
+  "healthAfterFailure": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 479,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "successfulBroadcast": {
+    "version": 2,
+    "health": {
+      "dataMigration": {
+        "name": "sdk_message_columns_backfill_v2",
+        "state": "complete",
+        "through": 0,
+        "total": 0
+      },
+      "status": "ok",
+      "version": "0.48.0",
+      "uptime": 556,
+      "sessions": {
+        "active": 0,
+        "total": 1
+      }
+    }
+  },
+  "projectedRpcRecovered": true,
+  "actorCacheStayedEmpty": true,
+  "exitRequests": [],
+  "warnings": [
+    "[StateProjectionService] Failed to broadcast system state: synthetic broadcast reader failure"
+  ],
+  "mainSqlAttempts": 0
+}

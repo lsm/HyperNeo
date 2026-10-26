@@ -1,3 +1,5 @@
+import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
+import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
@@ -35,6 +37,7 @@ type Sources = {
 type Gate = { value: Sources } | { reason: NeoPublicConversation };
 
 export function neoPublicationAnswerOrigins(publication: NeoPublication) {
+  if (publication.cardReply) return [];
   return [
     publication.askOrigin,
     ...(publication.triggerId?.startsWith('human:') ? [] : [publication.producerInput]),
@@ -176,7 +179,7 @@ export function presentNeoPublicConversation({
         })
       ),
     ...sessionMessages
-      .filter((message) => Date.parse(message.createdAt) >= from)
+      .filter((message) => message.kind !== 'worker-batch' && Date.parse(message.createdAt) >= from)
       .map(
         (message): NeoPublicEntry => ({
           kind: 'session',
@@ -225,3 +228,36 @@ export const projectNeoPublicConversation = (
   sessionMessages?: readonly NeoSessionMessage[],
   wakes?: readonly NeoConversationWake[]
 ) => NeoPublicConversation;
+
+export function neoCardReplyTitle(publication: NeoPublication, title?: string): string {
+  return (
+    title ??
+    publication.shortText.replace(/^(?:I replied · View card|我给你回了 · 查看卡片)\s*·?\s*/, '')
+  )
+    .split('\n')[0]
+    .slice(0, 120);
+}
+
+export const resolveNeoCardReply = (superpipe({})('neo-card-reply-target') as PipelineAPI)
+  .input(['reply', 'entries'])
+  .pipe(
+    (reply: Pick<NeoCardReply, 'askId' | 'questionId'>, entries: readonly NeoAskEntry[]) => {
+      const entry = entries.find((entry) => entry.ask.id === reply.askId);
+      const questions = entry?.summary?.questionRefs ?? entry?.questions;
+      let question = questions?.find((question) => question.id === reply.questionId);
+      const seen = new Set<string>();
+      while (question?.replacedBy && !seen.has(question.id)) {
+        seen.add(question.id);
+        question = questions?.find((next) => next.id === question!.replacedBy);
+      }
+      return question && !seen.has(question.id)
+        ? { value: { askId: reply.askId, questionId: question.id } }
+        : { reason: 'unavailable' };
+    },
+    ['reply', 'entries'],
+    'result:target'
+  )
+  .end('target') as (
+  reply: Pick<NeoCardReply, 'askId' | 'questionId'>,
+  entries: readonly NeoAskEntry[]
+) => { askId: string; questionId: string } | 'unavailable';

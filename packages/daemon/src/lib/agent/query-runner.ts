@@ -11,13 +11,17 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SessionToolApplication } from '@hyperneo/shared/types/session-tool-choice';
+import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import {
   isSDKAPIRetryMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
+  isSDKSystemInit,
 } from '@hyperneo/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
@@ -25,6 +29,7 @@ import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import type { ProviderEnvVars } from '../provider-service.ts';
+import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import {
@@ -41,6 +46,7 @@ import type { MessageQueue } from './message-queue.ts';
 import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
+import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
@@ -53,6 +59,7 @@ import {
 } from './query-retry-routing.ts';
 import { type QuestionInputOriginSource, QuestionInputScope } from './question-input-origin.ts';
 import { RetryPromptIdentity } from './retry-prompt-identity.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
 import {
@@ -95,6 +102,14 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 }
 
 const RETRY_EXIT_TIMEOUT_MS = 5000;
+
+const toolStatusSchema = z.array(
+  z.object({
+    name: z.string(),
+    status: z.string(),
+    tools: z.array(z.object({ name: z.string() })).optional(),
+  })
+);
 
 type StartupWatchRace =
   | { kind: 'message'; result: IteratorResult<unknown, void> }
@@ -401,6 +416,9 @@ export interface QueryRunnerContext {
 
 export class QueryRunner {
   readonly retryPromptIdentity = new RetryPromptIdentity();
+  private readonly toolInventory = new ObservedToolInventory();
+  private toolInventoryOwner: QueryAttemptToken | null = null;
+  private toolStatusRead = 0;
   private turnEndedGeneration: number | null = null;
 
   private streamSilence: StreamSilenceState = { lastActivityAt: 0, openTools: [] };
@@ -458,6 +476,72 @@ export class QueryRunner {
   }
 
   constructor(private ctx: QueryRunnerContext) {}
+
+  private notifyToolInventory(): void {
+    this.ctx.messageHub.event(
+      'session.toolInventory.changed',
+      { sessionId: this.ctx.session.id },
+      { channel: `session:${this.ctx.session.id}` }
+    );
+  }
+
+  async getToolInventory(): Promise<SessionToolInventory> {
+    const owner = this.toolInventoryOwner;
+    const queryObject = this.ctx.queryObject;
+    const snapshot = this.toolInventory.snapshot();
+    if (!owner || !queryObject || snapshot.state !== 'observed') return snapshot;
+    const read = ++this.toolStatusRead;
+    let status: unknown;
+    try {
+      status = await queryObject.mcpServerStatus?.();
+    } catch {
+      status = null;
+    }
+    if (read === this.toolStatusRead && queryObject === this.ctx.queryObject) {
+      const parsed = toolStatusSchema.safeParse(status);
+      this.toolInventory.captureStatus(
+        owner,
+        parsed.success
+          ? parsed.data
+          : snapshot.mcpServers.map((server) => ({ name: server.name, status: 'unverified' }))
+      );
+    }
+    return this.toolInventory.snapshot();
+  }
+
+  async applyToolChoice(): Promise<SessionToolApplication> {
+    const owner = this.toolInventoryOwner,
+      query = this.ctx.queryObject;
+    if (!query)
+      return this.ctx.queryPromise
+        ? { application: 'restart_required', reason: 'query_not_ready' }
+        : { application: 'next_query' };
+    if (!owner?.isLive() || this.toolInventory.snapshot().state !== 'observed')
+      return { application: 'restart_required', reason: 'query_not_ready' };
+    if (!query.setMcpServers)
+      return { application: 'restart_required', reason: 'live_mcp_unavailable' };
+    const owns = () =>
+      owner === this.toolInventoryOwner && owner.isLive() && query === this.ctx.queryObject;
+    try {
+      const result = await query.setMcpServers(
+        this.ctx.optionsBuilder.getEffectiveMcpServers() ?? {}
+      );
+      if (!owns()) return { application: 'unverified', reason: 'query_changed' };
+      if (Object.keys(result.errors ?? {}).length)
+        return { application: 'unverified', reason: 'application_failed' };
+      const read = ++this.toolStatusRead;
+      const status = await query.mcpServerStatus?.();
+      if (!owns()) return { application: 'unverified', reason: 'query_changed' };
+      const parsed = toolStatusSchema.safeParse(status);
+      if (!parsed.success || read !== this.toolStatusRead)
+        return { application: 'unverified', reason: 'status_unavailable' };
+      this.toolInventory.captureStatus(owner, parsed.data);
+      this.notifyToolInventory();
+      return { application: 'live' };
+    } catch {
+      return { application: 'unverified', reason: 'application_failed' };
+    }
+  }
 
   private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
 
@@ -523,74 +607,6 @@ export class QueryRunner {
     );
     this.queryLiveness = { promise: queryPromise, isLive: () => queryLive };
     this.ctx.queryPromise = queryPromise;
-  }
-
-  private async applyDeferredPermissionMode(
-    queryObject: QueryLike,
-    deferredPermissionMode: string | undefined,
-    attemptTimeoutMs = 8000,
-    backoffBaseMs = 250
-  ): Promise<void> {
-    if (!deferredPermissionMode || !queryObject.setPermissionMode) return;
-    const { session, logger } = this.ctx;
-    const maxAttempts = 3;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const liveMode = this.ctx.optionsBuilder.getCurrentPermissionMode?.();
-      if (liveMode !== undefined && liveMode !== deferredPermissionMode) {
-        logger.debug(
-          `QueryRunner.start: deferred permission mode switch for session ` +
-            `${session.id} aborted — desired mode is now '${liveMode}' ` +
-            `(was '${deferredPermissionMode}' at capture)`
-        );
-        return;
-      }
-      try {
-        const attemptPromise = queryObject.setPermissionMode(deferredPermissionMode);
-        attemptPromise.catch(() => {});
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([
-            attemptPromise,
-            new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(
-                () => reject(new Error(`no response within ${attemptTimeoutMs}ms`)),
-                attemptTimeoutMs
-              );
-            }),
-          ]);
-        } finally {
-          if (timeoutId !== undefined) clearTimeout(timeoutId);
-        }
-        return;
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        if (this.ctx.queryObject !== queryObject) {
-          logger.debug(
-            `QueryRunner.start: deferred permission mode switch for session ` +
-              `${session.id} aborted on attempt ${attempt} — query object ` +
-              `replaced/closed (${detail}); the replacement spawn re-applies it.`
-          );
-          return;
-        }
-        if (attempt === maxAttempts) {
-          logger.error(
-            `QueryRunner.start: failed to apply deferred permission mode ` +
-              `'${deferredPermissionMode}' for session ${session.id} after ` +
-              `${maxAttempts} attempts: ${detail}. The session keeps the intake ` +
-              `state (allowDangerouslySkipPermissions keeps permission decisions ` +
-              `host-managed via canUseTool allow-all). The mode is re-applied on ` +
-              `the next query spawn.`
-          );
-          return;
-        }
-        logger.warn(
-          `QueryRunner.start: deferred permission mode ` +
-            `'${deferredPermissionMode}' for session ${session.id} failed on ` +
-            `attempt ${attempt}/${maxAttempts}: ${detail}; retrying`
-        );
-        await new Promise((resolve) => setTimeout(resolve, backoffBaseMs * attempt));
-      }
-    }
   }
 
   invalidateAttemptTokens(): void {
@@ -700,11 +716,20 @@ export class QueryRunner {
       this.ctx.getQueryGeneration() === queryGeneration
         ? this.ctx.attemptTokens.allocate()
         : QueryAttemptRegistry.detached();
+    if (attemptToken.isLive()) {
+      this.toolInventoryOwner = attemptToken;
+      this.toolInventory.begin(attemptToken, 'sdk');
+      this.notifyToolInventory();
+    }
     const questionInputs = new QuestionInputScope(
       session.id,
       () => attemptToken.isLive() && this.isRunOwnershipLive(queryGeneration)
     );
     const questionOrigin = () => questionInputs.origin();
+    const humanInputs = new QuestionInputScope(
+      session.id,
+      () => attemptToken.isLive() && this.isRunOwnershipLive(queryGeneration)
+    );
     const attemptHook = this.createAttemptBoundPreToolUseHook(attemptToken, questionOrigin);
 
     let startupPermit: SdkStartupPermit | null = null;
@@ -712,11 +737,11 @@ export class QueryRunner {
       if (!startupPermit) return;
       const permit = startupPermit;
       startupPermit = null;
-      logger.debug(
+      if (!permit.release()) return;
+      logger.warn(
         `SDK startup gate: slot released (session=${session.id} reason=${reason} ` +
           `heldMs=${Date.now() - permit.admittedAt})`
       );
-      permit.release();
     };
 
     let runAbortController: AbortController | null = null;
@@ -769,7 +794,7 @@ export class QueryRunner {
       }
       if (persistPin) {
         try {
-          this.ctx.db.updateSession(session.id, {
+          await this.ctx.db.updateSession(session.id, {
             config: { ...session.config },
           });
         } catch (err) {
@@ -854,6 +879,7 @@ export class QueryRunner {
         optionsBuilder.build({
           askUserQuestionHook: attemptHook,
           canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
+          operationInputOrigin: () => humanInputs.origin(),
           session: providerSession,
         })
       );
@@ -923,8 +949,8 @@ export class QueryRunner {
           sessionId: session.id,
           signal: runAbortController.signal,
         });
-        if (startupPermit.queuedBehind > 0) {
-          logger.info(
+        if (startupPermit.waitedMs > 0) {
+          logger.warn(
             `SDK startup gate: session ${session.id} admitted after waiting ` +
               `${startupPermit.waitedMs}ms behind ${startupPermit.queuedBehind} session(s) ` +
               `(gate=${JSON.stringify(startupGate.getStats())})`
@@ -969,6 +995,7 @@ export class QueryRunner {
           session.id,
           optionsBuilder.getEffectiveThinkingLevel()
         );
+        setKeyBridgeThinkingOff(session.id, queryOptions.thinking?.type === 'disabled');
         const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
         );
@@ -996,6 +1023,7 @@ export class QueryRunner {
         throw envAbort;
       }
 
+      startupPermit?.setPhase('sdk_first_message');
       removeFlagSettingsFile = runLagPhase('sdk:flag_settings', () =>
         writeFlagSettingsFile(queryOptions, session.id)
       );
@@ -1005,7 +1033,8 @@ export class QueryRunner {
           prompt: this.createMessageGeneratorWrapper(
             queryGeneration,
             recoveryState.startGuard,
-            questionInputs
+            questionInputs,
+            humanInputs
           ),
           options: queryOptions,
         })
@@ -1014,16 +1043,6 @@ export class QueryRunner {
 
       this.ctx.onModelsFetched(queryGeneration, attemptToken).catch((e) => {
         logger.warn('Background fetch of models failed:', e);
-      });
-
-      void this.applyDeferredPermissionMode(
-        queryObject,
-        optionsBuilder.getDeferredPermissionMode()
-      ).catch((err) => {
-        logger.warn(
-          `QueryRunner.start: deferred permission mode switch failed for session ${session.id}: ` +
-            `${err instanceof Error ? err.message : String(err)}`
-        );
       });
 
       if (session.config.provider !== 'acp') {
@@ -1085,7 +1104,7 @@ export class QueryRunner {
             `Model: ${queryOptions.model}, ${workspaceDesc}` +
             (isRootWorkspace ? ' — running on root workspace (not a worktree)' : '') +
             ` The SDK subprocess did not emit its first message within the startup window; ` +
-            `concurrent cold-start load is bounded by the startup gate.` +
+            `Startup permits expire independently of query recovery; slow startups may overlap after lease expiry.` +
             ` (Hint: set HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS to increase timeout, currently ${inactivityBackstopMs}ms)`
         );
         logger.error(
@@ -1312,7 +1331,7 @@ export class QueryRunner {
                   isSDKResultSuccess(message) ? message.result : message.errors.join('\n')
                 ));
             if (authRetry || authResult) {
-              if (authResult) this.ctx.db.saveSDKMessage(session.id, message);
+              if (authResult) await this.ctx.db.saveSDKMessage(session.id, message);
               throw new Error('401 Claude authentication failed');
             }
           }
@@ -1374,7 +1393,19 @@ export class QueryRunner {
             this.fedAfterTurnEnd = [];
           this.turnEndedGeneration = turnEndedGeneration;
           try {
-            if (message.type === 'result') questionInputs.endTurn();
+            if (isSDKSystemInit(message)) {
+              this.toolInventory.captureInit(attemptToken, {
+                tools: message.tools ?? [],
+                skills: message.skills ?? [],
+                plugins: message.plugins ?? [],
+                mcp_servers: message.mcp_servers ?? [],
+              });
+              this.notifyToolInventory();
+            }
+            if (message.type === 'result') {
+              questionInputs.endTurn();
+              humanInputs.endTurn();
+            }
             await this.handleSDKMessage(message, queryGeneration);
           } catch (error) {
             await this.handleStreamMessageError(message, error, queryGeneration, attemptToken);
@@ -1776,6 +1807,8 @@ export class QueryRunner {
       }
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
+      this.toolInventory.end(attemptToken);
+      this.notifyToolInventory();
       removeFlagSettingsFile?.();
 
       releaseStartupPermit('attempt_finished');
@@ -2142,7 +2175,8 @@ export class QueryRunner {
   async *createMessageGeneratorWrapper(
     queryGeneration: number,
     startGuard?: () => void,
-    questionInputs?: QuestionInputScope
+    questionInputs?: QuestionInputScope,
+    humanInputs?: QuestionInputScope
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
@@ -2158,7 +2192,7 @@ export class QueryRunner {
         }
         break;
       }
-      messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
+      await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
       const promptContent = (queuedMessage.message as { content?: unknown } | undefined)?.content;
@@ -2211,13 +2245,20 @@ export class QueryRunner {
 
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
+      if (humanInputs && message.uuid && neoCoordinatorBinding(this.ctx.db, session.id)) {
+        const prompt = this.ctx.db.getSDKMessageRepo().getDeliveryContent(session.id, message.uuid);
+        if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
+      }
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield this.retryPromptIdentity.outgoing(message);
+      yield this.retryPromptIdentity.outgoing(
+        message,
+        !!neoCoordinatorBinding(this.ctx.db, session.id)
+      );
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
     }
@@ -2390,7 +2431,7 @@ export class QueryRunner {
       return (
         `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
         `The SDK subprocess did not emit its first message within the startup window ` +
-        `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
+        `(after one automatic retry); Startup permits expire independently of query recovery; slow startups may overlap after lease expiry. ` +
         `Try: resending your message, or increase the timeout with ` +
         `HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS (current: ${startupTimeoutMs}ms).`
       );
@@ -2450,7 +2491,7 @@ export class QueryRunner {
       },
     } as unknown as SDKMessage;
 
-    if (!db.saveSDKMessage(session.id, assistantMessage)) {
+    if (!(await db.saveSDKMessage(session.id, assistantMessage))) {
       if (options?.markAsError) {
         internalEventBus.publishAsync('session.error', {
           sessionId: session.id,

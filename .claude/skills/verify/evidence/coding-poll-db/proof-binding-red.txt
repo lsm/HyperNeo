@@ -1,0 +1,21 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-poll-proof-evidence.test.ts:
+16 | test('retained polling proofs identify one committed application tree for both runtimes', () => {
+17 |   const observed = JSON.parse(readFileSync(new URL('observed.json', evidence), 'utf8')) as {
+18 |     proofBinding?: Binding;
+19 |   };
+20 |   const binding = observed.proofBinding;
+21 |   expect(binding).toBeDefined();
+                       ^
+error: expect(received).toBeDefined()
+
+Received: undefined
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-poll-proof-evidence.test.ts:21:19)
+(fail) retained polling proofs identify one committed application tree for both runtimes [1.30ms]
+
+ 0 pass
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [10.00ms]

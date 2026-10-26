@@ -34,11 +34,10 @@
 # daemon/web path filters (docs-only PRs included) — it guards the Bun/Deno
 # dual-support migration and is non-blocking until flipped to required.
 #
-# NOTE: Sandbox apt packages (bubblewrap/socat/ripgrep) are intentionally not
-# installed on test/build jobs — no CI-executed test there runs a real sandbox
-# (online jobs set HYPERNEO_TEST_DISABLE_SANDBOX=1; tests/online/sandbox is
-# matrix-exempt/manual-only; the build smoke test passes without them).
-# real-api-tests.yml installs them for its real-session shards.
+# NOTE: Daemon test jobs install bubblewrap for OS-confined worker runtime
+# cleanup. SDK turns in online jobs still use HYPERNEO_TEST_DISABLE_SANDBOX=1;
+# actual worker sandbox sessions remain in the manual real-API workflow.
+# Web/build jobs do not need these sandbox packages.
 #
 # Release is handled separately in release.yml (triggered by version tags).
 
@@ -98,6 +97,15 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Fetch previous dev tip for the DB baseline ratchet
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        env:
+          PREVIOUS_DEV: ${{ github.event.before }}
+        run: git fetch --no-tags --depth=1 origin "$PREVIOUS_DEV"
+
+      - name: Test main-thread DB ratchet CLI
+        run: bun run test:db-main-thread
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -151,6 +159,8 @@ jobs:
       # chain. strip-comments.ts enumerates files via `git ls-files`
       # (index-only), so the shallow checkout is fine.
       - name: Run make check
+        env:
+          DB_RATCHET_BASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.event.before || 'origin/dev' }}
         run: make check
 
       - name: Verify exact version pins
@@ -197,7 +207,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run Deno boot smoke
-        run: ./scripts/deno-smoke.sh
+        run: python3 .claude/skills/verify/deno-smoke-fixture-isolation.py
 
   # ============================================
   # PATH FILTERS
@@ -351,6 +361,12 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/setup-devproxy
 
+      - name: Install cleanup sandbox
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -430,6 +446,12 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+
+      - name: Install cleanup sandbox
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          /usr/bin/bwrap --die-with-parent --ro-bind / / -- /bin/true
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -607,15 +629,22 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts
+        run: bun build --compile --compile-autoload-package-json --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
 
       - name: Smoke test
         run: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-linux-x64
         env:
           GLM_API_KEY: smoke-test
 
+      - name: Compiled CLI device commands
+        run: |
+          run=$(mktemp -d)
+          mkdir -p "$run/home"
+          env -i HOME="$run/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$run/data" \
+            bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-linux-x64 "$run" --device-commands
+
       - name: Compile daemon binary
-        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts
+        run: bun build --compile --compile-autoload-package-json --root=packages --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts $(bun scripts/compiled-worker-entrypoints.ts)
 
       - name: Smoke test daemon binary
         run: bun run scripts/smoke-test.ts ./dist/bin/hyperneod-linux-x64 --daemon
@@ -623,6 +652,57 @@ jobs:
           GLM_API_KEY: smoke-test
           HYPERNEO_DATA_DIR: /tmp/hyperneod-smoke-data
 
+      - name: Load embeddings from a compiled binary in a fresh data dir
+        run: bun .claude/skills/verify/compiled-embedding-load.ts ${{ runner.temp }}/hyperneo-embedding-load bun-linux-x64
+
+
+  windows-compiled-smoke:
+    name: Windows Compiled Worker Smoke
+    runs-on: windows-latest
+    needs: [changes]
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.online == 'true')
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run worker resolution and compiled fixture contracts
+        working-directory: packages/daemon
+        run: bun test --preload=./tests/unit/setup.ts ./tests/unit/lib/runtime-worker-url.test.ts
+      - name: Prove the compile timeout budget on Windows three times
+        shell: pwsh
+        run: |
+          bun .claude/skills/verify/compiled-worker-timeout.ts (Join-Path $env:RUNNER_TEMP 'worker-timeout-red') --reproduce
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($attempt in 1..3) {
+            bun .claude/skills/verify/compiled-worker-timeout.ts (Join-Path $env:RUNNER_TEMP "worker-timeout-green-$attempt")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Build compiled Windows CLI
+        run: bun scripts/build-binary.ts --target bun-windows-x64
+        env:
+          HYPERNEO_BUILD_COMMIT: ${{ github.sha }}
+      - name: Run isolated compiled startup smoke
+        shell: pwsh
+        run: |
+          $run = Join-Path $env:RUNNER_TEMP 'hyperneo-windows-smoke'
+          New-Item -ItemType Directory -Force "$run\home" | Out-Null
+          $env:HOME = "$run\home"
+          $env:HYPERNEO_DATA_DIR = "$run\data"
+          $env:NODE_ENV = 'test'
+          bun .claude/skills/verify/compiled-worker-startup.ts dist/bin/hyperneo-windows-x64.exe $run
+      - name: Load embeddings from a compiled binary in a fresh data dir
+        run: bun .claude/skills/verify/compiled-embedding-load.ts ${{ runner.temp }}/hyperneo-embedding-load
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-compiled-worker-evidence
+          path: |
+            ${{ runner.temp }}/hyperneo-windows-smoke/evidence/
+            ${{ runner.temp }}/worker-timeout-*/evidence/
 
   # ============================================
   # GATE - All tests must pass (handles conditional job results)
@@ -645,6 +725,7 @@ jobs:
       - test-web
       - build
       - deno-boot-smoke
+      - windows-compiled-smoke
 
     steps:
       - name: Check all jobs passed
@@ -691,6 +772,11 @@ jobs:
           # deno-boot-smoke: PR to dev, push to dev, workflow_dispatch
           if [[ "${{ needs.deno-boot-smoke.result }}" == "failure" ]]; then
             echo "❌ deno-boot-smoke failed"
+            FAILED=1
+          fi
+
+          if [[ "${{ needs.windows-compiled-smoke.result }}" != "success" && "${{ needs.windows-compiled-smoke.result }}" != "skipped" ]]; then
+            echo "Windows compiled worker smoke did not pass"
             FAILED=1
           fi
 

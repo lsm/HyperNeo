@@ -1,3 +1,4 @@
+import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { fileURLToPath } from 'node:url';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { describe, expect, test, spyOn } from 'bun:test';
@@ -24,6 +25,7 @@ function fixture() {
     return { cwd, branch: 'feature' };
   };
   const db = new Database(join(root, 'facts.db'));
+  createNeoPackPreferencesTable(db);
   createCodingPackTables(db);
   let calls = 0;
   const requests: string[][] = [];
@@ -64,6 +66,21 @@ function fixture() {
 }
 
 describe('ledger branch reader', () => {
+  test('refresh does not read branch admission through the main repository', async () => {
+    const f = fixture();
+    const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+    const main = spyOn(facts, 'read').mockImplementation(() => {
+      throw new Error('branch refresh read on main repository');
+    });
+    try {
+      const result = await facts.refresh('synthetic/ledger', 'feature', () => response([{ url }]));
+      expect(result.membership).toMatchObject({ status: 'known', urls: [url] });
+    } finally {
+      main.mockRestore();
+      f.cleanup();
+    }
+  });
+
   test('simultaneous requests for one branch share one upstream read', async () => {
     const f = fixture();
     try {
@@ -171,7 +188,7 @@ describe('ledger branch reader', () => {
     const fault = spyOn(f.db, 'transaction').mockImplementation(((fn, mode) => {
       const commit = transaction(fn, mode);
       return (...args) => {
-        if (failures-- > 0)
+        if (mode === 'immediate' && failures-- > 0)
           throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
         return commit(...args);
       };
@@ -189,6 +206,45 @@ describe('ledger branch reader', () => {
       f.cleanup();
     }
   });
+  test('persistent writer contention exhausts three attempts without repeating the upstream read', async () => {
+    const f = fixture();
+    const transaction = f.db.transaction.bind(f.db);
+    let attempts = 0;
+    let calls = 0;
+    const spawn: SpawnFn = () => {
+      calls++;
+      return response([{ url }]);
+    };
+    const fault = spyOn(f.db, 'transaction').mockImplementation(((fn, mode) => {
+      if (mode !== 'immediate') return transaction(fn, mode);
+      return () => {
+        attempts++;
+        throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+      };
+    }) as typeof f.db.transaction);
+    try {
+      const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+      await expect(facts.refresh('synthetic/ledger', 'feature', spawn)).rejects.toThrow(
+        'database is locked'
+      );
+      expect(attempts).toBe(3);
+      expect(calls).toBe(1);
+      expect(facts.read('synthetic/ledger', 'feature').membership).toMatchObject({
+        status: 'unknown',
+        reason: 'missing',
+      });
+      fault.mockRestore();
+      expect((await facts.refresh('synthetic/ledger', 'feature', spawn)).membership).toMatchObject({
+        status: 'known',
+        urls: [url],
+      });
+      expect(calls).toBe(2);
+    } finally {
+      fault.mockRestore();
+      f.cleanup();
+    }
+  });
+
   test('checkout HEAD discovery and invalid locations keep their existing behavior', async () => {
     const f = fixture();
     try {
@@ -345,12 +401,17 @@ describe('branch coverage', () => {
       const facts = new CodingPrLedgerRepository(f.db).branchFacts;
       let finish!: (code: number) => void,
         calls = 0;
+      let started!: () => void;
+      const collecting = new Promise<void>((done) => {
+        started = done;
+      });
       const slow: SpawnFn = () => {
         calls++;
         return {
           ...response([{ url }]),
           exited: new Promise<number>((done) => {
             finish = done;
+            started();
           }),
         };
       };
@@ -361,6 +422,7 @@ describe('branch coverage', () => {
         slow,
         () => 100
       );
+      await collecting;
       expect(calls).toBe(1);
       other = new Database(join(f.root, 'facts.db'));
       const newer = new CodingPrLedgerRepository(other).branchFacts;
@@ -417,5 +479,24 @@ test('the actual daemon watcher shares branch coverage and reuses it after reope
     expect(observed.snapshot.ok).toBe(true);
   } finally {
     rmSync(run, { recursive: true, force: true });
+  }
+});
+
+test('an unlisted checkout makes no GitHub request until the human watches its repository', async () => {
+  const f = fixture();
+  try {
+    f.db
+      .prepare(
+        "INSERT INTO neo_pack_preferences VALUES ('coding', 'global', '', 'watchedRepos', '[]', 'human', 1)"
+      )
+      .run();
+    const checkout = f.checkout('unlisted');
+    expect(await f.reader(f.db)(checkout)).toEqual([]);
+    expect(f.calls()).toBe(0);
+    f.db.prepare('UPDATE neo_pack_preferences SET value_json = \'["synthetic/ledger"]\'').run();
+    expect(await f.reader(f.db)(checkout)).toEqual([url]);
+    expect(f.calls()).toBe(1);
+  } finally {
+    f.cleanup();
   }
 });

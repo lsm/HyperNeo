@@ -2,6 +2,8 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { nativeFeedEnqueueWrites } from '../../storage/repositories/native-feed-enqueue-write.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { readWorkFeedOffsets, type WorkFeedTurn } from '../../storage/work-feed.ts';
@@ -12,8 +14,11 @@ import {
   type FeedSource,
   feedWorkFiles,
   listFeedFilesAsync,
+  dropForeignFeeds,
+  ownFeedFiles,
   pruneVanishedFeeds,
 } from './work-feed.ts';
+import type { StartedWork } from '../../storage/work-started-sessions.ts';
 
 export const WORK_FEED_CODEX = 'work.feed.codex';
 const FEED_INTERVAL_MS = 60_000;
@@ -95,8 +100,8 @@ export function codexRolloutTurns(lines: readonly string[], threadId: string): W
   });
 }
 
-export function scheduleCodexFeed(queue: JobQueueRepository): void {
-  queue.enqueueUniquePending({
+export async function scheduleCodexFeed(queue: JobQueueRepository): Promise<void> {
+  await gatewayFor(queue.db).call(nativeFeedEnqueueWrites, 'enqueueUniquePending', {
     queue: WORK_FEED_CODEX,
     payload: { scope: 'codex' },
     matchPayload: { scope: 'codex' },
@@ -117,6 +122,10 @@ export const codexFeedSource: FeedSource<CodexRolloutMeta & FeedFileMeta> = {
   turns: (lines, meta) => codexRolloutTurns(lines, meta.threadId),
 };
 
+export function ownCodexSessions(started: readonly StartedWork[]): Set<string> {
+  return new Set(started.flatMap((ref) => (ref.adapter === 'codex-desktop' ? [ref.id] : [])));
+}
+
 export function feedCodexFiles(
   db: BunDatabase,
   files: readonly FeedFile[]
@@ -125,13 +134,19 @@ export function feedCodexFiles(
 }
 
 export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
-  .input(['queue', 'db', 'root', 'now'])
+  .input(['queue', 'db', 'root', 'now', 'own'])
   .pipe(scheduleCodexFeed, 'queue')
   .pipe(
     (db: BunDatabase, root: string) =>
       runLagPhase('feed:codex:prune', () => pruneVanishedFeeds(db, root, codexFeedSource)),
     ['db', 'root'],
     'pruned'
+  )
+  .pipe(
+    (db: BunDatabase, root: string, own: ReadonlySet<string> | null) =>
+      dropForeignFeeds(db, root, codexFeedSource, own),
+    ['db', 'root', 'own'],
+    'foreign'
   )
   .pipe(
     (root: string, now: number) =>
@@ -145,10 +160,17 @@ export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
     ['db', 'files'],
     'changed'
   )
-  .pipe(feedCodexFiles, ['db', 'changed'], 'result')
+  .pipe(
+    (changed: FeedFile[], own: ReadonlySet<string> | null) =>
+      ownFeedFiles(changed, codexFeedSource, own),
+    ['changed', 'own'],
+    'owned'
+  )
+  .pipe(feedCodexFiles, ['db', 'owned'], 'result')
   .endAsync('result') as (
   queue: JobQueueRepository,
   db: BunDatabase,
   root: string,
-  now: number
+  now: number,
+  own: ReadonlySet<string> | null
 ) => Promise<{ files: number; turns: number }>;

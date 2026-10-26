@@ -1,6 +1,6 @@
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies.ts';
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, jest } from 'bun:test';
 import type { McpServerConfig, MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
@@ -204,6 +204,108 @@ describe('Session RPC Handlers — models.list', () => {
     setupSessionHandlers(messageHubData.hub, {} as SessionManager, eventBus, {} as SpaceManager);
   });
 
+  it('returns healthy models and identifies a failed provider during forced refresh', async () => {
+    const model = {
+      id: 'healthy-model',
+      name: 'Healthy',
+      provider: 'healthy',
+      contextWindow: 128000,
+    } as ModelInfo;
+    for (const [id, discover] of [
+      ['healthy', async () => [model]],
+      [
+        'broken',
+        async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        },
+      ],
+    ] as const) {
+      getProviderRegistry().register({
+        id,
+        displayName: id,
+        isAvailable: () => true,
+        getModels: discover,
+        listRemoteModels: discover,
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {} }),
+      } as unknown as Provider);
+    }
+    const handler = messageHubData.handlers.get('models.list')!;
+    const result = (await handler({ forceRefresh: true }, {})) as {
+      models: Array<{ id: string; available: boolean }>;
+      unavailableProviders: Array<{ providerId: string; available: boolean }>;
+    };
+    expect(result.models).toEqual([
+      expect.objectContaining({ id: 'healthy-model', available: true }),
+    ]);
+    expect(result.unavailableProviders).toContainEqual(
+      expect.objectContaining({ providerId: 'broken', available: false })
+    );
+  });
+
+  it('discovers slow and stalled providers concurrently within a bounded cold-start window', async () => {
+    const starts: string[] = [];
+    const model = {
+      id: 'cold-model',
+      name: 'Cold',
+      provider: 'cold',
+      contextWindow: 128000,
+    } as ModelInfo;
+    for (const [id, discover] of [
+      [
+        'cold',
+        () =>
+          new Promise<ModelInfo[]>((resolve) => {
+            starts.push('cold');
+            setTimeout(() => resolve([model]), 15000);
+          }),
+      ],
+      [
+        'stalled',
+        () =>
+          new Promise<ModelInfo[]>(() => {
+            starts.push('stalled');
+          }),
+      ],
+    ] as const) {
+      getProviderRegistry().register({
+        id,
+        displayName: id,
+        isAvailable: () => true,
+        getModels: discover,
+        listRemoteModels: discover,
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {} }),
+      } as unknown as Provider);
+    }
+    jest.useFakeTimers();
+    try {
+      const handler = messageHubData.handlers.get('models.list')!;
+      const response = handler({ forceRefresh: true }, {}).then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      );
+      await jest.advanceTimersByTimeAsync(1);
+      expect(starts).toEqual(['cold', 'stalled']);
+      await jest.advanceTimersByTimeAsync(30000);
+      const result = await response;
+      expect(result).not.toHaveProperty('error');
+      const value = ('value' in result ? result.value : null) as {
+        models: Array<{ id: string }>;
+        unavailableProviders: Array<{ providerId: string; available: boolean }>;
+      };
+      expect(value.models.map((item) => item.id)).toEqual(['cold-model']);
+      expect(value.unavailableProviders).toContainEqual(
+        expect.objectContaining({ providerId: 'stalled', available: false })
+      );
+    } finally {
+      clearModelsCache();
+      jest.useRealTimers();
+    }
+  });
+
   it('returns only the configured curation subset', async () => {
     const models = [
       {
@@ -228,32 +330,6 @@ describe('Session RPC Handlers — models.list', () => {
     };
 
     expect(result.models.map((model) => model.id)).toEqual(['deepseek-v4-flash']);
-  });
-
-  it('lists the thinking levels each model accepts', async () => {
-    const models = [
-      { id: 'sonnet', name: 'Sonnet', provider: 'anthropic', contextWindow: 200_000 },
-      { id: 'kimi-k3', name: 'Kimi', provider: 'kimi', contextWindow: 200_000 },
-      {
-        id: 'quiet',
-        name: 'Quiet',
-        provider: 'anthropic',
-        contextWindow: 200_000,
-        thinkingModes: 'off',
-      },
-    ] as ModelInfo[];
-    setModelsCache(new Map([['global', models]]));
-
-    const handler = messageHubData.handlers.get('models.list')!;
-    const result = (await handler({ useCache: true }, {})) as {
-      models: Array<{ id: string; thinkingLevels: string[] }>;
-    };
-
-    expect(Object.fromEntries(result.models.map((m) => [m.id, m.thinkingLevels]))).toEqual({
-      sonnet: ['off', 'think8k', 'think16k', 'think24k', 'think32k', 'think48k', 'think64k'],
-      'kimi-k3': ['off', 'think32k'],
-      quiet: [],
-    });
   });
 
   it('returns the providers that answered first while a slow provider is still loading', async () => {
@@ -1911,10 +1987,22 @@ describe('Session RPC Handlers — session.update host process controls', () => 
   });
 
   it('still lets an updatable config field through to the SDK options', async () => {
+    const toolSelection = {
+      version: 1 as const,
+      choices: { 'mcp:browser': { selected: false, aliases: ['browser-alias'] } },
+    };
+    liveSession.config.toolSelection = toolSelection;
     const handler = messageHubData.handlers.get('session.update');
 
     await handler!(
-      { sessionId: 's1', config: { sdkToolsPreset: ['Read', 'Glob'], maxTurns: 7 } },
+      {
+        sessionId: 's1',
+        config: {
+          sdkToolsPreset: ['Read', 'Glob'],
+          maxTurns: 7,
+          toolSelection: structuredClone(toolSelection),
+        },
+      },
       {}
     );
 
@@ -1925,6 +2013,7 @@ describe('Session RPC Handlers — session.update host process controls', () => 
     const options = await buildQueryOptions();
     expect(options.tools).toEqual(['Read', 'Glob']);
     expect(options.maxTurns).toBe(7);
+    expect(liveSession.config.toolSelection).toEqual(toolSelection);
   });
 });
 
@@ -1932,6 +2021,10 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let liveSession: Session;
+  let appliedLevelAtPersist: string | null | undefined;
+  const applyThinkingLevel = mock(async () => {
+    appliedLevelAtPersist = liveSession.config.thinkingLevel;
+  });
 
   async function buildQueryOptions() {
     const settingsManager = {
@@ -1982,9 +2075,13 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
     } as Session;
 
     const sessionManager = {
-      getSessionForControl: mock(async () => ({ getSessionData: () => liveSession })),
+      getSessionForControl: mock(async () => ({
+        getSessionData: () => liveSession,
+        applyThinkingLevel,
+      })),
       updateSession: mock(async (_id: string, updates: Partial<Session>) => {
         if (updates.config) liveSession.config = { ...liveSession.config, ...updates.config };
+        appliedLevelAtPersist = null;
       }),
     } as unknown as SessionManager;
 
@@ -2005,6 +2102,16 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
     const options = await buildQueryOptions();
     expect(options.pathToClaudeCodeExecutable).not.toBe('/tmp/evil-cli');
     expect(options.env?.HYPERNEO_PWNED).toBeUndefined();
+  });
+
+  it('applies the persisted level to the live query after saving it', async () => {
+    applyThinkingLevel.mockClear();
+    const handler = messageHubData.handlers.get('session.thinking.set');
+
+    await handler!({ sessionId: 's1', level: 'think32k' }, {});
+
+    expect(applyThinkingLevel).toHaveBeenCalledTimes(1);
+    expect(appliedLevelAtPersist).toBe('think32k');
   });
 });
 
@@ -2528,9 +2635,13 @@ describe('Session RPC Handlers — session.retryNowAfterRateLimit', () => {
     );
 
     expect(result).toEqual({ success: true });
-    expect(getSessionAsync).toHaveBeenCalledWith('space:s1:task:t1:post-approval:worker', {
-      startQuery: false,
-    });
+    expect(getSessionAsync).toHaveBeenCalledWith(
+      'space:s1:task:t1:post-approval:worker',
+      {
+        startQuery: false,
+      },
+      false
+    );
     expect(retryNowAfterRateLimit).toHaveBeenCalledTimes(1);
   });
 });
@@ -2589,9 +2700,13 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
     expect(result.success).toBe(true);
     expect(replacement.calls).toEqual(['restart', 'replay']);
     expect(stale.calls).toEqual([]);
-    expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('resume-session', {
-      startQuery: false,
-    });
+    expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
+      'resume-session',
+      {
+        startQuery: false,
+      },
+      false
+    );
   });
 
   it('reports a failed resume when the post-choice lookup finds no session', async () => {

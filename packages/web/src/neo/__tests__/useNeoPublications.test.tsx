@@ -555,3 +555,34 @@ describe('mergePublicationEdits', () => {
     expect(mergePublicationEdits(state, { state: 'stale' })).toBe(state);
   });
 });
+
+it('coalesces a card reply retarget into its existing timeline row across refresh/reconnect', () => {
+  const cardReply = {
+    sourceMessageIds: ['30000000-0000-4000-8000-000000000001'],
+    askId: 'a',
+    questionId: 'old',
+    mutationId: '40000000-0000-4000-8000-000000000001',
+  };
+  const first = { ...row(1), cardReply };
+  const state: NeoPublicationState = {
+    conversationId: id,
+    status: 'ready',
+    items: [first],
+    nextAfter: 1,
+    hasMore: false,
+    hasEarlier: false,
+  };
+  const next = {
+    ...first,
+    cardReply: {
+      ...cardReply,
+      questionId: 'new',
+      mutationId: '40000000-0000-4000-8000-000000000002',
+    },
+  };
+  const response = { state: 'ready' as const, items: [next], nextAfter: 1 };
+  const refreshed = mergePublicationEdits(state, response);
+  expect(refreshed.items).toEqual([next]);
+  expect(refreshed.nextAfter).toBe(1);
+  expect(mergePublicationEdits(refreshed, response)).toBe(refreshed);
+});

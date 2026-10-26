@@ -1,4 +1,5 @@
 import { generateUUID } from '@hyperneo/shared';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useVoiceRecorder, isVoiceRecordingSupported } from '../hooks/useVoiceRecorder.ts';
 import { requestVoiceTranscription, runVoiceSubmit } from '../lib/voice/voice-submit-pipeline.ts';
@@ -36,7 +37,11 @@ export function NeoVoice({
   onError,
   onPhase,
   door,
+  previewContext,
+  onPreviewCapture,
 }: {
+  previewContext?: NeoPreviewReference;
+  onPreviewCapture?: () => void;
   door?: 'session';
   sessionId: string;
   connected: boolean;
@@ -58,6 +63,13 @@ export function NeoVoice({
   latest.current = recorder;
   const liveStream = useRef<VoiceLiveStream | null>(null);
   const interim = useRef(onInterim);
+  const recordingDraft = useRef<{ sendDraft: string; previewContext?: NeoPreviewReference } | null>(
+    null
+  );
+  const captureDraft = () => ({
+    sendDraft: draftText,
+    ...(previewContext && door !== 'session' ? { previewContext: { ...previewContext } } : {}),
+  });
   interim.current = onInterim;
   function takeLiveStream(): VoiceLiveStream | null {
     const live = liveStream.current;
@@ -97,6 +109,8 @@ export function NeoVoice({
   }, []);
 
   async function start() {
+    recordingDraft.current = captureDraft();
+    onPreviewCapture?.();
     try {
       await recorder.start();
       const hub = connectionManager.getHubIfConnected();
@@ -112,8 +126,10 @@ export function NeoVoice({
 
   async function deliverSendIntent(recordId: string, text: string) {
     const outcome = await onSendVoice(text, recordId);
-    if (outcome.kind === 'refused') onError(outcome.reason);
-    else if (outcome.kind === 'unconfirmed') {
+    if (outcome.kind === 'refused') {
+      onError(outcome.reason);
+      if (outcome.retained) return;
+    } else if (outcome.kind === 'unconfirmed') {
       onError('Could not send that recording. It is saved below so you can retry.');
       return;
     }
@@ -129,13 +145,22 @@ export function NeoVoice({
     markVoiceAudioBusy(id);
     beginInteractiveVoiceSubmit();
     const live = entry ? null : takeLiveStream();
+    const captured = entry ?? recordingDraft.current ?? captureDraft();
     try {
       if (intent === 'send' && entry?.sendText) {
         await deliverSendIntent(entry.id, entry.sendText);
         return;
       }
       const result = await runVoiceSubmit(
-        { sessionId, mode: 'stay', retrySilent: !!entry, intent, sendDraft: draftText, door },
+        {
+          sessionId,
+          mode: 'stay',
+          retrySilent: !!entry,
+          intent,
+          sendDraft: captured.sendDraft ?? '',
+          door,
+          ...(captured.previewContext ? { previewContext: captured.previewContext } : {}),
+        },
         {
           stopRecording: entry ? async () => recordingFromEntry(entry) : recorder.stop,
           ...(live
@@ -225,6 +250,7 @@ export function NeoVoice({
           </div>
           <Button
             size="sm"
+            class="h-11 min-w-11 shrink-0"
             variant="danger"
             disabled={!!transcribing || recorder.isStarting}
             onClick={() => void transcribe('draft')}
@@ -238,6 +264,7 @@ export function NeoVoice({
         enabled && (
           <Button
             size="sm"
+            class="h-11 min-w-11 shrink-0"
             variant="ghost"
             disabled={!connected || !isVoiceRecordingSupported()}
             title={
@@ -246,7 +273,7 @@ export function NeoVoice({
             onClick={() => void start()}
             aria-label="Start voice input"
           >
-            <NeoIcon name="mic" />
+            <NeoIcon name="mic" class="!h-6 !w-6" />
           </Button>
         )
       )}

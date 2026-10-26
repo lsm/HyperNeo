@@ -1,9 +1,15 @@
+import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from './sqlite-compat.ts';
 
 const modes = new WeakMap<Database, boolean>();
 
 export const sdkSideOnlyWrites = (db: Database): boolean => modes.get(db) === true;
+
+export function applySdkBodyWriteMode(db: Database, args: unknown): void {
+  const mode = (args as { sdkSideOnlyWrites?: unknown } | null)?.sdkSideOnlyWrites;
+  if (typeof mode === 'boolean') modes.set(db, mode);
+}
 
 const decide = (superpipe({})('sdkSideBodyStartup') as PipelineAPI)
   .input(['facts'])
@@ -78,9 +84,16 @@ export function startSdkBodyWriteAdmission(
   dbPath: string,
   report: (mode: SdkBodyWriteMode) => void,
   createWorker = () =>
-    new Worker(new URL('./sdk-message-body-admission-worker.ts', import.meta.url).href, {
-      type: 'module',
-    })
+    new Worker(
+      runtimeWorkerUrl(
+        './sdk-message-body-admission-worker.ts',
+        './daemon/src/storage/sdk-message-body-admission-worker.ts',
+        import.meta.url
+      ).toString(),
+      {
+        type: 'module',
+      }
+    )
 ): () => void {
   modes.set(db, false);
   const reason = decide({ ...copyFacts(db), missing: false });

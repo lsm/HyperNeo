@@ -1,0 +1,34 @@
+{
+  "base": "e28f3eb05be078633a711838760cb131af3f26d6",
+  "redCommit": "2fdf7d4a750fd510bf58bfcc91caaf57a015972d",
+  "productionChangedLines": 22,
+  "productionBudget": 90,
+  "focusedTests": 154,
+  "baseline": {
+    "focusedFailures": 8,
+    "mainSqlAttempts": 1,
+    "coldRpcError": "session list SQL reached main connection"
+  },
+  "changedCallGraph": [
+    "session.list uses the database gateway read lane via a single awaited repository call",
+    "new sessions.list.read operation exposes only existing SessionRepository.listSessions",
+    "existing listSessions query, ordering and rowToSession projection run unchanged inside the gateway read transaction",
+    "full Session[] result is serialized outside the transaction",
+    "only own import and op registration appended to db-ops.ts; own Deno smoke block appended"
+  ],
+  "verification": [
+    "real public WebSocket session.list RPC on fresh Bun and Deno daemons",
+    "full session fields and ordering match the synchronous reference for seven filter cases",
+    "status overrides archive flag as before; public includeSpaceSessions field ignored",
+    "session SQL absent from main; held synthetic WAL writer does not block reads",
+    "native read worker rejection has no synchronous fallback; health and later recovery pass",
+    "actor cache stays empty; stored row hash unchanged; source proof data removed"
+  ],
+  "unverified": [
+    "liveQuery sessions.list migration",
+    "summary DTO or client changes",
+    "UI and served build",
+    "production workload scale"
+  ],
+  "fullRepositoryCheck": "passed"
+}

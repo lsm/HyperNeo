@@ -23,6 +23,8 @@ import type {
 import type { Session } from '@hyperneo/shared';
 import { ClientEventGateway, STATE_CHANNELS } from '@hyperneo/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository.ts';
+import { healthSessionCountReads } from '../storage/repositories/health-session-count-read.ts';
+import { sessionProjectionReads } from '../storage/repositories/session-projection-read.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
 import { sanitizeGlobalSettings } from './rpc-handlers/settings-handlers.ts';
 import { BUILD_METADATA } from './build-metadata.ts';
@@ -174,7 +176,7 @@ export class StateProjectionService {
           details,
           occurredAt: Date.now(),
         });
-        this.persistSessionError(sessionId, details);
+        return this.persistSessionError(sessionId, details);
       },
       { subscriberName: 'StateProjectionService.sessionError' }
     );
@@ -184,44 +186,36 @@ export class StateProjectionService {
       (data) => {
         const { sessionId } = data as unknown as { sessionId: string };
         this.errorCache.set(sessionId, null);
-        this.persistSessionError(sessionId, null);
+        return this.persistSessionError(sessionId, null);
       },
       { subscriberName: 'StateProjectionService.sessionErrorClear' }
     );
   }
 
-  private persistSessionError(sessionId: string, details: unknown): void {
-    if (!this.db) return;
-    try {
-      const db = this.db.getDatabase();
-      if (!details) {
-        db.prepare('UPDATE sessions SET last_error = NULL WHERE id = ?').run(sessionId);
-        this.reactiveDb?.notifyChange('sessions');
-        return;
-      }
-      const err = details as {
-        category?: unknown;
-        userMessage?: unknown;
-        message?: unknown;
-        metadata?: Record<string, unknown> | undefined;
-      };
-      const category = typeof err.category === 'string' ? err.category : null;
-      if (!category) return;
-      const message =
-        (typeof err.userMessage === 'string' && err.userMessage) ||
-        (typeof err.message === 'string' && err.message) ||
-        '';
-      const providerIdRaw = err.metadata?.providerId;
-      const snapshot: Record<string, unknown> = { category, message };
-      if (typeof providerIdRaw === 'string') snapshot.providerId = providerIdRaw;
-      db.prepare('UPDATE sessions SET last_error = ? WHERE id = ?').run(
-        JSON.stringify(snapshot),
-        sessionId
-      );
-      this.reactiveDb?.notifyChange('sessions');
-    } catch (err) {
-      this.logger.warn(`Failed to persist session error for ${sessionId}:`, err);
-    }
+  private async persistSessionError(sessionId: string, details: unknown): Promise<void> {
+    const db = this.db;
+    if (!db) return;
+    const persist = (lastError: string | null) =>
+      db
+        .setSessionLastError(sessionId, lastError)
+        .catch((err) => this.logger.warn(`Failed to persist session error for ${sessionId}:`, err));
+    if (!details) return persist(null);
+    const err = details as {
+      category?: unknown;
+      userMessage?: unknown;
+      message?: unknown;
+      metadata?: Record<string, unknown> | undefined;
+    };
+    const category = typeof err.category === 'string' ? err.category : null;
+    if (!category) return;
+    const message =
+      (typeof err.userMessage === 'string' && err.userMessage) ||
+      (typeof err.message === 'string' && err.message) ||
+      '';
+    const providerIdRaw = err.metadata?.providerId;
+    const snapshot: Record<string, unknown> = { category, message };
+    if (typeof providerIdRaw === 'string') snapshot.providerId = providerIdRaw;
+    return persist(JSON.stringify(snapshot));
   }
 
   private async broadcastSessionUpdateFromCache(sessionId: string): Promise<void> {
@@ -307,12 +301,15 @@ export class StateProjectionService {
       auth: authStatus,
 
       health: {
+        dataMigration: this.db?.getDataMigrationStatus(),
         status: 'ok' as const,
         version: BUILD_METADATA.version,
         uptime: Date.now() - startTime,
         sessions: {
           active: this.sessionManager.getActiveSessions(),
-          total: this.sessionManager.getTotalSessions(),
+          total: await this.sessionManager
+            .getDatabase()
+            .gateway.call(healthSessionCountReads, 'countHumanSessions'),
         },
       },
 
@@ -341,10 +338,9 @@ export class StateProjectionService {
   private async getSessionsState(): Promise<SessionsState> {
     const settings = this.settingsManager.getGlobalSettings();
 
-    const allSessions = this.sessionManager.listSessions({ includeArchived: true });
-    const hasArchivedSessions = allSessions.some((s) => s.status === 'archived');
-
-    const sessions = settings.showArchived ? allSessions : this.sessionManager.listSessions();
+    const { sessions, hasArchivedSessions } = await this.sessionManager
+      .getDatabase()
+      .gateway.call(sessionProjectionReads, 'snapshot', settings.showArchived);
 
     return {
       sessions,
@@ -397,6 +393,7 @@ export class StateProjectionService {
   }
 
   private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
+    await this.db?.waitForSdkMessageColumns(sessionId, false);
     const agentSession = await this.sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       if ((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db) {
@@ -423,11 +420,17 @@ export class StateProjectionService {
 
   async broadcastSystemChange(): Promise<void> {
     const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SYSTEM);
-    const state = { ...(await this.getSystemState()), version };
-
-    this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
-      channel: 'global',
-    });
+    try {
+      const state = { ...(await this.getSystemState()), version };
+      this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
+        channel: 'global',
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[StateProjectionService] Failed to broadcast system state:',
+        error instanceof Error ? error.message : error
+      );
+    }
   }
 
   async broadcastSettingsChange(): Promise<void> {

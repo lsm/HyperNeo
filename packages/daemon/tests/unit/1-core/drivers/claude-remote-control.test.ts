@@ -132,7 +132,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
 
   const relayed = () => spawned.find((call) => call.args.includes('HyperNeo relay'))?.args.at(-1);
 
-  test.each(['cli', 'unknown', 'ambiguous'] as const)(
+  test.each(['unknown', 'ambiguous'] as const)(
     'native wake refuses a %s target owner before opening or requesting any helper',
     async (owner) => {
       write(record('t1'));
@@ -150,6 +150,35 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       expect(spawned).toEqual([]);
     }
   );
+
+  test('a CLI owner accepts direct inbox input without requiring Desktop ownership', async () => {
+    write(record('t1'));
+    live = [{ sessionId: 'cli-t1', status: 'idle', pid: 1, owner: 'cli' }];
+    const context = {
+      from: 'session:neo',
+      caller: { source: 'internal' as const, role: 'neo' as const },
+    };
+    const receipt = { executionId: 'cli-t1', inputId: 'pending-input' };
+    const received: string[] = [];
+    const result = await runClaudeDesktopWake(
+      target,
+      'next task',
+      {
+        ...deps(),
+        sendInbox: async (_id, message) => {
+          received.push(message);
+          return { ok: true, value: { delivered: false, receipt } };
+        },
+      },
+      context
+    );
+    expect(received).toEqual(['next task']);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { delivered: false, unconfirmed: true, receipt },
+    });
+    expect(spawned).toEqual([]);
+  });
 
   test('refuses a CLI-owned RC helper without sending or changing its permissions', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
@@ -172,12 +201,12 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(spawned).toEqual([]);
   });
 
-  test('refuses a CLI relay after opening rc-toggle in Desktop', async () => {
+  test('reports a failed auto relay after opening rc-toggle in Desktop', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(outcome).toMatchObject({ ok: false, reason: 'not_delivered' });
     expect(spawned[0].args.slice(-3)).toEqual(['--desktop', '--resume', 'cli-rc']);
-    expect(relayed()).toBeUndefined();
+    expect(relayed()).toContain('Please turn on Remote Control');
   });
 
   test('requires the existing authorized rc-toggle instead of creating a replacement', async () => {
@@ -219,23 +248,265 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
   });
 
-  test('a stopped forwarding helper retains its history while a fresh acceptEdits helper is prepared', async () => {
+  test('a fresh helper is prepared in auto mode when no mode is configured', async () => {
+    await openRcToggle([], [], deps(), 'desktop-wake');
+    const prepare = spawned[0].args;
+    expect(prepare[prepare.indexOf('--permission-mode') + 1]).toBe('auto');
+  });
+
+  test('a stopped desktop-wake is reopened by id instead of preparing a second helper', async () => {
     const old = record('old', {
       title: 'desktop-wake',
       cwd: '/Users/test',
-      permissionMode: 'acceptEdits',
+      permissionMode: 'bypassPermissions',
     });
     write(old);
-    const oldPath = join(dir, 'acct/scope/local_old.json');
-    const bytes = readFileSync(oldPath, 'utf8');
     const result = await openRcToggle([old], [], deps(), 'desktop-wake');
     expect(result).toMatchObject({
-      value: { record: { sessionId: 'local_new-rc', permissionMode: 'acceptEdits' } },
+      value: { record: { sessionId: 'local_old', permissionMode: 'bypassPermissions' } },
     });
-    expect(spawned[0].args).toContain('--session-id');
-    expect(spawned[0].args).toContain('acceptEdits');
-    expect(spawned[0].args).not.toContain('bypassPermissions');
-    expect(readFileSync(oldPath, 'utf8')).toBe(bytes);
+    expect(spawned.some((call) => call.args.includes('--session-id'))).toBe(false);
+    expect(spawned.find((call) => call.args.includes('--desktop'))?.args.slice(-2)).toEqual([
+      '--resume',
+      'cli-old',
+    ]);
+  });
+
+  test.each(['desktop-wake', 'rc-toggle'])(
+    'a dead %s is reused without leaking replacement records',
+    async (title) => {
+      const old = record('old', { title, cwd: '/Users/test' });
+      write(old);
+      let now = 0;
+      const base = deps();
+      const result = await openRcToggle(
+        [old],
+        [],
+        {
+          ...base,
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms;
+          },
+          spawn: (args, options) => {
+            const child = base.spawn(args, options);
+            live = [];
+            return child;
+          },
+        },
+        title
+      );
+      expect(result).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining(`Claude Code Desktop did not open ${title}.`),
+        },
+      });
+      expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(0);
+      expect(spawned.filter((call) => call.args.includes('--desktop'))).toHaveLength(1);
+    }
+  );
+
+  test.each(['auto', 'default', 'acceptEdits', 'bypassPermissions'])(
+    'a live %s target receives directly using fresh mode without a helper',
+    async (mode) => {
+      write(
+        record('t1', {
+          cwd: '/Users/test',
+          permissionMode: mode === 'bypassPermissions' ? 'auto' : 'bypassPermissions',
+        })
+      );
+      live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
+      const project = join(dir, 'projects/-Users-test');
+      mkdirSync(project, { recursive: true });
+      writeFileSync(join(project, 'cli-t1.jsonl'), '');
+      const context = { from: 'session:origin', caller: { source: 'rpc' as const } };
+      const result = await runClaudeDesktopWake(
+        target,
+        'Exact direct marker',
+        {
+          ...deps(),
+          liveSessions: async () => {
+            write(record('t1', { cwd: '/Users/test', permissionMode: mode }));
+            return live;
+          },
+          sendInbox: async (id, message, receivedContext, fromMode) => {
+            expect(id).toBe('cli-t1');
+            expect(receivedContext).toEqual(context);
+            expect(fromMode).toBe(mode === 'bypassPermissions' ? 'bypass' : 'prompting');
+            writeFileSync(
+              join(project, 'cli-t1.jsonl'),
+              JSON.stringify({
+                type: 'user',
+                uuid: 'direct-input',
+                message: { content: message },
+              }) + '\n'
+            );
+            return {
+              ok: true,
+              value: {
+                delivered: false,
+                unconfirmed: true,
+                receipt: { executionId: id, inputId: 'direct-input' },
+              },
+            };
+          },
+        },
+        context
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: { delivered: true, receipt: { inputId: 'direct-input' } },
+      });
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test.each(['auto', 'default', 'acceptEdits', 'bypassPermissions'])(
+    'retries an unconfirmed direct send using the freshly changed %s receiver mode',
+    async (mode) => {
+      const initial = record('t1', {
+        cwd: '/Users/test',
+        permissionMode: mode === 'bypassPermissions' ? 'auto' : 'bypassPermissions',
+      });
+      write(initial);
+      live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
+      const project = join(dir, 'projects/-Users-test');
+      mkdirSync(project, { recursive: true });
+      const transcript = join(project, 'cli-t1.jsonl');
+      writeFileSync(transcript, '');
+      let now = 0;
+      const base = deps();
+      const result = await runClaudeDesktopWake(
+        target,
+        'Fresh mode marker',
+        {
+          ...base,
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms;
+          },
+          sendInbox: async () => {
+            write({ ...initial, permissionMode: mode });
+            return {
+              ok: true,
+              value: {
+                delivered: false,
+                unconfirmed: true,
+                receipt: { executionId: 'cli-t1', inputId: 'held' },
+              },
+            };
+          },
+          spawn: (args, options) => {
+            const child = base.spawn(args, options);
+            if (args.includes('HyperNeo relay'))
+              writeFileSync(
+                transcript,
+                JSON.stringify({
+                  type: 'user',
+                  uuid: 'retried',
+                  content: '<cross-session-message>Fresh mode marker</cross-session-message>',
+                }) + '\n'
+              );
+            return child;
+          },
+        },
+        { from: 'session:origin', caller: { source: 'rpc' } }
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: { delivered: true, receipt: { inputId: 'retried' } },
+      });
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].args[spawned[0].args.indexOf('--permission-mode') + 1]).toBe(
+        mode === 'bypassPermissions' ? mode : 'auto'
+      );
+    }
+  );
+
+  test.each([false, true])(
+    'a failed retry reports mode and reason after inbox throws: %s',
+    async (throws) => {
+      write(record('t1', { cwd: '/Users/test', permissionMode: 'acceptEdits' }));
+      live = [{ sessionId: 'cli-t1', pid: 1, name: 'target', owner: 'desktop', status: 'idle' }];
+      const base = deps();
+      const result = await runClaudeDesktopWake(
+        target,
+        'Refused marker',
+        {
+          ...base,
+          sendInbox: async () => {
+            if (throws) throw new Error('direct inbox exception');
+            return { ok: false, reason: 'not_delivered', detail: 'direct held' };
+          },
+          spawn: (args, options) => ({
+            ...base.spawn(args, options),
+            exited: Promise.resolve(1),
+            stderr: new Response('relay held').body,
+          }),
+        },
+        { from: 'session:origin', caller: { source: 'rpc' } }
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining('acceptEdits'),
+      });
+      if (!result.ok) expect(result.detail).toContain('relay held');
+      expect(spawned).toHaveLength(1);
+    }
+  );
+
+  test('a stopped auto Desktop target runs a headless turn without a warm spawn', async () => {
+    write(record('t1', { cwd: '/Users/test', permissionMode: 'auto' }));
+    const project = join(dir, 'projects/-Users-test');
+    mkdirSync(project, { recursive: true });
+    const transcript = join(project, 'cli-t1.jsonl');
+    writeFileSync(transcript, '');
+    const base = deps();
+    const result = await runClaudeDesktopWake(
+      target,
+      'Cold marker',
+      {
+        ...base,
+        spawn: (args, options) => {
+          const child = base.spawn(args, options);
+          if (args.includes('--resume') && !args.includes('--desktop'))
+            writeFileSync(
+              transcript,
+              JSON.stringify({
+                type: 'user',
+                uuid: 'cold-input',
+                message: { content: 'Cold marker' },
+              }) +
+                '\n' +
+                JSON.stringify({
+                  type: 'assistant',
+                  message: { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+                }) +
+                '\n'
+            );
+          return child;
+        },
+      },
+      { from: 'session:origin', caller: { source: 'rpc' } }
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: { delivered: true, receipt: { inputId: 'cold-input' } },
+    });
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].args).toEqual([
+      'claude',
+      '-p',
+      '--resume',
+      'cli-t1',
+      '--permission-mode',
+      'auto',
+      '--',
+      'Cold marker',
+    ]);
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {
@@ -396,7 +667,8 @@ describe('B1 native task delivery', () => {
         order.push('rc-requested');
         return { ok: true, value: { delivered: true } };
       },
-      async (target, message) => {
+      async (target, message, _deps, deliveryContext) => {
+        expect(deliveryContext).toEqual(context);
         expect(target.sessionId).toBe('local_target');
         expect(message).toBe('Exact actual task');
         order.push('native-message');

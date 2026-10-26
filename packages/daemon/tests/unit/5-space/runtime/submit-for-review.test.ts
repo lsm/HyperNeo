@@ -33,6 +33,7 @@ import {
   enqueueDirectOutcome,
 } from '../../../../src/lib/tasks/direct-outcome-jobs';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 let jobs: JobQueueRepository;
@@ -490,7 +491,7 @@ test('configured shared catalog discovers lazily and both transports persist the
       getSession: (id) => sessions.getSession(id),
       getTaskManager: (id) => new SpaceTaskManager(db, id),
       taskRepo: tasks,
-      notifyStandalone: () => {},
+      runOp: runDbOpOn(db, () => {}),
       emitTaskUpdated: async () => {},
       emitTaskCreated: async () => {},
       getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
@@ -506,7 +507,7 @@ test('configured shared catalog discovers lazily and both transports persist the
     {
       getSession: (id) => sessions.getSession(id),
       getTaskManager: (id) => new SpaceTaskManager(db, id),
-      notifyStandalone: () => {},
+      runOp: runDbOpOn(db, () => {}),
       emitTaskUpdated: async () => {},
       isWorkflowRunActive: () => false,
       hasDirectWorkerProvenance: (id) =>

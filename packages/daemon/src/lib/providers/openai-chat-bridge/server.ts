@@ -750,7 +750,7 @@ export async function createOpenAIChatBridgeServer(
       }
 
       const sessionThinkingEntry = sessionThinkingConfigs.get(sessionId);
-      if (sessionThinkingEntry?.thinking && !body.thinking) {
+      if (sessionThinkingEntry?.thinking && (!body.thinking || body.thinking.type === 'adaptive')) {
         body = { ...body, thinking: sessionThinkingEntry.thinking };
       }
 

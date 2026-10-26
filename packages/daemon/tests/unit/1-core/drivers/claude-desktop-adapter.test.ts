@@ -1,3 +1,7 @@
+import { vi } from 'vitest';
+import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
+import { prepareWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
+import { existsSync } from 'node:fs';
 import { requireClaudeReplyDestination } from '../../../../src/lib/drivers/claude-inbox-submit';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -15,6 +19,8 @@ import {
   type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
   type ClaudeLiveSession,
+  relayNativeDesktopMessage,
+  readClaudeInputEvidence,
   claudeDirectInput,
   claudeNativeInput,
   claudeInputEvidence,
@@ -133,6 +139,7 @@ describe('claude-desktop adapter against the app session records', () => {
       admitInbox: sendInbox
         ? (context) => requireClaudeReplyDestination(context, { hasSession: () => false })
         : undefined,
+      listProcesses: async () => [],
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
@@ -249,6 +256,7 @@ describe('claude-desktop adapter against the app session records', () => {
         receipt: { executionId: 'cli-a1', inputId: 'in-1' },
       },
     };
+    const refused = { ok: false as const, reason: 'unreachable' as const, detail: 'no inbox' };
     let transcript: string;
     beforeEach(() => {
       const folder = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
@@ -291,20 +299,44 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(spawned).toEqual([]);
     });
 
-    test.each([
-      ['held', written, 'may still be held for approval'],
-      [
-        'refused',
-        { ok: false as const, reason: 'unreachable' as const, detail: 'no inbox' },
-        'the direct inbox message failed (no inbox)',
-      ],
-    ])('a %s direct message falls back to the relay', async (_, reply, said) => {
+    test('a direct message held past the confirmation window stays pending under its receipt, with no relay, until a later status read confirms it', async () => {
+      const held = adapter(undefined, 0, undefined, undefined, async () => written);
+      expect(await held.send?.(ref, 'load "orders" then stop', context)).toEqual({
+        ok: true,
+        value: { ...written.value, desktopUI, remoteControl: false },
+      });
+      expect(spawned).toEqual([]);
+      const receipt = written.value.receipt;
+      expect(await held.status?.(ref, undefined, receipt)).toMatchObject({
+        ok: true,
+        value: { inputEvidence: { receipt, state: 'unavailable' } },
+      });
+      append({
+        type: 'user',
+        uuid: 'in-1',
+        timestamp: at,
+        message: { content: 'load "orders" then stop' },
+      });
+      append({
+        type: 'assistant',
+        uuid: 'out-1',
+        timestamp: at,
+        message: { content: [{ type: 'text', text: 'loaded' }], stop_reason: 'end_turn' },
+      });
+      expect(await held.status?.(ref, undefined, receipt)).toMatchObject({
+        ok: true,
+        value: { inputEvidence: { receipt, state: 'observed', transcriptState: 'completed' } },
+      });
+      expect(spawned).toEqual([]);
+    });
+
+    test('a refused direct message falls back to the relay', async () => {
       const relay = adapter(
         undefined,
         0,
         () => append(relayed('u-relay')),
         undefined,
-        async () => reply
+        async () => refused
       );
       expect(await relay.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
@@ -337,17 +369,17 @@ describe('claude-desktop adapter against the app session records', () => {
         0,
         () => append(relayed()),
         undefined,
-        async () => reply
+        async () => refused
       );
       expect(await queued.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
         value: { delivered: true, confirmedAt, desktopUI, remoteControl: false },
       });
-      const lost = adapter(undefined, 1, undefined, undefined, async () => reply);
+      const lost = adapter(undefined, 1, undefined, undefined, async () => refused);
       expect(await lost.send?.(ref, 'load "orders"', context)).toEqual({
         ok: false,
         reason: 'not_delivered',
-        detail: expect.stringContaining(said),
+        detail: expect.stringContaining('the direct inbox message failed (no inbox)'),
       });
       expect(await lost.send?.(ref, 'load "orders"', context)).toMatchObject({
         detail: expect.stringContaining('the relay failed: relay failed'),
@@ -393,7 +425,7 @@ describe('claude-desktop adapter against the app session records', () => {
     });
 
     test('a relay that never shows up and an expired CLI login are reported as such', async () => {
-      const silent = adapter(undefined, 0, undefined, undefined, async () => written);
+      const silent = adapter(undefined, 0, undefined, undefined, async () => refused);
       expect(await silent.send?.(ref, 'load "orders"', context)).toMatchObject({
         reason: 'not_delivered',
         detail: expect.stringContaining('the relayed message did not appear either'),
@@ -403,7 +435,7 @@ describe('claude-desktop adapter against the app session records', () => {
         1,
         undefined,
         { stdout: 'Failed to authenticate: OAuth session expired', stderr: '' },
-        async () => written
+        async () => refused
       );
       expect(await expired.send?.(ref, 'load "orders"', context)).toMatchObject({
         reason: 'claude_cli_login_expired',
@@ -424,7 +456,7 @@ describe('claude-desktop adapter against the app session records', () => {
       const live: ClaudeLiveSession[] = [
         { sessionId: 'cli-p1', status: 'idle', name: 'Neo iOS app', owner: 'cli', pid: 1 },
       ];
-      await adapter(live, 1, undefined, undefined, async () => written).send?.(
+      await adapter(live, 1, undefined, undefined, async () => refused).send?.(
         { adapter: 'claude-desktop', id: 'local_p1' },
         'next',
         context
@@ -489,12 +521,22 @@ describe('claude-desktop adapter against the app session records', () => {
 
   test('archives only the selected session and preserves its full app record', async () => {
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
-    const before = { ...JSON.parse(readFileSync(path, 'utf8')), appMetadata: { keep: true } };
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const env = await prepareWorkerSandbox(root);
+    const before = {
+      ...JSON.parse(readFileSync(path, 'utf8')),
+      cwd: root,
+      appMetadata: { keep: true },
+    };
     writeFileSync(path, JSON.stringify(before));
     const driver = adapter([]);
     const ref = { adapter: driver.id, id: 'local_a1' };
     expect(await driver.archive!(ref, () => null)).toEqual({ ok: true, value: { archived: true } });
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ ...before, isArchived: true });
+    expect(existsSync(env.TMPDIR)).toBe(false);
+    expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+    expect(existsSync(root)).toBe(true);
     expect(await driver.archive!(ref, () => null)).toEqual({
       ok: true,
       value: { archived: false },
@@ -504,6 +546,41 @@ describe('claude-desktop adapter against the app session records', () => {
         .flatMap((group) => group.work)
         .map((work) => work.ref.id)
     ).not.toContain(ref.id);
+  });
+
+  test('keeps the Claude record unarchived when runtime removal fails', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const failure = vi
+      .spyOn(sandbox, 'releaseWorkerSandbox')
+      .mockRejectedValue(new Error('synthetic EBUSY'));
+    try {
+      await expect(
+        adapter([]).archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+      ).rejects.toThrow('synthetic EBUSY');
+      expect(JSON.parse(readFileSync(path, 'utf8')).isArchived).not.toBe(true);
+    } finally {
+      failure.mockRestore();
+    }
+  });
+
+  test('retries runtime release for an already archived Claude session', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const env = await prepareWorkerSandbox(root);
+    writeFileSync(
+      path,
+      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: root, isArchived: true })
+    );
+    try {
+      expect(
+        await adapter([]).archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+      ).toEqual({ ok: true, value: { archived: false } });
+      expect(existsSync(env.TMPDIR)).toBe(false);
+      expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
+    } finally {
+      await sandbox.releaseWorkerSandbox(root);
+    }
   });
 
   test.each(['busy', 'waiting', 'unknown'])(
@@ -895,13 +972,13 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(spawned).toEqual(resumed('auto'));
     });
 
-    test('a session Neo started headless keeps the mode it started in after Desktop relabels it', async () => {
+    test('a stopped Desktop session uses auto instead of its historical bypass mode', async () => {
       const driver = resumeAs('acceptEdits', {
         entrypoint: 'sdk-cli',
         permissionMode: 'bypassPermissions',
       });
       expect(await driver.send?.(ref, 'run the audit', context)).toEqual(delivered);
-      expect(spawned).toEqual(resumed('bypassPermissions'));
+      expect(spawned).toEqual(resumed('auto'));
     });
 
     test.each([
@@ -909,14 +986,12 @@ describe('claude-desktop adapter against the app session records', () => {
       ['default', undefined],
       ['acceptEdits', { entrypoint: 'sdk-cli', permissionMode: 'acceptEdits' }],
     ] as const)(
-      'a session in %s that did not start headless in a free mode is sent to Desktop, never escalated',
+      'a stopped Desktop session recorded as %s uses the authorized auto headless route',
       async (mode, firstTurn) => {
-        expect(await resumeAs(mode, firstTurn).send?.(ref, 'run the audit', context)).toEqual({
-          ok: false,
-          reason: 'unreachable',
-          detail: `woodpecker is not running, and in ${mode} permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2`,
-        });
-        expect(spawned).toEqual([]);
+        expect(await resumeAs(mode, firstTurn).send?.(ref, 'run the audit', context)).toEqual(
+          delivered
+        );
+        expect(spawned).toEqual(resumed('auto'));
       }
     );
 
@@ -968,7 +1043,7 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
-  test.each(['desktop', 'unknown', undefined] as const)(
+  test.each(['unknown', undefined] as const)(
     'send does not relay or resume a live %s owner',
     async (owner) => {
       const driver = adapter([
@@ -978,13 +1053,13 @@ describe('claude-desktop adapter against the app session records', () => {
         await driver.send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
       ).toMatchObject({
         ok: false,
-        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+        reason: 'unreachable',
       });
       expect(
         await driver.steer!({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
       ).toMatchObject({
         ok: false,
-        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+        reason: 'unreachable',
       });
       expect(spawned).toEqual([]);
     }
@@ -1471,6 +1546,168 @@ describe('claudeInputEvidence', () => {
 });
 
 describe('native Desktop message confirmation', () => {
+  test('a queued native send stays pending after the confirm window and confirms from a later transcript', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'desktop-queued-'));
+    const folder = join(root, '-synthetic');
+    mkdirSync(folder);
+    const target = {
+      sessionId: 'local_target',
+      cliSessionId: 'target',
+      cwd: '/synthetic',
+      title: 'worker',
+      isArchived: false,
+      lastActivityAt: 0,
+    };
+    const helper = {
+      ...target,
+      sessionId: 'local_helper',
+      cliSessionId: 'helper',
+      title: 'desktop-wake',
+    };
+    const targetPath = join(folder, 'target.jsonl');
+    const helperPath = join(folder, 'helper.jsonl');
+    writeFileSync(
+      targetPath,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'old-same-message',
+        timestamp: new Date(0).toISOString(),
+        message: {
+          content:
+            '<cross-session-message from="local_helper" name="desktop-wake">\nSynthetic queued task\nExact tail\n</cross-session-message>',
+        },
+      }) + '\n'
+    );
+    writeFileSync(helperPath, '');
+    const message = 'Synthetic queued task\nExact tail';
+    let elapsed = 0;
+    const deps = {
+      projectsDir: root,
+      now: () => elapsed,
+      sleep: async (ms: number) => {
+        elapsed += ms;
+      },
+      spawn: ((args: string[]) => {
+        appendFileSync(
+          helperPath,
+          JSON.stringify({
+            type: 'user',
+            uuid: 'helper-request',
+            message: {
+              content: `<cross-session-message from="relay">\n${args.at(-1)}\n</cross-session-message>`,
+            },
+          }) + '\n'
+        );
+        return {
+          stdout: new Response('Request queued').body,
+          stderr: new Response('').body,
+          exited: Promise.resolve(0),
+          kill: () => {},
+        };
+      }) as SpawnFn,
+    } as ClaudeDesktopAdapterDeps;
+    try {
+      const sent = await relayNativeDesktopMessage(
+        target,
+        helper,
+        [
+          {
+            sessionId: 'helper',
+            name: 'desktop-wake',
+            status: 'running',
+            pid: 1,
+            owner: 'desktop',
+          },
+        ],
+        message,
+        deps
+      );
+      expect(sent).toMatchObject({
+        ok: true,
+        value: {
+          delivered: false,
+          unconfirmed: true,
+          receipt: { executionId: 'target', inputId: expect.any(String) },
+        },
+      });
+      expect(elapsed).toBeGreaterThanOrEqual(28_000);
+      if (!sent.ok || !sent.value.receipt) throw new Error('Missing queued receipt');
+      expect(sent.value.confirmedAt).toBeUndefined();
+      const receipt = sent.value.receipt;
+      for (const [from, text] of [
+        ['local_other', message],
+        ['local_helper', 'Synthetic queued task\nDifferent tail'],
+      ]) {
+        appendFileSync(
+          targetPath,
+          JSON.stringify({
+            type: 'user',
+            uuid: `unrelated-${from}`,
+            timestamp: new Date(elapsed).toISOString(),
+            message: {
+              content: `<cross-session-message from="${from}" name="desktop-wake">\n${text}\n</cross-session-message>`,
+            },
+          }) + '\n'
+        );
+      }
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toEqual({
+        receipt,
+        state: 'pending',
+      });
+      elapsed += 120_000;
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toEqual({
+        receipt,
+        state: 'pending',
+      });
+      appendFileSync(
+        targetPath,
+        JSON.stringify({ type: 'assistant', message: { content: 'x'.repeat(2 * 1024 * 1024) } }) +
+          '\n'
+      );
+      appendFileSync(
+        targetPath,
+        JSON.stringify({
+          type: 'user',
+          uuid: 'later-target-input',
+          timestamp: new Date(elapsed).toISOString(),
+          message: {
+            content: `<cross-session-message from="local_helper" name="desktop-wake">\n${message}\n</cross-session-message>`,
+          },
+        }) + '\n'
+      );
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toMatchObject({
+        receipt,
+        state: 'pending',
+        transcriptState: 'accepted',
+      });
+      appendFileSync(
+        targetPath,
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: new Date(elapsed + 1).toISOString(),
+          message: {
+            content: [{ type: 'text', text: 'Synthetic completion' }],
+            stop_reason: 'end_turn',
+          },
+        }) + '\n'
+      );
+      expect(await readClaudeInputEvidence(target, deps, receipt)).toMatchObject({
+        receipt,
+        state: 'observed',
+        transcriptState: 'completed',
+        exchange: [
+          { role: 'user', text: expect.stringContaining(message) },
+          { role: 'agent', text: 'Synthetic completion' },
+        ],
+      });
+      expect(
+        await readClaudeInputEvidence({ ...target, cliSessionId: 'other' }, deps, receipt)
+      ).toEqual({ receipt, state: 'unavailable' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('requires the actual helper, user receipt and complete message rather than a matching prefix', () => {
     const message = 'Same opening line\nComplete quoted "tail" 😀';
     const entry = (helper: string, text: string, type = 'user') =>

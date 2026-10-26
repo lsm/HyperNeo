@@ -2440,14 +2440,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       const repo = (
         runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
       ).getSdkMessageRepo();
-      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
-        .saveUserMessage as (...args: unknown[]) => string;
+      const originalSave = (repo as unknown as { write: (...args: unknown[]) => unknown })
+        .write as (...args: unknown[]) => string;
       let saveStarted = false;
       let unblockSave: ((value: string) => void) | null = null;
       const saveBlocker = new Promise<string>((resolve) => {
         unblockSave = resolve;
       });
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = (
         ...args: unknown[]
       ) => {
         saveStarted = true;
@@ -2474,8 +2474,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(activeOutcome?.action).toBe('delivered');
       expect(queuedOutcome).toBeNull();
 
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
-        originalSave;
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = originalSave;
 
       runtime.start();
 
@@ -3161,14 +3160,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       const repo = (
         runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
       ).getSdkMessageRepo();
-      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
-        .saveUserMessage as (...args: unknown[]) => string;
+      const originalSave = (repo as unknown as { write: (...args: unknown[]) => unknown })
+        .write as (...args: unknown[]) => string;
       let saveStarted = false;
       let unblockSave: ((value: string) => void) | null = null;
       const saveBlocker = new Promise<string>((resolve) => {
         unblockSave = resolve;
       });
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = (
         ...args: unknown[]
       ) => {
         saveStarted = true;
@@ -3196,8 +3195,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       unblockSave!('db-race');
       const outcome = await blockedRender;
       await stopPromise;
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
-        originalSave;
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = originalSave;
 
       expect(outcome?.action).toBe('delivered');
       const internals = runtime as unknown as {
@@ -3452,14 +3450,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       const repo = (
         runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
       ).getSdkMessageRepo();
-      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
-        .saveUserMessage as (...args: unknown[]) => string;
+      const originalSave = (repo as unknown as { write: (...args: unknown[]) => unknown })
+        .write as (...args: unknown[]) => string;
       let saveStarted = false;
       let unblockSave: ((value: string) => void) | null = null;
       const saveBlocker = new Promise<string>((resolve) => {
         unblockSave = resolve;
       });
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = (
         ...args: unknown[]
       ) => {
         saveStarted = true;
@@ -3476,8 +3474,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const stopPromise = runtime.stop();
       unblockSave!('db-stop-handoff');
       await stopPromise;
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
-        originalSave;
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = originalSave;
 
       const row = db
         .prepare(
@@ -3524,10 +3521,10 @@ describe('SpaceRuntime external event subscriptions', () => {
       const repo = (
         runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
       ).getSdkMessageRepo();
-      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
-        .saveUserMessage as (...args: unknown[]) => string;
+      const originalSave = (repo as unknown as { write: (...args: unknown[]) => unknown })
+        .write as (...args: unknown[]) => string;
       let saveStarted = false;
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = (
         ...args: unknown[]
       ) => {
         saveStarted = true;
@@ -3545,8 +3542,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const stopStartedAt = Date.now();
       await runtime.stop();
       const stopElapsed = Date.now() - stopStartedAt;
-      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
-        originalSave;
+      (repo as unknown as { write: (...args: unknown[]) => unknown }).write = originalSave;
       delete process.env.HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS;
 
       expect(stopElapsed).toBeLessThan(2000);

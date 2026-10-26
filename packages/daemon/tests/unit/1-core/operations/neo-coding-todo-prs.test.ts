@@ -60,15 +60,15 @@ function setup(read: (urls: readonly string[]) => Promise<NeoWorkPr[] | null>) {
 }
 
 describe('coding todo pack', () => {
-  test('observed session PRs keep named and reported claims for the same todo', () => {
+  test('observed session PRs keep named and reported claims for the same todo', async () => {
     const { db, pack, repo, todo } = setup(async () => []);
     const row = todo(
       { pack: 'coding', kind: 'pr_merged', params: { urls: [pr(1, 'OPEN').url] } },
       `Opened ${pr(2, 'OPEN').url}`
     );
-    pack.openedPrs!(row, [pr(3, 'OPEN').url]);
+    await pack.openedPrs!(row, [pr(3, 'OPEN').url]);
     expect(repo.urls(row.id).sort()).toEqual([1, 2, 3].map((n) => pr(n, 'OPEN').url));
-    pack.openedPrs!(row, []);
+    await pack.openedPrs!(row, []);
     expect(repo.urls(row.id).sort()).toEqual([1, 2, 3].map((n) => pr(n, 'OPEN').url));
     db.close();
   });
@@ -132,7 +132,7 @@ describe('coding todo pack', () => {
     expect(await pack.check(row)).toBeNull();
     expect(repo.prs(row.id).map((item) => item.url)).toEqual([pr(5, 'OPEN').url]);
     const continued = { ...row, report: null };
-    pack.openedPrs!(continued, []);
+    await pack.openedPrs!(continued, []);
     expect(await pack.check(continued)).toBeNull();
     expect(repo.urls(row.id)).toEqual(['https://github.com/lsm/neo-ios/pull/5']);
   });
@@ -144,7 +144,7 @@ describe('coding todo pack', () => {
       state: 'doing' as const,
       startedAt: 100,
     };
-    pack.openedPrs!(row, [pr(7381, 'MERGED').url]);
+    await pack.openedPrs!(row, [pr(7381, 'MERGED').url]);
     expect(await pack.check(row)).toEqual({ done: false, evidence: null });
     expect(pack.statusLine(row)).toBeNull();
     db.close();
@@ -180,7 +180,7 @@ describe('coding todo pack', () => {
     dispatch(ids.id, 200, 'fullstack-1');
     dispatch(elsewhere.id, 150, 'fullstack-2');
     for (const row of [gpt, ids])
-      pack.openedPrs!(
+      await pack.openedPrs!(
         row,
         opened.map((item) => item.url)
       );
@@ -462,15 +462,15 @@ describe('planCodingTodoClaims', () => {
   });
 });
 
-describe('coding todo pack waiting', () => {
-  test('a todo with an open PR of its own is waiting on that PR, not idle', () => {
+describe('coding todo pack waiting', async () => {
+  test('a todo with an open PR of its own is waiting on that PR, not idle', async () => {
     const { db, pack, repo, todo } = setup(async () => []);
     const row = todo({ pack: 'coding', kind: 'pr_merged', params: {} });
-    expect(pack.waiting!(row)).toBe(false);
+    expect(await pack.waiting!(row)).toBe(false);
     repo.record(row.id, [pr(1, 'OPEN')], 2);
-    expect(pack.waiting!(row)).toBe(true);
+    expect(await pack.waiting!(row)).toBe(true);
     repo.record(row.id, [pr(1, 'MERGED')], 3);
-    expect(pack.waiting!(row)).toBe(false);
+    expect(await pack.waiting!(row)).toBe(false);
     db.close();
   });
   test('a todo whose reported PRs merged still waits on a later PR its branch opened, even when a retry claims it too', async () => {
@@ -486,14 +486,14 @@ describe('coding todo pack waiting', () => {
       { report: `Merged ${pr(1, 'MERGED').url} and ${pr(2, 'MERGED').url}.` },
       4
     );
-    pack.openedPrs!(row, [pr(3, 'OPEN').url]);
-    pack.openedPrs!(todo(null), [pr(3, 'OPEN').url]);
+    await pack.openedPrs!(row, [pr(3, 'OPEN').url]);
+    await pack.openedPrs!(todo(null), [pr(3, 'OPEN').url]);
     await pack.check(row);
-    expect(pack.waiting!(row)).toBe(true);
+    expect(await pack.waiting!(row)).toBe(true);
     expect(pack.statusLine(row)?.status).toContain('#3 open');
     later = 'MERGED';
     await pack.check(row);
-    expect(pack.waiting!(row)).toBe(false);
+    expect(await pack.waiting!(row)).toBe(false);
     db.close();
   });
 });
@@ -565,8 +565,25 @@ describe('coding pr_merged check wording and rules', () => {
     ).toBeNull();
     expect(
       codingTodoCheckRefusal({ check: merged({ urls: ['lsm/HyperNeo#7709'] }), instruction: null })
-    ).toBe(
-      'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
-    );
+    ).toBe('pr_merged_invalid_urls: every URL must name a pull request.');
   });
+});
+
+test('merged PR completion ignores failing CI, requested changes and ledger human wait', async () => {
+  const merged = pr(42, 'MERGED', { checks: 'failing', review: 'changes_requested' });
+  const { db, repo, todo } = setup(async () => [merged]);
+  try {
+    const pack = createCodingTodoPack(
+      repo,
+      async () => [merged],
+      () => 'waiting_human'
+    );
+    const row = todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [merged.url] } });
+    const facts = await pack.readFacts(row);
+    expect(pack.judge(row, facts)).toEqual({ state: 'done', evidence: '#42 merged' });
+    expect(await pack.check(row)).toEqual({ done: true, evidence: '#42 merged' });
+    expect(pack.statusLine(row)?.status).toContain('waiting on the human');
+  } finally {
+    db.close();
+  }
 });

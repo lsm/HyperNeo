@@ -41,6 +41,7 @@ const read=(input:unknown={url:url.replace('/pull/','/issues/')},name='neo.githu
 });
 const requests=()=>readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
 const stored=()=>app!.db.getDatabase().prepare("SELECT * FROM pack_coding_ref_facts WHERE json_extract(subject,'$.number')=7").get();
+const ageStored=()=>{const db=app!.db.getDatabase();db.prepare('UPDATE pack_coding_ref_facts SET observed_at = observed_at - 46800000').run();db.prepare('UPDATE pack_coding_work_facts SET observed_at = observed_at - 46800000').run();};
 try{
   await open();evidence.fanout=await Promise.all(Array.from({length:5},()=>read()));
   for(const result of evidence.fanout)assert.deepEqual(result,{ok:true,kind:'pr',url,state:'OPEN',checks:'passing',review:'approved',blockers:['1 unresolved review thread'],title:'Synthetic shared fact'});
@@ -53,9 +54,9 @@ try{
   assert.deepEqual(evidence.issue,{ok:true,kind:'issue',url:issue,state:'CLOSED',closedAs:'completed',closedBy:url,parent:'https://github.com/synthetic/ledger/issues/1'});
   assert.equal(evidence.section.ok,true,JSON.stringify(evidence.section));assert.equal(repo.getProject(evidence.section.projectId)?.title,'Synthetic epic');
   evidence.issueLookups=requests().filter((r:any)=>r.phase==='issue'&&r.family==='issue-reference').length;assert.equal(evidence.issueLookups,1,'Project and detail must share their reference acquisition');
-  control('changed');evidence.changed=await read();assert.equal(evidence.changed.review,'none');evidence.changedStored=stored();assert.equal(JSON.parse(evidence.changedStored.value_json).defaultBase,'main');
-  control('failed');evidence.failed=await read();assert.equal(evidence.failed.ok,false);assert.match(evidence.failed.reason,/unreadable/);
-  evidence.failedStored=stored();assert.equal(evidence.failedStored.value_json,evidence.changedStored.value_json);assert.equal(evidence.failedStored.observed_at,evidence.changedStored.observed_at);assert.equal(evidence.failedStored.reason,'failed');
+  control('changed');ageStored();evidence.changed=await read();assert.equal(evidence.changed.review,'none');evidence.changedStored=stored();assert.equal(JSON.parse(evidence.changedStored.value_json).defaultBase,'main');
+  control('failed');ageStored();evidence.failed=await read();assert.equal(evidence.failed.ok,false);assert.match(evidence.failed.reason,/unreadable/);
+  evidence.failedStored=stored();assert.equal(evidence.failedStored.value_json,evidence.changedStored.value_json);assert.equal(evidence.failedStored.observed_at,evidence.changedStored.observed_at-46800000);assert.equal(evidence.failedStored.reason,'failed');
   ws!.close();await app!.cleanup();app=undefined;control('reopen');await open();evidence.retained=stored();assert.equal(evidence.retained.value_json,evidence.failedStored.value_json);
   evidence.reopened=await read();assert.equal(evidence.reopened.ok,true);evidence.reopenedStored=stored();assert.equal(evidence.reopenedStored.reason,null);
   evidence.requests=requests();evidence.counts=Object.fromEntries(['initial','changed','failed','reopen'].map(phase=>[phase,evidence.requests.filter((r:any)=>r.phase===phase&&r.family==='ask-reference').length]));

@@ -33,7 +33,7 @@ async function received(kind = 'human', target = sessionId, consumed = true) {
       human
     );
   else {
-    if (target !== sessionId) db.createSession(createTestSession(target));
+    if (target !== sessionId) await db.createSession(createTestSession(target));
     db.getSDKMessageRepo().saveUserMessage(
       target,
       {
@@ -55,10 +55,10 @@ async function received(kind = 'human', target = sessionId, consumed = true) {
 }
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession(sessionId));
+  await db.createSession(createTestSession(sessionId));
   service = createNeoService(
     db,
-    {} as SessionManager,
+    { getCachedSession: mock(() => undefined) } as unknown as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,
     new InternalEventBus<DaemonInternalEventMap>()
   );
@@ -99,6 +99,11 @@ test('questions retain explicit human references without marking them answered',
   expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
     value: { ok: true, question: { replyTo: [id] } },
   });
+  expect(service.sessions.getCachedSession).not.toHaveBeenCalled();
+  expect(service.publications.list(conversationId)).toMatchObject([
+    { cardReply: { sourceMessageIds: [id], askId: 'work' } },
+  ]);
+  expect(service.publications.list(conversationId)?.[0].replyTo).toBeUndefined();
   const stored = service.todos.listQuestions('work')[0];
   expect(await invoke('neo.question.get', { questionId: stored.id })).toMatchObject({
     value: { ok: true, question: { replyTo: [id] } },
@@ -110,7 +115,7 @@ test('questions retain explicit human references without marking them answered',
 });
 
 test.each(['unknown', 'foreign', 'system', 'task', 'queued'])(
-  'both tools refuse %s references without publishing or creating questions',
+  'both tools omit %s references and still deliver',
   async (kind) => {
     const id =
       kind === 'unknown'
@@ -122,12 +127,12 @@ test.each(['unknown', 'foreign', 'system', 'task', 'queued'])(
           );
     expect(
       await invoke('neo.publication.publish', { ...publication, replyTo: [id] })
-    ).toMatchObject({ value: { accepted: false } });
+    ).toMatchObject({ value: { accepted: true, publication: { replyTo: [] } } });
     expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
-      value: { ok: false },
+      value: { ok: true, question: { replyTo: [] } },
     });
-    expect(service.publications.list(conversationId)).toHaveLength(0);
-    expect(service.todos.listQuestions('work')).toHaveLength(0);
+    expect(service.publications.list(conversationId)).toHaveLength(1);
+    expect(service.todos.listQuestions('work')).toHaveLength(1);
   }
 );
 
@@ -151,16 +156,16 @@ test('new publishes reject triggerId while legacy publications keep it readable'
   });
 });
 
-test('invalid mixed references refuse the entire publication and question', async () => {
+test('mixed references retain only received human inputs in both tools', async () => {
   const replyTo = [await received(), crypto.randomUUID()];
   expect(await invoke('neo.publication.publish', { ...publication, replyTo })).toMatchObject({
-    value: { accepted: false },
+    value: { accepted: true, publication: { replyTo: [replyTo[0]] } },
   });
   expect(await invoke('neo.question.ask', { ...question, replyTo })).toMatchObject({
-    value: { ok: false },
+    value: { ok: true, question: { replyTo: [replyTo[0]] } },
   });
-  expect(service.publications.list(conversationId)).toHaveLength(0);
-  expect(service.todos.listQuestions('work')).toHaveLength(0);
+  expect(service.publications.list(conversationId)).toHaveLength(2);
+  expect(service.todos.listQuestions('work')).toHaveLength(1);
 });
 
 test('rewording a start question retains its explicit human references', async () => {

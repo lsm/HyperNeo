@@ -59,6 +59,16 @@ const target: ClaudeInboxTarget = {
 };
 
 describe('claudeInboxFrame', () => {
+  test.each(['prompting', 'bypass'] as const)(
+    'uses the selected %s sender side in direct frames',
+    (fromMode) => {
+      const frame = JSON.parse(
+        claudeInboxFrame(target, '/tmp/cc-socks/123.sock', { ...submission(), fromMode })
+      );
+      expect(frame.message.content).toContain(`from-mode="${fromMode}"`);
+    }
+  );
+
   test('sends exact text and stable operation identities with an explicit reply address', () => {
     const input = submission();
     const line = claudeInboxFrame(target, '/tmp/cc-socks/123-deadbeef.sock', input);

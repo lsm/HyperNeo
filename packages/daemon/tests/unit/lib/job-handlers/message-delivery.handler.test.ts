@@ -1,3 +1,6 @@
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { parkDeliveryJob } from '../../../../src/storage/repositories/job-delivery-parking';
+import type { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, it, mock } from 'bun:test';
 import type {
   DeliveryOutcome,
@@ -69,9 +72,18 @@ function makeHarness(
 ) {
   const session = new MockSession();
   const jobQueue = {
+    db: {} as RawDatabase,
     isClaimCurrent: mock((_id: string, _token: string | null) => true),
-    requeueParked: mock((_id: string, _runAt: number, _token: string | null) => null),
+    requeueParked: mock(
+      (_id: string, _runAt: number, _token: string | null) => ({ id: _id }) as Job
+    ),
   };
+  bindGateway(jobQueue.db, {
+    call: async (_op: unknown, method: string, ...args: [string, number, string | null]) => {
+      if (method !== 'park') throw new Error(`Unexpected parking command: ${method}`);
+      return jobQueue.requeueParked(...args) !== null;
+    },
+  } as unknown as DbGateway);
   const getSession = mock(() => session);
   const getMessageContent = mock(() => ({ content: 'hello', sendStatus: 'enqueued' }));
   const isSessionArchived = mock(() => false);
@@ -100,11 +112,123 @@ function makeHarness(
   };
 }
 
+describe('Delivery parking writer boundary', () => {
+  it('the writer refuses parking without a claim token', async () => {
+    const db = await createTestDb();
+    try {
+      const jobs = db.getJobQueueRepo();
+      const queued = jobs.enqueue({ queue: 'message_delivery', payload: CHAT_PAYLOAD });
+      const [job] = jobs.dequeue('message_delivery');
+      expect(await db.gateway.call(parkDeliveryJob, 'park', job.id, Date.now() + 60000, null)).toBe(
+        false
+      );
+      expect(jobs.getJob(queued.id)).toMatchObject({
+        status: 'processing',
+        claimToken: job.claimToken,
+      });
+      expect(jobs.getJob(queued.id)?.payload.__parkCount).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each(['cooldown', 'blocked', 'interrupted'] as const)(
+    'returns stale_attempt if the writer rejects the %s parking fence',
+    async (mode) => {
+      const h = makeHarness(mode === 'cooldown' ? { getSessionCooldownRetryAt: () => 1000 } : {});
+      h.jobQueue.requeueParked.mockImplementation(() => null);
+      if (mode === 'blocked') h.session.driveResult = { outcome: 'blocked', retryAt: 1000 };
+      if (mode === 'interrupted')
+        h.session.driveDeliveryTurn = async () => {
+          throw new Error('Interrupted by user');
+        };
+      expect(await h.handler(h.job, {})).toEqual({ outcome: 'stale_attempt' });
+      expect(h.jobQueue.requeueParked).toHaveBeenCalledTimes(1);
+      expect(h.session.settleCalls).toEqual([]);
+    }
+  );
+
+  it('does not park a newer claim acquired while the writer command is queued', async () => {
+    const db = await createTestDb();
+    const jobs = db.getJobQueueRepo();
+    const queued = jobs.enqueue({ queue: 'message_delivery', payload: CHAT_PAYLOAD });
+    const [old] = jobs.dequeue('message_delivery');
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const actual = db.gateway;
+    bindGateway(jobs.db, {
+      call: async (_op: unknown, method: string, ...args: [string, number, string | null]) => {
+        if (method !== 'park') throw new Error('Unexpected command');
+        enter();
+        await held;
+        return actual.call(parkDeliveryJob, 'park', ...args);
+      },
+    } as unknown as DbGateway);
+    try {
+      const { handler } = makeHarness({
+        jobQueue: jobs,
+        getSessionCooldownRetryAt: () => Date.now() + 60000,
+      });
+      const pending = handler(old, {});
+      await entered;
+      db.getDatabase()
+        .prepare(
+          "UPDATE job_queue SET payload = json_set(payload, '$.__claimToken', ?) WHERE id = ?"
+        )
+        .run('new-owner', queued.id);
+      release();
+      expect(await pending).toEqual({ outcome: 'stale_attempt' });
+      expect(jobs.getJob(queued.id)).toMatchObject({
+        status: 'processing',
+        claimToken: 'new-owner',
+        retryCount: 0,
+      });
+      expect(jobs.getJob(queued.id)?.payload.__parkCount).toBeUndefined();
+    } finally {
+      release();
+      db.close();
+    }
+  });
+
+  it('writer failure leaves the claim processing without an inline parking fallback', async () => {
+    const db = await createTestDb();
+    const jobs = db.getJobQueueRepo();
+    const queued = jobs.enqueue({ queue: 'message_delivery', payload: CHAT_PAYLOAD });
+    const [job] = jobs.dequeue('message_delivery');
+    const writer = new DbGateway(':memory:', null, undefined, () => {
+      throw new Error('parking writer unavailable');
+    });
+    bindGateway(jobs.db, writer);
+    try {
+      const { handler } = makeHarness({
+        jobQueue: jobs,
+        getSessionCooldownRetryAt: () => Date.now() + 60000,
+      });
+      await expect(handler(job, {})).rejects.toThrow('parking writer unavailable');
+      expect(jobs.getJob(queued.id)).toMatchObject({
+        status: 'processing',
+        claimToken: job.claimToken,
+        retryCount: 0,
+      });
+      expect(jobs.getJob(queued.id)?.payload.__parkCount).toBeUndefined();
+    } finally {
+      await writer.close();
+      db.close();
+    }
+  });
+});
+
 describe('createMessageDeliveryHandler', () => {
   it('keeps interrupted unconsumed input retryable without spending an attempt', async () => {
     const db = await createTestDb();
     try {
-      db.createSession(createTestSession('sess-1'));
+      await db.createSession(createTestSession('sess-1'));
       const repo = db.getSDKMessageRepo();
       repo.saveUserMessage(
         'sess-1',
@@ -229,7 +353,7 @@ describe('createMessageDeliveryHandler', () => {
     });
 
     it('marks the message failed and settles for an archived session', async () => {
-      const markFailedSpy = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
+      const markFailedSpy = mock(async (_sessionId: string, uuid: string) => `db-${uuid}`);
       const publishSpy = mock(async () => {});
       const { handler, session, isSessionArchived, job } = makeHarness(
         { markDeliveryFailed: markFailedSpy, publishStatusChanged: publishSpy },

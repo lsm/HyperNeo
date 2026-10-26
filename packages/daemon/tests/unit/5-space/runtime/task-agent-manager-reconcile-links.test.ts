@@ -6,6 +6,7 @@ import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-m
 import { isOrphanedInProgressTask } from '../../../../src/lib/tasks/orphaned-task-recovery.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import type { SpaceTask } from '@hyperneo/shared';
+import { writeSpaceTaskVia } from '../../helpers/run-db-op';
 
 describe('TaskAgentManager.rehydrate', () => {
   let db: Database;
@@ -23,9 +24,10 @@ describe('TaskAgentManager.rehydrate', () => {
       name: 'Rehydrate links',
     }).id;
     manager = new TaskAgentManager({
-      db: { getDatabase: () => db },
+      db: { getDatabase: () => db, waitForSdkMessageColumns: async () => {} },
       internalEventBus: { subscribe: () => () => {} },
       taskRepo: repo,
+      writeTask: writeSpaceTaskVia(repo),
     } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
   });
 

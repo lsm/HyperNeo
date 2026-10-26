@@ -9,6 +9,8 @@ export type ConnectorOutcome =
 
 export interface ConnectorContext {
   workspacePath: string;
+  readPr?: (url: string, workspacePath: string) => Promise<ConnectorOutcome>;
+  readReviewThreads?: (url: string, workspacePath: string) => Promise<ConnectorOutcome>;
   params: Record<string, unknown>;
   rawParams?: Record<string, unknown>;
   hookLocalState: Record<string, unknown>;

@@ -2,6 +2,8 @@ import { GITHUB_POLL } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
 import type { GitHubPollingService } from '../github/polling-service.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { githubPollSuccessorWrites } from '../../storage/repositories/github-poll-successor-write.ts';
 
 const log = new Logger('github-poll-handler');
 
@@ -39,17 +41,13 @@ export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<Git
   const intervalMs = typeof deps.intervalMs === 'function' ? deps.intervalMs() : deps.intervalMs;
   const nextRunAt = intervalMs > 0 ? Date.now() + intervalMs : 0;
 
-  const existingJobs = jobQueue.listJobs({
-    queue: GITHUB_POLL,
-    status: 'pending',
-    limit: 1,
-  });
-
-  if (intervalMs > 0 && existingJobs.length === 0) {
-    jobQueue.enqueue({
+  if (intervalMs > 0) {
+    await gatewayFor(jobQueue.db).call(githubPollSuccessorWrites, 'enqueueUniquePending', {
       queue: GITHUB_POLL,
       payload: {},
       runAt: nextRunAt,
+      matchPayload: {},
+      activeStatuses: ['pending'],
     });
   }
 

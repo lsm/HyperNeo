@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from '../types.ts';
 import type { CustomEndpointConfig } from './custom-endpoint.ts';
+import type { SessionToolSelection } from './session-tool-choice.ts';
 
 export const MAX_GITHUB_POLLING_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
 
@@ -128,7 +129,7 @@ export interface NeoSettings {
 
 export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermissionMode {
   const mode = settings?.workerPermissionMode;
-  return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'bypassPermissions';
+  return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'auto';
 }
 
 export const NEO_STANDING_RULES_MAX = 20;
@@ -151,7 +152,14 @@ export type ChatDisplayMode = 'full' | 'compact' | 'minimal';
 
 export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
 
+export const WORKER_SANDBOX_MODES = ['off', 'always'] as const;
+export type WorkerSandboxMode = (typeof WORKER_SANDBOX_MODES)[number];
+
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
+  workerSandbox?: WorkerSandboxMode;
+  workerUnixSockets?: string[];
+  toolSelectionDefaults?: SessionToolSelection;
+
   settingSources: SettingSource[];
 
   language?: LanguageSetting;
@@ -186,6 +194,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   exa?: ExaSettings;
 
   neo?: NeoSettings;
+
+  workFeedScope?: 'all' | 'own';
 }
 
 export interface SessionSettings extends GlobalSettings {
@@ -193,6 +203,8 @@ export interface SessionSettings extends GlobalSettings {
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
+  workerSandbox: 'off',
+  workerUnixSockets: [],
   settingSources: ['user', 'project', 'local'],
   permissionMode: 'default',
   model: 'sonnet',

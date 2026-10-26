@@ -1,3 +1,8 @@
+import { createSessionToolActivationOperation } from '../tools/session-tool-activation.ts';
+import {
+  createSessionToolPreferenceWriter,
+  type SessionToolPreferenceWriter,
+} from '../tools/write-session-tool-preferences.ts';
 import { createNeoHomeOperations } from '../neo/home/operations.ts';
 import { createNeoHomeGithubOperation } from '../neo/home/github.ts';
 import { NeoHomeRepository } from '../neo/home/repository.ts';
@@ -45,11 +50,14 @@ import {
 } from '../drivers/claude-feed.ts';
 import {
   codexSessionsRoot,
+  ownCodexSessions,
   runCodexFeed,
   scheduleCodexFeed,
   WORK_FEED_CODEX,
 } from '../drivers/codex-feed.ts';
 import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
+import { readStartedWork } from '../../storage/work-started-sessions.ts';
+import { CLAUDE_DESKTOP_SESSIONS, ownClaudeSessions } from './family-operations/drivers.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations, neoReorganizeRuntime } from '../neo/operations.ts';
 import { createNeoProjectsReorganizer } from '../neo/reorganize-operation.ts';
@@ -64,7 +72,6 @@ import { adoptNeoFilePacks } from '../neo/packs/index.ts';
 import { getDataDir } from '../data-dir.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
-import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
@@ -125,7 +132,10 @@ import type { SpaceManager } from '../space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../tasks/task-manager.ts';
 import { SpaceWorkflowManager, createSpaceAgentLookup } from '../workflows/workflow-manager.ts';
 import type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import {
+  SpaceTaskRepository,
+  spaceTaskWriter,
+} from '../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
@@ -181,6 +191,7 @@ import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts'
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
 import { setupLiveQueryHandlers } from './live-query-handlers.ts';
+import { readLiveSessionList } from '../../storage/repositories/session-list-live-read.ts';
 import { setupReferenceHandlers } from './reference-handlers.ts';
 import { FileIndex } from '../file-index.ts';
 import { LiveQueryEngine } from '../../storage/live-query.ts';
@@ -252,10 +263,6 @@ function createGoalAutomationSelfNagSchedules(
 
 export interface RPCHandlerDependencies {
   watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
-  followSessionTopics?: (
-    source: () => readonly { topic: string; session?: string | null }[]
-  ) => void;
-  isSessionTopicCovered?: (sessionId: string, topic: string) => boolean;
   messageHub: MessageHub;
   deviceOf: (clientId: string) => UpgradeIdentity | null;
   sessionManager: SessionManager;
@@ -396,9 +403,53 @@ export interface RPCHandlerSetupResult {
   cancelInactivityWatchdog: () => void;
   sessionScheduler: SessionScheduler;
   notifyScheduleIdle: ReturnType<typeof createNeoService>['notifyScheduleIdle'];
+  wakePollingConcern: (key: string, text: string) => Promise<boolean>;
 }
 
-export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
+export async function setupRPCHandlers(
+  deps: RPCHandlerDependencies
+): Promise<RPCHandlerSetupResult> {
+  let taskAgentManager: TaskAgentManager;
+  const persistToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
+    createSessionToolPreferenceWriter(deps.db, async () => {
+      const stored = deps.db.getSession(id);
+      if (!stored) return;
+      const live = new Set([
+        taskAgentManager?.getCachedAgentSessionById(id),
+        deps.sessionManager.getCachedSession(id),
+      ]);
+      for (const session of live)
+        if (session)
+          session.getSessionData().config = {
+            ...session.getSessionData().config,
+            toolSelection: stored.config.toolSelection,
+            tools: stored.config.tools,
+          };
+      await deps.internalEventBus.publish('session.updated', {
+        sessionId: id,
+        source: 'tool-preferences',
+        session: { config: stored.config },
+      });
+      if (request.kind === 'skills')
+        await (
+          taskAgentManager?.getCachedAgentSessionById(id) ??
+          deps.sessionManager.getCachedSession(id)
+        )?.refreshToolsContextUsage();
+    })(id, request, tools);
+  const preferenceWrites = new Map<string, Promise<unknown>>();
+  const exclusiveToolPreferences = <T>(id: string, write: () => Promise<T>): Promise<T> => {
+    const previous = preferenceWrites.get(id) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(write);
+    preferenceWrites.set(id, next);
+    void next
+      .finally(() => {
+        if (preferenceWrites.get(id) === next) preferenceWrites.delete(id);
+      })
+      .catch(() => {});
+    return next;
+  };
+  const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
+    exclusiveToolPreferences(id, () => persistToolPreferences(id, request, tools));
   const pendingInactivityRunNow = new Set<Promise<void>>();
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
@@ -408,7 +459,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     () => deps.sessionManager.getOperationRegistry(),
     deps.deviceOf
   );
-  setupSystemHandlers(deps.messageHub, deps.sessionManager);
+  setupSystemHandlers(deps.messageHub, deps.sessionManager, () => deps.db.getDataMigrationStatus());
   setupAuthHandlers(
     deps.messageHub,
     deps.authManager,
@@ -416,7 +467,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     deps.db.providers
   );
-  registerMcpHandlers(deps.messageHub, deps.sessionManager);
+  registerMcpHandlers(deps.messageHub, deps.sessionManager, writeToolPreferences);
   registerSettingsHandlers(
     deps.messageHub,
     deps.settingsManager,
@@ -465,7 +516,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.liveQueries,
     deps.db.getDatabase(),
-    (args) => deps.db.getMessageFeedAsync(args)
+    (args) => deps.db.getMessageFeedAsync(args),
+    (includeArchived) => deps.db.gateway.call(readLiveSessionList, 'read', includeArchived)
   );
 
   registerAppMcpHandlers(deps.messageHub, {
@@ -473,7 +525,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     internalEventBus: deps.internalEventBus,
   });
 
-  setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db);
+  setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, writeToolPreferences);
 
   setupSpaceMcpHandlers(
     deps.messageHub,
@@ -1191,22 +1243,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     (id) => deps.db.getSession(id)
   );
-  const stampProvenance = (
+  const stampProvenance = async (
     sessionId: string,
     promptProvenance: NonNullable<SessionMetadata['promptProvenance']>
   ) => {
     const current = deps.db.getSession(sessionId);
     if (current) {
-      deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
-      deps.db.notifyChange('sessions', { sessionId });
+      await deps.db.updateSession(sessionId, {
+        metadata: { ...current.metadata, promptProvenance },
+      });
     }
   };
   spaceAgentV2Deps.stampProvenance = stampProvenance;
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
-    detach: (sessionId) => {
-      deps.db.detachSessionFromParent(sessionId);
-      deps.db.notifyChange('sessions', { sessionId });
+    detach: async (sessionId) => {
+      await deps.db.detachSessionFromParent(sessionId);
     },
     agentOwning: (sessionId) => {
       const id = spaceAgentRepo.getBySessionId(sessionId)?.id;
@@ -1262,6 +1314,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     spaceRuntimeService,
     {
+      writeToolPreferences,
       ensureSession: (target) => ensureSession(target, sessionResolutionDeps),
       resolveClones,
       listClones: (parentId) => deps.db.listChildSessions(parentId),
@@ -1305,7 +1358,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
-  let taskAgentManager: TaskAgentManager;
   let sessionResolutionDeps: ReturnType<typeof createDefaultSessionResolutionDeps>;
   const sessionMessageInjector = async (
     spaceId: string,
@@ -1365,6 +1417,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   taskAgentManager = new TaskAgentManager({
     db: deps.reactiveDb.db,
+    readGithubPr: (url, workspacePath) => neoService.readConnectorPr(url, workspacePath),
+    readGithubReviewThreads: (url, workspacePath) =>
+      neoService.readReviewThreads(url, workspacePath),
     sessionManager: deps.sessionManager,
     reactiveDb: deps.reactiveDb,
     spaceManager: deps.spaceManager,
@@ -1373,6 +1428,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     spaceRuntimeService,
     taskRepo: spaceTaskRepo,
+    writeTask: spaceTaskWriter(deps.reactiveDb.db.getDatabase(), deps.reactiveDb),
     workflowRunRepo: spaceWorkflowRunRepo,
     channelCycleRepo,
     messageHub: deps.messageHub,
@@ -1506,6 +1562,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
   const familyOperations = [
+    createSessionToolActivationOperation({
+      write: persistToolPreferences,
+      exclusive: exclusiveToolPreferences,
+      getLiveSession: (id) =>
+        taskAgentManager?.getCachedAgentSessionById(id) ?? deps.sessionManager.getCachedSession(id),
+    }),
     ...collectFamilyOperations({
       ...familyContext,
       goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
@@ -1584,7 +1646,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       hasDirectWorkerProvenance: (sessionId) =>
         directTaskExecutionRepo.hasSessionProvenance(sessionId),
       resolveDirectWorker: directTaskWorkerResolver,
-      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      runOp: deps.db.runSpaceTaskOp,
       workflowRunRepo: spaceWorkflowRunRepo,
       getWorkflowForRun: (run) => spaceWorkflowManager.getWorkflowForRun(run),
       taskAgentManager,
@@ -1631,13 +1693,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             ? artifactProfile.resolveInitialPrimaryLinkUrl(task.workflowRunId)
             : '',
         getPrState: async (prUrl) => {
-          const outcome = await createGithubConnector().ops.getPr(
-            { prUrl },
-            { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
-          );
-          if (!outcome.ok) throw new Error(outcome.error);
-          const state = (outcome.data as { state?: unknown } | null)?.state;
-          return typeof state === 'string' ? state : 'UNKNOWN';
+          const outcome = await neoService.readPrState(prUrl);
+          if ('reason' in outcome) throw new Error(outcome.reason);
+          return outcome.value;
         },
         workflowDeclaresPostApprovalRoute: (taskId) =>
           spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),
@@ -1658,7 +1716,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       hasDirectWorkerProvenance: (sessionId) =>
         directTaskExecutionRepo.hasSessionProvenance(sessionId),
       resolveDirectWorker: directTaskWorkerResolver,
-      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      runOp: deps.db.runSpaceTaskOp,
       emitTaskUpdated: async (spaceId, task) => {
         await deps.internalEventBus.publish('space.task.updated', {
           sessionId: 'global',
@@ -1680,7 +1738,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       parkStopped: (spaceId, taskId, expected) =>
         spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId, expected),
     },
-    familyOperations
+    familyOperations,
+    neoService.handleWorkerQuestion
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
@@ -1763,9 +1822,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   if (process.env.NODE_ENV !== 'test') {
     const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
-    fileNeoSessions(deps.db, neoService.repo, neoFolder);
-    void neoService
-      .openDefault()
+    void fileNeoSessions(deps.db, neoService.repo, neoFolder)
+      .catch((error) => log.warn('Neo sessions not filed', error))
+      .then(() => neoService.openDefault())
       .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();
@@ -1791,22 +1850,39 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.jobProcessor.register(WORK_TURN_EMBED, () =>
     runTurnEmbedding(deps.jobQueue, deps.db, deps.db.getEmbedder())
   );
-  deps.jobProcessor.register(WORK_FEED_CLAUDE, async () => ({
-    ...(await runClaudeFeed(
-      deps.jobQueue,
-      deps.db.getDatabase(),
-      claudeProjectsRoot(),
-      Date.now(),
-      deps.purgeClaudeFeed
-    )),
-  }));
-  deps.jobProcessor.register(WORK_FEED_CODEX, async () => ({
-    ...(await runCodexFeed(deps.jobQueue, deps.db.getDatabase(), codexSessionsRoot(), Date.now())),
-  }));
+  const startedWork = () =>
+    deps.settingsManager.getGlobalSettings().workFeedScope === 'own'
+      ? readStartedWork(deps.db.getDatabase())
+      : null;
+  deps.jobProcessor.register(WORK_FEED_CLAUDE, async () => {
+    const started = startedWork();
+    return {
+      ...(await runClaudeFeed(
+        deps.jobQueue,
+        deps.db.getDatabase(),
+        claudeProjectsRoot(),
+        Date.now(),
+        deps.purgeClaudeFeed,
+        started && (await ownClaudeSessions(started, CLAUDE_DESKTOP_SESSIONS))
+      )),
+    };
+  });
+  deps.jobProcessor.register(WORK_FEED_CODEX, async () => {
+    const started = startedWork();
+    return {
+      ...(await runCodexFeed(
+        deps.jobQueue,
+        deps.db.getDatabase(),
+        codexSessionsRoot(),
+        Date.now(),
+        started && ownCodexSessions(started)
+      )),
+    };
+  });
   if (process.env.NODE_ENV !== 'test') {
     scheduleTurnEmbedding(deps.jobQueue);
-    scheduleCodexFeed(deps.jobQueue);
-    scheduleClaudeFeed(deps.jobQueue);
+    await scheduleCodexFeed(deps.jobQueue);
+    await scheduleClaudeFeed(deps.jobQueue);
   }
 
   return {
@@ -1841,6 +1917,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       inactivityRunNowCancelled = true;
     },
     sessionScheduler,
+    wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
     notifyScheduleIdle: neoService.notifyScheduleIdle,
   };
 }

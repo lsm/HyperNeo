@@ -40,6 +40,7 @@ const read=(readUrl=url)=>new Promise<any>((done,fail)=>{
 });
 const requests=()=>readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
 const stored=()=>app!.db.getDatabase().prepare('SELECT * FROM pack_coding_work_facts').get();
+const ageStored=(ms:number)=>app!.db.getDatabase().prepare('UPDATE pack_coding_work_facts SET observed_at = observed_at - ?').run(ms);
 try{
   await open();evidence.fanout=await Promise.all(Array.from({length:5},()=>read()));
   for(const result of evidence.fanout)assert.deepEqual(result,{ok:true,kind:'pr',url,state:'OPEN',checks:'passing',review:'approved',blockers:['1 unresolved review thread'],title:'Synthetic shared fact'});
@@ -48,13 +49,13 @@ try{
   evidence.referenceLookups=evidence.initialRequests.filter((r:any)=>r.family==='ask-reference').length;
   assert.equal(evidence.referenceLookups,0,'PR URLs must not acquire a separate reference view');
   evidence.firstStored=stored();
-  control('changed');evidence.changed=await read();assert.equal(evidence.changed.review,'none');assert.deepEqual(evidence.changed.blockers,['1 unresolved review thread']);
+  control('changed');ageStored(13*60*60_000);evidence.changed=await read();assert.equal(evidence.changed.review,'none');assert.deepEqual(evidence.changed.blockers,['1 unresolved review thread']);
   evidence.changedStored=stored();
-  control('detail-failed');evidence.failed=await read();assert.equal(evidence.failed.ok,false);assert.match(evidence.failed.reason,/unreadable/);
+  control('detail-failed');ageStored(13*60*60_000);evidence.failed=await read();assert.equal(evidence.failed.ok,false);assert.match(evidence.failed.reason,/unreadable/);
   evidence.failedStored=stored();assert.equal(evidence.failedStored.value_json,evidence.changedStored.value_json);assert.equal(evidence.failedStored.reason,'failed');
   ws!.close();await app!.cleanup();app=undefined;control('reopen');await open();evidence.retained=stored();assert.equal(evidence.retained.value_json,evidence.failedStored.value_json);
-  evidence.reopened=await read();assert.equal(evidence.reopened.review,'none');assert.deepEqual(evidence.reopened.blockers,['1 unresolved review thread']);evidence.reopenedStored=stored();assert.equal(evidence.reopenedStored.reason,null);
-  control('host-alias');evidence.hostAlias=await read('https://www.github.com/synthetic/ledger/pull/7#discussion');assert.equal(evidence.hostAlias.url,url);assert.equal(evidence.hostAlias.review,'approved');assert.deepEqual(evidence.hostAlias.blockers,['1 unresolved review thread']);
+  ageStored(13*60*60_000);evidence.reopened=await read();assert.equal(evidence.reopened.review,'none');assert.deepEqual(evidence.reopened.blockers,['1 unresolved review thread']);evidence.reopenedStored=stored();assert.equal(evidence.reopenedStored.reason,null);
+  control('host-alias');ageStored(13*60*60_000);evidence.hostAlias=await read('https://www.github.com/synthetic/ledger/pull/7#discussion');assert.equal(evidence.hostAlias.url,url);assert.equal(evidence.hostAlias.review,'approved');assert.deepEqual(evidence.hostAlias.blockers,['1 unresolved review thread']);
   control('issue');evidence.issue=await read('https://github.com/synthetic/ledger/issues/3');assert.deepEqual(evidence.issue,{ok:true,kind:'issue',url:'https://github.com/synthetic/ledger/issues/3',state:'CLOSED',closedAs:'completed',closedBy:url,parent:'https://github.com/synthetic/ledger/issues/1'});
   control('redirect');evidence.redirect=await read('https://github.com/synthetic/ledger/issues/7');assert.equal(evidence.redirect.kind,'pr');assert.equal(evidence.redirect.url,url);
   evidence.requests=requests();evidence.counts=Object.fromEntries(['initial','changed','detail-failed','reopen'].map(phase=>[phase,evidence.requests.filter((r:any)=>r.phase===phase&&r.family==='work-detail').length]));

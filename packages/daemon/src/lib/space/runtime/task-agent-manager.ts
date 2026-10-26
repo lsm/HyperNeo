@@ -46,7 +46,10 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type {
+  SpaceTaskRepository,
+  WriteSpaceTask,
+} from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
@@ -138,7 +141,7 @@ import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.t
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
-import { HookExecutor } from '../../hooks/hook-executor.ts';
+import { HookExecutor, type HookExecutorConfig } from '../../hooks/hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,
@@ -251,6 +254,8 @@ function formatWorkflowNodeSessionTitle(task: SpaceTask, agentName?: string): st
 
 export interface TaskAgentManagerConfig {
   db: Database;
+  readGithubPr?: HookExecutorConfig['readGithubPr'];
+  readGithubReviewThreads?: HookExecutorConfig['readGithubReviewThreads'];
   sessionManager: SessionManager;
   reactiveDb?: ReactiveDatabase;
   spaceManager: SpaceManager;
@@ -259,6 +264,7 @@ export interface TaskAgentManagerConfig {
   spaceWorkflowManager: SpaceWorkflowManager;
   spaceRuntimeService: SpaceRuntimeService;
   taskRepo: SpaceTaskRepository;
+  writeTask: WriteSpaceTask;
   workflowRunRepo: SpaceWorkflowRunRepository;
   channelCycleRepo: ChannelCycleRepository;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -453,14 +459,12 @@ export class TaskAgentManager {
             kind: event.kind,
             reason: event.reason,
           });
-          try {
-            this.recomputeTaskRestriction(taskId);
-          } catch (err) {
+          void this.recomputeTaskRestriction(taskId).catch((err) => {
             log.warn(
               `TaskAgentManager: failed to mark task ${taskId} limited for session ${event.sessionId}:`,
               err
             );
-          }
+          });
         },
         { subscriberName: 'TaskAgentManager.rateLimitPause' }
       )
@@ -485,14 +489,12 @@ export class TaskAgentManager {
               });
               return;
             }
-            try {
-              this.recomputeTaskRestriction(taskId);
-            } catch (err) {
+            void this.recomputeTaskRestriction(taskId).catch((err) => {
               log.warn(
                 `TaskAgentManager: failed to recompute task ${taskId} restriction after session ${event.sessionId} resumed:`,
                 err
               );
-            }
+            });
             return;
           }
           void this.restoreTaskFromRateLimit(taskId).catch((err) => {
@@ -542,7 +544,7 @@ export class TaskAgentManager {
     }
   }
 
-  private recomputeTaskRestriction(taskId: string): void {
+  private async recomputeTaskRestriction(taskId: string): Promise<void> {
     const entries = this.limitedSessionsByTask.get(taskId);
     if (!entries || entries.size === 0) {
       return;
@@ -586,7 +588,8 @@ export class TaskAgentManager {
     ) {
       return;
     }
-    const outcome = this.config.taskRepo.casStatusWithPayload(
+    const outcome = await this.config.writeTask(
+      'casStatusWithPayload',
       taskId,
       ['in_progress', 'rate_limited', 'usage_limited'],
       status,
@@ -598,7 +601,8 @@ export class TaskAgentManager {
   }
 
   private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
-    const outcome = this.config.taskRepo.casStatusWithPayload(
+    const outcome = await this.config.writeTask(
+      'casStatusWithPayload',
       taskId,
       ['rate_limited', 'usage_limited'],
       'in_progress',
@@ -1363,13 +1367,13 @@ export class TaskAgentManager {
                 const workspaceChanged =
                   !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
                 if (workspaceChanged) {
-                  existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+                  await existing.updateMetadata({ workspacePath: reuseWorkspacePath });
                 }
                 try {
                   await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
                 } catch (err) {
                   if (workspaceChanged) {
-                    existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+                    await existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
                   }
                   throw err;
                 }
@@ -1405,7 +1409,7 @@ export class TaskAgentManager {
       parentTask && !init.title
         ? { ...init, title: formatWorkflowNodeSessionTitle(parentTask, memberInfo?.agentName) }
         : init;
-    const subSession = AgentSession.fromInit(
+    const subSession = await AgentSession.fromInit(
       subSessionInit,
       this.config.db,
       this.config.messageHub,
@@ -1458,10 +1462,7 @@ export class TaskAgentManager {
             this.forgetAgentSession(sessionId);
             this.cancelBySessionId(sessionId);
             try {
-              this.config.db
-                .getDatabase()
-                .prepare('DELETE FROM sessions WHERE id = ?')
-                .run(sessionId);
+              await this.config.db.deleteSession(sessionId);
             } catch (err) {
               log.warn(
                 `TaskAgentManager: failed to delete never-streamed session row ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
@@ -2211,7 +2212,7 @@ export class TaskAgentManager {
       );
     if (!agentSession) return null;
     if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
-      agentSession.updateMetadata({ workspacePath: workspacePath });
+      await agentSession.updateMetadata({ workspacePath: workspacePath });
     }
 
     let slotInit: AgentSessionInit | null = null;
@@ -2963,12 +2964,17 @@ export class TaskAgentManager {
   }
 
   async rehydrate(): Promise<void> {
+    await this.config.db.waitForSdkMessageColumns();
     let danglingLinksCleared = 0;
     for (const task of this.config.taskRepo.listActiveWithTaskAgentSession()) {
       try {
         if (
           task.taskAgentSessionId &&
-          this.config.taskRepo.clearMissingTaskAgentSession(task.id, task.taskAgentSessionId)
+          (await this.config.writeTask(
+            'clearMissingTaskAgentSession',
+            task.id,
+            task.taskAgentSessionId
+          ))
         ) {
           danglingLinksCleared++;
         }
@@ -3794,7 +3800,7 @@ export class TaskAgentManager {
       spaceWorkspacePath: space.workspacePath,
     }).workspacePath;
     if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
-      agentSession.updateMetadata({ workspacePath: workspacePath });
+      await agentSession.updateMetadata({ workspacePath: workspacePath });
     }
 
     const currentInit = this.resolveCurrentNodeAgentInitForExecution({
@@ -4160,7 +4166,7 @@ export class TaskAgentManager {
         await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
       }
       if (existing && existing.sendStatus !== 'deferred') {
-        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+        await this.config.db.writeSDKMessage('markDeliveryDeferredByUuid', sessionId, messageId);
       }
       await settleDeliveryRowStatus(deliveryRows, {
         sessionId,
@@ -4181,7 +4187,7 @@ export class TaskAgentManager {
         await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
       }
       if (existing && existing.sendStatus !== 'deferred') {
-        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+        await this.config.db.writeSDKMessage('markDeliveryDeferredByUuid', sessionId, messageId);
       }
       await settleDeliveryRowStatus(deliveryRows, {
         sessionId,
@@ -4332,9 +4338,9 @@ export class TaskAgentManager {
       saveUserMessage: (sessionId, message, sendStatus, origin) =>
         this.config.db.saveUserMessage(sessionId, message, sendStatus, origin),
       reopenDeliveryByUuid: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, uuid),
+        this.config.db.writeSDKMessage('reopenDeliveryByUuid', sessionId, uuid),
       markDeliveryDeferredByUuid: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, uuid),
+        this.config.db.writeSDKMessage('markDeliveryDeferredByUuid', sessionId, uuid),
     };
   }
 
@@ -4837,7 +4843,11 @@ export class TaskAgentManager {
 
     let hookEngine: HookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
-      const hookExecutor = new HookExecutor({ workspacePath });
+      const hookExecutor = new HookExecutor({
+        workspacePath,
+        readGithubPr: this.config.readGithubPr,
+        readGithubReviewThreads: this.config.readGithubReviewThreads,
+      });
       hookEngine = new HookEngine({
         addressing: workflowHookAddressing(workflow, workflowRunId),
         workflowRunCreatedAt: this.config.workflowRunRepo.getRun(workflowRunId)?.createdAt,
@@ -5010,7 +5020,7 @@ export class TaskAgentManager {
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
           const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
-          existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+          await existing.updateMetadata({ workspacePath: reuseWorkspacePath });
           try {
             await this.reinjectNodeAgentMcpServer(existing, {
               taskId,
@@ -5023,7 +5033,7 @@ export class TaskAgentManager {
             });
           } catch (err) {
             if (previousReuseWorkspacePath !== undefined) {
-              existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+              await existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
             }
             throw err;
           }

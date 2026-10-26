@@ -36,13 +36,13 @@ describe('Neo as one session', () => {
         createSession,
         getSessionAsync: vi.fn(),
         updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
-          db.updateSession(id, updates);
+          await db.updateSession(id, updates);
         },
       } as unknown as SessionManager,
       { event: vi.fn() } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    for (const id of [root, holder]) db.createSession(createTestSession(id));
+    for (const id of [root, holder]) await db.createSession(createTestSession(id));
     service.repo.saveProject({ id: 'web', title: 'Web', summary: '', context: '' }, 0);
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     db.getDatabase()
@@ -101,7 +101,10 @@ describe('Neo as one session', () => {
     runMigration393(db.getDatabase());
     const invoke = (name: string, input: unknown, as: OperationCaller) =>
       invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, as);
-    const todo = { title: 'Fix header', doneWhen: 'Merged' };
+    const todo = {
+      title: 'Fix header',
+      check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } },
+    };
     const added = await invoke('neo.todo.add', { askId: 'open', ...todo }, caller(root));
     expect(added).toMatchObject({ value: { ok: true } });
     const id = (added as { value: { todo: { id: string } } }).value.todo.id;

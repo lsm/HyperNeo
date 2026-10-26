@@ -52,6 +52,7 @@ process.stdout.write(JSON.stringify(row));
 `,
   { mode: 0o700 }
 );
+writeFileSync(join(run, 'bin/ps'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
 const state = new Database(join(run, 'home/.codex/state_5.sqlite'));
 state.exec(
   'CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT,updated_at_ms INTEGER);CREATE TABLE project_roots(project_id TEXT,position INTEGER,path TEXT);CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER,rollout_path TEXT,git_branch TEXT)'
@@ -269,6 +270,13 @@ try {
     console.log('REPRODUCED: merged facts leave the next todo pending, with no worker dispatch.');
   } else {
     assert.deepEqual(evidence.initial, { first: 'done', next: 'doing', starts: 1 });
+    const workerInput = JSON.stringify(calls.find((call) => call.method === 'turn/start'));
+    evidence.workerRuleDelivered = workerInput;
+    assert(workerInput.includes('10. Write PR descriptions and issues for a person to read in 30 seconds.'));
+    assert(workerInput.includes('Your full report (rule 9) goes to Neo, not into the PR.'));
+    assert(workerInput.includes('In a public repo: no local paths, machine names, session ids or private repo names.'));
+    assert(workerInput.includes('An issue states the problem and what done looks like, in a few sentences.'));
+
     await refresh();
     assert.equal(starts(), 1);
     store.askQuestion(

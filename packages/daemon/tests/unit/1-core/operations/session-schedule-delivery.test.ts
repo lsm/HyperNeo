@@ -10,22 +10,56 @@ import { createTestDb, createTestSession } from '../../../helpers/database';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession('recipient'));
+  await db.createSession(createTestSession('recipient'));
 });
 afterEach(() => db.close());
 
 describe('createScheduleDelivery', () => {
   test('root Neo is an available schedule target even though work discovery excludes it', async () => {
-    db.createSession(createTestSession('neo:root'));
+    await db.createSession(createTestSession('neo:root'));
     const delivery = createScheduleDelivery(db, () => createOperationRegistry([]));
     expect(await delivery.status({ adapter: 'hyperneo', id: 'neo:root' })).toBe('done');
     db.getDatabase()
       .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
       .run(JSON.stringify({ status: 'processing' }), 'neo:root');
     expect(await delivery.status({ adapter: 'hyperneo', id: 'neo:root' })).toBe('running');
-    db.updateSession('neo:root', { status: 'archived' });
+    await db.updateSession('neo:root', { status: 'archived' });
     expect(await delivery.status({ adapter: 'hyperneo', id: 'neo:root' })).toBe('not_open');
   });
+  test('enqueue rejection rolls back the wake receipt and allows a clean retry', async () => {
+    const row = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo()).create({
+      target: { adapter: 'hyperneo', id: 'recipient' },
+      sourceKind: 'reminder',
+      sourceId: 'release',
+      note: 'Check release',
+      nudgeEvery: 1,
+      cadence: { kind: 'every', everyMs: 60000 },
+      createdBySession: null,
+    });
+    const messageId = `schedule:${row.id}:${row.nextRunAt}`;
+    const delivery = createScheduleDelivery(db, () => createOperationRegistry([]));
+    const raw = db.getDatabase();
+    raw.exec(`CREATE TRIGGER reject_scheduled_mail BEFORE INSERT ON job_queue
+      WHEN NEW.queue = 'mailbox' BEGIN SELECT RAISE(ABORT, 'synthetic queue unavailable'); END`);
+    await expect(delivery.deliver(row, messageId, 'Check release')).rejects.toThrow(
+      'synthetic queue unavailable'
+    );
+    const wake = () =>
+      raw
+        .prepare('SELECT * FROM session_schedule_wakes WHERE session_id = ? AND message_id = ?')
+        .get('recipient', messageId);
+    expect(wake()).toBeFalsy();
+    expect(db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: messageId })).toEqual(
+      []
+    );
+    raw.exec('DROP TRIGGER reject_scheduled_mail');
+    await delivery.deliver(row, messageId, 'Check release');
+    expect(wake()).toBeTruthy();
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: messageId })
+    ).toHaveLength(1);
+  });
+
   test('concurrent retries enqueue one daemon note with verifiable wake metadata', async () => {
     const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
     const row = scheduler.create({
@@ -94,7 +128,7 @@ describe('Neo schedule target lifecycle', () => {
   test.each(['{', 'null', '{"status":7}'])(
     'unreadable processing state %s does not strand an open Neo wake',
     async (processingState) => {
-      db.createSession(createTestSession(target.id));
+      await db.createSession(createTestSession(target.id));
       db.getDatabase()
         .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
         .run(processingState, target.id);
@@ -117,7 +151,7 @@ describe('Neo schedule target lifecycle', () => {
     ['ended', 'not_open'],
     ['archived', 'not_open'],
   ] as const)('%s Neo finishes target_gone instead of skipping busy', async (status, expected) => {
-    if (status !== 'missing') db.createSession({ ...createTestSession(target.id), status });
+    if (status !== 'missing') await db.createSession({ ...createTestSession(target.id), status });
     const { scheduler, row, delivery, handler, mail } = create();
     expect(await delivery.status(target)).toBe(expected);
     await handler(db.getJobQueueRepo().getJob(row.pendingJobId!)!);
@@ -132,7 +166,7 @@ describe('Neo schedule target lifecycle', () => {
   });
 
   test('open interrupted Neo remains active and can fire after returning to idle', async () => {
-    db.createSession(createTestSession(target.id));
+    await db.createSession(createTestSession(target.id));
     const state = (status: string) =>
       db
         .getDatabase()
@@ -167,12 +201,12 @@ describe('Neo schedule target lifecycle', () => {
   });
 
   test('Neo closed after the status check is rejected at delivery time', async () => {
-    db.createSession(createTestSession(target.id));
+    await db.createSession(createTestSession(target.id));
     const { scheduler, row, handler, mail } = create();
     scheduler.registerSource({
       kind: 'reminder',
       facts: async () => {
-        db.updateSession(target.id, { status: 'ended' });
+        await db.updateSession(target.id, { status: 'ended' });
         return { digest: 'changed', summary: 'Check the goal' };
       },
       message: (_id, change) => change.summary,
@@ -208,7 +242,7 @@ describe('schedule target lifecycle and external delivery', () => {
     '%s completes the schedule instead of retrying or reporting fired',
     async (reason) => {
       const { scheduler, row, job } = create();
-      if (reason === 'stopped') db.updateSession('recipient', { status: 'archived' });
+      if (reason === 'stopped') await db.updateSession('recipient', { status: 'archived' });
       const registry = createOperationRegistry([
         defineOperation({
           name: 'work.status',
@@ -294,7 +328,7 @@ describe('schedule target lifecycle and external delivery', () => {
     scheduler.registerSource({
       kind: 'reminder',
       facts: async () => {
-        db.updateSession('recipient', { status: 'archived' });
+        await db.updateSession('recipient', { status: 'archived' });
         return { digest: 'reminder', summary: 'Check release' };
       },
       message: (_id, change) => change.summary,

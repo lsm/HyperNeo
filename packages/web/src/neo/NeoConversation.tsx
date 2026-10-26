@@ -1,14 +1,10 @@
-import { NeoBusyRow } from './NeoBusyRow.tsx';
-import type { ChatMessage } from '@hyperneo/shared';
+import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
-import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { connectionState } from '../lib/state.ts';
 import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import { projectNeoMessageStatuses } from './message-status.ts';
-import { projectNeoProcessingActivity } from './processing-activity.ts';
 import {
   type NeoEditUndelivered,
   NeoPublicConversation,
@@ -20,49 +16,12 @@ import type { NeoPublicConversation as PublicConversation } from './public-conve
 type QuestionEpoch = Readonly<{ store: SessionStore; sessionId: string; toolUseId: string }>;
 type QuestionFailure = { epoch: QuestionEpoch; message: string };
 
-export function conversationText(message: ChatMessage): string {
-  if (message.type !== 'assistant' && message.type !== 'user') return '';
-  if (message.parent_tool_use_id) return '';
-  const content = message.message.content;
-  if (typeof content === 'string') return content;
-  return (content as unknown[])
-    .flatMap((block) => {
-      if (!block || typeof block !== 'object') return [];
-      const item = block as { type?: string; text?: unknown };
-      return item.type === 'text' && typeof item.text === 'string' ? [item.text] : [];
-    })
-    .join('\n\n');
-}
-
-export function completedConversation(messages: ChatMessage[]): ChatMessage[] {
-  const visible: ChatMessage[] = [];
-  let reply: ChatMessage | null = null;
-  for (const message of messages) {
-    const text = conversationText(message);
-    const syntheticDelivery = (message as { inputKind?: string }).inputKind === 'system';
-    if (
-      message.type === 'user' &&
-      !message.parent_tool_use_id &&
-      (text || neoMessageImageSources(message).length > 0) &&
-      !syntheticDelivery
-    )
-      visible.push(message);
-    if (message.type === 'assistant' && text) reply = message;
-    if (message.type === 'result') {
-      if (reply) visible.push(reply);
-      reply = null;
-    }
-  }
-  return visible;
-}
-
 export function NeoConversation({
   store,
   sessionId,
   publicConversation,
   onRetryPublic,
   onLoadEarlierPublic,
-  onProgress,
   replyLabels,
   pendingAsks,
   onRetryAsk,
@@ -71,12 +30,10 @@ export function NeoConversation({
   mute,
   onQuote,
   onOpenWork,
-  busy,
 }: {
   store: SessionStore;
-  busy?: readonly string[] | null;
   onQuote?: (quote: NeoQuote) => void;
-  onOpenWork?: (anchor: string) => void;
+  onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];
@@ -87,10 +44,7 @@ export function NeoConversation({
   publicConversation?: PublicConversation;
   onRetryPublic?: () => void;
   onLoadEarlierPublic?: () => void;
-  onProgress?: (label: string | null) => void;
 }) {
-  const messages = store.sdkMessages.value;
-  const maps = useMessageMaps(messages, sessionId);
   const state = store.agentState.value;
   const pending = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const epoch = useMemo(
@@ -117,31 +71,12 @@ export function NeoConversation({
   };
   const replyError =
     pending && epoch && questionFailure?.epoch === epoch ? questionFailure.message : null;
-  const conversation = messages.filter(
-    (message) => !maps.replacementStatusMap.has(message.uuid ?? '')
-  );
-  const visible = completedConversation(conversation);
-  const progress = projectNeoProcessingActivity(
-    sessionId,
-    store.activeSessionId?.value ?? null,
-    store.sessionState?.value ?? null,
-    state,
-    connectionState.value === 'connected',
-    store.isRecovering?.value ?? true,
-    visible
-  );
   const statuses = publicConversation
     ? projectNeoMessageStatuses(publicConversation.entries, {
         connected: connectionState.value === 'connected',
         status: publicConversation.status,
       })
     : undefined;
-  const progressLabel =
-    progress !== 'inactive' && (publicConversation || !progress.messageId) ? progress.label : null;
-  useEffect(() => {
-    onProgress?.(progressLabel);
-  }, [progressLabel, onProgress]);
-  useEffect(() => () => onProgress?.(null), [onProgress]);
   return (
     <>
       <section aria-label="Conversation with Neo" class="space-y-6">
@@ -168,11 +103,6 @@ export function NeoConversation({
           .map((ask) => (
             <PendingAsk key={ask.requestId} ask={ask} onRetry={onRetryAsk} onEdit={onEditAsk} />
           ))}
-        <NeoBusyRow
-          words={
-            busy !== undefined ? (busy ?? []) : progressLabel && !onProgress ? [progressLabel] : []
-          }
-        />
         {pending && epoch && (
           <QuestionPrompt
             pendingHeading="A quick choice"

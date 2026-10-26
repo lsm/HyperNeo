@@ -1,7 +1,13 @@
+import { installClaudeNativeWrites } from './claude-native-writes.ts';
+import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
+import { WorktreeManager } from '../worktree-manager.ts';
+import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
+import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { workExecutionLocation } from './execution-location.ts';
-import { basename, join, sep } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
@@ -45,7 +51,8 @@ import { reject } from './work-operations.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
-const FOLDER = 'COALESCE(main_repo_path, workspace_path)';
+const FOLDER =
+  "COALESCE(main_repo_path, json_extract(metadata, '$.executionProjectPath'), workspace_path)";
 const PROCESSING = `CASE WHEN json_valid(processing_state) THEN CASE
   WHEN json_extract(processing_state, '$.status') = 'interrupted'
     AND json_extract(processing_state, '$.reason') = 'restart' THEN 'interrupted_by_restart'
@@ -89,8 +96,17 @@ export interface HyperneoSessionControl {
     queuedSubmissionId: string,
     from: string
   ) => Promise<Result<WorkWithdrawal>>;
-  create(workspacePath: string, title: string, model?: string): Promise<string>;
-  resolveModel(model: string): Promise<string | null>;
+  create(
+    workspacePath: string,
+    title: string,
+    model?: string,
+    provider?: string,
+    effort?: string,
+    inPlace?: boolean,
+    prepared?: { sessionId: string; projectPath: string }
+  ): Promise<string>;
+  resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
+  effort?(sessionId: string): string | null;
   model(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
@@ -99,6 +115,7 @@ export interface HyperneoSessionControl {
 
 export interface HyperneoAdapterDeps {
   prepareExecution?: WorkExecutionPreparer;
+  worktreeBaseDir?: (projectPath: string) => string;
   projects?: () => NonNullable<WorkspaceHistoryEntry['project']>[];
   db: () => BunDatabase;
   machine: string;
@@ -360,6 +377,10 @@ export function readHyperneoTurnEnds(
   if (since === undefined) return [];
   const rows = db
     .prepare(`SELECT CAST(m.rowid AS TEXT) AS id, m.timestamp,
+    (SELECT p.timestamp FROM sdk_messages p WHERE p.session_id=m.session_id
+      AND p.parent_tool_use_id IS NULL AND p.rowid<m.rowid
+      AND p.message_type IN ('user','result') AND COALESCE(p.internal_compaction_turn,0)=0
+      AND COALESCE(p.tool_result_only,0)=0 ORDER BY p.rowid DESC LIMIT 1) AS started_at,
     COALESCE(NULLIF(json_extract(${sdkMessageBodyAt('m.rowid')}, '$.result'), ''),
       (SELECT group_concat(json_extract(block.value, '$.text'), char(10)) FROM json_each((
         SELECT CASE json_type(${sdkMessageBodyAt('a.rowid')}, '$.message.content')
@@ -379,11 +400,13 @@ export function readHyperneoTurnEnds(
     .all(sessionId, new Date(since).toISOString()) as {
     id: string;
     timestamp: string;
+    started_at: string | null;
     message: string;
   }[];
   return rows.flatMap((row) => {
     const at = workEntryTime(row.timestamp);
-    return at === undefined ? [] : [{ id: row.id, at, message: row.message }];
+    const startedAt = workEntryTime(row.started_at);
+    return at === undefined ? [] : [{ id: row.id, at, startedAt, message: row.message }];
   });
 }
 
@@ -550,31 +573,55 @@ export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDe
   return selectLocalStartFolder(request, deps, 'Start new work in a project folder or a Space.');
 }
 
+type HyperneoStartRequest = StartRequest & { provider?: string };
+
 export async function createHyperneoSession(
   folder: string,
-  request: StartRequest,
+  request: HyperneoStartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<Gate<string>> {
+  const identity = request.preparation
+    ? {
+        sessionId: crypto.randomUUID(),
+        projectPath: resolve(
+          await gitWorktreeProject(
+            (await new WorktreeManager().detectGitSupport(folder)).gitRoot ?? folder
+          )
+        ),
+      }
+    : undefined;
   const prepared = request.preparation
     ? await deps.prepareExecution!(request.preparation, {
         directory: folder,
-        destination: join(deps.neoFolder(), 'worktrees', crypto.randomUUID()),
+        destination: join(
+          (deps.worktreeBaseDir ?? getWorktreeBaseDir)(identity!.projectPath),
+          identity!.sessionId
+        ),
       })
     : null;
   if (prepared && !prepared.ok) return { reason: prepared };
   let sessionId: string | undefined;
   try {
+    if (prepared && workerSandboxOn())
+      await installClaudeNativeWrites(prepared.value.directory, [folder]);
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,
-      request.model
+      request.model,
+      request.provider,
+      request.effort,
+      prepared ? true : request.inPlace,
+      identity
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)
       return { reason: reject('unsupported_model', error.message) };
     throw error;
   } finally {
-    if (!sessionId) await prepared?.value.release();
+    if (!sessionId && prepared) {
+      await prepared.value.release();
+      await releaseWorkerSandbox(prepared.value.directory);
+    }
   }
   if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
     await deps.sessions.chooseWorktree(sessionId);
@@ -586,14 +633,27 @@ export async function createHyperneoSession(
 async function requireHyperneoStartConfiguration(
   request: StartRequest,
   deps: HyperneoAdapterDeps
-): Promise<Gate<StartRequest>> {
-  if (request.effort !== undefined)
-    return { reason: reject('unsupported_effort', 'HyperNeo cannot confirm a requested effort.') };
-  if (request.model === undefined) return { value: request };
-  const model = await deps.sessions.resolveModel(request.model);
-  return model
-    ? { value: { ...request, model } }
-    : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };
+): Promise<Gate<HyperneoStartRequest>> {
+  const effort =
+    request.effort === undefined ? undefined : workStartConfiguration.normalize(request.effort);
+  const thinking =
+    effort === undefined
+      ? undefined
+      : THINKING_OPTIONS.find((entry) => [entry.value, entry.label.toLowerCase()].includes(effort));
+  if (request.effort !== undefined && !thinking)
+    return { reason: reject('unsupported_effort', `Unknown HyperNeo effort ${request.effort}.`) };
+  const configured = { ...request, ...(thinking ? { effort: thinking.label.toLowerCase() } : {}) };
+  if (request.model === undefined) return { value: configured };
+  try {
+    const model = await deps.sessions.resolveModel(request.model);
+    return model
+      ? { value: { ...configured, model: model.id, provider: model.provider } }
+      : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };
+  } catch (error) {
+    if (error instanceof ModelUnavailableError)
+      return { reason: reject('unsupported_model', error.message) };
+    throw error;
+  }
 }
 
 function confirmHyperneoStart(
@@ -602,7 +662,10 @@ function confirmHyperneoStart(
   deps: HyperneoAdapterDeps
 ): Gate<{ sessionId: string; model: string | null }> {
   const model = deps.sessions.model(sessionId);
-  const confirmed = workStartConfiguration.confirm(request, model ? { model } : {});
+  const confirmed = workStartConfiguration.confirm(request, {
+    ...(model ? { model } : {}),
+    ...(request.effort ? { effort: deps.sessions.effort?.(sessionId) ?? undefined } : {}),
+  });
   return confirmed.ok
     ? { value: { sessionId, model } }
     : {
@@ -642,6 +705,7 @@ export async function openHyperneoWork(
       ...work,
       ...(work.status === 'done' ? { status: 'queued' as const } : {}),
       ...(model ? { model } : {}),
+      ...(request.effort ? { effort: request.effort } : {}),
       receipt: { executionId: sessionId, inputId },
     },
   };
@@ -764,6 +828,7 @@ const runHyperneoRename = (superpipe({})('hyperneo-rename-work') as PipelineAPI)
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
+    supportsStartEffort: true,
     supportsStartPreparation: !!deps.prepareExecution,
     capabilities: [
       'find',

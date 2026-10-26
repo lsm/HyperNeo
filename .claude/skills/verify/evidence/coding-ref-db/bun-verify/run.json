@@ -1,0 +1,8 @@
+{
+  "runtime": "bun",
+  "mode": "verify",
+  "exitCode": 0,
+  "head": "8ee3b457b507835036de29edc56820d01edf450c",
+  "temporaryDaemonDataRemoved": true,
+  "freeGiBBefore": 47.90486526489258
+}

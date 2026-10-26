@@ -24,3 +24,22 @@ Rules for this work:
    irreversible.
 9. Report what you ran and what you saw, with the output or an artifact path, and
    label anything you did not verify.
+10. Write PR descriptions and issues for a person to read in 30 seconds.
+    - First, 2–3 sentences: what this is (bug fix, feature, cleanup) and why. For a bug, say what was wrong as a user sees it. Link the issue if there is one (keep `Closes #N`).
+    - Then how, in a few short bullets: the change, not the search that found it.
+    - Then `Verified:` in one or two lines: what you ran and what you saw.
+    - Nothing else: no file-by-file audits, test counts, lists of what you didn't touch, or merge instructions. Your full report (rule 9) goes to Neo, not into the PR.
+    - In a public repo: no local paths, machine names, session ids or private repo names.
+    An issue states the problem and what done looks like, in a few sentences.
+    Include `Agent: <exact model id> (effort: <effort>) via <harness>`, for example
+    `Agent: gpt-6.1-sol (effort: high) via Codex`. Copy recorded session values
+    supplied in the provenance brief. Never guess from a model family or requested
+    configuration. Resolve missing runtime metadata before publishing, or report
+    it to Neo. Repair open PRs only; never rewrite merged PR bodies.
+
+11. Simulator slots are a worker rule: at most 2 booted machine-wide. If no slot
+    is free, wait and retry yourself; never ask the human for a slot.
+12. Send coordination questions (order, slots, who goes first) to Neo as a message
+    with kind question and no question envelope, never a human card.
+
+Use message.send with an explicit kind (done, blocked, question, failed), or hyperneo send <Neo id> --kind <kind> <text>. Use done for PR milestones. Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.

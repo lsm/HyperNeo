@@ -1,3 +1,9 @@
+import type { OperationCaller } from '../../lib/operations/registry.ts';
+import { neoProjectForgetWrites } from './neo-project-forget-writes.ts';
+import { neoProjectCleanupWrites } from './neo-project-cleanup-writes.ts';
+import type { NeoProjectCleanup } from '../../lib/neo/project-cleanup.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { reserveNeoHomeProjects } from './neo-home-reservation.ts';
 import { createHash } from 'node:crypto';
 import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
@@ -46,6 +52,11 @@ export class NeoRepository {
     }));
   }
 
+  async applyCleanup(step: NeoProjectCleanup): Promise<void> {
+    await gatewayFor(this.db).call(neoProjectCleanupWrites, 'apply', step);
+    this.notify();
+  }
+
   deleteEmptyProject(projectId: string): void {
     this.db.transaction(() => {
       const empty = this.db
@@ -61,8 +72,20 @@ export class NeoRepository {
     this.notify();
   }
 
+  async forgetProjectCommand(projectId: string, caller: OperationCaller) {
+    const result = await gatewayFor(this.db).call(
+      neoProjectForgetWrites,
+      'forget',
+      projectId,
+      caller
+    );
+    if (result.ok) this.notify();
+    return result;
+  }
+
   forgetProject(
-    projectId: string
+    projectId: string,
+    afterForget: () => void = () => {}
   ): { forgotten: true } | { reason: 'project_missing' | 'project_in_use' } {
     const result = this.db.transaction(() => {
       if (!this.db.prepare('SELECT 1 FROM neo_concerns WHERE id = ?').get(projectId))
@@ -77,6 +100,7 @@ export class NeoRepository {
       this.db.prepare('UPDATE neo_asks SET project_id = NULL WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
+      afterForget();
       return { forgotten: true as const };
     })();
     if ('forgotten' in result) this.notify();
@@ -128,6 +152,12 @@ export class NeoRepository {
             .get(input.title, input.summary, input.context, now, input.id, expectedRevision);
     if (row) this.notify();
     return row as NeoProject | null;
+  }
+
+  async reserveHomeProjects(): Promise<{ id: string; homePath: string }[]> {
+    const result = await gatewayFor(this.db).call(reserveNeoHomeProjects, 'reserve');
+    if (result.changed) this.notify();
+    return result.projects;
   }
 
   ensureHomePath(project: NeoProject): string {

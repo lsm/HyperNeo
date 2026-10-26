@@ -1,0 +1,206 @@
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import type { Session } from '../../../packages/shared/src/mod.ts';
+import type { SessionToolSelection } from '../../../packages/shared/src/types/session-tool-choice.ts';
+import { commitToolDefaultUpdate, captureToolPreferenceRow } from '../../../packages/daemon/src/storage/repositories/tool-preference-commit.ts';
+import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { Server } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js';
+import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
+import { ListToolsRequestSchema } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
+
+import { AgentSession } from '../../../packages/daemon/src/lib/agent/agent-session.ts';
+
+const run=resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV,'test');
+assert.equal(process.env.HOME,join(run,'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
+assert(!existsSync(join(run,'data')));
+for(const name of ['home','workspace','evidence']) mkdirSync(join(run,name),{recursive:true});
+const {createDaemonApp}=await import('../../../packages/daemon/src/app.ts');
+const {getConfig}=await import('../../../packages/daemon/src/config.ts');
+const {MessageHub,WebSocketClientTransport}=await import('../../../packages/shared/src/mod.ts');
+const mcp=new Server({name:'synthetic-browser',version:'1'},{capabilities:{tools:{}}});
+mcp.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[{name:'navigate',inputSchema:{type:'object'}}]}));
+const client=new Client({name:'synthetic-projection',version:'1'});
+const [a,b]=InMemoryTransport.createLinkedPair();
+await mcp.connect(a);
+await client.connect(b);
+let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
+let transport:InstanceType<typeof WebSocketClientTransport>|undefined;
+let duplicate:AgentSession|undefined;
+let restoreLookup=()=>{};
+const evidence:Record<string,unknown>={sdkConsumerWired:false,legacyRpcWired:true,sdkApplyVerified:false,queryStarted:false};
+try {
+  app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
+  assert.notEqual(app.server.port,8399);
+  const hub=new MessageHub({defaultSessionId:'global'});
+  transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});
+  hub.registerTransport(transport);
+  await transport.initialize();
+  const registry=await hub.request<{servers:{id:string}[]}>('mcp.registry.list',{});
+  for(const server of registry.servers) await hub.request('mcp.registry.setEnabled',{id:server.id,enabled:false});
+  const {server}=await hub.request<{server:{id:string}}>('mcp.registry.create',{name:'fixture-registry',sourceType:'stdio',command:'not-executed',enabled:false,env:{FIXTURE_ONLY:'synthetic'}});
+  const {skill:wrapper}=await hub.request<{skill:{id:string}}>('skill.create',{params:{name:'fixture-wrapper',displayName:'Fixture wrapper',description:'Fixture only',sourceType:'mcp_server',config:{type:'mcp_server',appMcpServerId:server.id},enabled:false,validationStatus:'valid'}});
+  const {skill:instruction}=await hub.request<{skill:{id:string}}>('skill.create',{params:{name:'fixture-instruction',displayName:'Fixture instruction',description:'Fixture only',sourceType:'builtin',config:{type:'builtin',commandName:'fixture-instruction'},enabled:false,validationStatus:'valid'}});
+  const {sessionId}=await hub.request<{sessionId:string}>('session.create',{workspacePath:join(run,'workspace'),config:{model:'haiku',provider:'anthropic',queryMode:'manual',sdkToolsPreset:['Read']}});
+  const raw=app.db.getDatabase();
+  const seeded:SessionToolSelection={version:1,choices:{[`mcp:${server.id}`]:{selected:false,aliases:['frozen-fixture']},[`skill:${instruction.id}`]:{selected:false}}};
+  await hub.request('tools.save',{sessionId,tools:{disabledSkills:[wrapper.id,instruction.id]}});
+  assert.equal(await app.db.casSessionRuntimeSettings(app.db.captureSessionRuntimeSettings(sessionId)!,{toolSelection:seeded}),'won');
+  await app.sessionManager.interruptInMemorySession(sessionId);
+  const reload=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
+  await reload();
+  duplicate=await AgentSession.fromInit({sessionId,workspacePath:join(run,'workspace'),model:'haiku',provider:'anthropic'},app.db,hub,app.internalEventBus,async()=>null,'haiku');
+  const runtimeMcp={fixtureRuntime:{command:'not-executed'}};
+  duplicate.mergeRuntimeMcpServers(runtimeMcp);
+  const originalLookup=app.taskAgentManager.getCachedAgentSessionById.bind(app.taskAgentManager);
+  app.taskAgentManager.getCachedAgentSessionById=id=>id===sessionId?duplicate!:originalLookup(id);
+  restoreLookup=()=>{app!.taskAgentManager.getCachedAgentSessionById=originalLookup;};
+  const tools={disabledSkills:[],useClaudeCodePreset:false};
+  const originalCapture=app.db.captureSessionRuntimeSettings.bind(app.db);
+  app.db.captureSessionRuntimeSettings=()=>{throw new Error('caller-thread preference capture');};
+  try {
+    assert.deepEqual(await hub.request('tools.save',{sessionId,tools}),{success:true});
+    evidence.workerCaptureVerified=true;
+  } finally {app.db.captureSessionRuntimeSettings=originalCapture;}
+  let session=await reload();
+  assert.equal(session.config.toolSelection!.choices[`mcp:${server.id}`]?.selected,true);
+  assert.equal(session.config.toolSelection!.choices[`skill:${instruction.id}`]?.selected,true);
+  assert.deepEqual(session.config.tools,tools);
+  assert.deepEqual(duplicate.getSessionData().config.toolSelection,session.config.toolSelection);
+  assert.deepEqual(duplicate.getSessionData().config.tools,tools);
+  assert.deepEqual(duplicate.getSessionData().config.mcpServers,runtimeMcp);
+  assert.deepEqual(session.config.sdkToolsPreset,['Read']);
+  assert.deepEqual(session.config.toolSelection!.choices[`mcp:${server.id}`]?.aliases,['frozen-fixture']);
+  const accepted=session.config.toolSelection;
+  assert.deepEqual(await hub.request('session.update',{sessionId,config:{autoScroll:false,toolSelection:accepted,tools:{disabledSkills:[instruction.id],useClaudeCodePreset:false}}}),{success:true});
+  session=await reload();
+  assert.equal(session.config.autoScroll,false);
+  assert.equal(session.config.toolSelection!.choices[`mcp:${server.id}`]?.selected,true);
+  assert.equal(session.config.toolSelection!.choices[`skill:${instruction.id}`]?.selected,false);
+  assert.deepEqual(session.config.tools?.disabledSkills,[instruction.id]);
+  assert.deepEqual(duplicate.getSessionData().config.toolSelection,session.config.toolSelection);
+  assert.deepEqual(duplicate.getSessionData().config.tools,session.config.tools);
+  const beforeFailure=app.db.captureSessionRuntimeSettings(sessionId)!;
+  raw.exec("CREATE TRIGGER legacy_door_failure BEFORE UPDATE ON sessions WHEN NEW.config IS NOT OLD.config BEGIN SELECT RAISE(ABORT,'synthetic door failure'); END");
+  const failed=await hub.request<{success:boolean;error?:string}>('tools.save',{sessionId,tools:{disabledSkills:[]}});
+  raw.exec('DROP TRIGGER legacy_door_failure');
+  assert.equal(failed.success,false);
+  assert.equal(app.db.captureSessionRuntimeSettings(sessionId)!.config,beforeFailure.config);
+  assert.deepEqual((await reload()).config.toolSelection,session.config.toolSelection);
+  assert.deepEqual(duplicate.getSessionData().config.toolSelection,session.config.toolSelection);
+  await hub.request('mcp.enablement.setOverride',{scopeType:'session',scopeId:sessionId,serverId:server.id,enabled:true});
+  session=await reload();
+  assert.equal(session.config.toolSelection!.choices[`mcp:${server.id}`]?.selected,true);
+  const target=captureToolPreferenceRow(raw,{table:'global_settings',id:1});
+  const defaults:SessionToolSelection={version:1,choices:{[`mcp:${server.id}`]:{selected:false}}};
+  assert.equal(commitToolDefaultUpdate(raw,target,[],defaults,()=>true),'won');
+  const cleared=await hub.request<{deleted:boolean}>('mcp.enablement.clearOverride',{scopeType:'session',scopeId:sessionId,serverId:server.id});
+  assert.equal(cleared.deleted,true);
+  session=await reload();
+  assert.deepEqual(session.config.toolSelection!.choices[`mcp:${server.id}`],{selected:false,aliases:['frozen-fixture']});
+  assert.deepEqual(duplicate.getSessionData().config.toolSelection,session.config.toolSelection);
+  assert.equal(app.db.mcpEnablement.getOverride('session',sessionId,server.id),null);
+  assert(!app.sessionManager.getCachedSession(sessionId)?.queryObject);
+  assert(!duplicate.queryObject);
+  assert.equal((await hub.request<{state:string}>('session.getToolInventory',{sessionId})).state,'not_running');
+  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['navigate']);
+  for(const method of ['tools.save','session.update']) {
+    const {skill:doomed}=await hub.request<{skill:{id:string}}>('skill.create',{params:{name:`deleted-${method}`,displayName:'Deleted fixture',description:'Synthetic',sourceType:'builtin',config:{type:'builtin',commandName:'deleted-fixture'},enabled:false,validationStatus:'valid'}});
+    assert.deepEqual(await hub.request('tools.save',{sessionId,tools:{disabledSkills:[instruction.id,doomed.id]}}),{success:true});
+    assert.deepEqual(await hub.request('skill.delete',{id:doomed.id}),{success:true});
+    const settings={disabledSkills:[instruction.id]};
+    const params=method==='tools.save'?{sessionId,tools:settings}:{sessionId,config:{autoScroll:true,tools:settings}};
+    assert.deepEqual(await hub.request(method,params),{success:true});
+    session=await reload();
+    assert.deepEqual(session.config.tools,settings);
+    assert.equal(session.config.toolSelection!.choices[`skill:${doomed.id}`]?.selected,false);
+    assert.deepEqual(duplicate.getSessionData().config.tools,settings);
+    if(method==='session.update')assert.equal(session.config.autoScroll,true);
+  }
+  const {server:removedServer}=await hub.request<{server:{id:string}}>('mcp.registry.create',{name:'deleted-server',sourceType:'stdio',command:'not-executed',enabled:false});
+  const {skill:orphan}=await hub.request<{skill:{id:string}}>('skill.create',{params:{name:'orphan-wrapper',displayName:'Orphan wrapper',description:'Synthetic',sourceType:'mcp_server',config:{type:'mcp_server',appMcpServerId:removedServer.id},enabled:false,validationStatus:'valid'}});
+  assert.deepEqual(await hub.request('tools.save',{sessionId,tools:{disabledSkills:[instruction.id,orphan.id]}}),{success:true});
+  assert.deepEqual(await hub.request('mcp.registry.delete',{id:removedServer.id}),{success:true});
+  assert.deepEqual(await hub.request('tools.save',{sessionId,tools:{disabledSkills:[instruction.id]}}),{success:true});
+  session=await reload();
+  assert.deepEqual(session.config.tools?.disabledSkills,[instruction.id]);
+  assert.equal(session.config.toolSelection!.choices[`mcp:${removedServer.id}`]?.selected,false);
+  assert.deepEqual(session.config.toolSelection!.choices[`mcp:${server.id}`]?.aliases,['frozen-fixture']);
+  evidence.deletedDefinitionSaves=true;
+  const {server:siblingServer}=await hub.request<{server:{id:string}}>('mcp.registry.create',{name:'sibling-server',sourceType:'stdio',command:'not-executed',enabled:false});
+  const {sessionId:independentSession}=await hub.request<{sessionId:string}>('session.create',{workspacePath:join(run,'workspace'),config:{model:'haiku',provider:'anthropic',queryMode:'manual'}});
+  for(const method of ['mcp.enablement.setOverride','mcp.enablement.clearOverride']) {
+    const commit=app.db.casSessionToolPreferences.bind(app.db);
+    let release!:()=>void;
+    let captured!:()=>void;
+    const held=new Promise<void>(resolve=>{release=resolve;});
+    const ready=new Promise<void>(resolve=>{captured=resolve;});
+    let first=true;
+    app.db.casSessionToolPreferences=async(...args)=>{
+      if(args[0].id===sessionId&&first){first=false;captured();await held;}
+      return commit(...args);
+    };
+    const requests:Promise<unknown>[]=[];
+    try {
+      requests.push(hub.request(method,{scopeType:'session',scopeId:sessionId,serverId:server.id,enabled:true}));
+      await Promise.race([ready,requests[0].then(()=>{throw new Error('expected held commit');})]);
+      requests.push(hub.request(method,{scopeType:'session',scopeId:sessionId,serverId:siblingServer.id,enabled:true}));
+      await hub.request('mcp.enablement.setOverride',{scopeType:'session',scopeId:independentSession,serverId:server.id,enabled:true});
+      release();
+      const results=await Promise.allSettled(requests);
+      evidence[`${method}ConcurrentResults`]=results;
+      assert.deepEqual(results.map(result=>result.status),['fulfilled','fulfilled']);
+      session=await reload();
+      for(const id of [server.id,siblingServer.id]){
+        assert.equal(session.config.toolSelection!.choices[`mcp:${id}`]?.selected,method==='mcp.enablement.setOverride');
+        const override=app.db.mcpEnablement.getOverride('session',sessionId,id);
+        assert.equal(override?.enabled??null,method==='mcp.enablement.setOverride'?true:null);
+      }
+      assert.deepEqual(duplicate.getSessionData().config.toolSelection,session.config.toolSelection);
+      assert.deepEqual(duplicate.getSessionData().config.mcpServers,runtimeMcp);
+    } finally {
+      release();
+      await Promise.allSettled(requests);
+      app.db.casSessionToolPreferences=commit;
+    }
+  }
+  evidence.concurrentSessionOverrides=true;
+  evidence.independentSessionNotBlocked=true;
+  evidence.selection=session.config.toolSelection;
+  evidence.tools=session.config.tools;
+  evidence.sessionId=sessionId;
+  evidence.serverId=server.id;
+  evidence.rpcSavesCanonicalAndLegacy=true;
+  evidence.bothCacheOwnersSynchronized=true;
+  evidence.runtimeMcpPreserved=true;
+  evidence.failedWriteKeptCachesAndStorage=true;
+  evidence.overrideClearInheritedDefault=true;
+} finally {
+  restoreLookup();
+  await duplicate?.cleanup();
+  await transport?.close();
+  await app?.cleanup();
+  await client.close();
+  await mcp.close();
+  writeFileSync(join(run,'evidence/legacy-session-tools.json'),JSON.stringify(evidence,null,2));
+}
+const restarted=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
+const hub2=new MessageHub({defaultSessionId:'global'});
+const connection=new WebSocketClientTransport({url:`ws://127.0.0.1:${restarted.server.port}/ws`,autoReconnect:false});
+hub2.registerTransport(connection);
+try {
+  assert.notEqual(restarted.server.port,8399);
+  await connection.initialize();
+  const session=(await hub2.request<{session:Session}>('session.get',{sessionId:evidence.sessionId})).session;
+  assert.deepEqual(session.config.toolSelection,evidence.selection);
+  assert.deepEqual(session.config.tools,evidence.tools);
+  evidence.restartRetainedPreferences=true;
+  evidence.pass=true;
+  console.log('PASS legacy RPC wiring: tools.save/session.update/override set-clear, both cache owners, failed-write preservation and restart; no SDK/UI consumer flip');
+} finally {
+  await connection.close();
+  await restarted.cleanup();
+  writeFileSync(join(run,'evidence/legacy-session-tools.json'),JSON.stringify(evidence,null,2));
+}

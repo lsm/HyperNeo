@@ -38,11 +38,7 @@ const FOLLOWERS = [
   subscription('s3', 'github/acme/widgets/pull_request/8.*'),
 ];
 
-function harness(
-  stored: ExternalEvent | null,
-  subscriptions = FOLLOWERS,
-  covered: (sessionId: string, topic: string) => boolean = () => false
-) {
+function harness(stored: ExternalEvent | null, subscriptions = FOLLOWERS) {
   const delivered: SessionEventDelivery[] = [];
   const removed: string[] = [];
   let reads = 0;
@@ -61,7 +57,6 @@ function harness(
       delivered.push(delivery);
     },
     removeSubscription: (sessionId, topic) => removed.push(`${sessionId} ${topic}`),
-    isTopicCovered: covered,
   };
   const run = (published: ExternalEvent = stored ?? event()) =>
     routeSessionExternalEvent(deps, {
@@ -85,7 +80,7 @@ describe('a session external event is routed in one pass', () => {
   test('a closed PR is delivered and then ends the subscriptions to that PR', async () => {
     const h = harness(event({ topic: 'github/acme/widgets/pull_request/7.closed' }));
     await h.run();
-    expect(h.delivered.map((delivery) => delivery.sessionId)).toEqual(['s1']);
+    expect(h.delivered.map((delivery) => delivery.sessionId)).toEqual(['s1', 's2']);
     expect(h.removed).toEqual([
       's1 github/Acme/Widgets/pull_request/7.*',
       's2 github/acme/widgets/pull_request/7.review_*',
@@ -112,17 +107,13 @@ describe('a session external event is routed in one pass', () => {
     );
     await closed.run();
     expect(closed.removed).toHaveLength(2);
-    expect(closed.delivered).toEqual([]);
+    expect(closed.delivered.map((delivery) => delivery.sessionId)).toEqual(['s1', 's2']);
   });
 
-  test('a session a live card already covers gets the event once, through the card', async () => {
-    const h = harness(
-      event({ topic: 'github/acme/widgets/pull_request/7.closed' }),
-      FOLLOWERS,
-      (sessionId, topic) => sessionId === 's1' && topic.endsWith('/7.closed')
-    );
+  test('every explicit follower gets its final event before removal', async () => {
+    const h = harness(event({ topic: 'github/acme/widgets/pull_request/7.closed' }), FOLLOWERS);
     await h.run();
-    expect(h.delivered).toEqual([]);
+    expect(h.delivered.map((delivery) => delivery.sessionId)).toEqual(['s1', 's2']);
     expect(h.removed).toEqual([
       's1 github/Acme/Widgets/pull_request/7.*',
       's2 github/acme/widgets/pull_request/7.review_*',

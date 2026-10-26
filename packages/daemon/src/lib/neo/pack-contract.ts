@@ -46,12 +46,16 @@ export interface NeoTodoPack {
   schema(db: Database): void;
   check(todo: NeoTodo): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
-  openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
+  openedPrs?(todo: NeoTodo, urls: readonly string[]): Promise<void>;
   repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
-  waiting?(todo: NeoTodo): boolean;
+  waiting?(todo: NeoTodo): boolean | Promise<boolean>;
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(
+    draft: Pick<NeoTodo, 'check' | 'instruction'> & { id?: string },
+    peers?: readonly NeoTodo[]
+  ): string | null;
+  record?(
     draft: Pick<NeoTodo, 'check' | 'instruction'> & { id?: string },
     peers?: readonly NeoTodo[]
   ): string | null;
@@ -68,6 +72,8 @@ export interface NeoPackPreferenceDeclaration {
     | { kind: 'boolean' }
     | { kind: 'number'; min?: number; max?: number }
     | { kind: 'globs' }
+    | { kind: 'repositories' }
+    | { kind: 'text' }
     | { kind: 'login' };
   default: unknown;
   ask: string;
@@ -75,18 +81,28 @@ export interface NeoPackPreferenceDeclaration {
 }
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
+  forgetRepositories?(repos: readonly string[]): void;
   sessionLinks?(ref: WorkRef | null): Promise<string[]>;
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
-  observeSessions?(sessions: readonly NeoSessionFacts[], now: number): void;
+  stats?(now: number): Record<string, number>;
+  observeSessions?(sessions: readonly NeoSessionFacts[], now: number): Promise<void>;
   snapshotRows?(
     repos: readonly string[] | null,
     now: number,
     openTodoIds: readonly string[]
   ): Record<string, string | number | null>[];
   workerRules?: string;
+  workerBrief?(
+    instruction: string,
+    identity: {
+      model: string | null;
+      effort: string | null;
+      harness: string;
+    }
+  ): string;
   workGoal?(instruction: string, goal: NeoWorkGoal | null): string;
   prepareExecution?: NeoExecutionPreparation;
   instructions(): string | null;

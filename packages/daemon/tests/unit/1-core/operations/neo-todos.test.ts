@@ -1,3 +1,4 @@
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
@@ -18,6 +19,7 @@ function setup(packs: NeoPack[] = []) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  packs = [...createTodoCheckPacks(db), ...packs];
   let changes = 0;
   const stopped: string[] = [];
   const repo = new NeoAskTodoRepository(db, () => changes++);
@@ -31,6 +33,7 @@ function setup(packs: NeoPack[] = []) {
     createdAt: 1,
   });
   const stopFails = { value: false };
+  const duringStop = { value: (_todo: NeoTodo) => {} };
   const ops = Object.fromEntries(
     createNeoTodoOperations(
       repo,
@@ -42,6 +45,7 @@ function setup(packs: NeoPack[] = []) {
         retry: async () => ({ ok: false as const, reason: 'not failed' }),
         stop: async (todo) => {
           stopped.push(todo.id);
+          duringStop.value(todo);
           return stopFails.value ? 'stop_failed: driver offline' : null;
         },
       },
@@ -53,7 +57,7 @@ function setup(packs: NeoPack[] = []) {
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as
       | { ok: true; todo: NeoTodo; todos: NeoTodo[] }
       | { ok: false; reason: string };
-  return { db, repo, call, stopped, stopFails, changes: () => changes };
+  return { db, repo, call, stopped, stopFails, duringStop, changes: () => changes };
 }
 
 describe('neo.todo operations', () => {
@@ -76,6 +80,7 @@ describe('neo.todo operations', () => {
     });
     repo.updateTodo(first.todo, { state: 'doing', startedAt: 5 }, 5);
     const second = await call('neo.todo.add', {
+      check: pendingTodoCheck,
       askId: 'ask',
       title: 'Deploy',
       doneWhen: 'Both daemons run it',
@@ -94,7 +99,13 @@ describe('neo.todo operations', () => {
       () => [],
       () => null
     ).find((op) => op.name === 'neo.todo.add')!;
-    const input = { askId: 'ask', title: 'T', doneWhen: 'D', instruction: 'Do' };
+    const input = {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'T',
+      doneWhen: 'D',
+      instruction: 'Do',
+    };
     const ref = { adapter: 'hyperneo', id: 'dev-1' };
     expect(add.inputSchema.safeParse({ ...input, target: { verb: 'send', ref } }).success).toBe(
       true
@@ -106,11 +117,26 @@ describe('neo.todo operations', () => {
   test('changes only an open ask', async () => {
     const { db, call } = setup();
     db.exec("UPDATE neo_asks SET status = 'done'");
-    expect(await call('neo.todo.add', { askId: 'ask', title: 'x', doneWhen: 'y' })).toEqual({
-      ok: false,
-      reason: 'ask_settled: this ask is done.',
+    expect(
+      await call('neo.todo.add', {
+        check: pendingTodoCheck,
+        askId: 'ask',
+        title: 'x',
+        doneWhen: 'y',
+      })
+    ).toEqual({
+      ok: true,
+      todos: [],
+      records: ['ask_settled: this ask is done; no change was made.'],
     });
-    expect(await call('neo.todo.add', { askId: 'none', title: 'x', doneWhen: 'y' })).toEqual({
+    expect(
+      await call('neo.todo.add', {
+        check: pendingTodoCheck,
+        askId: 'none',
+        title: 'x',
+        doneWhen: 'y',
+      })
+    ).toEqual({
       ok: false,
       reason: 'not_found: no such ask.',
     });
@@ -118,7 +144,12 @@ describe('neo.todo operations', () => {
 
   test('ticks a todo met or reported with evidence', async () => {
     const { call } = setup();
-    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    const added = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+    });
     if (!added.ok) throw new Error(added.reason);
     expect(await call('neo.todo.edit', { todoId: added.todo.id, done: 'met' })).toEqual({
       ok: false,
@@ -132,7 +163,7 @@ describe('neo.todo operations', () => {
     });
     expect(met.ok && met.todo).toMatchObject({
       title: 'Fix login',
-      state: 'done',
+      state: 'closed_unverified',
       finishedAt: expect.any(Number),
       evidence: '#12 merged',
       report: null,
@@ -143,22 +174,26 @@ describe('neo.todo operations', () => {
       evidence: 'The session says it is fixed',
     });
     expect(reported.ok && reported.todo).toMatchObject({
-      state: 'done',
+      state: 'closed_unverified',
       report: 'The session says it is fixed',
     });
   });
 
   test('removes a todo with its reason and replacement', async () => {
     const { call, stopped } = setup();
-    const old = await call('neo.todo.add', { askId: 'ask', title: 'Old', doneWhen: 'x' });
-    const next = await call('neo.todo.add', { askId: 'ask', title: 'New', doneWhen: 'x' });
-    if (!old.ok || !next.ok) throw new Error('add failed');
-    expect(
-      await call('neo.todo.remove', { todoId: old.todo.id, reason: 'r', replacedBy: old.todo.id })
-    ).toEqual({
-      ok: false,
-      reason: 'replacement_missing: replacedBy is not another todo on this ask.',
+    const old = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Old',
+      doneWhen: 'x',
     });
+    const next = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'New',
+      doneWhen: 'x',
+    });
+    if (!old.ok || !next.ok) throw new Error('add failed');
     const removed = await call('neo.todo.remove', {
       todoId: old.todo.id,
       reason: 'The human chose a new session',
@@ -178,14 +213,19 @@ describe('neo.todo operations', () => {
 
   test('closes a todo done with the reason and stops its session', async () => {
     const { call, stopped } = setup();
-    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    const added = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+    });
     if (!added.ok) throw new Error(added.reason);
     const closed = await call('neo.todo.close', {
       todoId: added.todo.id,
       reason: 'Verified on device',
     });
     expect(closed.ok && closed.todo).toMatchObject({
-      state: 'done',
+      state: 'closed_unverified',
       evidence: 'Verified on device',
       finishedAt: expect.any(Number),
     });
@@ -196,9 +236,120 @@ describe('neo.todo operations', () => {
     });
   });
 
+  test('refuses to finish a todo while its card waits for the human, and keeps the card', async () => {
+    const { call, repo, stopped } = setup();
+    const added = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+    });
+    if (!added.ok) throw new Error(added.reason);
+    const card = repo.askQuestion(
+      'card-1',
+      'ask',
+      {
+        text: 'Approve step 1?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: added.todo.id,
+      },
+      Date.now()
+    );
+    const refused = {
+      ok: false,
+      reason: 'card_unanswered: card card-1 is still waiting for the human.',
+    };
+    expect(await call('neo.todo.close', { todoId: added.todo.id, reason: 'Done' })).toEqual(
+      refused
+    );
+    expect(
+      await call('neo.todo.edit', { todoId: added.todo.id, done: 'met', evidence: '#12 merged' })
+    ).toEqual(refused);
+    expect(repo.getQuestion(card.id)?.state).toBe('open');
+    expect(repo.getTodo(added.todo.id)?.state).not.toBe('done');
+    expect(stopped).toEqual([]);
+  });
+
+  test('a card asked while the close stops the session keeps the todo open', async () => {
+    const { call, repo, duringStop } = setup();
+    const added = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+    });
+    if (!added.ok) throw new Error(added.reason);
+    duringStop.value = (todo) => {
+      repo.askQuestion(
+        'card-late',
+        'ask',
+        {
+          text: 'Approve step 2?',
+          kind: 'yesno',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todoId: todo.id,
+        },
+        Date.now()
+      );
+    };
+    expect(await call('neo.todo.close', { todoId: added.todo.id, reason: 'Done' })).toEqual({
+      ok: false,
+      reason: 'card_unanswered: card card-late is still waiting for the human.',
+    });
+    expect(repo.getQuestion('card-late')?.state).toBe('open');
+    expect(repo.getTodo(added.todo.id)?.state).not.toBe('done');
+  });
+
+  test('finishes a todo once its card is answered', async () => {
+    const { call, repo } = setup();
+    const added = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+    });
+    if (!added.ok) throw new Error(added.reason);
+    const card = repo.askQuestion(
+      'card-1',
+      'ask',
+      {
+        text: 'Approve step 1?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: added.todo.id,
+      },
+      Date.now()
+    );
+    repo.answerQuestion(card, 'yes', 'button', Date.now());
+    const closed = await call('neo.todo.close', { todoId: added.todo.id, reason: 'Approved' });
+    expect(closed.ok && closed.todo).toMatchObject({
+      state: 'closed_unverified',
+      evidence: 'Approved',
+    });
+    expect(repo.getQuestion(card.id)).toMatchObject({ state: 'answered', answer: 'yes' });
+  });
+
   test('a close whose stop fails leaves the todo unchanged and says so', async () => {
     const { call, stopFails, repo } = setup();
-    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    const added = await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+    });
     if (!added.ok) throw new Error(added.reason);
     stopFails.value = true;
     expect(await call('neo.todo.close', { todoId: added.todo.id, reason: 'x' })).toEqual({
@@ -212,6 +363,7 @@ describe('neo.todo operations', () => {
     const { call } = setup();
     expect(
       await call('neo.todo.add', {
+        check: pendingTodoCheck,
         askId: 'ask',
         title: 'Fix',
         doneWhen: 'Merged',
@@ -226,6 +378,7 @@ describe('neo.todo operations', () => {
     const { repo, call } = setup();
     const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
     const fix = await call('neo.todo.add', {
+      check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
       doneWhen: 'Merged',
@@ -236,8 +389,14 @@ describe('neo.todo operations', () => {
     expect(repo.listQuestions('ask')).toMatchObject([
       { kind: 'start', state: 'open', text: 'Start "Fix"?', startTodos: [fix.todo.id] },
     ]);
-    await call('neo.todo.add', { askId: 'ask', title: 'Note', doneWhen: 'Written' });
+    await call('neo.todo.add', {
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Note',
+      doneWhen: 'Written',
+    });
     const deploy = await call('neo.todo.add', {
+      check: pendingTodoCheck,
       askId: 'ask',
       title: 'Deploy',
       doneWhen: 'Live',
@@ -259,6 +418,7 @@ describe('neo.todo operations', () => {
     const { repo, call } = setup();
     const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
     const fix = await call('neo.todo.add', {
+      check: pendingTodoCheck,
       askId: 'ask',
       title: 'Fix',
       doneWhen: 'Merged',
@@ -268,6 +428,7 @@ describe('neo.todo operations', () => {
     if (!fix.ok) throw new Error(fix.reason);
     await call('neo.todo.remove', { todoId: fix.todo.id, reason: 'not needed' });
     const deploy = await call('neo.todo.add', {
+      check: pendingTodoCheck,
       askId: 'ask',
       title: 'Deploy',
       doneWhen: 'Live',
@@ -307,14 +468,11 @@ describe('a pack owns its check', () => {
     });
     if (!added.ok) throw new Error(added.reason);
     expect(added.todo.doneWhen).toBe('gauge level reads 5');
-    expect(await call('neo.todo.edit', { todoId: added.todo.id, doneWhen: 'Half' })).toEqual({
-      ok: false,
-      reason:
-        "done_when_from_check: this todo's done-when comes from its check; change the check instead.",
-    });
+    const edited = await call('neo.todo.edit', { todoId: added.todo.id, doneWhen: 'Half' });
+    expect(edited.ok && edited.todo.doneWhen).toBe('gauge level reads 5');
   });
 
-  test('a todo whose done-when predates its pack wording stays editable', async () => {
+  test('a legacy completion sentence is preserved until its check changes', async () => {
     const { repo, call } = setup([gauge]);
     const old = repo.addTodo(
       'old',
@@ -323,7 +481,7 @@ describe('a pack owns its check', () => {
       1
     );
     const edited = await call('neo.todo.edit', { todoId: old.id, doneWhen: 'Half full' });
-    expect(edited.ok && edited.todo.doneWhen).toBe('Half full');
+    expect(edited.ok && edited.todo.doneWhen).toBe('Full enough');
   });
 
   test('refuses a check its pack refuses, and adds nothing', async () => {

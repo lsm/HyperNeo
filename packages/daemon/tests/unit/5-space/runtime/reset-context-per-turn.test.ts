@@ -1,10 +1,12 @@
+import { mockMailboxAdmission } from '../../../helpers/mock-mailbox-admission';
+import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
 import { describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import {
-  persistPrompt,
+  ensurePromptInTransaction as ensurePrompt,
   PromptContentConflictError,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import {
@@ -94,6 +96,7 @@ function makeManager(opts: {
 
   const config = {
     db: {
+      writeSDKMessage: writeThroughRepo,
       getDatabase: () => (opts.outbox ? opts.outbox.db : {}),
       saveUserMessage,
       getUserMessageIdsByStatus,
@@ -109,7 +112,7 @@ function makeManager(opts: {
       getJobQueueRepo: () =>
         opts.outbox
           ? opts.enqueueThrows
-            ? opts.outbox.breakingEnqueue()
+            ? mockMailboxAdmission(opts.outbox.breakingEnqueue())
             : opts.outbox.jobQueue
           : {
               activeDeliveryMessageUuids: () =>
@@ -212,7 +215,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   }
 
   function seedDeliveryRow(outbox: OutboxTestDb, uuid: string, text: string): string {
-    const { dbMessageId } = persistPrompt({
+    const { dbMessageId } = ensurePrompt({
       db: outbox.db,
       sdkMessageRepo: outbox.sdkRepo,
       jobQueue: outbox.jobQueue,

@@ -21,7 +21,7 @@ const scope = { kind: 'repo', key: 'synthetic/repo' };
 const setting = { pack: 'coding', scope, key: 'mergePolicy', value: 'review_bot' };
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession('neo:root'));
+  await db.createSession(createTestSession('neo:root'));
   service = createNeoService(
     db,
     {} as SessionManager,
@@ -38,6 +38,14 @@ const invoke = (name: string, input: unknown, caller = human) =>
   invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
 
 describe('pack settings operations', () => {
+  const watch = {
+    pack: 'coding',
+    scope: { kind: 'global', key: '' },
+    key: 'watchedRepos',
+    value: [],
+    setBy: 'upgrade',
+    setAt: expect.any(Number),
+  };
   test('human saves a declared setting with provenance, and anyone reads it in get/list/snapshot', async () => {
     expect(await invoke('pack.preferences.get', setting)).toMatchObject({
       value: { preference: null },
@@ -55,16 +63,16 @@ describe('pack settings operations', () => {
       value: { preference },
     });
     expect(await invoke('pack.preferences.list', {}, { source: 'mcp' })).toMatchObject({
-      value: { preferences: [preference] },
+      value: { preferences: [watch, preference] },
     });
     expect(await invoke('neo.snapshot', {})).toMatchObject({
-      value: { packPreferences: [preference] },
+      value: { packPreferences: [watch, preference] },
     });
     expect(await invoke('pack.preferences.set', { ...setting, value: 'human' })).toMatchObject({
       value: { ok: true },
     });
     expect(await invoke('pack.preferences.list', {})).toMatchObject({
-      value: { preferences: [{ ...preference, value: 'human' }] },
+      value: { preferences: [watch, { ...preference, value: 'human' }] },
     });
   });
   test.each([
@@ -98,7 +106,9 @@ describe('pack settings operations', () => {
     expect(await invoke('pack.preferences.set', { ...setting, ...change })).toMatchObject({
       value: { ok: false },
     });
-    expect(await invoke('pack.preferences.list', {})).toMatchObject({ value: { preferences: [] } });
+    expect(await invoke('pack.preferences.list', {})).toMatchObject({
+      value: { preferences: [watch] },
+    });
   });
   test('repo get falls back to a pack global setting, never a default', async () => {
     expect(await invoke('pack.preferences.get', setting)).toMatchObject({

@@ -281,16 +281,6 @@ export async function updateGlobalSettings(
   }>('settings.global.update', { updates }, options);
 }
 
-export async function listRuntimeMcpServers(
-  sessionId: string
-): Promise<import('@hyperneo/shared').ListRuntimeMcpServersResponse> {
-  const hub = await connectionManager.getHub();
-  return await hub.request<import('@hyperneo/shared').ListRuntimeMcpServersResponse>(
-    'session.listRuntimeMcpServers',
-    { sessionId }
-  );
-}
-
 export async function getRewindPoints(sessionId: string): Promise<{
   rewindPoints: Array<{ uuid: string; timestamp: number; content: string; turnNumber: number }>;
   error?: string;
@@ -488,4 +478,18 @@ export async function listCustomEndpointModels(data: {
     models: Array<{ id: string; name?: string }>;
     fromCache: boolean;
   }>('customEndpoints.listModels', data, { timeout: 15000 });
+}
+
+export async function testCustomEndpointConnection(data: {
+  baseUrl: string;
+  type?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+}): Promise<{ success: boolean; message: string }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ success: boolean; message: string }>(
+    'customEndpoints.testConnection',
+    data,
+    { timeout: 15000 }
+  );
 }

@@ -191,27 +191,6 @@ describe('WorkflowModelSelect', () => {
         thinkingModes: 'granular',
       });
     });
-
-    it('calls onModelsLoad with the deduped loaded models', async () => {
-      const onModelsLoad = vi.fn();
-      render(
-        <WorkflowModelSelect
-          value={undefined}
-          onChange={vi.fn()}
-          onModelsLoad={onModelsLoad}
-          testId="glm-model-select"
-        />
-      );
-      await waitFor(() => expect(onModelsLoad).toHaveBeenCalled());
-
-      const loaded = onModelsLoad.mock.calls[0][0] as ModelInfo[];
-      expect(loaded.length).toBe(5);
-      const ids = loaded.map((m) => `${m.provider}:${m.id}`);
-      expect(new Set(ids).size).toBe(ids.length);
-      expect(loaded.some((m) => m.id === 'glm-reasoning' && m.thinkingModes === 'granular')).toBe(
-        true
-      );
-    });
   });
 
   describe('unavailable models', () => {

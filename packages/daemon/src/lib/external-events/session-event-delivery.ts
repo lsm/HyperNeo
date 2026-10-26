@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SessionEventSubscription } from '../../storage/repositories/session-event-subscription-repository.ts';
-import { renderAddress } from '../mailbox/address.ts';
+import { canonicalJson } from '../agent/prompt-comparison.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { submitSessionEvent } from '../../storage/repositories/session-event-submission.ts';
 import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
-import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
+import { crashHandler, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { externalEventTopicSuffix } from './event-tiers.ts';
 import type { ExternalEventPublishedPayload } from './external-event-service.ts';
 import { buildImmediateEventMessageUuid } from './immediate-delivery-pipeline.ts';
@@ -100,21 +103,34 @@ export function planSessionEventDeliveries(
   };
 }
 
-export function mailSessionEvent(
+export async function mailSessionEvent(
   jobQueue: JobQueueRepository,
   delivery: SessionEventDelivery
 ): Promise<MailboxHandoffOutcome> {
-  return handoffPromptToMailbox({
-    to: renderAddress({ kind: 'session', sessionId: delivery.sessionId }),
+  const args = {
+    to: { kind: 'session' as const, sessionId: delivery.sessionId },
     origin: SESSION_EVENT_ORIGIN,
     messageUuid: delivery.messageUuid,
     deliveryMode: delivery.mode,
     message: {
-      type: 'user',
-      message: { role: 'user', content: delivery.text },
+      type: 'user' as const,
+      message: { role: 'user' as const, content: delivery.text },
       parent_tool_use_id: null,
-      inputKind: 'system',
+      inputKind: 'system' as const,
+      neoWakeEvent: true,
     },
-    jobQueue,
-  });
+  };
+  const digest = (value: unknown) =>
+    createHash('sha256').update(canonicalJson(value)).digest('hex');
+  const key = digest([SESSION_EVENT_ORIGIN, args.to, delivery.messageUuid]);
+  const fingerprint = digest([args.to, args.origin, args.messageUuid, args.message]);
+  try {
+    return await gatewayFor(jobQueue.db).call(submitSessionEvent, 'submit', {
+      key,
+      fingerprint,
+      entryArgs: args,
+    });
+  } catch (error) {
+    return crashHandler(error);
+  }
 }

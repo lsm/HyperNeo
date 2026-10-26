@@ -13,7 +13,7 @@ import {
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 
-type TransitionResult = ReturnType<typeof transitionStandaloneTask>;
+type TransitionResult = ReturnType<(typeof transitionStandaloneTask)['run']>;
 
 export type TransitionTaskRejection =
   | 'unsupported_status'

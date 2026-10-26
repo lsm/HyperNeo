@@ -91,6 +91,7 @@ describe('Wake and conversation explicit disclosures', () => {
               toName: 'Synthetic worker',
               createdAt: new Date().toISOString(),
               text: 'Synthetic preview\nLong message detail. '.repeat(8),
+              kind: 'session' as const,
             },
           },
         ])}

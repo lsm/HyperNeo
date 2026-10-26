@@ -461,6 +461,34 @@ describe('SpaceTaskRepository', () => {
       expect(cleared!.pendingCompletionSubmittedAt).toBeNull();
       expect(cleared!.pendingCompletionReason).toBeNull();
     });
+
+    it('skips the write when the approval it was read under has been replaced', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'approved', approvedAt: 1000 });
+      repo.updateTask(task.id, { approvedAt: 2000 });
+
+      const stale = repo.updateTask(
+        task.id,
+        { postApprovalBlockedReason: 'stale' },
+        'approved',
+        undefined,
+        undefined,
+        undefined,
+        1000
+      );
+      const current = repo.updateTask(
+        task.id,
+        { postApprovalBlockedReason: 'current' },
+        'approved',
+        undefined,
+        undefined,
+        undefined,
+        2000
+      );
+
+      expect(stale).toBeNull();
+      expect(current!.postApprovalBlockedReason).toBe('current');
+    });
   });
 
   describe('casStatus', () => {
@@ -882,6 +910,46 @@ describe('SpaceTaskRepository', () => {
       repo.deleteTask(task.id);
 
       expect(searchIndexedTaskIds('nebula')).toEqual([]);
+    });
+
+    describe('a failed search-row write leaves no partial task write', () => {
+      function rejectSearchWrites(): void {
+        db.exec(
+          "CREATE TRIGGER reject_search BEFORE INSERT ON message_search_content BEGIN SELECT RAISE(ABORT, 'search rejected'); END"
+        );
+      }
+
+      it('createTask', () => {
+        createSearchIndex();
+        rejectSearchWrites();
+        expect(() => repo.createTask({ spaceId, title: 'Lost', description: '' })).toThrow(
+          'search rejected'
+        );
+        expect(repo.listBySpace(spaceId)).toEqual([]);
+      });
+
+      it('updateTask', () => {
+        createSearchIndex();
+        const task = repo.createTask({ spaceId, title: 'Kept', description: '' });
+        rejectSearchWrites();
+        expect(() => repo.updateTask(task.id, { title: 'Changed' })).toThrow('search rejected');
+        expect(repo.getTask(task.id)?.title).toBe('Kept');
+      });
+
+      it('promoteDraftTasksByCreator', () => {
+        createSearchIndex();
+        const parent = repo.createTask({ spaceId, title: 'Parent', description: '' });
+        const draft = repo.createTask({
+          spaceId,
+          title: 'Draft',
+          description: '',
+          status: 'draft',
+          createdByTaskId: parent.id,
+        });
+        rejectSearchWrites();
+        expect(() => repo.promoteDraftTasksByCreator(parent.id)).toThrow('search rejected');
+        expect(repo.getTask(draft.id)?.status).toBe('draft');
+      });
     });
 
     it('purges pending message rows when the task is deleted', () => {

@@ -14,7 +14,7 @@ describe('provider auth rejection delivery policy', () => {
     const db = await createTestDb();
     const session = createTestSession('rejected-key');
     session.config.provider = 'glm';
-    db.createSession(session);
+    await db.createSession(session);
     clearProviderFailure('glm');
     const agent = new AgentSession(
       session,
@@ -39,7 +39,7 @@ describe('provider auth rejection delivery policy', () => {
           },
           'enqueued'
         );
-        deliverMessage(db.getJobQueueRepo(), session.id, uuid, { origin: 'chat' });
+        await deliverMessage(db.getJobQueueRepo(), session.id, uuid, { origin: 'chat' });
       }
       await agent.onProviderAuthRejected('synthetic rejected key');
       const deadline = Date.now() + 1000;

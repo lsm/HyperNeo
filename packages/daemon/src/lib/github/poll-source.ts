@@ -12,6 +12,7 @@ export type GitHubPollCollector = (
 
 export interface GitHubRateLimitInfo {
   remaining: number;
+  status?: number;
   limit?: number;
   resource?: string;
   resetAt: number;
@@ -28,7 +29,13 @@ export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
   const remaining = remainingRaw ? parseInt(remainingRaw, 10) : Number.NaN;
   const resetSeconds = resetRaw ? parseInt(resetRaw, 10) : Number.NaN;
   const retryAfterSeconds = retryAfterRaw ? parseInt(retryAfterRaw, 10) : Number.NaN;
-  const remainingValue = Number.isNaN(remaining) ? Infinity : remaining;
+  const expiredSuccess =
+    (res.ok || res.status === 304) &&
+    remaining === 0 &&
+    Number.isFinite(resetSeconds) &&
+    resetSeconds * 1000 <= Date.now() &&
+    Number.isNaN(retryAfterSeconds);
+  const remainingValue = Number.isNaN(remaining) || expiredSuccess ? Infinity : remaining;
   const hasRetryAfter = !Number.isNaN(retryAfterSeconds);
   const limited =
     res.status === 429 || (res.status === 403 && (remainingValue === 0 || hasRetryAfter));
@@ -39,6 +46,7 @@ export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
       : resetSeconds * 1000;
   return {
     remaining: remainingValue,
+    status: res.status,
     ...(Number.isFinite(limit) ? { limit } : {}),
     ...(resource
       ? {

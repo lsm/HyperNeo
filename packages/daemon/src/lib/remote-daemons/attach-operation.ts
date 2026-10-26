@@ -82,11 +82,11 @@ export async function pairRemoteDaemon(
     : { reason: { kind: 'rejected', reason: `${input.daemonId}: ${paired.reason}` } };
 }
 
-export function attachRemoteDaemon(
+export async function attachRemoteDaemon(
   input: AttachInput & { credential?: string },
   registry: RemoteDaemonRegistry
-): AttachResult {
-  registry.attach(input.daemonId, input.url, input.credential);
+): Promise<AttachResult> {
+  await registry.attach(input.daemonId, input.url, input.credential);
   return {
     kind: 'attached',
     daemonId: input.daemonId,

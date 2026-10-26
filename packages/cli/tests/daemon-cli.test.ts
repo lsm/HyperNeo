@@ -110,11 +110,22 @@ describe('getDaemonHelpText', () => {
     const help = getDaemonHelpText();
     expect(help).toContain('--port');
     expect(help).toContain('--host');
+    expect(help).toContain('Host to bind to (default: 127.0.0.1)');
     expect(help).toContain('--db-path');
     expect(help).toContain('--data-dir');
     expect(help).toContain('--workspace');
     expect(help).toContain('--version');
     expect(help).toContain('--help');
     expect(help).toContain('hyperneod');
+  });
+});
+
+describe('getDaemonHelpText workspace contract', () => {
+  test('explains the Neo user-folder override and environment setting', () => {
+    const help = getDaemonHelpText();
+    expect(help).toContain('Neo user folder');
+    expect(help).toContain('file indexing');
+    expect(help).toContain('~/HyperNeo');
+    expect(help).toContain('HYPERNEO_WORKSPACE_PATH');
   });
 });

@@ -1,9 +1,15 @@
+import { createHash } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { canonicalJson } from '../../lib/agent/prompt-comparison.ts';
+import { parseAddress } from '../../lib/mailbox/address.ts';
+import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
+import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
 import type { Result, WorkWithdrawal } from '../../lib/drivers/types.ts';
 import { reject } from '../../lib/drivers/work-operations.ts';
 import { withBusyRetry } from '../busy-retry.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { ClaudeDesktopBridgeRepository } from './claude-desktop-bridge-repository.ts';
 import { JobQueueRepository, type Job } from './job-queue-repository.ts';
@@ -135,7 +141,55 @@ export class ClaudeDesktopOutboxRepository {
   enqueue(sessionId: string, from: string, input: Input): Job {
     return enqueueCommand(sessionId, from, input, this);
   }
-  transaction<T>(effect: () => T): T {
+  enqueueReported(sessionId: string, from: string, input: Input): Job {
+    return this.immediate(() => {
+      const job = this.enqueue(sessionId, from, input);
+      this.report(sessionId);
+      return job;
+    });
+  }
+  withdrawReported(sessionId: string, from: string, id: string): Result<WorkWithdrawal> {
+    return this.immediate(() => {
+      const result = this.withdraw(sessionId, from, id);
+      this.report(sessionId);
+      return result;
+    });
+  }
+  report(sessionId: string): void {
+    this.reportChanges(sessionId, (job, fact) => {
+      const to = parseAddress(String(job.payload.from));
+      if (to?.kind !== 'session') throw new Error('Desktop mods report has no session destination');
+      const outcome = enqueueMailboxEntry(
+        this.jobs,
+        createMailboxEntry({
+          to,
+          origin: `driver:claude-desktop:${sessionId}`,
+          messageUuid: createHash('sha256')
+            .update(`${job.id}:${JSON.stringify(fact)}`)
+            .digest('hex'),
+          message: {
+            type: 'user',
+            inputKind: 'system',
+            parent_tool_use_id: null,
+            message: {
+              role: 'user',
+              content: `Claude Desktop peer transport fact (API receipt is not proof of execution): ${JSON.stringify(fact)}`,
+            },
+          },
+        })
+      );
+      if (outcome.kind === 'rejected') throw new Error(outcome.reason);
+    });
+  }
+  write<K extends ClaudeDesktopOutboxWrite>(
+    method: K,
+    ...args: Parameters<ClaudeDesktopOutboxRepository[K]>
+  ): Promise<ReturnType<ClaudeDesktopOutboxRepository[K]>> {
+    return gatewayFor(this.db).run(claudeDesktopOutboxWrites, { method, args }) as Promise<
+      ReturnType<ClaudeDesktopOutboxRepository[K]>
+    >;
+  }
+  private immediate<T>(effect: () => T): T {
     return withBusyRetry(() => this.db.transaction(effect, 'immediate')());
   }
   withdraw(sessionId: string, from: string, id: string): Result<WorkWithdrawal> {
@@ -297,3 +351,12 @@ export class ClaudeDesktopOutboxRepository {
       : { ...base, kind, from: job.payload.from as string, text: job.payload.text as string };
   }
 }
+
+type ClaudeDesktopOutboxWrite = 'enqueueReported' | 'withdrawReported' | 'report' | 'exchange';
+
+export const claudeDesktopOutboxWrites = defineRepositoryOp(
+  'claudeDesktop.outbox.write',
+  'write',
+  ClaudeDesktopOutboxRepository,
+  ['enqueueReported', 'withdrawReported', 'report', 'exchange']
+);

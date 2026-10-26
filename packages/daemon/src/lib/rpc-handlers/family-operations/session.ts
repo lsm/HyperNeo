@@ -44,10 +44,10 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
         context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
         context.deps.sessionManager.getCachedSession(sessionId)
       )?.getProcessingState().status ?? '',
-    markReturned: (sessionId, returnedAt) => {
+    markReturned: async (sessionId, returnedAt) => {
       const current = context.deps.db.getSession(sessionId);
       if (!current) return;
-      context.deps.db.updateSession(sessionId, {
+      await context.deps.db.updateSession(sessionId, {
         metadata: { ...current.metadata, clone: { returnedAt } },
       });
     },
@@ -60,14 +60,13 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     listChildren: (sessionId) => context.deps.db.listChildSessions(sessionId),
     sessionSpaceId: (session) =>
       resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
-    setParent: (sessionId, parentId) => {
+    setParent: async (sessionId, parentId) => {
       const current = context.deps.db.getSession(sessionId);
       if (current)
-        context.deps.db.updateSession(sessionId, {
+        await context.deps.db.updateSession(sessionId, {
           metadata: { ...current.metadata, movedUnderParent: parentId !== null },
         });
-      context.deps.db.setSessionParent(sessionId, parentId);
-      context.deps.db.notifyChange('sessions', { sessionId });
+      await context.deps.db.setSessionParent(sessionId, parentId);
     },
   });
   return [
@@ -107,6 +106,7 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
         context.deps.sessionManager.getCachedSession(sessionId) ??
         null,
       getSession: scopeDeps.getSession,
+      updateSession: (sessionId, updates) => context.deps.db.updateSession(sessionId, updates),
       sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
       audit: (entry) => {
         try {

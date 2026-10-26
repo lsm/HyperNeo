@@ -1,4 +1,6 @@
 import { captureDirectMailboxAdmission } from '../tasks/direct-mailbox-admission.ts';
+import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
@@ -77,7 +79,7 @@ function createFailureDeps(deps: MailboxRegistrationDeps): MailboxFailureDeps {
 function registerExpiration(deps: MailboxRegistrationDeps, failure: MailboxFailureDeps): void {
   deps.mailboxExpireProcessor.register(
     MAILBOX_EXPIRE_FIRE,
-    createMailboxExpireHandler(deps.jobQueue, (job) => materializeMailboxFailure(job, failure))
+    createMailboxExpireHandler(deps.jobQueue, (job) => void materializeMailboxFailure(job, failure))
   );
 }
 
@@ -92,6 +94,20 @@ function registerDelivery(
       jobQueue: deps.jobQueue,
       db: deps.db.getDatabase(),
       sdkMessageRepo: deps.db.getSDKMessageRepo(),
+      prepareEntry: async (entry, jobId) =>
+        entry.to.kind === 'session' &&
+        new NeoRepository(deps.db.getDatabase()).getBindingBySession(entry.to.sessionId)?.kind ===
+          'neo'
+          ? deps.db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue, {
+              prepare: [
+                entry,
+                jobId,
+                entry.origin === 'chat' ||
+                  !!entry.message.workerReportKind ||
+                  !!entry.message.neoWakeEvent,
+              ],
+            })
+          : entry,
       getSession: deps.getSession,
       captureAdmission: (entry) => captureDirectMailboxAdmission(deps.db.getDatabase(), entry),
       isSessionArchived: deps.isSessionArchived,

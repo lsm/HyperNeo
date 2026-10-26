@@ -1,7 +1,14 @@
+import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
+import { planNudge } from '../../lib/neo/nudge.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
-import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
+import type { DriverSent, NeoDriverTarget } from '../../lib/neo/driver-work.ts';
+import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
+import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
+import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { WorkDeliveryInputRepository } from './work-delivery-input-repository.ts';
 import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
@@ -40,10 +47,133 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 }
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
+  read(
+    method: 'unrecordedStarts'
+  ): Promise<ReturnType<NeoTodoSessionRepository['unrecordedStarts']>>;
+  read(method: 'awaitingReports'): Promise<ReturnType<NeoTodoSessionRepository['awaitingReports']>>;
+  read(
+    method: 'nudgeContext',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['nudgeContext']>>;
+  read(method: (typeof neoTodoSessionReads.methods)[number], todoId?: string) {
+    return gatewayFor(this.db).call(
+      neoTodoSessionReads,
+      method,
+      ...((todoId === undefined ? [] : [todoId]) as never)
+    );
+  }
+
+  write<K extends (typeof neoTodoSessionWrites.methods)[number]>(
+    method: K,
+    ...args: Parameters<NeoTodoSessionRepository[K]>
+  ): Promise<ReturnType<NeoTodoSessionRepository[K]>> {
+    return gatewayFor(this.db).call(neoTodoSessionWrites, method, ...(args as never)) as Promise<
+      ReturnType<NeoTodoSessionRepository[K]>
+    >;
+  }
+
+  recordDispatch(input: {
+    todoId: string;
+    askId: string;
+    ref: WorkRef;
+    startedAt?: number;
+    link?: string;
+    observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'>;
+    sent: DriverSent | null;
+    keepIdentity: boolean;
+  }) {
+    const recorded = input.keepIdentity ? this.readCard(input.todoId) : null;
+    this.recordRef(input.todoId, input.ref, input.startedAt, input.link, {
+      model: input.observed.model ?? recorded?.model ?? undefined,
+      effort: input.observed.effort ?? recorded?.effort ?? undefined,
+    });
+    this.recordSent(input.todoId, input.sent);
+    const todos = new NeoAskTodoRepository(this.db);
+    return {
+      todo: todos.getTodo(input.todoId),
+      askOpen: todos.getAsk(input.askId)?.status === 'open',
+    };
+  }
+
   readonly inputs: WorkDeliveryInputRepository;
+  readonly turnReports: NeoTurnReportReceipts;
   constructor(db: Database) {
     super(db, 'neo_todo_sessions', 'todo_id');
     this.inputs = new WorkDeliveryInputRepository(db);
+    this.turnReports = new NeoTurnReportReceipts(db);
+  }
+
+  recordProgress(todoId: string, progress: NeoDriverProgress, now: number): boolean {
+    if (progress.landed !== null) this.recordStartedAt(todoId, progress.landed);
+    let changed = false;
+    if (progress.live && progress.cardStatus) {
+      if (progress.cardStatus !== 'needs_you' && this.readNeedsYouSince(todoId) !== null)
+        this.recordNeedsYouSince(todoId, null);
+      changed = this.recordLive(
+        todoId,
+        progress.cardStatus,
+        progress.live.link,
+        progress.live.remoteLink
+      );
+    }
+    this.recordCardCheck(todoId, { checkedAt: now, unchecked: progress.live === null });
+    return changed;
+  }
+
+  claimNeedsYou(todoId: string, now: number) {
+    const since = this.readNeedsYouSince(todoId);
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    const followed =
+      todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
+    if (since !== null || !todo || !followed) return null;
+    this.recordNeedsYouSince(todoId, now);
+    return todo;
+  }
+
+  nudgeContext(todoId: string) {
+    const store = new NeoAskTodoRepository(this.db),
+      todo = store.getTodo(todoId);
+    const ask = todo && store.getAsk(todo.askId),
+      ref = this.readRef(todoId);
+    return todo?.state === 'doing' &&
+      todo.instruction &&
+      this.get(todoId)?.verb !== 'adopt' &&
+      ref &&
+      ask?.status === 'open'
+      ? { todo, ask, ref }
+      : null;
+  }
+
+  claimNudge(
+    todoId: string,
+    ref: WorkRef,
+    live: NonNullable<NeoDriverProgress['live']>,
+    now: number,
+    updatedAt: number
+  ) {
+    const context = this.nudgeContext(todoId);
+    if (
+      !context ||
+      context.todo.updatedAt !== updatedAt ||
+      JSON.stringify(context.ref) !== JSON.stringify(ref) ||
+      live.status === 'queued'
+    )
+      return null;
+    const since = Math.max(
+      context.todo.startedAt ?? context.todo.createdAt,
+      live.lastReplyAt ?? live.lastActivityAt
+    );
+    const prior = this.readNudge(todoId);
+    const incident = prior && since <= prior.since ? prior : { since, nudges: 0 };
+    const plan = ['done', 'stopped'].includes(live.status) ? planNudge(incident, now) : null;
+    this.recordNudge(todoId, { since: incident.since, nudges: plan?.nudges ?? incident.nudges });
+    return plan ? { ...context, incident, plan } : null;
+  }
+
+  finishNudge(todoId: string, since: number, expectedNudges: number, nudges: number): void {
+    const current = this.readNudge(todoId);
+    if (current?.since === since && current.nudges === expectedNudges)
+      this.recordNudge(todoId, { since, nudges });
   }
 
   readNudge(todoId: string): { since: number; nudges: number } | null {
@@ -90,6 +220,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       .run(todoId, JSON.stringify(target));
   }
 
+  bind(todoId: string, ref: WorkRef, now: number): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO neo_todo_sessions
+      (todo_id, target, ref, started_at, follow_anchor)
+      VALUES (?, ?, ?, ?, ?)`)
+      .run(todoId, JSON.stringify({ verb: 'adopt', ref }), JSON.stringify(ref), now, now);
+  }
+
   readLinks(todoId: string): { link: string | null; remoteLink: string | null } {
     const row = this.db
       .prepare(
@@ -131,3 +269,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ).map((row) => ({ todoId: row.todoId, ref: JSON.parse(row.ref) as WorkRef }));
   }
 }
+
+export const neoTodoSessionReads = defineRepositoryOp(
+  'neo.todoSessionReads',
+  'read',
+  NeoTodoSessionRepository,
+  ['unrecordedStarts', 'awaitingReports', 'nudgeContext']
+);
+export const neoTodoSessionWrites = defineRepositoryOp(
+  'neo.todoSessionWrites',
+  'write',
+  NeoTodoSessionRepository,
+  ['recordLive', 'recordDispatch', 'recordProgress', 'claimNeedsYou', 'claimNudge', 'finishNudge']
+);

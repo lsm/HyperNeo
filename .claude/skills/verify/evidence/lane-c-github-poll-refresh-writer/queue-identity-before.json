@@ -1,0 +1,8 @@
+{
+  "ciRunnerPasses": 0,
+  "ciRunnerFailures": 1,
+  "registeredQueue": "synthetic.renamed.github.poll",
+  "pendingJobsInRegisteredQueue": 0,
+  "expectedPendingJobs": 1,
+  "expectedLegacyQueueUntouched": true
+}

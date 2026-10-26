@@ -1,3 +1,5 @@
+import type { Database } from '../../storage/sqlite-compat.ts';
+import { presentNeoPreviewAsk } from './preview-context.ts';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { NeoConversationWakeSchema } from '../../storage/repositories/neo-conversation-wake-repository.ts';
@@ -36,7 +38,8 @@ export function requireNeoConversationReader(
 export function createNeoConversationReadOperation(
   repo: NeoRepository,
   ledger: NeoConversationReader,
-  present: (message: NeoSessionMessage) => Promise<NeoSessionMessage> = async (message) => message
+  present: (message: NeoSessionMessage) => Promise<NeoSessionMessage> = async (message) => message,
+  database?: Database
 ) {
   const read = (superpipe({})('neo-conversation-read') as PipelineAPI)
     .input(['page', 'caller'])
@@ -108,6 +111,7 @@ export function createNeoConversationReadOperation(
               toName: z.string().nullable(),
               text: z.string(),
               createdAt: z.string(),
+              kind: z.enum(['session', 'worker-batch']),
             }),
           }),
         ])
@@ -119,7 +123,7 @@ export function createNeoConversationReadOperation(
   return defineOperation({
     name: 'neo.conversation.read',
     description:
-      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session; the human sees only the ones Neo sent), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; each human ask carries the same daemon-computed messageStatus as neo.conversation.asks.read. Neo replies and revision history come from the publication ledger. Session messages come from the record message.send writes when root Neo sends or receives one. Scheduled wakes appear as role wake with their summary and attributed additions. Only the current public conversation is readable; SDK transcripts and raw internal notes are excluded.',
+      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session; RPC callers are served the ones Neo sent plus system-forwarded worker batches, each marked kind session or worker-batch so clients hide worker batches from the human), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; each human ask carries the same daemon-computed messageStatus as neo.conversation.asks.read. Neo replies and revision history come from the publication ledger. Session messages come from message.send records and separately released worker batches; batch disclosures project text only. Scheduled wakes appear as role wake with their summary and attributed additions. Only the current public conversation is readable; SDK transcripts and raw internal notes are excluded.',
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationReadInput,
     resultSchema,
@@ -130,7 +134,11 @@ export function createNeoConversationReadOperation(
             ...result,
             items: await Promise.all(
               result.items.map(async (item) =>
-                item.role === 'session' ? { ...item, message: await present(item.message) } : item
+                item.role === 'session'
+                  ? { ...item, message: await present(item.message) }
+                  : item.role === 'human' && database
+                    ? { ...item, ask: await presentNeoPreviewAsk(item.ask, database, caller) }
+                    : item
               )
             ),
           }

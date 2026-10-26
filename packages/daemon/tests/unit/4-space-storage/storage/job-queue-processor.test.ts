@@ -3,10 +3,24 @@ import {
   DeadLetterImmediatelyError,
   JobQueueProcessor,
 } from '../../../../src/storage/job-queue-processor';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+const gatewayWith = (
+  db: Database,
+  intercept: (method: string, args: unknown[], run: () => Promise<unknown>) => Promise<unknown>
+) => {
+  const inline = new DbGateway(':memory:', db);
+  return {
+    call: (op: never, method: string, ...args: unknown[]) =>
+      intercept(method, args, () =>
+        (inline.call as (...a: unknown[]) => Promise<unknown>)(op, method, ...args)
+      ),
+  } as unknown as DbGateway;
+};
 
 describe('JobQueueProcessor', () => {
   let db: Database;
@@ -45,6 +59,155 @@ describe('JobQueueProcessor', () => {
     db.close();
   });
 
+  it('drains a pending startup reclaim before stop resolves without dispatching afterward', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let dequeues = 0;
+    processor = new JobQueueProcessor(repo, {
+      db: gatewayWith(db, async (method, _args, run) => {
+        if (method === 'reclaimStale') {
+          entered();
+          await gate;
+        }
+        if (method === 'dequeue') dequeues++;
+        return run();
+      }),
+    });
+    const job = repo.enqueue({ queue: 'stop-reclaim', payload: {} });
+    const handled: string[] = [];
+    processor.register(job.queue, async (claimed) => {
+      handled.push(claimed.id);
+    });
+    processor.start();
+    await requested;
+    let stopped = false;
+    const drain = processor.stop().then(() => {
+      stopped = true;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(stopped).toBe(false);
+      expect(handled).toEqual([]);
+    } finally {
+      release();
+      await drain;
+    }
+    expect(dequeues).toBe(0);
+    expect(repo.getJob(job.id)?.status).toBe('pending');
+    expect(handled).toEqual([]);
+  });
+
+  it('does not replay reclaim on main when its writer is unavailable', async () => {
+    let requests = 0;
+    processor = new JobQueueProcessor(repo, {
+      db: gatewayWith(db, async (method, _args, run) => {
+        if (method === 'reclaimStale') {
+          requests++;
+          throw new Error('writer unavailable');
+        }
+        return run();
+      }),
+    });
+    const job = repo.enqueue({ queue: 'unavailable-reclaim', payload: {} });
+    repo.dequeue(job.queue);
+    db.prepare('UPDATE job_queue SET started_at = 0, heartbeat_at = 0 WHERE id = ?').run(job.id);
+    processor.register(job.queue, async () => {});
+    expect(await processor.tick()).toBe(0);
+    expect(requests).toBe(1);
+    expect(repo.getJob(job.id)?.status).toBe('processing');
+    expect(repo.getJob(job.id)?.retryCount).toBe(0);
+  });
+
+  it('passes the reclaim token so delayed jitter cannot change a newer pending claim', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    processor = new JobQueueProcessor(repo, {
+      db: gatewayWith(db, async (method, _args, run) => {
+        if (method === 'reschedulePending') {
+          entered();
+          await gate;
+        }
+        return run();
+      }),
+    });
+    const job = repo.enqueue({ queue: 'jitter-race', payload: {} });
+    const [oldClaim] = repo.dequeue(job.queue);
+    db.prepare('UPDATE job_queue SET started_at = 0, heartbeat_at = 0 WHERE id = ?').run(job.id);
+    processor.register(job.queue, async () => {});
+    const tick = processor.tick();
+    await requested;
+    const due = Date.now() + 60_000;
+    try {
+      const [newClaim] = repo.dequeue(job.queue);
+      expect(newClaim.claimToken).not.toBe(oldClaim.claimToken);
+      repo.reclaimStale(Date.now() + 1_000);
+      expect(repo.reschedulePending(job.id, due, newClaim.claimToken)).toBe(true);
+    } finally {
+      release();
+      await tick;
+    }
+    expect(repo.getJob(job.id)?.runAt).toBe(due);
+    expect(repo.getJob(job.id)?.status).toBe('pending');
+  });
+
+  it('aborts the reclaimed handler before waiting for a jitter receipt', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    processor = new JobQueueProcessor(repo, {
+      staleThresholdMs: 60_000,
+      db: gatewayWith(db, async (method, _args, run) => {
+        if (method === 'reschedulePending') {
+          entered();
+          await gate;
+        }
+        return run();
+      }),
+    });
+    let signal: AbortSignal | undefined;
+    processor.register('abort-reclaim', async (_job, context) => {
+      signal = context!.signal;
+      await new Promise<void>((resolve) =>
+        signal!.addEventListener('abort', () => resolve(), { once: true })
+      );
+    });
+    const job = repo.enqueue({ queue: 'abort-reclaim', payload: {} });
+    await processor.tick();
+    const oldClaim = repo.getJob(job.id)!;
+    db.prepare('UPDATE job_queue SET started_at = 0, heartbeat_at = 0 WHERE id = ?').run(job.id);
+    const reclaim = (
+      processor as unknown as {
+        reclaimStaleClaims(staleBefore: number): Promise<void>;
+      }
+    ).reclaimStaleClaims(Date.now() - 5_000);
+    await requested;
+    try {
+      expect(signal?.aborted).toBe(true);
+      expect(repo.complete(job.id, {}, oldClaim.claimToken)).toBeNull();
+      expect(repo.getJob(job.id)?.status).toBe('pending');
+    } finally {
+      release();
+      await reclaim;
+    }
+  });
+
   it('serializes delayed claims and drains their handlers on stop without losing jobs', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -52,11 +215,11 @@ describe('JobQueueProcessor', () => {
     });
     processor = new JobQueueProcessor(repo, {
       maxConcurrent: 5,
-      claimJobs: async (request) => {
+      db: gatewayWith(db, async (method, _args, run) => {
+        if (method !== 'dequeue') return run();
         await gate;
-        if (request.method !== 'dequeue') throw new Error('unexpected fixture mode');
-        return repo.dequeue(...request.args);
-      },
+        return run();
+      }),
     });
     const seen: string[] = [];
     let maxActive = 0;
@@ -88,11 +251,11 @@ describe('JobQueueProcessor', () => {
     expect(jobs.every((job) => repo.getJob(job.id)?.status === 'completed')).toBe(true);
   });
 
-  it('does not fall back to a main claim when the async writer rejects', async () => {
+  it('does not fall back to a main claim when the gateway rejects the claim', async () => {
     processor = new JobQueueProcessor(repo, {
-      claimJobs: async () => {
+      db: gatewayWith(db, async () => {
         throw new Error('unknown claim');
-      },
+      }),
     });
     let called = false;
     processor.register('synthetic', async () => {
@@ -527,8 +690,8 @@ describe('JobQueueProcessor', () => {
         Date.now() - 10_000,
         job.id
       );
-      (
-        staleProcessor as unknown as { reclaimStaleClaims(staleBefore: number): void }
+      await (
+        staleProcessor as unknown as { reclaimStaleClaims(staleBefore: number): Promise<void> }
       ).reclaimStaleClaims(Date.now() - 100);
       await flush();
       await staleProcessor.tick();

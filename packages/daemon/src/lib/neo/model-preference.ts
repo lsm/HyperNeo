@@ -1,13 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
-import {
-  findSameModel,
-  getThinkingLevelsForModel,
-  resolveAutoCompactPercent,
-  normalizeThinkingLevel,
-  THINKING_LEVELS,
-  type ThinkingLevel,
-} from '@hyperneo/shared';
+import { findSameModel, resolveAutoCompactPercent, normalizeThinkingLevel } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { getAvailableModels } from '../model-service.ts';
@@ -38,15 +31,6 @@ const PreferenceResult = z.union([
   }),
 ]);
 
-export function clampNeoThinking(
-  levels: readonly ThinkingLevel[],
-  requested: ThinkingLevel
-): ThinkingLevel {
-  if (levels.includes(requested)) return requested;
-  const rank = THINKING_LEVELS.indexOf(requested);
-  return [...levels].reverse().find((level) => THINKING_LEVELS.indexOf(level) <= rank) ?? 'off';
-}
-
 export function requireNeoPreferenceModel(
   input: z.infer<typeof PreferenceInput>,
   catalog: { models: readonly ModelInfo[] }
@@ -61,15 +45,10 @@ export function requireNeoPreferenceModel(
           reason: `invalid_model: ${entry.provider}/${entry.model} is not available.`,
         },
       };
-    const levels = getThinkingLevelsForModel(
-      model.provider,
-      model.thinkingModes,
-      model.effortLevels
-    );
     entries.push({
-      model: entry.model,
+      model: model.alias === entry.model ? model.id : entry.model,
       provider: model.provider,
-      thinkingLevel: clampNeoThinking(levels, normalizeThinkingLevel(entry.thinkingLevel)),
+      thinkingLevel: normalizeThinkingLevel(entry.thinkingLevel),
       ...(entry.autoCompactPercent === undefined
         ? {}
         : { autoCompactPercent: entry.autoCompactPercent }),
@@ -126,10 +105,7 @@ export function createNeoPreferenceOperation(service: NeoService) {
     .pipe(requireNeoPreferenceModel, ['input', 'catalog'], 'result:admission')
     .pipe(
       async (input: NeoModelPreference) => {
-        const fallbacks =
-          input.fallbacks ?? service.db.getGlobalSettings().neo?.preferences?.fallbacks;
-        const preferences = { ...input, ...(fallbacks === undefined ? {} : { fallbacks }) };
-        await service.saveModelPreference(preferences);
+        const preferences = await service.saveModelPreference(input);
         return { ok: true as const, preferences };
       },
       'admission',

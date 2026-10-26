@@ -7,7 +7,7 @@ import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-h
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { Database } from '../../../../src/storage/database';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
+import { createTables } from '../../../../src/storage/schema';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -110,6 +110,7 @@ function createMockSessionManager(): {
       getSDKMessagePageAsync: async (
         _sessionId: string,
         page: {
+          requireSession?: boolean;
           limit?: number;
           before?: number;
           since?: number;
@@ -117,6 +118,8 @@ function createMockSessionManager(): {
           sinceRowid?: number;
         }
       ) => {
+        if (page.requireSession && !mocks.getSessionFromDB(_sessionId))
+          throw new Error('Session not found');
         const result = agentSessionData.mocks.getSDKMessages(
           page.limit,
           page.before,
@@ -698,6 +701,7 @@ describe('Message RPC Handlers', () => {
         )
         .run(Date.now());
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => ':memory:',
         getDatabase: () => sqlite,
       } as unknown as Database;
@@ -726,6 +730,7 @@ describe('Message RPC Handlers', () => {
       };
       const read = mock(async () => page);
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => '/synthetic-page.db',
         getSDKMessagePageAsync: read,
       } as unknown as Database;
@@ -745,6 +750,7 @@ describe('Message RPC Handlers', () => {
         )
       ).toEqual(page);
       expect(read).toHaveBeenCalledWith('session-123', {
+        requireSession: true,
         limit: 2,
         before: 100,
         since: 50,
@@ -758,6 +764,7 @@ describe('Message RPC Handlers', () => {
         throw new Error('SDK reader failed');
       });
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => '/synthetic-page.db',
         getSDKMessagePageAsync: read,
       } as unknown as Database;
@@ -773,6 +780,7 @@ describe('Message RPC Handlers', () => {
       const page = { sdkMessages: [], hasMore: false, backgroundTaskMessages: [] };
       const read = mock(async () => page);
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => '/synthetic-page.db',
         getSDKMessagePageAsync: read,
       } as unknown as Database;
@@ -784,6 +792,7 @@ describe('Message RPC Handlers', () => {
         )
       ).toEqual(page);
       expect(read).toHaveBeenCalledWith('conv:synthetic', {
+        requireSession: false,
         limit: undefined,
         before: undefined,
         since: undefined,
@@ -892,7 +901,7 @@ describe('Message RPC Handlers', () => {
       const handler = messageHubData.handlers.get('message.sdkMessages');
       expect(handler).toBeDefined();
 
-      sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+      sessionManagerData.mocks.getSessionFromDB.mockReturnValueOnce(null);
 
       await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
         'Session not found'
@@ -903,13 +912,22 @@ describe('Message RPC Handlers', () => {
   describe('message.sdkMessage', () => {
     test('returns one message in full for "show full output"', async () => {
       const sqlite = new BunDatabase(':memory:');
-      sqlite.exec('CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, sdk_message TEXT)');
-      runMigration418(sqlite);
+      createTables(sqlite);
+      sqlite
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+           VALUES ('session-123', 'Synthetic message', ?, ?, 'active', '{}', '{}')`
+        )
+        .run(new Date().toISOString(), new Date().toISOString());
       const full = { type: 'user', uuid: 'u1', message: { content: 'z'.repeat(20_000) } };
       sqlite
-        .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
-        .run('session-123', 'u1', JSON.stringify(full));
+        .prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, sdk_uuid, sdk_message, timestamp)
+           VALUES ('full-body', 'session-123', 'user', ?, ?, ?)`
+        )
+        .run('u1', JSON.stringify(full), new Date().toISOString());
       const db = {
+        waitForSdkMessageColumns: async () => {},
         getDbPath: () => ':memory:',
         getDatabase: () => sqlite,
         getSession: (id: string) => (id === 'session-123' ? { id } : null),
@@ -935,8 +953,11 @@ describe('Message RPC Handlers', () => {
           },
         };
         sqlite
-          .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
-          .run('session-123', 'u2', JSON.stringify(result));
+          .prepare(
+            `INSERT INTO sdk_messages (id, session_id, message_type, sdk_uuid, sdk_message, timestamp)
+             VALUES ('capped-body', 'session-123', 'user', ?, ?, ?)`
+          )
+          .run('u2', JSON.stringify(result), new Date().toISOString());
         const capped = (await handler!(
           { sessionId: 'session-123', messageUuid: 'u2', capped: true },
           {}

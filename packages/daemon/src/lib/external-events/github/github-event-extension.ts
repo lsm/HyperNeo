@@ -17,10 +17,12 @@ import { isRateLimitError } from '../../session/rate-limit-detector.ts';
 import { ExternalEventStore } from '../external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../session-external-event-store.ts';
 import type {
+  ExternalEvent,
   ExternalEventExtensionContext,
   HttpExternalEventExtension,
   RpcExternalEventExtension,
 } from '../types.ts';
+import { normalizeSessionPrClosure } from './session-pr-closure.ts';
 import {
   checkRunAppKeyFrom,
   checkRunConclusionFrom,
@@ -115,6 +117,8 @@ const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'mer
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
+  recordSessionClosure?: (event: ExternalEvent) => Promise<unknown>;
+  replaySessionTerminals?: () => Promise<unknown>;
   collectPollPage?: GitHubPollCollector;
   pollIntervalMs?: number;
   getPollIntervalMs?: () => number | undefined;
@@ -123,6 +127,12 @@ interface GitHubEventExtensionOptions {
   reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
+  sessionWatchRepos?: () => { owner: string; repo: string }[];
+  reportPollingHealth?: (
+    repos: GitHubWatchedRepo[],
+    reached: Set<string>,
+    now: number
+  ) => Promise<void>;
   subscribedPullRequests?: (watched: { spaceId: string; owner: string; repo: string }) => number[];
   syncReadCheckout?: (watched: GitHubPollingRepo, request: typeof fetch) => Promise<unknown>;
 }
@@ -296,6 +306,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private credentialGeneration = 0;
   private pollCycleCredentialGeneration: number | null = null;
   private pollCycleCredentialFingerprint: string | null = null;
+  private pollCycleCredentialSource: string | null = null;
   private pollCycleAccessible = false;
   private readonly credentialStore?: CredentialStore;
   private readonly eventStore: ExternalEventStore;
@@ -313,6 +324,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
     this.stopped = false;
+    this.reconcileSessionWatches();
     if (this.options.autoReconcileWebhooks) {
       this.reconcileSweepPromise = this.reconcileManagedWebhooks()
         .catch((error) => {
@@ -1000,8 +1012,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async pollEnabledSpaces(
     fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
   ): Promise<number> {
+    return this.withPollingHealth(undefined, () => this.pollEnabledSpacesCore(fetchImpl));
+  }
+
+  private async pollEnabledSpacesCore(
+    fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
+  ): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
+    const sessionConfig = await this.context.config.getSpaceConfig(
+      SESSION_EVENT_SCOPE,
+      this.sourceId
+    );
+    if (sessionConfig?.enabled !== false) await this.options.replaySessionTerminals?.();
     if (Date.now() < this.rateLimitedUntil) {
       log.warn('GitHub polling cycle skipped — rate limited until', {
         resetAt: new Date(this.rateLimitedUntil).toISOString(),
@@ -1027,6 +1050,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     spaceId: string,
     fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
   ): Promise<number> {
+    return this.withPollingHealth(spaceId, () => this.pollSpaceCore(spaceId, fetchImpl));
+  }
+
+  private async pollSpaceCore(
+    spaceId: string,
+    fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
+  ): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
     if (Date.now() < this.rateLimitedUntil) {
@@ -1038,6 +1068,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     const spaceConfig = await this.context.config.getSpaceConfig(spaceId, this.sourceId);
     if (spaceConfig && !spaceConfig.enabled) return 0;
+    if (spaceId === SESSION_EVENT_SCOPE) await this.options.replaySessionTerminals?.();
     let count = 0;
     const repos = this.repo
       .listPollingRepos(spaceId)
@@ -1048,6 +1079,47 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (Date.now() < this.rateLimitedUntil) break;
     }
     return count;
+  }
+
+  private reconcileSessionWatches(): void {
+    for (const repo of this.options.sessionWatchRepos?.() ?? []) {
+      if (this.repo.getWatchedRepo(SESSION_EVENT_SCOPE, repo.owner, repo.repo)) continue;
+      this.repo.upsertWatchedRepo({
+        spaceId: SESSION_EVENT_SCOPE,
+        ...repo,
+        enabled: true,
+        pollingEnabled: true,
+        webhookEnabled: false,
+      });
+    }
+  }
+
+  private async withPollingHealth(
+    spaceId: string | undefined,
+    poll: () => Promise<number>
+  ): Promise<number> {
+    if (!(await this.isPollingGloballyEnabled())) return 0;
+    this.reconcileSessionWatches();
+    const repos = this.repo.listPollingRepos(spaceId);
+    const eligible: GitHubWatchedRepo[] = [];
+    for (const repo of repos) {
+      if (this.reapUnreferencedSessionRepo(repo)) continue;
+      const config = await this.context!.config.getSpaceConfig(repo.spaceId, this.sourceId);
+      if (config?.enabled !== false) eligible.push(repo);
+    }
+    try {
+      return await poll();
+    } finally {
+      const reached = new Set(
+        eligible
+          .filter((repo) => {
+            const current = this.repo.getWatchedRepoById(repo.id);
+            return current?.lastPollAt != null && current.lastPollAt !== repo.lastPollAt;
+          })
+          .map((repo) => repo.id)
+      );
+      await this.options.reportPollingHealth?.(eligible, reached, Date.now());
+    }
   }
 
   private async isPollingGloballyEnabled(): Promise<boolean> {
@@ -1171,7 +1243,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
     }
     if (this.stopped) return;
-    if (this.repo.listPollingRepos().length === 0) {
+    if (!this.options.sessionWatchRepos && this.repo.listPollingRepos().length === 0) {
       if (this.pollTimer) {
         clearTimeout(this.pollTimer);
         this.pollTimer = null;
@@ -1353,7 +1425,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (secondaryLimitApplied) {
           this.applyRateLimit(
             {
-              remaining: validationRateLimit.remaining,
+              ...validationRateLimit,
               resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
               limited: true,
               retryAfter: true,
@@ -1822,7 +1894,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private maybeStopPolling(): void {
     if (!this.pollTimer) return;
-    if (this.repo.listPollingRepos().length > 0) return;
+    if (this.options.sessionWatchRepos || this.repo.listPollingRepos().length > 0) return;
     clearTimeout(this.pollTimer);
     this.pollTimer = null;
   }
@@ -1870,6 +1942,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       this.lastRateLimitFingerprint = newFingerprint;
     }
     log.warn('GitHub rate limit detected — deferring next poll', {
+      status: rateLimit.status ?? null,
+      credentialSource: this.pollCycleCredentialSource ?? 'unknown',
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,
       limit: rateLimit.limit ?? null,
       resource: rateLimit.resource ?? 'unknown',
@@ -2385,7 +2459,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ) {
         this.applyRateLimit(
           {
-            remaining: rateLimit.remaining,
+            ...rateLimit,
             resetAt: rateLimit.limited ? rateLimit.resetAt : 0,
             limited: true,
             retryAfter: rateLimit.retryAfter,
@@ -2420,6 +2494,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     } finally {
       this.pollCycleCredentialGeneration = null;
       this.pollCycleCredentialFingerprint = null;
+      this.pollCycleCredentialSource = null;
       this.pollCycleAccessible = false;
     }
   }
@@ -2496,6 +2571,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     const credentials = await this.resolveTokenOrFail();
     const token = credentials.token;
+    this.pollCycleCredentialSource = token
+      ? credentials.source
+      : this.options.fetchImpl || fetchImpl !== fetch
+        ? 'injected'
+        : 'gh';
     const fetchPage = createGitHubPollSource({
       collection: this.options.collectPollPage
         ? {
@@ -2579,7 +2659,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (rateLimit.limited) {
         if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
           this.applyRateLimit({
-            remaining: rateLimit.remaining,
+            ...rateLimit,
             resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
             limited: true,
             retryAfter: true,
@@ -2602,7 +2682,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             ? rateLimit.resetAt - Date.now()
             : RATE_LIMIT_MIN_BACKOFF_MS;
           this.applyRateLimit({
-            remaining: rateLimit.remaining,
+            ...rateLimit,
             resetAt: Date.now() + secondaryDelayMs,
             limited: true,
             retryAfter: true,
@@ -2841,7 +2921,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             if (rateLimit.limited) {
               if (response.status === 429 && rateLimit.remaining > 0 && !rateLimit.retryAfter) {
                 this.applyRateLimit({
-                  remaining: rateLimit.remaining,
+                  ...rateLimit,
                   resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
                   limited: true,
                   retryAfter: true,
@@ -2870,7 +2950,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                   ? rateLimit.resetAt - Date.now()
                   : RATE_LIMIT_MIN_BACKOFF_MS;
                 this.applyRateLimit({
-                  remaining: rateLimit.remaining,
+                  ...rateLimit,
                   resetAt: Date.now() + secondaryDelayMs,
                   limited: true,
                   retryAfter: true,
@@ -3040,8 +3120,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         partialScan = true;
         break;
       }
+      const discoverClosure =
+        watched.spaceId === SESSION_EVENT_SCOPE &&
+        subscribedPullRequestNumbers.includes(prNumber) &&
+        !!this.options.recordSessionClosure;
       const mergeHeaders = gitHubPollingHeaders(token);
-      if (mergeConflictEtags[prNumber])
+      if (!discoverClosure && mergeConflictEtags[prNumber])
         mergeHeaders['If-None-Match'] = mergeConflictEtags[prNumber];
       let mergeResponse: Response;
       try {
@@ -3066,7 +3150,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           !mergeRateLimit.retryAfter
         ) {
           this.applyRateLimit({
-            remaining: mergeRateLimit.remaining,
+            ...mergeRateLimit,
             resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
             limited: true,
             retryAfter: true,
@@ -3091,7 +3175,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             ? mergeRateLimit.resetAt - Date.now()
             : RATE_LIMIT_MIN_BACKOFF_MS;
           this.applyRateLimit({
-            remaining: mergeRateLimit.remaining,
+            ...mergeRateLimit,
             resetAt: Date.now() + secondaryDelayMs,
             limited: true,
             retryAfter: true,
@@ -3110,6 +3194,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (mergeEtag) mergeConflictEtags[prNumber] = mergeEtag;
       const pullDetail = asPollingObject(await mergeResponse.json());
       if (pullDetail.state !== 'open') {
+        if (discoverClosure) {
+          const closure = normalizeSessionPrClosure(watched, prNumber, pullDetail);
+          if (closure) await this.options.recordSessionClosure?.(closure);
+        }
         delete mergeConflictStates[prNumber];
         if (subscribedPullRequestNumbers.includes(prNumber))
           delete recentPullRequestHeadShas[prNumber];
@@ -3210,7 +3298,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             !reviewRateLimit.retryAfter
           ) {
             this.applyRateLimit({
-              remaining: reviewRateLimit.remaining,
+              ...reviewRateLimit,
               resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
               limited: true,
               retryAfter: true,
@@ -3231,7 +3319,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               ? reviewRateLimit.resetAt - Date.now()
               : RATE_LIMIT_MIN_BACKOFF_MS;
             this.applyRateLimit({
-              remaining: reviewRateLimit.remaining,
+              ...reviewRateLimit,
               resetAt: Date.now() + secondaryDelayMs,
               limited: true,
               retryAfter: true,
@@ -3340,7 +3428,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           !reactionRateLimit.retryAfter
         ) {
           this.applyRateLimit({
-            remaining: reactionRateLimit.remaining,
+            ...reactionRateLimit,
             resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
             limited: true,
             retryAfter: true,
@@ -3359,7 +3447,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             ? reactionRateLimit.resetAt - Date.now()
             : RATE_LIMIT_MIN_BACKOFF_MS;
           this.applyRateLimit({
-            remaining: reactionRateLimit.remaining,
+            ...reactionRateLimit,
             resetAt: Date.now() + secondaryDelayMs,
             limited: true,
             retryAfter: true,

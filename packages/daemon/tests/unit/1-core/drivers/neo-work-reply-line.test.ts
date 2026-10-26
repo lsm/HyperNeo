@@ -6,12 +6,16 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { driverWorkCall, driverWorkCaller } from '../../../../src/lib/neo/driver-work';
+import {
+  driverWorkCall,
+  driverWorkCaller,
+  withWorkGoal,
+} from '../../../../src/lib/neo/driver-work';
 
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'neo:own-root' };
 const place = { machine: 'laptop', folder: '/synthetic/repo', name: 'repo' };
 const line = (id: string) =>
-  `Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send ${id} "<text>" (not SendMessage). Keep working after you send.`;
+  `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${id} --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.`;
 
 function harness(adapter: string) {
   const received: string[] = [];
@@ -57,6 +61,15 @@ function harness(adapter: string) {
 }
 
 describe('Neo external worker reply instructions', () => {
+  test('generated worker briefs restrict reporting even without a goal', () => {
+    for (const goal of [null, { goal: 'Ship it', doneWhen: 'Merged' }]) {
+      const brief = withWorkGoal('Build it.', goal);
+      expect(brief).toContain('Message Neo only at milestones');
+      expect(brief).toContain('PR opened, merged or closed; blocked; a question; done; failed');
+      expect(brief).toContain('no acknowledgments and no progress pings');
+    }
+  });
+
   test.each(['claude-code', 'claude-desktop', 'codex-desktop'])(
     'work sends and starts to %s append the sending Neo once',
     async (adapter) => {

@@ -62,7 +62,12 @@ import type { SpaceAgentTemplateRepository } from '../../../storage/repositories
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import {
+  type SpaceTaskRepository,
+  spaceTaskWrites,
+  type WriteSpaceTask,
+} from '../../../storage/repositories/space-task-repository.ts';
+import { spaceTaskLaneFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import { TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -166,7 +171,7 @@ import {
 import { classifyLastMessageForIdleAgent } from '../../session/last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from '../../workflows/llm-workflow-selector.ts';
 import {
-  clearPendingCompletionState,
+  clearedPendingCompletion,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
@@ -1580,8 +1585,13 @@ export class SpaceRuntime {
       }
       return;
     }
-    this.expirePublishedExternalEventsPastTtl();
-    this.redispatchPublishedEventsWithoutDeliveries();
+    void this.expirePublishedExternalEventsPastTtl()
+      .then(() => this.redispatchPublishedEventsWithoutDeliveries())
+      .catch((err) =>
+        log.warn(
+          `SpaceRuntime: retained event redispatch failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      );
   }
 
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
@@ -2208,21 +2218,26 @@ export class SpaceRuntime {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
           if (existing) return { dbId: existing.dbId, replayed: true };
         }
-        const dbId = await Promise.resolve(
-          messages.saveUserMessage(targetSessionId, message, 'deferred', 'system')
+        const dbId = await messages.write(
+          'saveUserMessage',
+          targetSessionId,
+          message,
+          'deferred',
+          'system'
         );
         return { dbId, replayed: false };
       },
-      reopenFailedDigest: (targetSessionId, uuid) => {
-        const failedRow = messages.getMessageByStatusAndUuid(targetSessionId, 'failed', uuid);
-        if (failedRow) messages.updateMessageStatus([failedRow.dbId], 'deferred');
+      reopenFailedDigest: async (sid, uuid) => {
+        const row = messages.getMessageByStatusAndUuid(sid, 'failed', uuid);
+        if (row)
+          await messages.write('transitionMessageSendStatus', row.dbId, 'failed', 'deferred');
       },
-      deleteDigestMessage: (targetSessionId, dbId) => {
+      deleteDigestMessage: async (targetSessionId, dbId) => {
         const row = messages.getMessageByStatusAndDbId(targetSessionId, 'deferred', dbId);
         if (row && typeof row.uuid === 'string') {
           this.deleteDigestHandoffDebt(targetSessionId, row.uuid);
         }
-        messages.deletePendingUserMessage(targetSessionId, dbId, 'deferred');
+        await messages.write('deletePendingUserMessage', targetSessionId, dbId, 'deferred');
       },
       appendDigest: async (targetSessionId, message) => {
         const row = messages.getDeliveryContent(targetSessionId, String(message.uuid));
@@ -2244,7 +2259,7 @@ export class SpaceRuntime {
       }
       if (outcome.action === 'delivered') {
         try {
-          this.supersedeObsoleteDigestRows(
+          await this.supersedeObsoleteDigestRows(
             sessionId,
             store,
             outcome.uuid,
@@ -2263,7 +2278,7 @@ export class SpaceRuntime {
         }
       } else {
         try {
-          this.dropUncoveredDeferredDigestRows(sessionId, store);
+          await this.dropUncoveredDeferredDigestRows(sessionId, store);
         } catch (cleanupError) {
           if (this.isTargetSessionLive(sessionId)) {
             this.scheduleTurnEndDigestRetry(sessionId, taskId);
@@ -2280,7 +2295,7 @@ export class SpaceRuntime {
       return outcome;
     } catch (error) {
       try {
-        this.dropUncoveredDeferredDigestRows(sessionId, store);
+        await this.dropUncoveredDeferredDigestRows(sessionId, store);
       } catch (cleanupError) {
         if (this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
@@ -2309,11 +2324,11 @@ export class SpaceRuntime {
       return;
     }
     this.digestSupersedeRetryCounts.set(key, attempts);
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       this.digestSupersedeRetryTimers.delete(key);
       if (this.isStopped) return;
       try {
-        this.supersedeObsoleteDigestRows(
+        await this.supersedeObsoleteDigestRows(
           sessionId,
           store,
           deliveredUuid,
@@ -2337,7 +2352,10 @@ export class SpaceRuntime {
     this.digestSupersedeRetryTimers.set(key, timer);
   }
 
-  private dropUncoveredDeferredDigestRows(sessionId: string, store: ExternalEventStore): void {
+  private async dropUncoveredDeferredDigestRows(
+    sessionId: string,
+    store: ExternalEventStore
+  ): Promise<void> {
     const messages = this.getSdkMessageRepo();
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     const targetWorkflowRunId = execution?.workflowRunId;
@@ -2375,18 +2393,18 @@ export class SpaceRuntime {
             )
         );
       if (!allMembersDelivered) {
-        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        await messages.write('deletePendingUserMessage', sessionId, row.dbId, 'deferred');
       }
     }
   }
 
-  private supersedeObsoleteDigestRows(
+  private async supersedeObsoleteDigestRows(
     sessionId: string,
     store: ExternalEventStore,
     deliveredUuid: string | null,
     deliveredEventIds: string[],
     currentTaskId?: string
-  ): void {
+  ): Promise<void> {
     const messages = this.getSdkMessageRepo();
     const deliveredEventIdSet = new Set(deliveredEventIds);
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
@@ -2446,7 +2464,7 @@ export class SpaceRuntime {
         );
       });
       if (isObsolete) {
-        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        await messages.write('deletePendingUserMessage', sessionId, row.dbId, 'deferred');
       }
     }
   }
@@ -2875,6 +2893,8 @@ export class SpaceRuntime {
   }
 
   private postApprovalRouter: PostApprovalRouter | null = null;
+  private readonly writeTask: WriteSpaceTask = (method, ...args) =>
+    spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(spaceTaskWrites, method, ...args);
   private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
 
   async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
@@ -2888,6 +2908,7 @@ export class SpaceRuntime {
       runPostApprovalRetry({
         taskId,
         taskRepo: this.config.taskRepo,
+        writeTask: this.writeTask,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
         isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
@@ -2913,6 +2934,7 @@ export class SpaceRuntime {
     if (!manager) return null;
     this.postApprovalRouter = new PostApprovalRouter({
       taskRepo: this.config.taskRepo,
+      writeTask: this.writeTask,
       resolveCompletionOutcome: (task) => {
         const artifactSummary = task.workflowRunId
           ? this.resolvePrimaryResultArtifactSummary(task.workflowRunId)
@@ -3101,14 +3123,16 @@ export class SpaceRuntime {
         expectedWorkflowRunId: options.expectedWorkflowRunId,
       });
     } finally {
-      const latest = this.config.taskRepo.getTask(taskId);
-      if (
-        latest?.status === 'approved' &&
-        latest.workflowRunId === approvedTask.workflowRunId &&
-        latest.approvedAt === approvedTask.approvedAt
-      ) {
-        clearPendingCompletionState(this.config.taskRepo, taskId);
-      }
+      await this.writeTask(
+        'updateTask',
+        taskId,
+        clearedPendingCompletion,
+        'approved',
+        undefined,
+        undefined,
+        approvedTask.workflowRunId ?? null,
+        approvedTask.approvedAt ?? null
+      );
     }
 
     if (routeResult.mode !== 'skipped') {
@@ -3241,9 +3265,14 @@ export class SpaceRuntime {
     if (task.taskAgentSessionId) {
       this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
     }
-    const cleared = this.config.taskRepo.updateTask(task.id, {
-      taskAgentSessionId: null,
-    });
+    const cleared = await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+      spaceTaskWrites,
+      'updateTask',
+      task.id,
+      {
+        taskAgentSessionId: null,
+      }
+    );
     if (cleared) {
       await this.safeOnTaskUpdated(spaceId, cleared);
     }
@@ -3291,9 +3320,14 @@ export class SpaceRuntime {
     }
     this.clearAgentStuckStateForRun(task.workflowRunId);
     return (
-      this.config.taskRepo.updateTask(task.id, {
-        taskAgentSessionId: null,
-      }) ?? task
+      (await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+        spaceTaskWrites,
+        'updateTask',
+        task.id,
+        {
+          taskAgentSessionId: null,
+        }
+      )) ?? task
     );
   }
 
@@ -3479,9 +3513,14 @@ export class SpaceRuntime {
         updated.approvalReason !== (params.cancelReason ?? params.approvalReason)
       ) {
         updated =
-          this.config.taskRepo.updateTask(taskId, {
-            approvalReason: params.cancelReason ?? params.approvalReason ?? null,
-          }) ?? updated;
+          (await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+            spaceTaskWrites,
+            'updateTask',
+            taskId,
+            {
+              approvalReason: params.cancelReason ?? params.approvalReason ?? null,
+            }
+          )) ?? updated;
       }
       if (!previous.workflowRunId) {
         await this.safeOnTaskUpdated(spaceId, updated);
@@ -3520,7 +3559,12 @@ export class SpaceRuntime {
       return updated;
     }
 
-    const updated = this.config.taskRepo.updateTask(taskId, params);
+    const updated = await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+      spaceTaskWrites,
+      'updateTask',
+      taskId,
+      params
+    );
     if (updated) await this.safeOnTaskUpdated(spaceId, updated);
     return updated;
   }
@@ -3596,8 +3640,8 @@ export class SpaceRuntime {
       this.config.reactiveDb?.beginTransaction();
       try {
         updated = this.config.db.transaction(() => {
-          const result = this.config.taskRepo.updateTask(taskId, writeParams);
-          this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
+          const result = this.config.taskRepo.updateTask(taskId, writeParams, previous.status);
+          if (result) this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
           return result;
         })();
         this.config.reactiveDb?.commitTransaction();
@@ -3606,7 +3650,7 @@ export class SpaceRuntime {
         throw err;
       }
     } else {
-      updated = this.config.taskRepo.updateTask(taskId, writeParams);
+      updated = await this.writeTask('updateTask', taskId, writeParams);
     }
     if (updated) {
       let emitUpdated = true;
@@ -3741,7 +3785,12 @@ export class SpaceRuntime {
   private async reconcileTerminalRunTasks(run: SpaceWorkflowRun): Promise<void> {
     const checkedAt = Date.now();
     await this.reconcileTerminalRunTasksUnchecked(run);
-    this.config.taskRepo.markReconcileCheckedAt(run.id, checkedAt);
+    await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+      spaceTaskWrites,
+      'markReconcileCheckedAt',
+      run.id,
+      checkedAt
+    );
   }
 
   private async reconcileTerminalRunTasksUnchecked(run: SpaceWorkflowRun): Promise<void> {
@@ -4053,7 +4102,10 @@ export class SpaceRuntime {
 
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
-        this.config.taskRepo.clearAllSpawnReservations();
+        await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+          spaceTaskWrites,
+          'clearAllSpawnReservations'
+        );
         await this.rehydrateExecutors();
         await this.recoverStalledRuns();
         if (generation !== this.runtimeGeneration || this.isStopped) {
@@ -4102,8 +4154,8 @@ export class SpaceRuntime {
       await this.checkStandaloneTasks();
       await this.recoverRateLimitedTasks();
 
-      this.expirePublishedExternalEventsPastTtl();
-      this.expirePendingExternalEventDeliveriesPastTtl();
+      await this.expirePublishedExternalEventsPastTtl();
+      await this.expirePendingExternalEventDeliveriesPastTtl();
 
       this.pruneExpiredCycleEvents();
       this.pruneDigestHandoffDebt();
@@ -5003,11 +5055,11 @@ export class SpaceRuntime {
     }
   }
 
-  private expirePublishedExternalEventsPastTtl(now = Date.now()): void {
+  private async expirePublishedExternalEventsPastTtl(now = Date.now()): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
     try {
-      store.markPublishedEventsFailedBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, now);
+      await store.expirePublishedEventsBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, now);
     } catch (err) {
       log.warn(
         `SpaceRuntime: TTL sweep failed: ${err instanceof Error ? err.message : String(err)}`
@@ -5015,7 +5067,7 @@ export class SpaceRuntime {
     }
   }
 
-  private expirePendingExternalEventDeliveriesPastTtl(now = Date.now()): void {
+  private async expirePendingExternalEventDeliveriesPastTtl(now = Date.now()): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
     try {
@@ -5023,7 +5075,11 @@ export class SpaceRuntime {
         ...this.externalEventDeliveriesInFlight,
         ...this.immediateDispatchesInFlight,
       ]);
-      store.markPendingDeliveriesFailedBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, inFlightKeys, now);
+      await store.expirePendingDeliveriesBefore(
+        now - EXTERNAL_EVENT_QUEUE_TTL_MS,
+        inFlightKeys,
+        now
+      );
     } catch (err) {
       log.warn(
         `SpaceRuntime: pending-delivery TTL sweep failed: ${err instanceof Error ? err.message : String(err)}`
@@ -6038,8 +6094,13 @@ export class SpaceRuntime {
     });
     await this.transitionRunStatusAndEmit(runId, 'blocked');
     if (
-      this.config.taskRepo.casStatus(canonicalTask.id, TASK_BLOCKABLE_FROM_STATUSES, 'blocked') ===
-      'superseded'
+      (await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+        spaceTaskWrites,
+        'casStatus',
+        canonicalTask.id,
+        TASK_BLOCKABLE_FROM_STATUSES,
+        'blocked'
+      )) === 'superseded'
     ) {
       log.warn(
         `SpaceRuntime: skipped blocking task ${canonicalTask.id} for execution ${execution.id} ` +
@@ -8569,7 +8630,9 @@ export class SpaceRuntime {
         hasDirectAttempt: withDirectAttempt.has(task.id),
       }));
       for (const task of selectOrphanedInProgressTasks(evidence, now)) {
-        const reopened = this.config.taskRepo.updateTask(
+        const reopened = await spaceTaskLaneFor(this.config.db, this.config.reactiveDb).call(
+          spaceTaskWrites,
+          'updateTask',
           task.id,
           { status: 'open', startedAt: null },
           'in_progress'

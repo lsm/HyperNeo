@@ -79,7 +79,7 @@ async function startRuntime(file: string, deps: Deps) {
       liveSessions: deps.liveSessions,
       onError: deps.onError,
       persist: async (exchange, pid, idle) => {
-        const reply = outbox.exchange(exchange, pid, idle);
+        const reply = await outbox.write('exchange', exchange, pid, idle);
         seen.set(exchange.sessionId, { pid, at: Date.now() });
         for (const listener of listeners) listener(exchange.sessionId);
         await deps.onExchange?.(exchange.sessionId);

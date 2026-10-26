@@ -1,20 +1,40 @@
+import { testAskEntry, testTodo } from './neo-test-views.ts';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeArtifactPreview, openArtifactPreview } from '../../lib/artifact-preview-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { SessionStore } from '../../lib/session-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
+import type { MessageHub } from '@hyperneo/shared';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
+import {
+  createNeoIntakeClient,
+  type NeoDraft,
+  type NeoPendingAsk,
+  neoDraftPayload,
+} from '../neo-intake.ts';
+import { restoreNeoImages, useNeoAttachments } from '../neo-attachments.ts';
+import type { NeoPublicEntry } from '../public-conversation.ts';
 
 const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn(), event: vi.fn() }));
-const voice = vi.hoisted(() => ({ recording: false, submit: vi.fn() }));
-vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => voice.recording }));
+const voice = vi.hoisted(() => ({
+  recording: false,
+  enabled: false,
+  start: vi.fn(),
+  submit: vi.fn(),
+}));
+vi.mock('../useNeoVoiceSettings.ts', () => ({
+  useNeoVoiceSettings: () => voice.recording || voice.enabled,
+}));
 vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
   isVoiceRecordingSupported: () => true,
   useVoiceRecorder: () => ({
     isRecording: voice.recording,
     isStarting: false,
     durationLimitHit: false,
-    start: vi.fn(),
+    start: voice.start,
     stop: vi.fn(),
     cancel: vi.fn(),
     getLevel: () => 0,
@@ -46,8 +66,14 @@ let slowLoad: Promise<unknown> | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  voice.submit.mockReset();
   voice.recording = false;
+  voice.enabled = false;
+  voice.start.mockResolvedValue(undefined);
+  useNeoAttachments(root).remove(useNeoAttachments(root).files.map((file) => file.id));
+  closeArtifactPreview();
   persisted.clear();
+  sessionStorage.clear();
   slowLoad = null;
   seams.event.mockImplementation(() => () => {});
   connectionState.value = 'connected';
@@ -92,6 +118,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  closeArtifactPreview();
   vi.unstubAllGlobals();
 });
 
@@ -103,11 +130,10 @@ function mount() {
     sessionInfo: { id: root, config: { model: 'haiku' }, metadata: {} },
     agentState: { status: 'idle' },
   } as never;
-  const snapshot = {
+  const snapshot: NeoSnapshot = {
     ok: true,
     sessionId: root,
     projects: [],
-    work: [],
   };
   const model = signal({
     sessionId: root,
@@ -116,7 +142,7 @@ function mount() {
     viewPublicConversation: {
       conversationId: root.slice(4),
       status: 'ready',
-      entries: [],
+      entries: [] as NeoPublicEntry[],
       hasEarlier: false,
       hasMore: false,
     },
@@ -130,6 +156,8 @@ function mount() {
     publications: { refresh: vi.fn() },
     send: vi.fn().mockResolvedValue({ ok: true, created: true, messageId: 'fictional-send' }),
     sendRequestId: vi.fn(() => null),
+    pendingAsks: [] as readonly NeoPendingAsk[],
+    discardSend: vi.fn((_id: string): NeoDraft | null => null),
   });
   seams.useNeo.mockImplementation(() => model.value);
   return { ...render(<NeoLive />), model, store };
@@ -143,7 +171,667 @@ function value() {
   return (screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement).value;
 }
 
+function capturedDraft() {
+  return JSON.parse(
+    sessionStorage.getItem(`hyperneo_neo_draft_reload_v1.${encodeURIComponent(root)}`) ?? 'null'
+  );
+}
+
+function previewRoute(delay?: Promise<unknown>) {
+  const original = seams.request.getMockImplementation()!;
+  seams.request.mockImplementation(async (method, input) => {
+    if (method !== 'operation.invoke') return original(method, input);
+    if (input.name === 'artifact.file.get') {
+      if (input.input.artifactId === 'report-a' && delay) return delay;
+      const id = input.input.artifactId;
+      return {
+        accepted: true,
+        metadata: {
+          context: { kind: 'todo', id: 'fictional-todo' },
+          artifact: {
+            daemonId: 'd',
+            artifactId: id,
+            title: `${id}.md`,
+            kind: 'markdown',
+            byteLength: 8,
+          },
+          sha256: (id === 'report-a' ? 'a' : 'b').repeat(64),
+          createdAt: 1,
+          sourcePath: `${id}.md`,
+          producer: { adapter: 'hyperneo', id: 's' },
+        },
+      };
+    }
+    if (input.name === 'artifact.file.read')
+      return {
+        accepted: true,
+        data: btoa('# Report'),
+        nextOffset: 8,
+        byteLength: 8,
+        sha256: (input.input.artifactId === 'report-a' ? 'a' : 'b').repeat(64),
+        complete: true,
+      };
+    return { accepted: true };
+  });
+}
+function openPreview(id: string) {
+  act(() => openArtifactPreview({ kind: 'artifact', artifactId: id }, `${id}.md`));
+}
+function binding(name: string, hash: string) {
+  return screen.queryByText(new RegExp(`To Neo.*${name}.*${hash}`));
+}
+
+describe('Neo live preview binding', () => {
+  it('recovery: binds only after the delayed empty draft load settles', async () => {
+    let release!: (value: unknown) => void;
+    slowLoad = new Promise((resolve) => {
+      release = resolve;
+    });
+    previewRoute();
+    openPreview('report-a');
+    mount();
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    await act(async () => {
+      release({ session: { metadata: { inputDraft: '' } } });
+    });
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+  });
+  it.each([false, true])(
+    'retries failed recovery without rebinding newer typing: %s',
+    async (typed) => {
+      let reject!: (error: Error) => void;
+      slowLoad = new Promise((_resolve, fail) => {
+        reject = fail;
+      });
+      previewRoute();
+      mount();
+      openPreview('report-a');
+      await screen.findByRole('button', { name: 'Use current Preview' });
+      await act(async () => {
+        reject(new Error('Synthetic draft read failure'));
+      });
+      expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+      if (typed) type('Newer unbound text');
+      slowLoad = null;
+      await act(async () => {
+        connectionState.value = 'disconnected';
+      });
+      await act(async () => {
+        connectionState.value = 'connected';
+      });
+      if (typed) {
+        await act(async () => {});
+        expect(value()).toBe('Newer unbound text');
+        expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+      } else await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    }
+  );
+  it.each(['remove', 'rebind'] as const)(
+    'retains explicit %s while empty draft load is pending',
+    async (choice) => {
+      let release!: (value: unknown) => void;
+      slowLoad = new Promise((resolve) => {
+        release = resolve;
+      });
+      previewRoute();
+      mount();
+      openPreview('report-a');
+      fireEvent.click(await screen.findByRole('button', { name: 'Use current Preview' }));
+      openPreview('report-b');
+      await screen.findByRole('button', { name: 'Use current Preview' });
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: choice === 'remove' ? 'Remove Preview context' : 'Use current Preview',
+        })
+      );
+      await act(async () => {
+        release({ session: { metadata: { inputDraft: '' } } });
+      });
+      expect(!!binding('report-b', 'bbbbbbbb')).toBe(choice === 'rebind');
+      expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    }
+  );
+  it('keeps an authored draft on its snapshot until explicitly rebound or removed', async () => {
+    previewRoute();
+    const view = mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    type('Discuss this snapshot');
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use current Preview' }));
+    await waitFor(() => expect(binding('report-b', 'bbbbbbbb')).toBeTruthy());
+    openPreview('report-a');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-b', 'bbbbbbbb')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Preview context' }));
+    openPreview('report-b');
+    await act(async () => {});
+    expect(binding('report-b', 'bbbbbbbb')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0]).not.toHaveProperty('previewContext');
+  });
+  it('retains a phone preview binding after dismissing the sheet and captures before send', async () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    previewRoute();
+    const view = mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    act(() => closeArtifactPreview());
+    type('About this report');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    openPreview('report-b');
+    expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+      previewContext: {
+        artifactId: 'report-a',
+        snapshot: 'a'.repeat(64),
+        displayName: 'report-a.md',
+        state: 'available',
+      },
+    });
+  });
+  it('pins the association before awaiting microphone access on an otherwise empty draft', async () => {
+    voice.enabled = true;
+    let release!: () => void;
+    voice.start.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+    previewRoute();
+    mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledOnce());
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+    await act(async () => {
+      release();
+    });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+  });
+  it.each(['attachment', 'reading', 'quote'] as const)(
+    'keeps the bound snapshot when cleared text leaves %s framing',
+    async (framing) => {
+      previewRoute();
+      const view = mount();
+      openPreview('report-a');
+      await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+      type('Temporary draft text');
+      let finishReading: (() => void) | undefined;
+      let reading: Promise<void> | undefined;
+      if (framing === 'quote') {
+        act(() => {
+          view.model.value = {
+            ...view.model.value,
+            viewPublicConversation: {
+              ...view.model.value.viewPublicConversation,
+              entries: [
+                {
+                  kind: 'ask',
+                  key: 'quoted-ask',
+                  ask: {
+                    conversationId: root.slice(4),
+                    requestId: 'quoted-ask',
+                    askOrigin: { sessionId: root, messageId: 'quoted-ask' },
+                    content: 'Original fictional message',
+                    sequence: 1,
+                    createdAt: '2026-10-25T12:00:00Z',
+                  },
+                },
+              ],
+            },
+          };
+        });
+        fireEvent.click(await screen.findByRole('button', { name: 'Reply to your message' }));
+      } else if (framing === 'attachment') {
+        act(() => {
+          restoreNeoImages(root, [{ data: 'YWJj', media_type: 'image/png' }]);
+        });
+      } else {
+        const file = new File(['Synthetic notes'], 'notes.txt', { type: 'text/plain' });
+        vi.spyOn(file, 'text').mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              finishReading = () => resolve('Synthetic notes');
+            })
+        );
+        act(() => {
+          reading = useNeoAttachments(root).add([file], vi.fn());
+        });
+        await waitFor(() => expect(finishReading).toBeTypeOf('function'));
+        expect(useNeoAttachments(root).reading).toBe(1);
+      }
+      openPreview('report-b');
+      await screen.findByRole('button', { name: 'Use current Preview' });
+      try {
+        type('');
+        expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+        expect(binding('report-b', 'bbbbbbbb')).toBeNull();
+      } finally {
+        if (framing === 'reading')
+          await act(async () => {
+            finishReading!();
+            await reading;
+          });
+      }
+      if (framing === 'quote') type('Reply after clearing');
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+        previewContext: { artifactId: 'report-a', snapshot: 'a'.repeat(64) },
+        ...(framing === 'quote' ? { quote: { text: 'Original fictional message' } } : {}),
+      });
+    }
+  );
+  it('allows a fully empty draft to follow the current Preview after text is cleared', async () => {
+    previewRoute();
+    mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    type('Temporary text without framing');
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    type('');
+    await waitFor(() => expect(binding('report-b', 'bbbbbbbb')).toBeTruthy());
+  });
+  it('holds an attachment-only draft binding while switching previews', async () => {
+    previewRoute();
+    const view = mount();
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    act(() => {
+      restoreNeoImages(root, [{ data: 'YWJj', media_type: 'image/png' }]);
+    });
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+      previewContext: { artifactId: 'report-a' },
+      images: [{ data: 'YWJj' }],
+    });
+  });
+  it('does not clear a newer binding when an earlier send is accepted', async () => {
+    previewRoute();
+    const view = mount();
+    let release!: (value: unknown) => void;
+    view.model.value.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    openPreview('report-a');
+    await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+    type('Earlier snapshot comment');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    openPreview('report-b');
+    await waitFor(() => expect(binding('report-b', 'bbbbbbbb')).toBeTruthy());
+    type('Later snapshot comment');
+    await act(async () => {
+      release({ ok: true, created: true, messageId: 'first' });
+    });
+    expect(value()).toBe('Later snapshot comment');
+    expect(binding('report-b', 'bbbbbbbb')).toBeTruthy();
+    expect(view.model.value.send.mock.calls[0][0]).toMatchObject({
+      previewContext: { artifactId: 'report-a' },
+    });
+  });
+  it('keeps a previously unbound draft unbound when a preview is opened', async () => {
+    previewRoute();
+    mount();
+    type('Unbound before preview');
+    openPreview('report-a');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Use current Preview' }));
+    expect(binding('report-a', 'aaaaaaaa')).toBeTruthy();
+  });
+  it('never silently binds existing text when metadata arrives late', async () => {
+    let release!: (value: unknown) => void;
+    previewRoute(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+    const view = mount();
+    openPreview('report-a');
+    type('Unbound thought');
+    openPreview('report-b');
+    await screen.findByRole('button', { name: 'Use current Preview' });
+    await act(async () => {
+      release({ accepted: false, reason: 'revoked' });
+    });
+    expect(binding('report-a', 'aaaaaaaa')).toBeNull();
+    expect(binding('report-b', 'bbbbbbbb')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(view.model.value.send.mock.calls[0][0]).not.toHaveProperty('previewContext');
+  });
+});
+
 describe('Neo real composer draft recovery', () => {
+  it('renders neither activity row mid-turn while another message can still be sent', async () => {
+    const { container, model, store } = mount();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message Neo' })).toBeTruthy());
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          working: [{ sessionId: root, projectId: null, title: 'Neo', status: 'processing' }],
+          todoAsks: [
+            testAskEntry('active', 'Fictional active task', {
+              state: 'doing',
+              todos: [testTodo('active', { state: 'doing' })],
+            }),
+          ],
+        },
+      };
+      store.sessionState.value = {
+        ...store.sessionState.value!,
+        agentState: { status: 'processing', phase: 'thinking' },
+      } as never;
+    });
+    expect(screen.getByRole('region', { name: 'Conversation with Neo' })).toBeTruthy();
+    expect(container.querySelector('.neo-progress-slot, .neo-progress, .neo-activity')).toBeNull();
+    expect(screen.queryByRole('note', { name: 'Neo activity' })).toBeNull();
+    expect(screen.queryByText(/Neo is working|Syncing…|Working on it/)).toBeNull();
+    type('Another human message mid-turn');
+    expect(value()).toBe('Another human message mid-turn');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(model.value.send).toHaveBeenCalled());
+  });
+
+  it.each(['remove', 'rebind', 'edit'] as const)(
+    'captures a delayed transcript with the latest draft and binding after %s',
+    async (choice) => {
+      previewRoute();
+      voice.enabled = true;
+      let release!: (value: unknown) => void;
+      voice.submit.mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve;
+        })
+      );
+      const view = mount();
+      openPreview('report-a');
+      await waitFor(() => expect(binding('report-a', 'aaaaaaaa')).toBeTruthy());
+      type('Draft before stopping');
+      voice.recording = true;
+      act(() => {
+        view.model.value = { ...view.model.value };
+      });
+      const stop = await screen.findByRole('button', {
+        name: 'Stop recording and add it to your draft',
+      });
+      voice.recording = false;
+      fireEvent.click(stop);
+      await waitFor(() => expect(voice.submit).toHaveBeenCalledOnce());
+      if (choice === 'remove') {
+        fireEvent.click(screen.getByRole('button', { name: 'Remove Preview context' }));
+      } else if (choice === 'rebind') {
+        openPreview('report-b');
+        fireEvent.click(await screen.findByRole('button', { name: 'Use current Preview' }));
+      } else {
+        act(() => {
+          view.model.value = {
+            ...view.model.value,
+            viewPublicConversation: {
+              ...view.model.value.viewPublicConversation,
+              entries: [
+                {
+                  kind: 'ask',
+                  key: 'voice-overlap',
+                  ask: {
+                    conversationId: root.slice(4),
+                    requestId: 'voice-overlap',
+                    askOrigin: { sessionId: root, messageId: 'voice-overlap' },
+                    content: 'Newly edited request',
+                    sequence: 1,
+                    createdAt: '2026-10-25T12:00:00Z',
+                    delivery: { state: 'failed' },
+                  },
+                },
+              ],
+            },
+          } as never;
+        });
+        fireEvent.click(await screen.findByRole('button', { name: 'Edit and send again' }));
+        await waitFor(() => expect(capturedDraft().text).toContain('Newly edited request'));
+      }
+      const latest = capturedDraft();
+      const expected = latest.previewContext;
+      expect(expected?.artifactId ?? null).toBe(choice === 'rebind' ? 'report-b' : null);
+      await act(async () =>
+        release({
+          kind: 'routed',
+          recordId: 'delayed-preview-transcript',
+          outcome: {
+            kind: 'insert',
+            transcript: 'Later voice addition',
+            autoSend: false,
+          },
+        })
+      );
+      await waitFor(() => expect(value()).toBe(`${latest.text}\nLater voice addition`));
+      expect(capturedDraft()).toMatchObject({ text: value(), previewContext: expected });
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      expect(view.model.value.send.mock.calls[0][0].previewContext).toEqual(expected ?? undefined);
+    }
+  );
+
+  it.each([false, true])(
+    'restores an unavailable persisted reference, voice draft: %s',
+    async (withVoice) => {
+      const view = mount();
+      await act(async () => {});
+      const previewContext: NeoPreviewReference = {
+        artifactId: 'registered-report',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Unavailable report',
+        state: 'unavailable',
+      };
+      view.model.value = {
+        ...view.model.value,
+        viewPublicConversation: {
+          ...view.model.value.viewPublicConversation,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'bound-undelivered',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000001',
+                askOrigin: { sessionId: root, messageId: '20000000-0000-4000-8000-000000000001' },
+                content: [{ type: 'text', text: 'Undelivered bound request' }],
+                sequence: 1,
+                createdAt: '2026-10-25T09:00:00.000Z',
+                delivery: { state: 'failed' },
+                previewContext,
+              },
+            },
+          ],
+        },
+      };
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit and send again' }));
+      await waitFor(() => expect(value()).toBe('Undelivered bound request'));
+      expect(capturedDraft()).toMatchObject({ text: 'Undelivered bound request', previewContext });
+      expect(
+        screen.getByText(/To Neo.*Preview unavailable.*Unavailable report.*aaaaaaaa/)
+      ).toBeTruthy();
+      if (withVoice) {
+        voice.recording = true;
+        type('Voice-bound draft');
+        voice.submit.mockResolvedValueOnce({
+          kind: 'routed',
+          recordId: 'bound-voice',
+          outcome: { kind: 'insert', transcript: 'Voice addition', autoSend: false },
+        });
+        const stop = await screen.findByRole('button', {
+          name: 'Stop recording and add it to your draft',
+        });
+        voice.recording = false;
+        fireEvent.click(stop);
+        await waitFor(() => expect(value()).toBe('Voice-bound draft\nVoice addition'));
+        expect(capturedDraft()).toMatchObject({
+          text: 'Voice-bound draft\nVoice addition',
+          previewContext,
+        });
+        expect(voice.submit.mock.calls[0][0].intent).toBe('draft');
+        expect(view.model.value.send).not.toHaveBeenCalled();
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      expect(view.model.value.send.mock.calls[0][0]).toMatchObject({ previewContext });
+    }
+  );
+  it.each([false, true])(
+    'retains or explicitly removes a failed-send Preview binding: %s',
+    async (remove) => {
+      const view = mount();
+      await act(async () => {});
+      const previewContext: NeoPreviewReference = {
+        artifactId: 'registered-report',
+        snapshot: 'a'.repeat(64),
+        displayName: 'Synthetic report',
+        state: 'available',
+      };
+      let offline = true;
+      const request = vi.fn(
+        async (_method: string, { input }: { input: ReturnType<typeof neoDraftPayload> }) => {
+          if (offline) throw new Error('Disconnected');
+          return {
+            ok: true,
+            requestId: input.requestId,
+            messageId: input.requestId,
+            created: true,
+            ...(input.previewContext
+              ? { previewContext: { ...previewContext, ...input.previewContext } }
+              : {}),
+          };
+        }
+      );
+      const client = createNeoIntakeClient(
+        async () => ({ request }) as unknown as MessageHub,
+        (pendingAsks) => {
+          view.model.value = { ...view.model.value, pendingAsks };
+        }
+      );
+      view.model.value = {
+        ...view.model.value,
+        send: vi.fn(client.send),
+        discardSend: vi.fn(client.discard),
+        sendRequestId: vi.fn(() => null),
+      };
+      await act(async () => {
+        await expect(
+          client.send({ sessionId: root, text: 'Failed bound request', previewContext })
+        ).rejects.toThrow('Disconnected');
+      });
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      await waitFor(() => expect(value()).toBe('Failed bound request'));
+      expect(screen.getByText(/To Neo.*Synthetic report.*aaaaaaaa/)).toBeTruthy();
+      expect(capturedDraft()).toMatchObject({ text: 'Failed bound request', previewContext });
+      if (remove) fireEvent.click(screen.getByRole('button', { name: 'Remove Preview context' }));
+      expect(capturedDraft().previewContext).toEqual(remove ? null : previewContext);
+      offline = false;
+      type('Edited request');
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+      expect(request.mock.calls[1][1].input.previewContext).toEqual(
+        remove
+          ? undefined
+          : {
+              artifactId: previewContext.artifactId,
+              snapshot: previewContext.snapshot,
+            }
+      );
+      expect(request.mock.calls[1][1].input.content).toBe('Edited request');
+      await waitFor(() => expect(screen.queryByText(/To Neo.*Synthetic report/)).toBeNull());
+    }
+  );
+  it('keeps a newer restored binding when an earlier send completes', async () => {
+    const view = mount();
+    await act(async () => {});
+    const contextA: NeoPreviewReference = {
+      artifactId: 'report-a',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Report A',
+      state: 'available',
+    };
+    const contextB: NeoPreviewReference = {
+      artifactId: 'report-b',
+      snapshot: 'b'.repeat(64),
+      displayName: 'Report B',
+      state: 'available',
+    };
+    let acceptFirst = () => {};
+    const request = vi.fn(
+      async (_method: string, { input }: { input: ReturnType<typeof neoDraftPayload> }) => {
+        if (input.content !== 'Edited A') throw new Error('Disconnected');
+        return new Promise((resolve) => {
+          acceptFirst = () =>
+            resolve({
+              ok: true,
+              requestId: input.requestId,
+              messageId: input.requestId,
+              created: true,
+              previewContext: contextA,
+            });
+        });
+      }
+    );
+    const client = createNeoIntakeClient(
+      async () => ({ request }) as unknown as MessageHub,
+      (pendingAsks) => {
+        view.model.value = { ...view.model.value, pendingAsks };
+      }
+    );
+    view.model.value = {
+      ...view.model.value,
+      send: vi.fn(client.send),
+      discardSend: vi.fn(client.discard),
+    };
+    await act(async () => {
+      await expect(
+        client.send({ sessionId: root, text: 'Failed A', previewContext: contextA })
+      ).rejects.toThrow('Disconnected');
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(value()).toBe('Failed A'));
+    type('Edited A');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await expect(
+        client.send({ sessionId: root, text: 'Failed B', previewContext: contextB })
+      ).rejects.toThrow('Disconnected');
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(value()).toBe('Failed B'));
+    await act(async () => {
+      acceptFirst();
+    });
+    expect(value()).toBe('Failed B');
+    expect(screen.getByText(/To Neo.*Report B.*bbbbbbbb/)).toBeTruthy();
+    expect(screen.queryByText(/To Neo.*Report A/)).toBeNull();
+  });
   it.each([false, true])(
     'clears an edited saved draft without clearing concurrent text: %s',
     async (concurrent) => {
@@ -608,6 +1296,10 @@ describe('Neo real composer draft recovery', () => {
     voice.recording = false;
     fireEvent.click(stop);
     await waitFor(() => expect(value()).toBe('Current fictional transcript'));
+    expect(capturedDraft()).toMatchObject({
+      text: 'Current fictional transcript',
+      previewContext: null,
+    });
     await waitFor(() => expect(persisted.get(root)).toBe('Current fictional transcript'));
   });
 

@@ -1,7 +1,29 @@
+import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
+import { discoverSigningSocket } from './worker-sockets.ts';
+import type { UUID } from 'node:crypto';
+import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
+import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
+import { sdkNeoWakeQueue } from '../../storage/repositories/sdk-message-transactions.ts';
+import { createMailboxEntry } from '../mailbox/entry.ts';
+import { decodeUlidTimestamp } from '../mailbox/ulid.ts';
+import { createNeoWorkerQuestionWriter } from './question-operations.ts';
+import {
+  sessionSender,
+  type SessionReportHandler,
+  type SendMessageResultSchema,
+} from '../messaging/message-send.ts';
+import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
+import { wrapSessionContent } from '../messaging/session-envelope.ts';
+import { publishDroppedWork } from './dropped-work.ts';
+import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
-import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { workerIdentity, workerEngine } from '@hyperneo/shared/types/worker-identity';
+import { z } from 'zod';
+import { WorkSummarySchema } from '../drivers/types.ts';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
 import type {
   GlobalSettings,
@@ -10,7 +32,7 @@ import type {
   Session,
   SessionConfig,
 } from '@hyperneo/shared';
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoQuestion, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
@@ -21,7 +43,10 @@ import { NeoConversationAskRepository } from '../../storage/repositories/neo-con
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
-import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import {
+  NeoTodoSessionRepository,
+  neoSafeSessionLink,
+} from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -130,8 +155,8 @@ export class NeoService {
           await Promise.all(this.installedPacks().map((pack) => pack.sessionLinks?.(ref) ?? []))
         ).flat(),
       readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
-      observeSessions: (sessions) => {
-        for (const pack of this.packs()) pack.observeSessions?.(sessions, Date.now());
+      observeSessions: async (sessions) => {
+        for (const pack of this.packs()) await pack.observeSessions?.(sessions, Date.now());
       },
       notifyChanged: () => this.notifyChanged(),
     });
@@ -148,12 +173,13 @@ export class NeoService {
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
-      tell: (ask, todo, note, key) => {
+      tell: (ask, todo, note, key, kind) => {
         return this.deliverForward(
           ask.sessionId,
           key ?? `neo-todo:${todo.id}:${todo.updatedAt}`,
           note,
-          ask.sessionId
+          ask.sessionId,
+          kind
         );
       },
       changed: this.notifyChanged,
@@ -277,16 +303,21 @@ export class NeoService {
     );
   }
 
-  async saveModelPreference(preferences: NeoModelPreference): Promise<void> {
-    const neo = this.db.getGlobalSettings().neo;
-    const updated = this.db.updateGlobalSettings({ neo: { ...neo, preferences } });
+  async saveModelPreference(preferences: NeoModelPreference): Promise<NeoModelPreference> {
+    const updated = await gatewayFor(this.db.getDatabase()).call(
+      globalSettingsWrites,
+      'neoPreferences',
+      preferences
+    );
+    const saved = updated.neo!.preferences!;
     this.publishSettings?.(updated);
     const root = this.repo.defaultBinding();
-    if (!root) return;
+    if (!root) return saved;
     await this.alignModelPreference(root.sessionId).catch((error) => {
       this.log.warn('Neo model preference not applied', error);
     });
-    await this.applyCompactPercent(root.sessionId, preferences);
+    await this.applyCompactPercent(root.sessionId, saved);
+    return saved;
   }
 
   private async applyCompactPercent(
@@ -365,7 +396,7 @@ export class NeoService {
     this.triggerTimer = undefined;
     this.triggerDeliveryRetryAt.clear();
     if (this.watching) await this.watching;
-    this.sessionWatcher.flushSessionNoticeGroup();
+    await this.sessionWatcher.flushSessionNoticeGroup();
   }
 
   readWorker(ref: WorkRef) {
@@ -381,16 +412,170 @@ export class NeoService {
     );
   }
 
+  async readQuestionSource(ref: WorkRef): Promise<NeoQuestionSource | null> {
+    const result = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.status',
+      { ref },
+      { source: 'internal' }
+    );
+    const current = z
+      .object({ ok: z.literal(true), value: WorkSummarySchema })
+      .safeParse(result.kind === 'completed' ? result.value : null);
+    if (!current.success) return null;
+    const local = ref.adapter === 'hyperneo' && !ref.daemon ? this.db.getSession(ref.id) : null;
+    return {
+      ...workerIdentity(ref, current.data.value.title),
+      provider: local?.config.provider ?? workerEngine(ref.adapter),
+      link:
+        neoSafeSessionLink(current.data.value.link, !!ref.daemon) ??
+        neoSafeSessionLink(current.data.value.remoteLink, true),
+    };
+  }
+
+  storeWorkerQuestion(ref: WorkRef, report: unknown, stored?: (question: NeoQuestion) => void) {
+    return createNeoWorkerQuestionWriter(
+      this.todos,
+      this.todoSessions,
+      () => this.db.getGlobalSettings().language,
+      (source) => this.readQuestionSource(source),
+      stored
+    )(ref, report);
+  }
+
+  readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
+    .input(['input', 'origin', 'retry'])
+    .pipe(
+      (input: Parameters<SessionReportHandler>[0], origin: string) => {
+        const sender = sessionSender(origin);
+        if (
+          !sender ||
+          !['question', 'blocked'].includes(input.kind ?? '') ||
+          this.repo.getBindingBySession(input.sessionId)?.kind !== 'neo'
+        )
+          return { reason: null };
+        return { value: sender };
+      },
+      ['input', 'origin'],
+      'result:receipt'
+    )
+    .pipe(
+      async (
+        sender: string,
+        input: Parameters<SessionReportHandler>[0],
+        origin: string,
+        retry: Parameters<SessionReportHandler>[2]
+      ) => {
+        const content = input.message.message.content;
+        const media = typeof content === 'string' ? [] : content.filter((b) => b.type === 'image');
+        const text =
+          input.handoff?.text ??
+          (typeof content === 'string'
+            ? content
+            : content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n'));
+        const files = input.handoff?.files ?? [];
+        const jobs = this.db.getJobQueueRepo();
+        let receipt: z.infer<typeof SendMessageResultSchema> | null = null;
+        const wake = (incident: string, note: string) => {
+          if (files.length) note += `\n${JSON.stringify({ handoffFiles: files })}`;
+          type Prior = { mailboxId: string; messageId: string };
+          let key = `worker-question:${incident}`;
+          for (;;) {
+            const prior = jobs.submissionReceipt<Prior>(key, key);
+            if (!prior) break;
+            const status = this.db
+              .getSDKMessageRepo()
+              .getUserSendStatus(input.sessionId, prior.messageId);
+            const job = jobs.getLatestByPayload('mailbox', { id: prior.mailboxId });
+            const live = job && ['pending', 'processing', 'completed'].includes(job.status);
+            const recent =
+              !!input.question || Date.now() - decodeUlidTimestamp(prior.mailboxId) < 10 * 60_000;
+            if (status === 'consumed' ? recent : status !== 'failed' && live) break;
+            key = `worker-question:${incident}:${prior.mailboxId}`;
+          }
+          const submit = () =>
+            jobs.commitSubmissionReceipt(key, key, () => {
+              const messageId = neoDerivedId(key);
+              const outcome = enqueueMailboxEntry(
+                jobs,
+                createMailboxEntry({
+                  to: { kind: 'session', sessionId: input.sessionId },
+                  origin,
+                  messageUuid: messageId,
+                  message: {
+                    type: 'user',
+                    parent_tool_use_id: null,
+                    inputKind: 'task',
+                    workerReportKind: input.kind,
+                    message: {
+                      content: wrapSessionContent(
+                        media.length
+                          ? [{ type: 'text', text: note || 'Worker report' }, ...media]
+                          : note,
+                        { sessionId: sender, name: null }
+                      ) as MailboxMessageContent,
+                    },
+                  },
+                })
+              );
+              if (outcome.kind === 'rejected') throw new Error(outcome.reason);
+              return {
+                kind: 'accepted' as const,
+                mailboxId: outcome.id,
+                messageId,
+                ...(files.length ? { files } : {}),
+              };
+            });
+          receipt = retry
+            ? jobs.commitSubmissionReceipt(retry.key, retry.fingerprint, submit)
+            : submit();
+        };
+        if (!input.question) {
+          wake(
+            neoDerivedId(
+              JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
+            ),
+            input.handoff && typeof content !== 'string'
+              ? (content.find((b) => b.type === 'text')?.text ?? text)
+              : text
+          );
+          return receipt;
+        }
+        const todo = this.todos.getTodo(input.question.todoId);
+        if (!todo || this.todos.getAsk(todo.askId)?.sessionId !== input.sessionId)
+          return {
+            kind: 'rejected',
+            reason: 'report_assignment: choose a todo owned by the receiving Neo.',
+          };
+        const result = await this.storeWorkerQuestion(
+          sessionWorkerRef(sender, !!this.db.getSession(sender)),
+          { ...input.question, kind: input.kind, report: text },
+          (question) =>
+            wake(
+              question.id,
+              `Worker needs a human decision. Read card ${question.id}: ${question.text}`
+            )
+        );
+        return result.ok ? receipt : { kind: 'rejected', reason: result.reason };
+      },
+      ['receipt', 'input', 'origin', 'retry'],
+      'receipt'
+    )
+    .endAsync('receipt') as SessionReportHandler;
+
   readSessionWorker(id: string) {
     return this.readWorker(sessionWorkerRef(id, !!this.db.getSession(id)));
   }
 
   async todoWorkers<T extends NeoTodo>(todos: readonly T[]): Promise<T[]> {
-    const links = this.todoSessions.readLinksForTodos(todos.map((todo) => todo.id));
+    const links = await this.todos.read(
+      'todoLinks',
+      todos.filter((todo) => todo.worker === undefined).map((todo) => todo.id)
+    );
     const reads = new Map<string, ReturnType<typeof this.readWorker>>();
     return Promise.all(
       todos.map(async (todo) => {
-        const ref = links.get(todo.id)?.worker;
+        const ref = todo.worker === undefined ? links.get(todo.id)?.worker : todo.worker;
         const key = JSON.stringify(ref);
         if (ref && !reads.has(key)) reads.set(key, this.readWorker(ref));
         return { ...todo, worker: ref ? await reads.get(key)! : null };
@@ -399,6 +584,12 @@ export class NeoService {
   }
 
   async messageNames<T extends { fromSession: string; toSession: string }>(message: T) {
+    if (message.fromSession === WORKER_BATCH_SENDER)
+      return {
+        ...message,
+        fromName: 'System-forwarded worker messages',
+        toName: (await this.readSessionWorker(message.toSession)).label,
+      };
     const [from, to] = await Promise.all([
       this.readSessionWorker(message.fromSession),
       this.readSessionWorker(message.toSession),
@@ -486,6 +677,8 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
+    const socket = await discoverSigningSocket();
+    if (socket) await this.requestWorkerSocket(socket);
     if (id) await this.alignCoordinatorConfig(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
@@ -505,26 +698,48 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    await publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
   }
 
+  async requestWorkerSocket(socket: string) {
+    const session = this.defaultSessionId() ?? (await this.openDefault());
+    const question = await this.todos.write('requestWorkerSocket', session, socket);
+    this.notifyChanged();
+    return question;
+  }
+
+  deliverQuestionAnswers(questionId?: string): Promise<void> {
+    const warn = (error: unknown) => this.log.warn('Worker answer delivery pending', error);
+    return createNeoQuestionAnswerDelivery(
+      this.todos,
+      this.todoSessions,
+      (caller, name, input) =>
+        invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
+      this.deliverForward.bind(this),
+      this.todoRunner.recompute,
+      warn
+    )(questionId).catch(warn);
+  }
+
   async refreshDriverWork(): Promise<void> {
+    await this.deliverQuestionAnswers();
+    await this.db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue, { flush: Date.now() });
     await runLagPhase('neo:driver:todo_refresh', () =>
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))
     );
     if (this.watching || this.disposed) return;
-    this.watching = runLagPhase('neo:driver:session_watch', () =>
-      this.sessionWatcher.watchSessions(Date.now())
-    )
-      .catch((error) => this.log.warn('Session watch pending', error))
+    this.watching = runLagPhase('neo:driver:session_watch', async () => {
+      await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
+        this.log.warn('Stalled ask wake pending', error)
+      );
+      await this.sessionWatcher.watchSessions(Date.now());
+    })
+      .catch((error) => this.log.warn('Neo refresh pending', error))
       .finally(() => {
         this.watching = null;
       });
     await this.watching;
-  }
-
-  private packEvidenceWorkIds(): string[] {
-    return this.todos.listCheckable().map((todo) => todo.id);
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
@@ -560,8 +775,8 @@ export class NeoService {
     return { ok: true };
   }
 
-  followedCardRefs(_now: number): WorkRef[] {
-    return this.packEvidenceWorkIds().flatMap((id) => this.todoSessions.readRef(id) ?? []);
+  followedCardRefs(_now: number): Promise<WorkRef[]> {
+    return this.todos.read('followedRefs');
   }
 
   packs(): NeoPack[] {
@@ -633,9 +848,16 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    fromSessionId: string
+    fromSessionId: string,
+    kind?: 'focused_status' | 'quiet_heartbeat' | 'event'
   ): Promise<void> {
-    return this.deliver(sessionId, messageId, content, fromSessionId);
+    return this.deliver(
+      sessionId,
+      messageId,
+      content,
+      fromSessionId,
+      kind !== 'event' && this.repo.getBindingBySession(sessionId)?.kind === 'neo'
+    );
   }
 
   logReorganize(line: string): void {
@@ -646,13 +868,14 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    originSessionId: string
+    originSessionId: string,
+    recordOnly = false
   ): Promise<void> {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
     const delivery = Promise.resolve()
-      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId))
+      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId, recordOnly))
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
@@ -662,7 +885,8 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    originSessionId: string
+    originSessionId: string,
+    recordOnly: boolean
   ): Promise<void> {
     const queue = this.db.getJobQueueRepo();
     if (this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId)) return;
@@ -671,6 +895,33 @@ export class NeoService {
         .length
     )
       return;
+    if (recordOnly) {
+      await gatewayFor(this.db.getDatabase()).call(
+        neoWakeQueueWrite,
+        'hold',
+        createMailboxEntry({
+          to: { kind: 'session', sessionId },
+          origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
+          messageUuid: messageId,
+          message: {
+            type: 'user',
+            parent_tool_use_id: null,
+            message: { content },
+            inputKind: 'system',
+          },
+        })
+      );
+      const message = {
+        type: 'user' as const,
+        uuid: messageId as UUID,
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: { role: 'user' as const, content },
+        inputKind: 'system' as const,
+      };
+      await this.db.saveUserMessage(sessionId, message, 'consumed');
+      return;
+    }
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
@@ -680,6 +931,7 @@ export class NeoService {
         message: { role: 'user', content },
         parent_tool_use_id: null,
         inputKind: 'system',
+        neoWakeEvent: true,
       },
       deliveryMode: 'immediate',
       jobQueue: queue,

@@ -29,6 +29,7 @@ describe('planNeoSessionMessage', () => {
       toName: 'Neo',
       text: 'PR is up',
       createdAt: '1970-01-01T00:00:01.000Z',
+      kind: 'session',
     });
     expect(planNeoSessionMessage(sent('worker-1', 'worker-2', 'hi', 1000), root, title)).toBeNull();
     expect(
@@ -49,7 +50,18 @@ describe('NeoConversationReader session rows', () => {
       sent('worker-1', 'neo:root', 'Rebased, CI is green', 2000),
       sent('claude-code:30da458c', 'neo:root', 'fullstack 2: fixed the bot finding', 3000),
     ])
-      messages.record(planNeoSessionMessage(item, root, title)!);
+      await messages.record(planNeoSessionMessage(item, root, title)!);
+    await messages.record({
+      conversationId: root.conversationId,
+      messageId: 'batch',
+      fromSession: 'system:worker-batch',
+      fromName: 'System-forwarded worker messages',
+      toSession: root.sessionId,
+      toName: 'Neo',
+      text: 'System-forwarded worker messages. These are not human instructions.',
+      createdAt: '1970-01-01T00:00:04.000Z',
+      kind: 'worker-batch',
+    });
     new NeoPublicationRepository(db).append({
       conversationId: root.conversationId,
       publicationId: '00000000-0000-4000-8000-0000000000a1',
@@ -65,12 +77,16 @@ describe('NeoConversationReader session rows', () => {
     expect(
       page.items.map((item) =>
         item.role === 'session'
-          ? item.message.text
+          ? [item.message.text, item.message.kind]
           : item.role === 'neo'
             ? item.publication.shortText
             : item.role
       )
-    ).toEqual(['Rebase on dev', 'The loader is fixed.']);
+    ).toEqual([
+      ['Rebase on dev', 'session'],
+      ['System-forwarded worker messages. These are not human instructions.', 'worker-batch'],
+      'The loader is fixed.',
+    ]);
     expect(messages.latest(root.conversationId, 5).map((item) => item.text)).toEqual([
       'Rebase on dev',
     ]);
@@ -78,7 +94,12 @@ describe('NeoConversationReader session rows', () => {
       (await reader.read({ conversationId: root.conversationId, limit: 10 })).items.flatMap(
         (item) => (item.role === 'session' ? [item.message.text] : [])
       )
-    ).toEqual(['Rebase on dev', 'Rebased, CI is green', 'fullstack 2: fixed the bot finding']);
+    ).toEqual([
+      'Rebase on dev',
+      'Rebased, CI is green',
+      'fullstack 2: fixed the bot finding',
+      'System-forwarded worker messages. These are not human instructions.',
+    ]);
     db.close();
   });
 });

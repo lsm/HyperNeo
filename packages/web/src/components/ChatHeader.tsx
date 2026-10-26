@@ -61,6 +61,7 @@ export function ChatHeader({
   displayMode,
   onDisplayModeChange,
 }: ChatHeaderProps) {
+  const folder = session?.worktree?.worktreePath ?? session?.workspacePath;
   const returnedAt = session?.metadata.clone?.returnedAt;
   const isChild = !!session?.parentSessionId && !session.id.startsWith('neo:');
   const isClone = isChild && !session?.metadata.movedUnderParent;
@@ -127,6 +128,15 @@ export function ChatHeader({
           >
             {conversationTitle(titleOverride || session?.title || 'New conversation', isClone)}
           </h2>
+          {folder && (
+            <span
+              data-testid="chat-header-folder"
+              title={folder}
+              class="max-w-[45%] truncate text-xs text-fg-muted"
+            >
+              {folder}
+            </span>
+          )}
           {isClone && returnedAt && (
             <span
               class="flex-shrink-0 text-[11px] text-fg-faint"

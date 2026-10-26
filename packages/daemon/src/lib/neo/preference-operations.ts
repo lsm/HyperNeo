@@ -36,8 +36,12 @@ function valueSchema(type: NeoPackPreferenceDeclaration['type']): z.ZodType {
           (n) =>
             (type.min === undefined || n >= type.min) && (type.max === undefined || n <= type.max)
         );
+    case 'repositories':
+      return z.array(z.string().regex(/^[a-z\d](?:[a-z\d-]*[a-z\d])?\/[a-z\d_.-]+$/i));
     case 'globs':
       return z.array(z.string().min(1));
+    case 'text':
+      return z.string().max(200);
     case 'login':
       return z.string().regex(/^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i);
   }

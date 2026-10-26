@@ -1,3 +1,5 @@
+import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
+import { neoCardReplyTitle } from './public-conversation.ts';
 import { NativeContentDisclosure } from '../components/ui/NativeContentDisclosure.tsx';
 import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
@@ -18,6 +20,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
 import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoPreviewReference } from './NeoPreviewReference.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
 import { NeoClampedText } from './NeoClampedText.tsx';
 import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
@@ -412,10 +415,12 @@ function PublicEntry({
   replyLabels,
   onQuote,
   onSeek,
+  onOpenWork,
   status,
 }: {
   entry: NeoPublicEntry;
   status?: NeoMessageStatus;
+  onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
   onSeek?: (messageId: string) => void;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
@@ -537,6 +542,7 @@ function PublicEntry({
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
       >
+        <NeoPreviewReference reference={ask?.previewContext} />
         {ask?.replyTo && (
           <div data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}>
             <ReplyQuote replyTo={ask.replyTo} labels={replyLabels} onSeek={onSeek} />
@@ -564,6 +570,28 @@ function PublicEntry({
           </div>
         )}
         {(() => {
+          if (publication?.cardReply)
+            return (
+              <button
+                type="button"
+                class="text-left text-accent hover:underline focus-visible:outline-accent"
+                disabled={!onOpenWork}
+                onClick={() =>
+                  onOpenWork?.(
+                    `neo-ref-question-${publication.cardReply!.questionId}`,
+                    publication.cardReply
+                  )
+                }
+              >
+                {t('chat.cardReply')}
+                <span class="block text-sm text-fg">
+                  {neoCardReplyTitle(
+                    publication,
+                    replyLabels?.get(`question:${publication.cardReply.questionId}`)?.label
+                  )}
+                </span>
+              </button>
+            );
           const fold = (
             <ContentDisclosureControl expanded={expanded} onToggle={() => setExpanded(!expanded)} />
           );
@@ -623,7 +651,9 @@ function PublicEntry({
           );
         })()}
       </div>
-      {publication && (publication.editedAt || publication.revisions?.length) ? (
+      {publication &&
+      !publication.cardReply &&
+      (publication.editedAt || publication.revisions?.length) ? (
         <div class="flow-root mt-1">
           {history && <NeoPublicationHistory publication={publication} id={`${anchor}-history`} />}
           <ContentDisclosureControl
@@ -781,6 +811,7 @@ export function PendingAsk({
       <div
         class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}
       >
+        <NeoPreviewReference reference={ask.previewContext} />
         {ask.quote && (
           <NeoQuoteBar
             author={ask.quote.author}
@@ -862,7 +893,7 @@ export function NeoPublicConversation({
   onEditUndelivered?: NeoEditUndelivered;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
-  onOpenWork?: (anchor: string) => void;
+  onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
 }) {
   const wakeFor = (id: string) =>
     conversation.entries.find(
@@ -892,13 +923,16 @@ export function NeoPublicConversation({
   };
   return (
     <div class="space-y-6" aria-label={t('chat.public')}>
-      {conversation.status !== 'ready' && (
-        <p role="status" class="text-sm text-fg-muted">
-          {conversation.status === 'loading'
-            ? t('chat.loading')
-            : t(conversation.entries.length > 0 ? 'chat.unavailableRetained' : 'chat.unavailable')}
-        </p>
-      )}
+      {conversation.status !== 'ready' &&
+        (conversation.status === 'unavailable' || conversation.entries.length === 0) && (
+          <p role="status" class="text-sm text-fg-muted">
+            {conversation.status === 'loading'
+              ? t('chat.loading')
+              : t(
+                  conversation.entries.length > 0 ? 'chat.unavailableRetained' : 'chat.unavailable'
+                )}
+          </p>
+        )}
       {conversation.status === 'unavailable' && onRetry && (
         <button type="button" class="text-sm text-accent hover:underline" onClick={onRetry}>
           {t('chat.retryLoad')}
@@ -938,6 +972,7 @@ export function NeoPublicConversation({
                     <PublicEntry
                       key={item.key}
                       entry={item}
+                      onOpenWork={onOpenWork}
                       replyLabels={labels}
                       onSeek={seek}
                       onQuote={onQuote}
@@ -953,6 +988,7 @@ export function NeoPublicConversation({
           <PublicEntry
             key={entry.key}
             entry={entry}
+            onOpenWork={onOpenWork}
             onEditUndelivered={onEditUndelivered}
             replyLabels={labels}
             onSeek={seek}

@@ -1,4 +1,5 @@
 import { Database as BunDatabase } from 'bun:sqlite';
+import { backfillSdkMessageColumns } from '../../../../src/storage/schema/m413-sdk-message-columns';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import type { McpServerConfig } from '@hyperneo/shared';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session.ts';
@@ -147,7 +148,10 @@ function makeManager(): {
     title: 'Rehydrate MCP task',
   };
   const tam = new TaskAgentManager({
-    db: { getDatabase: () => new BunDatabase(':memory:') },
+    db: {
+      getDatabase: () => new BunDatabase(':memory:'),
+      waitForSdkMessageColumns: async () => {},
+    },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
     sessionManager: {
       registerSession: (session: AgentSessionType) => {
@@ -205,6 +209,63 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
   afterEach(() => {
     restoreSpy?.mockRestore();
+  });
+
+  test('startup rehydration waits for legacy projections before deciding pending-input replay', async () => {
+    const { tam } = makeManager();
+    const outbox = createOutboxTestDb();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const config = tam.config as unknown as {
+      db: Record<string, unknown>;
+      taskRepo: Record<string, unknown>;
+    };
+    let release = () => {};
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    outbox.db.exec(
+      'CREATE TABLE migration_markers (key TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)'
+    );
+    outbox.db
+      .prepare(`INSERT INTO sdk_messages (id,session_id,message_type,sdk_message,timestamp,send_status,sdk_uuid)
+      VALUES ('legacy-input',?,'user',?,'2026-10-23T00:00:00Z','enqueued','legacy-input')`)
+      .run(
+        SUB_SESSION_ID,
+        JSON.stringify({
+          type: 'user',
+          uuid: 'legacy-input',
+          inputKind: 'task',
+          message: { role: 'user', content: 'retained task input' },
+        })
+      );
+    outbox.db.exec(
+      'ALTER TABLE sdk_messages ADD COLUMN seq INTEGER; UPDATE sdk_messages SET seq=rowid'
+    );
+    Object.assign(config.db, {
+      getDatabase: () => outbox.db,
+      waitForSdkMessageColumns: () => ready,
+      getSDKMessageRepo: () => outbox.sdkRepo,
+      getJobQueueRepo: () => outbox.jobQueue,
+      getUserMessageIdsByStatus: (id: string, status: 'enqueued' | 'deferred') =>
+        outbox.sdkRepo.getUserMessageIdsByStatus(id, status),
+    });
+    config.taskRepo.listActiveWithTaskAgentSession = () => [];
+    config.taskRepo.listActive = () => [{ workflowRunId: RUN_ID }];
+    restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(fake.agentSession);
+    try {
+      expect(outbox.sdkRepo.getUserMessageIdsByStatus(SUB_SESSION_ID, 'enqueued')).toHaveLength(0);
+      const restored = tam.rehydrate();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(restoreSpy).not.toHaveBeenCalled();
+      await backfillSdkMessageColumns(outbox.db, () => {});
+      release();
+      await restored;
+      expect(outbox.sdkRepo.getUserMessageIdsByStatus(SUB_SESSION_ID, 'enqueued')).toHaveLength(1);
+      expect(fake.state.calls).toContain('replayPendingMessagesForImmediateMode');
+    } finally {
+      release();
+      outbox.db.close();
+    }
   });
 
   test('resumes a persisted worker through the original session ID', async () => {
@@ -777,11 +838,11 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getDatabase = () => outbox.db;
     config.db.getSDKMessageRepo = () => outbox.sdkRepo;
     config.db.getJobQueueRepo = () => outbox.jobQueue;
-    config.db.saveUserMessage = (
+    config.db.saveUserMessage = async (
       sessionId: string,
       message: unknown,
       sendStatus?: string
-    ): string => {
+    ): Promise<string> => {
       const uuid = (message as { uuid?: string }).uuid ?? 'unknown';
       const dbId = `${sessionId}:${uuid}`;
       outbox.db
@@ -843,11 +904,11 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getJobQueueRepo = () => outbox.jobQueue;
     config.db.getUserMessagesByStatus = (sessionId: string, status: string) =>
       outbox.sdkRepo.getUserMessagesByStatus(sessionId, status as never);
-    config.db.saveUserMessage = (
+    config.db.saveUserMessage = async (
       sessionId: string,
       message: unknown,
       sendStatus?: string
-    ): string => {
+    ): Promise<string> => {
       const uuid = (message as { uuid?: string }).uuid ?? 'unknown';
       const dbId = `${sessionId}:${uuid}`;
       outbox.db
@@ -913,11 +974,11 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getJobQueueRepo = () => outbox.jobQueue;
     config.db.getUserMessagesByStatus = (sessionId: string, status: string) =>
       outbox.sdkRepo.getUserMessagesByStatus(sessionId, status as never);
-    config.db.saveUserMessage = (
+    config.db.saveUserMessage = async (
       sessionId: string,
       message: unknown,
       sendStatus?: string
-    ): string => {
+    ): Promise<string> => {
       const uuid = (message as { uuid?: string }).uuid ?? 'unknown';
       const dbId = `${sessionId}:${uuid}`;
       outbox.db
@@ -982,11 +1043,11 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getDatabase = () => outbox.db;
     config.db.getSDKMessageRepo = () => outbox.sdkRepo;
     config.db.getJobQueueRepo = () => outbox.jobQueue;
-    config.db.saveUserMessage = (
+    config.db.saveUserMessage = async (
       sessionId: string,
       message: unknown,
       sendStatus?: string
-    ): string => {
+    ): Promise<string> => {
       const uuid = (message as { uuid?: string }).uuid ?? 'unknown';
       const dbId = `${sessionId}:${uuid}`;
       outbox.db
@@ -1043,7 +1104,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getDatabase = () => outbox.db;
     config.db.getSDKMessageRepo = () => outbox.sdkRepo;
     config.db.getJobQueueRepo = () => outbox.jobQueue;
-    config.db.saveUserMessage = () => 'db-id';
+    config.db.saveUserMessage = async () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
     const session = fake.agentSession as unknown as Record<string, unknown>;
     session.handleQueryTrigger = async () => ({ success: true, messageCount: 0 });
@@ -1090,7 +1151,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getDatabase = () => outbox.db;
     config.db.getSDKMessageRepo = () => outbox.sdkRepo;
     config.db.getJobQueueRepo = () => outbox.jobQueue;
-    config.db.saveUserMessage = () => 'db-id';
+    config.db.saveUserMessage = async () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
     const session = fake.agentSession as unknown as Record<string, unknown>;
     session.replayPendingMessagesForImmediateMode = async () => {};

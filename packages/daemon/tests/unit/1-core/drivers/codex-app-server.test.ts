@@ -1,3 +1,9 @@
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -69,6 +75,138 @@ describe('connectCodexAppServer', () => {
       });
     } finally {
       client.close();
+    }
+  });
+
+  test.each([false, true])(
+    'unsubscribes only its own turn at completion, including early notification: %s',
+    async (early) => {
+      const { path, seen } = await listen();
+      let complete = () => {};
+      sockets.removeAllListeners('connection');
+      sockets.on('connection', (socket) => {
+        complete = () =>
+          socket.send(
+            JSON.stringify({
+              method: 'turn/completed',
+              params: { threadId: 'owned-thread', turn: { id: 'owned-turn', status: 'completed' } },
+            })
+          );
+        socket.on('message', (data) => {
+          const message = JSON.parse(String(data));
+          seen.push({ method: message.method, params: message.params });
+          if (message.id === undefined) return;
+          if (message.method === 'turn/start' && early) complete();
+          socket.send(
+            JSON.stringify({
+              id: message.id,
+              result: message.method === 'turn/start' ? { turn: { id: 'owned-turn' } } : {},
+            })
+          );
+        });
+      });
+      const client = await connectCodexAppServer(path);
+      try {
+        await client.call('turn/start', { threadId: 'owned-thread', input: [] });
+        if (!early) {
+          await client.close();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          expect(seen.some((m) => m.method === 'thread/unsubscribe')).toBe(false);
+          for (const peer of sockets.clients)
+            peer.send(
+              JSON.stringify({
+                method: 'turn/completed',
+                params: { threadId: 'other-thread', turn: { id: 'owned-turn' } },
+              })
+            );
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          expect(seen.some((m) => m.method === 'thread/unsubscribe')).toBe(false);
+          complete();
+        }
+        const deadline = Date.now() + 1000;
+        while (!seen.some((m) => m.method === 'thread/unsubscribe') && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(seen.filter((m) => m.method === 'thread/unsubscribe')).toEqual([
+          { method: 'thread/unsubscribe', params: { threadId: 'owned-thread' } },
+        ]);
+      } finally {
+        await client.close();
+      }
+    }
+  );
+
+  test.each([false, true])(
+    'bounds deferred close retention when completion is missing or mismatched: %s',
+    async (mismatched) => {
+      const { path, seen } = await listen();
+      sockets.removeAllListeners('connection');
+      sockets.on('connection', (socket) => {
+        socket.on('message', (data) => {
+          const message = JSON.parse(String(data));
+          seen.push({ method: message.method, params: message.params });
+          if (message.id === undefined) return;
+          socket.send(
+            JSON.stringify({
+              id: message.id,
+              result: message.method === 'turn/start' ? { turn: { id: 'owned-turn' } } : {},
+            })
+          );
+          if (message.method === 'turn/start' && mismatched)
+            socket.send(
+              JSON.stringify({
+                method: 'turn/completed',
+                params: { threadId: 'owned-thread', turn: { id: 'different-turn' } },
+              })
+            );
+        });
+      });
+      const client = await connectCodexAppServer(path, 25);
+      try {
+        await client.call('turn/start', { threadId: 'owned-thread', input: [] });
+        client.close();
+        const deadline = Date.now() + 500;
+        while (sockets.clients.size && Date.now() < deadline)
+          await new Promise((done) => setTimeout(done, 5));
+        expect(seen.filter((m) => m.method === 'thread/unsubscribe')).toEqual([
+          { method: 'thread/unsubscribe', params: { threadId: 'owned-thread' } },
+        ]);
+        expect(sockets.clients.size).toBe(0);
+        expect(seen.some((m) => m.method === 'turn/interrupt')).toBe(false);
+      } finally {
+        for (const peer of sockets.clients) peer.terminate();
+        client.close();
+      }
+    }
+  );
+
+  test('logs unrecognized completion shape without its contents', async () => {
+    const { path } = await listen();
+    const config = getLoggerConfig();
+    configureLogger({ level: LogLevel.WARN, filter: ['*'], excludeFilter: [] });
+    const logs: string[] = [];
+    const off = subscribeToStructuredLogs((event) => {
+      if (event.message.startsWith('work.send app-server completion unrecognized'))
+        logs.push(event.message);
+    });
+    const client = await connectCodexAppServer(path);
+    try {
+      for (const peer of sockets.clients)
+        peer.send(
+          JSON.stringify({
+            method: 'turn/completed',
+            params: { threadId: 'synthetic-thread', turn: {}, privateMarker: 'MUST_NOT_BE_LOGGED' },
+          })
+        );
+      for (let n = 0; n < 50 && !logs.length; n++)
+        await new Promise((done) => setTimeout(done, 10));
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain('"hasThreadId":true');
+      expect(logs[0]).toContain('"hasTurnId":false');
+      expect(logs[0]).not.toContain('MUST_NOT_BE_LOGGED');
+    } finally {
+      client.close();
+      off();
+      configureLogger(config);
     }
   });
 

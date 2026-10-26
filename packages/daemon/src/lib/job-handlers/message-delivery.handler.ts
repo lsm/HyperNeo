@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { routeDriveTurnOutcome } from '../agent/handler-outcome-routing.ts';
@@ -16,8 +18,9 @@ export interface MessageDeliveryHandlerDeps {
   getSession(sessionId: string): Promise<MessageDeliverySession | null>;
   getSessionCooldownRetryAt?(sessionId: string): number | null;
   getMessageContent(sessionId: string, messageUuid: string): DeliveryLoadResult | null;
+  prepareContent?(loaded: DeliveryLoadResult, job: Job): Promise<DeliveryLoadResult>;
   isSessionArchived?(sessionId: string): boolean;
-  markDeliveryFailed?(sessionId: string, messageUuid: string): string | null;
+  markDeliveryFailed?(sessionId: string, messageUuid: string): Promise<string | null>;
   publishStatusChanged?(sessionId: string, messageIds: string[]): Promise<unknown>;
   metrics?: DeliveryMetrics;
 }
@@ -39,7 +42,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
 
     if (deps.isSessionArchived?.(payload.sessionId)) {
       const flippedIds: string[] = [];
-      const failedDbId = deps.markDeliveryFailed?.(payload.sessionId, payload.messageUuid) ?? null;
+      const failedDbId =
+        (await deps.markDeliveryFailed?.(payload.sessionId, payload.messageUuid)) ?? null;
       if (failedDbId) flippedIds.push(failedDbId);
       if (flippedIds.length > 0 && deps.publishStatusChanged) {
         void deps.publishStatusChanged(payload.sessionId, flippedIds).catch(() => {});
@@ -57,7 +61,14 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     const cooldownRetryAt = deps.getSessionCooldownRetryAt?.(payload.sessionId) ?? null;
     if (cooldownRetryAt !== null) {
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
-      deps.jobQueue.requeueParked(job.id, cooldownRetryAt, job.claimToken);
+      const parked = await gatewayFor(deps.jobQueue.db).call(
+        parkDeliveryJob,
+        'park',
+        job.id,
+        cooldownRetryAt,
+        job.claimToken
+      );
+      if (!parked) return { outcome: 'stale_attempt' };
       return { parked: 'rate_limit_cooldown', retryAt: cooldownRetryAt };
     }
     const loaded = deps.getMessageContent(payload.sessionId, payload.messageUuid);
@@ -68,7 +79,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       return { outcome: 'no_content' };
     }
 
-    const { content, sendStatus } = loaded;
+    const { sendStatus } = loaded;
 
     if (sendStatus === 'consumed') {
       return { outcome: 'completed' };
@@ -79,6 +90,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     }
 
     if (!claimCurrent()) return { outcome: 'stale_attempt' };
+    const { content } = deps.prepareContent ? await deps.prepareContent(loaded, job) : loaded;
     let result: DeliveryOutcome;
     try {
       result = await session.driveDeliveryTurn(
@@ -94,7 +106,14 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       if (!(error instanceof Error) || error.message !== 'Interrupted by user') throw error;
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      const parked = await gatewayFor(deps.jobQueue.db).call(
+        parkDeliveryJob,
+        'park',
+        job.id,
+        retryAt,
+        job.claimToken
+      );
+      if (!parked) return { outcome: 'stale_attempt' };
       return { parked: 'user_interrupt', retryAt };
     }
     const route = routeDriveTurnOutcome(result);
@@ -105,7 +124,14 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       await session.settleSkippedDelivery?.(payload.messageUuid);
     }
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
-      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
+      const parked = await gatewayFor(deps.jobQueue.db).call(
+        parkDeliveryJob,
+        'park',
+        job.id,
+        route.retryAt,
+        job.claimToken
+      );
+      if (!parked) return { outcome: 'stale_attempt' };
     }
     return route.result;
   };

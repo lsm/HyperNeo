@@ -1,0 +1,741 @@
+{
+  "mode": "before",
+  "build": "7bb3531241dcfe70a630ec635d67d3c16ecc9a26",
+  "fanout": [
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    },
+    {
+      "accepted": true
+    }
+  ],
+  "first": {
+    "repo": "synthetic/ledger",
+    "number": 7,
+    "fact_revision": 1,
+    "observation_revision": 1,
+    "value_json": "{\"state\":\"MERGED\",\"mergeCommit\":\"cccccccccccccccccccccccccccccccccccccccc\"}",
+    "source": "github-pr-detail",
+    "observed_at": 1792970429688,
+    "attempted_at": 1792970429688,
+    "reason": null
+  },
+  "known": {
+    "accepted": true
+  },
+  "failed": {
+    "accepted": false,
+    "reason": "matching_merge_commit_required"
+  },
+  "partial": {
+    "accepted": false,
+    "reason": "matching_merge_commit_required"
+  },
+  "recovered": {
+    "accepted": true
+  },
+  "reopened": {
+    "accepted": true
+  },
+  "closed": {
+    "accepted": false,
+    "reason": "matching_merge_commit_required"
+  },
+  "taskKnown": {
+    "id": "affa646d-a787-4aa3-bc96-954046e98d28",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970431546,
+    "startedAt": null,
+    "completedAt": 1792970431550,
+    "archivedAt": null,
+    "updatedAt": 1792970431550,
+    "spaceId": "d128dea4-b492-4974-bb85-800076a3b5ca",
+    "taskNumber": 1,
+    "workflowRunId": "ea9e1721-aaa8-48ed-bb7c-bb18c06bf910",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "taskOpen": {
+    "accepted": false,
+    "reason": "task_completion_unavailable",
+    "detail": "mark_complete merge gate: the run's PR is still OPEN (https://github.com/synthetic/ledger/pull/9). Merge it before calling mark_complete (gh pr merge), then retry."
+  },
+  "taskMerged": {
+    "id": "1aded59c-cd7d-4330-8028-6709267d140f",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970431875,
+    "startedAt": null,
+    "completedAt": 1792970432199,
+    "archivedAt": null,
+    "updatedAt": 1792970432199,
+    "spaceId": "d128dea4-b492-4974-bb85-800076a3b5ca",
+    "taskNumber": 3,
+    "workflowRunId": "eb172fd5-966f-4514-b203-5ef184495d09",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "taskWasClosed": {
+    "id": "78946b89-0f34-4dda-b616-123385a9a129",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970432201,
+    "startedAt": null,
+    "completedAt": 1792970432525,
+    "archivedAt": null,
+    "updatedAt": 1792970432525,
+    "spaceId": "d128dea4-b492-4974-bb85-800076a3b5ca",
+    "taskNumber": 4,
+    "workflowRunId": "df155d3b-bdda-4fd6-a542-42c7640b4567",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "noCommit": [
+    {
+      "id": "67332abc-68a0-4bce-946a-091ad0bce20b",
+      "title": "Synthetic task",
+      "description": "",
+      "status": "done",
+      "priority": "normal",
+      "labels": [],
+      "dependsOn": [],
+      "result": "Task completed.",
+      "createdAt": 1792970432528,
+      "startedAt": null,
+      "completedAt": 1792970432853,
+      "archivedAt": null,
+      "updatedAt": 1792970432853,
+      "spaceId": "d128dea4-b492-4974-bb85-800076a3b5ca",
+      "taskNumber": 5,
+      "workflowRunId": "c0b88cc4-6cac-4665-83a7-e17389d6ed3b",
+      "workspacePath": null,
+      "activeSession": null,
+      "blockReason": null,
+      "approvalSource": "agent",
+      "approvalReason": null,
+      "approvedAt": null,
+      "pendingCheckpointType": null,
+      "pendingCompletionGeneration": 0,
+      "pendingCompletionSubmittedByNodeId": null,
+      "pendingCompletionSubmittedAt": null,
+      "pendingCompletionReason": null,
+      "reportedStatus": null,
+      "reportedSummary": null,
+      "postApprovalSessionId": null,
+      "postApprovalStartedAt": null,
+      "postApprovalBlockedReason": null,
+      "postApprovalSourceNodeId": null,
+      "restrictions": null,
+      "terminalGeneration": 1
+    },
+    {
+      "id": "e65174a4-e8e2-4fb3-a845-a7f35c8327c5",
+      "title": "Synthetic task",
+      "description": "",
+      "status": "done",
+      "priority": "normal",
+      "labels": [],
+      "dependsOn": [],
+      "result": "Task completed.",
+      "createdAt": 1792970432854,
+      "startedAt": null,
+      "completedAt": 1792970433178,
+      "archivedAt": null,
+      "updatedAt": 1792970433178,
+      "spaceId": "d128dea4-b492-4974-bb85-800076a3b5ca",
+      "taskNumber": 6,
+      "workflowRunId": "546a83c1-8d90-4eef-843e-3ecfb5c629be",
+      "workspacePath": null,
+      "activeSession": null,
+      "blockReason": null,
+      "approvalSource": "agent",
+      "approvalReason": null,
+      "approvedAt": null,
+      "pendingCheckpointType": null,
+      "pendingCompletionGeneration": 0,
+      "pendingCompletionSubmittedByNodeId": null,
+      "pendingCompletionSubmittedAt": null,
+      "pendingCompletionReason": null,
+      "reportedStatus": null,
+      "reportedSummary": null,
+      "postApprovalSessionId": null,
+      "postApprovalStartedAt": null,
+      "postApprovalBlockedReason": null,
+      "postApprovalSourceNodeId": null,
+      "restrictions": null,
+      "terminalGeneration": 1
+    }
+  ],
+  "task-failed": {
+    "accepted": false,
+    "reason": "task_completion_unavailable",
+    "detail": "mark_complete merge gate: could not verify the run's PR state for https://github.com/synthetic/ledger/pull/10 (GitHub PR state unavailable: failed). The task stays approved until the PR is confirmed merged."
+  },
+  "task-partial": {
+    "accepted": false,
+    "reason": "task_completion_unavailable",
+    "detail": "mark_complete merge gate: could not verify the run's PR state for https://github.com/synthetic/ledger/pull/11 (GitHub PR state unavailable: partial). The task stays approved until the PR is confirmed merged."
+  },
+  "taskRecovered": {
+    "id": "4c7fa6e0-0440-48ae-902c-3ac318c114f2",
+    "title": "Synthetic task",
+    "description": "",
+    "status": "done",
+    "priority": "normal",
+    "labels": [],
+    "dependsOn": [],
+    "result": "Task completed.",
+    "createdAt": 1792970433825,
+    "startedAt": null,
+    "completedAt": 1792970434148,
+    "archivedAt": null,
+    "updatedAt": 1792970434148,
+    "spaceId": "d128dea4-b492-4974-bb85-800076a3b5ca",
+    "taskNumber": 9,
+    "workflowRunId": "bd679d73-3659-43da-b879-6b6925ac8fba",
+    "workspacePath": null,
+    "activeSession": null,
+    "blockReason": null,
+    "approvalSource": "agent",
+    "approvalReason": null,
+    "approvedAt": null,
+    "pendingCheckpointType": null,
+    "pendingCompletionGeneration": 0,
+    "pendingCompletionSubmittedByNodeId": null,
+    "pendingCompletionSubmittedAt": null,
+    "pendingCompletionReason": null,
+    "reportedStatus": null,
+    "reportedSummary": null,
+    "postApprovalSessionId": null,
+    "postApprovalStartedAt": null,
+    "postApprovalBlockedReason": null,
+    "postApprovalSourceNodeId": null,
+    "restrictions": null,
+    "terminalGeneration": 1
+  },
+  "counts": {
+    "initial": 1,
+    "known": 0,
+    "failed": 1,
+    "partial": 1,
+    "recovered": 1,
+    "reopen": 0,
+    "closed": 1,
+    "known-negative": 0,
+    "task-known": 0,
+    "task-open": 1,
+    "task-merged": 2,
+    "no-commit": 2,
+    "task-failed": 1,
+    "task-partial": 1,
+    "task-recovered": 1
+  },
+  "verified": true,
+  "mainSql": [
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?",
+    "INSERT INTO pack_coding_merge_facts\n        (repo, number, fact_revision, observation_revision, value_json, source, observed_at, attempted_at, reason)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT(repo, number) DO UPDATE SET fact_revision = excluded.fact_revision,\n        observation_revision = excluded.observation_revision, value_json = excluded.value_json,\n        source = excluded.source, observed_at = excluded.observed_at,\n        attempted_at = excluded.attempted_at, reason = excluded.reason",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT fact_revision AS factRevision, observation_revision AS observationRevision,\n    value_json AS value, source, observed_at AS observedAt, attempted_at AS attemptedAt, reason\n    FROM pack_coding_merge_facts WHERE repo = ? AND number = ?"
+  ],
+  "commands": [],
+  "rpcMetrics": [
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 716.7300829999999
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 716.603666
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 716.5904580000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 716.5850829999999
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 716.5874159999998
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 20.7126659999999
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 342.4072080000001
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 340.42570799999976
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 340.3294169999999
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 185.23862499999996
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 339.27641700000004
+    },
+    {
+      "name": "neo.coding.smoke",
+      "durationMs": 19.949208
+    }
+  ],
+  "gatewayMetrics": [],
+  "maxLagMs": 18.428999999999633,
+  "requests": [
+    {
+      "phase": "initial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "initial",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "known",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/7",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "closed",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "closed",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "known-negative",
+      "family": "work",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences"
+      ]
+    },
+    {
+      "phase": "task-open",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-merged",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/9",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-merged",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/8",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "no-commit",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/12",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "no-commit",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/12",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-failed",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/10",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-partial",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/11",
+        "--json",
+        "state,mergeCommit"
+      ]
+    },
+    {
+      "phase": "task-recovered",
+      "family": "merge",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/ledger/pull/11",
+        "--json",
+        "state,mergeCommit"
+      ]
+    }
+  ]
+}

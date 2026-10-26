@@ -1,0 +1,519 @@
+{
+  "scope": "Lane A row 25: bounded query observations",
+  "regressionCommit": "c8ce8d71cc4829fdee334261fc936279ec2f484d",
+  "productionChangedLines": 153,
+  "focusedUnitTests": 12,
+  "focusedAssertions": 82,
+  "repositoryCheck": "passed",
+  "versions": {
+    "bun": "1.4.3",
+    "deno": "2.9.4"
+  },
+  "oneExistingCheckout": true,
+  "noNewInstall": true,
+  "runtimes": {
+    "bun": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 62,
+        "gatewayCommands": 0,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "failed": 1,
+          "malformed": 1,
+          "empty": 1
+        },
+        "rollingStoredRows": 1,
+        "maxLoopLagMs": 11.711291000000074,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.0755386352539,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          456.6387920000001,
+          456.617084,
+          456.61012500000004,
+          456.60908300000006,
+          456.605,
+          318.6589999999999,
+          316.5915,
+          316.15945799999986,
+          317.3098749999999,
+          316.78125,
+          295.9789579999997,
+          275.92029100000036,
+          255.29037500000004,
+          233.25279199999977,
+          317.58183299999973,
+          319.5195840000001,
+          321.1215420000003
+        ],
+        "rss": {
+          "before": 95978432,
+          "after": 130581560
+        }
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 24,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "failed": 1,
+          "malformed": 1,
+          "empty": 1
+        },
+        "rollingStoredRows": 1,
+        "maxLoopLagMs": 8.707499999999982,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.1755256652832,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          611.3646669999999,
+          611.3414999999999,
+          611.3389159999999,
+          611.335792,
+          611.328834,
+          318.7925,
+          318.59329100000014,
+          318.3174590000003,
+          375.17875000000004,
+          316.07733400000006,
+          295.44341699999995,
+          275.3717919999999,
+          254.9414999999999,
+          234.84787500000039,
+          315.50941699999976,
+          314.86799999999994,
+          315.99737499999947
+        ],
+        "rss": {
+          "before": 94553024,
+          "after": 147604536
+        },
+        "fence": {
+          "before": 4,
+          "after": 5,
+          "winningCoverage": {
+            "kind": "bounded-query",
+            "query": {
+              "repo": "synthetic/ledger",
+              "kind": "pr",
+              "state": "merged",
+              "by": "merged",
+              "since": "2026-10-15T11:00:00Z",
+              "limit": 2,
+              "withinHours": 3
+            }
+          }
+        },
+        "contention": {
+          "healthMs": 0.5359170000001541,
+          "writeMs": 1205.1542089999994,
+          "affectedWriteUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 65.04458299999999,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.5210420000000795,
+            "argsBytes": 1084,
+            "replyBytes": 1061
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.2594169999999849,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.34858299999996234,
+            "argsBytes": 1078,
+            "replyBytes": 1055
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.08445800000004056,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.35862500000030195,
+            "argsBytes": 364,
+            "replyBytes": 330
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.17866700000013225,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.4227080000000569,
+            "argsBytes": 364,
+            "replyBytes": 330
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 55.27470900000026,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.6576249999998254,
+            "argsBytes": 362,
+            "replyBytes": 340
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.13124999999990905,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.25645799999983865,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.1272079999998823,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.21941599999991013,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.11425000000008367,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.2044580000001588,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.09587499999997817,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.21958300000005693,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.07929199999944103,
+            "argsBytes": 158,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.06779200000073615,
+            "argsBytes": 158,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.19145900000057736,
+            "argsBytes": 295,
+            "replyBytes": 325
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.25466599999981554,
+            "argsBytes": 1017,
+            "replyBytes": 325
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.19237500000053842,
+            "argsBytes": 158,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 884.5410410000004,
+            "argsBytes": 1017,
+            "replyBytes": 1046
+          }
+        ]
+      }
+    },
+    "deno": {
+      "before": {
+        "verified": true,
+        "mainConnectionTargetSql": 62,
+        "gatewayCommands": 0,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "failed": 1,
+          "malformed": 1,
+          "empty": 1
+        },
+        "rollingStoredRows": 1,
+        "maxLoopLagMs": 7.772041000000172,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.0738067626953,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          450.3773329999999,
+          450.3165839999999,
+          450.31383299999993,
+          450.3151250000001,
+          450.31950000000006,
+          316.16925000000015,
+          319.88904100000013,
+          320.02599999999984,
+          321.2497079999998,
+          320.19833400000016,
+          297.22329100000024,
+          274.64075,
+          253.9867089999998,
+          231.62195800000018,
+          318.8047080000001,
+          321.9841250000004,
+          315.8029580000002
+        ],
+        "rss": {
+          "before": 226787328,
+          "after": 312737792
+        }
+      },
+      "verify": {
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 24,
+        "acquisitionCounts": {
+          "initial": 1,
+          "changed": 1,
+          "failed": 1,
+          "malformed": 1,
+          "empty": 1
+        },
+        "rollingStoredRows": 1,
+        "maxLoopLagMs": 18.497292000000016,
+        "temporaryDaemonDataRemoved": true,
+        "freeGiBBefore": 258.17013931274414,
+        "exitCode": 0,
+        "rpcDurationMs": [
+          717.5692920000001,
+          717.4185000000002,
+          717.4097909999996,
+          716.6160829999999,
+          716.54475,
+          317.87966700000015,
+          316.3711669999998,
+          316.3030829999998,
+          509.6467079999993,
+          321.52225,
+          299.54299999999967,
+          277.8812079999998,
+          256.3782089999995,
+          234.91899999999987,
+          321.0175420000005,
+          322.7947090000007,
+          341.83445800000027
+        ],
+        "rss": {
+          "before": 215891968,
+          "after": 332251136
+        },
+        "fence": {
+          "before": 4,
+          "after": 5,
+          "winningCoverage": {
+            "kind": "bounded-query",
+            "query": {
+              "repo": "synthetic/ledger",
+              "kind": "pr",
+              "state": "merged",
+              "by": "merged",
+              "since": "2026-10-15T11:00:00Z",
+              "limit": 2,
+              "withinHours": 3
+            }
+          }
+        },
+        "contention": {
+          "healthMs": 0.7660420000001977,
+          "writeMs": 1210.3570420000005,
+          "affectedWriteUnder250ms": false
+        },
+        "gatewayMetrics": [
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 238.51624999999967,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.63412500000004,
+            "argsBytes": 1084,
+            "replyBytes": 1061
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.28412500000013097,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.31258299999990413,
+            "argsBytes": 1078,
+            "replyBytes": 1055
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.22424999999975626,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.323790999999801,
+            "argsBytes": 364,
+            "replyBytes": 330
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.2023340000000644,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.2694579999997586,
+            "argsBytes": 364,
+            "replyBytes": 330
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 180.00645800000075,
+            "argsBytes": 173,
+            "replyBytes": 349
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.6335840000001554,
+            "argsBytes": 362,
+            "replyBytes": 340
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.4875419999998485,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.35170799999923474,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.3846670000002632,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.30958300000020245,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.20125000000007276,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.5944579999995767,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.27791700000034325,
+            "argsBytes": 162,
+            "replyBytes": 286
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.31212500000037835,
+            "argsBytes": 1021,
+            "replyBytes": 1050
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.1818329999996422,
+            "argsBytes": 158,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.16537500000049477,
+            "argsBytes": 158,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.29724999999962165,
+            "argsBytes": 295,
+            "replyBytes": 325
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 0.995665999999801,
+            "argsBytes": 1017,
+            "replyBytes": 325
+          },
+          {
+            "operation": "coding.query.snapshot",
+            "durationMs": 0.49662500000067666,
+            "argsBytes": 158,
+            "replyBytes": 282
+          },
+          {
+            "operation": "coding.query.observe",
+            "durationMs": 889.3914169999998,
+            "argsBytes": 1017,
+            "replyBytes": 1046
+          }
+        ]
+      }
+    }
+  },
+  "limits": [
+    "The intentionally delayed 300 ms synthetic upstream and held 1.2-second writer exceed the 250 ms affected-operation target.",
+    "Gateway elapsed time and serialized sizes are recorded; queue, SQL and cloning time are not separately attributed.",
+    "No UI, model turn, production data or deployment was exercised. Other lane-A rows remain."
+  ]
+}

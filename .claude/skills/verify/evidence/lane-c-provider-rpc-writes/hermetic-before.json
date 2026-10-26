@@ -1,0 +1,8 @@
+{
+  "exitCode": 1,
+  "failedTests": 8,
+  "passedTests": 4,
+  "guard": "default credential key-path resolution is forbidden",
+  "result": "guard rejected the default resolver before file access",
+  "environment": "scrubbed environment and disposable home"
+}

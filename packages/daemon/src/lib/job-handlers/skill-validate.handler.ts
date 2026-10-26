@@ -36,12 +36,11 @@ export function createSkillValidateHandler(
           );
         }
       }
-
-      skillsManager.setSkillValidationStatus(skillId, 'valid');
-      return { valid: true, skillId };
     } catch (error) {
-      skillsManager.setSkillValidationStatus(skillId, 'invalid');
+      await skillsManager.setSkillValidationStatus(skillId, 'invalid');
       throw error;
     }
+    await skillsManager.setSkillValidationStatus(skillId, 'valid');
+    return { valid: true, skillId };
   };
 }

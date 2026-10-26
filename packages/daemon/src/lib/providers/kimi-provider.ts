@@ -1,4 +1,5 @@
-import type { ModelInfo } from '@hyperneo/shared';
+import type { ModelInfo, ThinkingEffort } from '@hyperneo/shared';
+import { THINKING_EFFORTS } from '@hyperneo/shared';
 import type {
   CuratedModel,
   ListRemoteModelsOptions,
@@ -134,6 +135,69 @@ export class KimiProvider implements Provider {
     },
   ];
 
+  static readonly K31_MODELS: ModelInfo[] = [
+    {
+      id: 'kimi-k3.1-pro',
+      name: 'Kimi K3.1 Pro',
+      alias: 'k3.1',
+      family: 'kimi',
+      provider: 'kimi',
+      contextWindow: 1_048_576,
+      providerAliases: [
+        'k3.1',
+        'kimi-k3.1',
+        'k3.1-pro',
+        'K3.1',
+        'Kimi-K3.1-Pro',
+        'moonshot-k3.1',
+        'moonshot-k3.1-pro',
+      ],
+      providerAliasPrefixes: ['moonshot-k3.1'],
+      preferContextWindowMetadata: true,
+      thinkingModes: 'granular',
+      description: 'Kimi K3.1 Pro · 1M context flagship, always-on thinking with reasoning effort',
+      releaseDate: '2026-10-24',
+      available: true,
+    },
+    {
+      id: 'kimi-k3.1-pro-highspeed',
+      name: 'Kimi K3.1 Pro Highspeed',
+      alias: 'kimi-k3.1-pro-highspeed',
+      family: 'kimi',
+      provider: 'kimi',
+      contextWindow: 1_048_576,
+      providerAliases: [
+        'k3.1-pro-highspeed',
+        'kimi-k3.1-highspeed',
+        'Kimi-K3.1-Pro-Highspeed',
+        'moonshot-k3.1-pro-highspeed',
+      ],
+      providerAliasPrefixes: ['moonshot-k3.1-pro-highspeed'],
+      preferContextWindowMetadata: true,
+      thinkingModes: 'granular',
+      description: 'Kimi K3.1 Pro Highspeed · 1M context, 2-3× faster variant',
+      releaseDate: '2026-10-24',
+      available: true,
+    },
+  ];
+
+  private static readonly KNOWN_MODELS: ModelInfo[] = [
+    ...KimiProvider.MODELS,
+    ...KimiProvider.K31_MODELS,
+  ];
+
+  private static isK31FamilyModelId(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    return (
+      id === 'k3.1' ||
+      id === 'kimi-k3.1' ||
+      id === 'moonshot-k3.1' ||
+      id.startsWith('k3.1-') ||
+      id.startsWith('kimi-k3.1-') ||
+      id.startsWith('moonshot-k3.1-')
+    );
+  }
+
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
   private defaultRegion: KimiRegion = 'china';
@@ -205,9 +269,15 @@ export class KimiProvider implements Provider {
       id === 'k3' ||
       id === 'kimi-k3' ||
       id === 'moonshot-k3' ||
+      id === 'k3.1' ||
+      id === 'kimi-k3.1' ||
+      id === 'moonshot-k3.1' ||
       id.startsWith('k3-') ||
       id.startsWith('kimi-k3-') ||
-      id.startsWith('moonshot-k3-')
+      id.startsWith('moonshot-k3-') ||
+      id.startsWith('k3.1-') ||
+      id.startsWith('kimi-k3.1-') ||
+      id.startsWith('moonshot-k3.1-')
     );
   }
 
@@ -241,7 +311,8 @@ export class KimiProvider implements Provider {
       id === 'k3' ||
       id.startsWith('kimi-') ||
       id.startsWith('moonshot-') ||
-      id.startsWith('k3-')
+      id.startsWith('k3-') ||
+      id.startsWith('k3.1-')
     );
   }
 
@@ -352,6 +423,30 @@ export class KimiProvider implements Provider {
     await result;
   }
 
+  private static baseModelsForRegion(region: KimiRegion): ModelInfo[] {
+    return region === 'global'
+      ? [...KimiProvider.MODELS, ...KimiProvider.K31_MODELS]
+      : [...KimiProvider.MODELS];
+  }
+
+  private static gateK31ModelsForRegion(models: ModelInfo[], region: KimiRegion): ModelInfo[] {
+    if (region === 'global') return models;
+    return models.filter((model) => !KimiProvider.isK31FamilyModelId(model.id));
+  }
+
+  private resolveEffectiveRegion(): KimiRegion {
+    const explicitRegion = this.env.KIMI_REGION;
+    if (explicitRegion) return resolveKimiRegion(explicitRegion);
+    const configuredBaseUrl = this.env.KIMI_BASE_URL;
+    if (configuredBaseUrl) {
+      return (
+        KimiProvider.resolveRegionFromBaseUrl(normalizeBaseUrl(configuredBaseUrl)) ??
+        this.defaultRegion
+      );
+    }
+    return this.defaultRegion;
+  }
+
   async getModels(): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
@@ -360,9 +455,7 @@ export class KimiProvider implements Provider {
       explicitRegion ? resolveKimiRegion(explicitRegion) : this.defaultRegion
     );
     const baseUrl = normalizeBaseUrl(this.env.KIMI_BASE_URL || regionBaseUrl);
-    const region = explicitRegion
-      ? resolveKimiRegion(explicitRegion)
-      : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
+    const region = this.resolveEffectiveRegion();
     const probeModelId = KimiProvider.resolveUpstreamModelId(
       KimiProvider.getModelIdForRegion(region),
       baseUrl,
@@ -374,21 +467,30 @@ export class KimiProvider implements Provider {
     });
     let models: ModelInfo[];
     try {
-      const discovered = await this.listRemoteModels();
-      models = mergeDiscoveredModels(KimiProvider.MODELS, discovered);
+      const discovered = await this.listRemoteModels({ discoveryOnly: true });
+      models = mergeDiscoveredModels(KimiProvider.baseModelsForRegion(region), discovered);
     } catch {
-      models = KimiProvider.MODELS;
+      models = KimiProvider.baseModelsForRegion(region);
     }
-    return this.mergeCuratedModels(models);
+    return KimiProvider.gateK31ModelsForRegion(this.mergeCuratedModels(models), region);
   }
 
   setCuratedModels(models: CuratedModel[] | undefined): void {
     this.curatedModels = models;
   }
 
+  isCuratedModelVisible(modelId: string): boolean {
+    if (this.resolveEffectiveRegion() === 'global') return true;
+    return !KimiProvider.isK31FamilyModelId(modelId);
+  }
+
   getCachedModels(): ModelInfo[] | null {
     if (!this.curatedModels?.length) return null;
-    return this.mergeCuratedModels(KimiProvider.MODELS);
+    const region = this.resolveEffectiveRegion();
+    return KimiProvider.gateK31ModelsForRegion(
+      this.mergeCuratedModels(KimiProvider.baseModelsForRegion(region)),
+      region
+    );
   }
 
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
@@ -434,7 +536,7 @@ export class KimiProvider implements Provider {
     const fingerprint = this.discoveryFingerprint();
     if (!options.force && cacheable) {
       const cached = this.discoveryCache.get(fingerprint);
-      if (cached) return cached;
+      if (cached) return this.finishDiscoveredModels(cached, options);
     }
     const baseUrl = this.resolveModelListBaseUrl(options.baseUrl);
     const models = await fetchRemoteModelList({
@@ -449,8 +551,18 @@ export class KimiProvider implements Provider {
     if (cacheable) {
       this.discoveryCache.set(fingerprint, discovered);
     }
+    return this.finishDiscoveredModels(discovered, options);
+  }
+
+  private finishDiscoveredModels(
+    discovered: ModelInfo[],
+    options: ListRemoteModelsOptions
+  ): ModelInfo[] {
     if (options.discoveryOnly) return discovered;
-    return this.mergeCuratedModels(discovered);
+    return KimiProvider.gateK31ModelsForRegion(
+      this.mergeCuratedModels(discovered),
+      this.resolveEffectiveRegion()
+    );
   }
 
   ownsModel(modelId: string): boolean {
@@ -459,9 +571,13 @@ export class KimiProvider implements Provider {
     return (
       id === 'kimi' ||
       id === 'k3' ||
+      id === 'k3.1' ||
       id === 'kimi-k3' ||
       id === 'k3-256k' ||
       id === 'kimi-k3-256k' ||
+      id === 'kimi-k3.1' ||
+      id === 'kimi-k3.1-pro' ||
+      id === 'kimi-k3.1-pro-highspeed' ||
       id === 'kimi-for-coding' ||
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
@@ -473,6 +589,10 @@ export class KimiProvider implements Provider {
 
   getModelForTier(_tier: ModelTier): string | undefined {
     return KimiProvider.DEFAULT_MODEL;
+  }
+
+  getModelEffortLevels(): ThinkingEffort[] {
+    return [...THINKING_EFFORTS];
   }
 
   getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
@@ -490,6 +610,24 @@ export class KimiProvider implements Provider {
 
   private static canonicalizeModelId(modelId: string): string {
     const id = KimiProvider.normalizeKimiModelId(modelId);
+    if (
+      id === 'k3.1-pro-highspeed' ||
+      id === 'kimi-k3.1-highspeed' ||
+      id === 'kimi-k3.1-pro-highspeed' ||
+      id === 'moonshot-k3.1-pro-highspeed'
+    ) {
+      return 'kimi-k3.1-pro-highspeed';
+    }
+    if (
+      id === 'k3.1' ||
+      id === 'k3.1-pro' ||
+      id === 'kimi-k3.1' ||
+      id === 'kimi-k3.1-pro' ||
+      id === 'moonshot-k3.1' ||
+      id === 'moonshot-k3.1-pro'
+    ) {
+      return 'kimi-k3.1-pro';
+    }
     if (
       id === 'k3-256k' ||
       id === 'kimi-k3-256k' ||
@@ -534,6 +672,24 @@ export class KimiProvider implements Provider {
       useLegacy = region !== 'global';
     }
     if (
+      id === 'k3.1-pro-highspeed' ||
+      id === 'kimi-k3.1-highspeed' ||
+      id === 'kimi-k3.1-pro-highspeed' ||
+      id === 'moonshot-k3.1-pro-highspeed'
+    ) {
+      return 'kimi-k3.1-pro-highspeed';
+    }
+    if (
+      id === 'k3.1' ||
+      id === 'k3.1-pro' ||
+      id === 'kimi-k3.1' ||
+      id === 'kimi-k3.1-pro' ||
+      id === 'moonshot-k3.1' ||
+      id === 'moonshot-k3.1-pro'
+    ) {
+      return 'kimi-k3.1-pro';
+    }
+    if (
       id === 'k3-256k' ||
       id === 'kimi-k3-256k' ||
       id === 'moonshot-k3-256k' ||
@@ -570,6 +726,8 @@ export class KimiProvider implements Provider {
     if (normalized === 'k3-256k' || normalized === 'kimi-k3-256k') return 262_144;
     if (
       normalized === 'kimi-k3' ||
+      normalized === 'kimi-k3.1-pro' ||
+      normalized === 'kimi-k3.1-pro-highspeed' ||
       (KimiProvider.hasOneMContextSuffix(modelId) && KimiProvider.isDiscoveredKimiModelId(modelId))
     ) {
       return 1_048_576;
@@ -658,7 +816,7 @@ export class KimiProvider implements Provider {
 
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo | null {
     const normalized = KimiProvider.normalizeKimiModelId(model.id);
-    const exactMatch = KimiProvider.MODELS.find((candidate) => {
+    const exactMatch = KimiProvider.KNOWN_MODELS.find((candidate) => {
       const identifiers = [
         candidate.id,
         ...(candidate.sdkModelIds ?? []),
@@ -674,7 +832,7 @@ export class KimiProvider implements Provider {
       !KimiProvider.hasOneMContextSuffix(exactMatch.id);
     if (exactMatch && !exactMatchLosesSuffix) return exactMatch;
     let prefixMatch: { model: ModelInfo; length: number } | undefined;
-    for (const candidate of KimiProvider.MODELS) {
+    for (const candidate of KimiProvider.KNOWN_MODELS) {
       for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {
         const prefix = KimiProvider.normalizeKimiModelId(rawPrefix);
         if (

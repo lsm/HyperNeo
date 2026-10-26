@@ -51,7 +51,7 @@ describe('Database Facade', () => {
   });
 
   describe('constructor and initialize', () => {
-    it('creates a Database instance', () => {
+    it('creates a Database instance', async () => {
       expect(db).toBeDefined();
     });
 
@@ -61,17 +61,87 @@ describe('Database Facade', () => {
   });
 
   describe('getDatabase', () => {
-    it('returns the underlying BunDatabase instance', () => {
+    it('returns the underlying BunDatabase instance', async () => {
       const rawDb = db.getDatabase();
       expect(rawDb).toBeDefined();
       expect(typeof rawDb.query).toBe('function');
     });
   });
 
+  describe('writeSDKMessage', () => {
+    it('resolves with the repository write result', async () => {
+      await db.createSession(createTestSession());
+      const id = await db.saveUserMessage(
+        'test-session-id',
+        { type: 'user', uuid: 'write-entry-1', message: { role: 'user', content: 'hi' } } as never,
+        'submitted'
+      );
+
+      await expect(
+        db.writeSDKMessage('markDeliveryFailedByUuid', 'test-session-id', 'write-entry-1')
+      ).resolves.toBe(id);
+      expect(db.getMessageByStatusAndDbId('test-session-id', 'failed', id)?.dbId).toBe(id);
+    });
+
+    it('rejects when the repository write throws', async () => {
+      db.getDatabase().exec('DROP TABLE sdk_messages');
+
+      await expect(
+        db.writeSDKMessage('markDeliveryFailedByUuid', 'test-session-id', 'missing')
+      ).rejects.toThrow();
+    });
+  });
+
   describe('Session operations', () => {
+    it('reports a failed session write as a rejection, not a synchronous throw', async () => {
+      const raw = db.getDatabase();
+      const prepare = raw.prepare.bind(raw);
+      raw.prepare = ((sql: string, ...rest: unknown[]) => {
+        if (/UPDATE sessions/.test(sql)) throw new Error('fictional write failure');
+        return prepare(sql, ...rest);
+      }) as typeof raw.prepare;
+      try {
+        let pending: Promise<void> | undefined;
+        expect(() => {
+          pending = db.setSessionLastError('fictional-session', null);
+        }).not.toThrow();
+        await expect(pending).rejects.toThrow('fictional write failure');
+      } finally {
+        raw.prepare = prepare;
+      }
+    });
+
+    it('reports a failed value-returning session write as a rejection', async () => {
+      const raw = db.getDatabase();
+      const prepare = raw.prepare.bind(raw);
+      raw.prepare = ((sql: string, ...rest: unknown[]) => {
+        if (/UPDATE sessions/.test(sql)) throw new Error('fictional write failure');
+        return prepare(sql, ...rest);
+      }) as typeof raw.prepare;
+      try {
+        let pending: Promise<boolean> | undefined;
+        expect(() => {
+          pending = db.takeRestartCooldownResume('fictional-session');
+        }).not.toThrow();
+        await expect(pending).rejects.toThrow('fictional write failure');
+      } finally {
+        raw.prepare = prepare;
+      }
+    });
+
+    it('persists a config key cleared with undefined', async () => {
+      await db.createSession(
+        createTestSession({ config: { model: 'default', autoCompactPercent: 50 } })
+      );
+
+      await db.updateSession('test-session-id', { config: { autoCompactPercent: undefined } });
+
+      expect(db.getSession('test-session-id')?.config).not.toHaveProperty('autoCompactPercent');
+    });
+
     it('creates and retrieves a session', async () => {
       const session = createTestSession();
-      db.createSession(session);
+      await db.createSession(session);
 
       const retrieved = db.getSession(session.id);
       expect(retrieved).toBeDefined();
@@ -80,9 +150,9 @@ describe('Database Facade', () => {
 
     it('updates a session', async () => {
       const session = createTestSession();
-      db.createSession(session);
+      await db.createSession(session);
 
-      db.updateSession(session.id, { title: 'Updated Title' });
+      await db.updateSession(session.id, { title: 'Updated Title' });
 
       const retrieved = db.getSession(session.id);
       expect(retrieved!.title).toBe('Updated Title');
@@ -90,9 +160,9 @@ describe('Database Facade', () => {
 
     it('deletes a session', async () => {
       const session = createTestSession();
-      db.createSession(session);
+      await db.createSession(session);
 
-      db.deleteSession(session.id);
+      await db.deleteSession(session.id);
 
       const retrieved = db.getSession(session.id);
       expect(retrieved).toBeNull();
@@ -101,8 +171,8 @@ describe('Database Facade', () => {
     it('lists all sessions', async () => {
       const session1 = createTestSession({ id: 'session-1' });
       const session2 = createTestSession({ id: 'session-2' });
-      db.createSession(session1);
-      db.createSession(session2);
+      await db.createSession(session1);
+      await db.createSession(session2);
 
       const sessions = db.listSessions();
       expect(sessions).toHaveLength(2);
@@ -152,13 +222,13 @@ describe('Database Facade', () => {
       const first = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 0 });
       const reactiveDb1 = createReactiveDatabase(first);
       await first.initialize(reactiveDb1);
-      first.createSession(createTestSession());
+      await first.createSession(createTestSession());
       const message = {
         type: 'user',
         uuid: 'restart-uuid',
         message: { role: 'user', content: [{ type: 'text', text: 'restart recovery marker' }] },
       } as SDKMessage;
-      expect(first.saveSDKMessage('test-session-id', message)).toBe(true);
+      expect(await first.saveSDKMessage('test-session-id', message)).toBe(true);
       first.close();
 
       db = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 0 });
@@ -175,13 +245,13 @@ describe('Database Facade', () => {
       db = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 20 });
       const reactiveDbTimer = createReactiveDatabase(db);
       await db.initialize(reactiveDbTimer);
-      db.createSession(createTestSession());
+      await db.createSession(createTestSession());
       const message = {
         type: 'user',
         uuid: 'timer-uuid',
         message: { role: 'user', content: [{ type: 'text', text: 'timer flush marker' }] },
       } as SDKMessage;
-      expect(db.saveSDKMessage('test-session-id', message)).toBe(true);
+      expect(await db.saveSDKMessage('test-session-id', message)).toBe(true);
 
       const deadline = Date.now() + 3_000;
       let searchable = false;

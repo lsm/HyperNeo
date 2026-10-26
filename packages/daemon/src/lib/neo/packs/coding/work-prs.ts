@@ -9,6 +9,7 @@ import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;
+export const NEO_SETTLED_PR_READ_MS = 12 * 60 * 60_000;
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const GhPrSchema = z.object({
   url: z.string(),
@@ -135,11 +136,12 @@ type BranchRule = {
 type PrDetail = { commits: { oid: string; signed: boolean }[]; unresolved: number };
 
 const RULES_MS = 10 * 60_000;
+const RULES_RETRY_MS = 60_000;
 const githubPr = (url: string) => {
   const pr = parsePrUrl(url);
   return pr?.host === 'github.com' ? pr : null;
 };
-const rulesCache = new Map<string, { at: number; rules: BranchRule[] }>();
+const rulesCache = new Map<string, { at: number; rules: readonly BranchRule[] | null }>();
 const RulesSchema = z.array(
   z.object({
     type: z.string(),
@@ -173,6 +175,38 @@ const DetailSchema = z.object({
 });
 const DETAIL_QUERY =
   'query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}';
+
+type RequiredCheck = { context: string; integrationId: number | null };
+
+function requiredChecks(rules: readonly BranchRule[]): RequiredCheck[] {
+  return rules
+    .filter((rule) => rule.type === 'required_status_checks')
+    .flatMap((rule) => {
+      const parameters = rule.parameters as Record<string, unknown> | null | undefined;
+      const checks = parameters?.required_status_checks;
+      if (Array.isArray(checks))
+        return checks.flatMap((check) => {
+          if (typeof check === 'string') return [{ context: check, integrationId: null }];
+          if (check && typeof check === 'object' && typeof check.context === 'string')
+            return [
+              {
+                context: check.context,
+                integrationId:
+                  typeof check.integration_id === 'number' && check.integration_id >= 0
+                    ? check.integration_id
+                    : null,
+              },
+            ];
+          return [];
+        });
+      const contexts = parameters?.contexts;
+      return Array.isArray(contexts)
+        ? contexts.flatMap((context) =>
+            typeof context === 'string' ? [{ context, integrationId: null }] : []
+          )
+        : [];
+    });
+}
 
 export function wantsNeoWorkPrBlockers(pr: NeoWorkPr, base: string | undefined): boolean {
   return !!base && pr.state === 'OPEN' && pr.checks !== 'pending';
@@ -224,19 +258,146 @@ function gh(args: string[], spawnImpl: SpawnFn, resourceHint: 'core' | 'graphql'
   return runGhJson(args, homedir(), spawnImpl, { resourceHint });
 }
 
-async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
-  const key = `${repo}:${base}`;
+const CheckRunsSchema = z.object({
+  check_runs: z.array(
+    z.object({
+      name: z.string().nullish(),
+      status: z.string().nullish(),
+      conclusion: z.string().nullish(),
+      app_id: z.number().nullish(),
+    })
+  ),
+});
+const CombinedStatusSchema = z.object({
+  statuses: z.array(
+    z.object({
+      state: z.string(),
+      context: z.string().nullish(),
+      creator_id: z.number().nullish(),
+    })
+  ),
+});
+
+const REST_PAGE_SIZE = 100;
+const REST_MAX_PAGES = 10;
+const CHECK_RUNS_FIELDS = '{check_runs:[.check_runs[]|{name,status,conclusion,app_id:.app.id}]}';
+const STATUS_FIELDS = '{statuses:[.statuses[]|{state,context,creator_id:.creator.id}]}';
+
+async function readCheckRollup(
+  url: string,
+  raw: Record<string, unknown>,
+  spawnImpl: SpawnFn
+): Promise<GhCheck[] | null> {
+  if (raw.state !== 'OPEN') return [];
+  const meta = parsePrUrl(url);
+  if (!meta || typeof raw.headRefOid !== 'string' || !raw.headRefOid) return null;
+  const base = `repos/${meta.owner}/${meta.repo}/commits/${raw.headRefOid}`;
+  const rollup: GhCheck[] = [];
+  const runs: (typeof rollup)[number][] = [];
+  const statuses: (typeof rollup)[number][] = [];
+  const covered = new Map<string, Set<number | null>>();
+  const cover = (context: string, provider: number | null | undefined) => {
+    const providers = covered.get(context.toUpperCase()) ?? new Set<number | null>();
+    providers.add(provider ?? null);
+    covered.set(context.toUpperCase(), providers);
+  };
+  for (let page = 1; page <= REST_MAX_PAGES; page++) {
+    const outcome = await gh(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `${base}/check-runs?per_page=${REST_PAGE_SIZE}&page=${page}`,
+        '--jq',
+        CHECK_RUNS_FIELDS,
+      ],
+      spawnImpl,
+      'core'
+    );
+    const parsed = outcome.ok ? CheckRunsSchema.safeParse(outcome.data) : null;
+    if (!parsed?.success) return null;
+    for (const run of parsed.data.check_runs) {
+      runs.push({
+        status: run.status ? run.status.toUpperCase() : null,
+        conclusion: run.conclusion ? run.conclusion.toUpperCase() : null,
+      });
+      if (run.name) cover(run.name, run.app_id ?? null);
+    }
+    if (parsed.data.check_runs.length < REST_PAGE_SIZE) break;
+  }
+  for (let page = 1; page <= REST_MAX_PAGES; page++) {
+    const outcome = await gh(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `${base}/status?per_page=${REST_PAGE_SIZE}&page=${page}`,
+        '--jq',
+        STATUS_FIELDS,
+      ],
+      spawnImpl,
+      'core'
+    );
+    const parsed = outcome.ok ? CombinedStatusSchema.safeParse(outcome.data) : null;
+    if (!parsed?.success) return null;
+    for (const status of parsed.data.statuses) {
+      statuses.push({ state: status.state.toUpperCase() });
+      if (status.context) cover(status.context, status.creator_id ?? null);
+    }
+    if (parsed.data.statuses.length < REST_PAGE_SIZE) break;
+  }
+  rollup.push(...runs, ...statuses);
+  if (typeof raw.baseRefName === 'string' && raw.baseRefName) {
+    const rules = await fetchBranchRules(
+      `${meta.owner}/${meta.repo}`,
+      raw.baseRefName,
+      meta.host,
+      spawnImpl
+    );
+    if (rules === null) return null;
+    const alreadyFailing = rollup.some((check) => checkResult(check) === 'failing');
+    if (!alreadyFailing)
+      for (const check of requiredChecks(rules)) {
+        const providers = covered.get(check.context.toUpperCase());
+        const satisfied =
+          check.integrationId === null
+            ? providers !== undefined
+            : (providers?.has(check.integrationId) ?? false);
+        if (!satisfied) rollup.push({ state: 'EXPECTED' });
+      }
+  }
+  return rollup;
+}
+
+async function fetchBranchRules(
+  repo: string,
+  base: string,
+  host: string,
+  spawnImpl: SpawnFn
+): Promise<readonly BranchRule[] | null> {
+  const key = `${host}/${repo}:${base}`;
   const cached = rulesCache.get(key);
-  if (cached && Date.now() - cached.at < RULES_MS) return cached.rules;
+  if (cached && Date.now() - cached.at < (cached.rules ? RULES_MS : RULES_RETRY_MS))
+    return cached.rules;
   const outcome = await gh(
-    ['gh', 'api', `repos/${repo}/rules/branches/${encodeURIComponent(base)}`],
+    ['gh', 'api', '--hostname', host, `repos/${repo}/rules/branches/${encodeURIComponent(base)}`],
     spawnImpl,
     'core'
   );
+  if (!outcome.ok && /HTTP 404/.test(outcome.error ?? '')) {
+    rulesCache.set(key, { at: Date.now(), rules: [] });
+    return [];
+  }
   const parsed = outcome.ok ? RulesSchema.safeParse(outcome.data) : null;
-  const rules = parsed?.success ? parsed.data : [];
-  if (parsed?.success) rulesCache.set(key, { at: Date.now(), rules });
+  const rules = parsed?.success ? parsed.data : null;
+  rulesCache.set(key, { at: Date.now(), rules });
   return rules;
+}
+
+async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
+  return (await fetchBranchRules(repo, base, 'github.com', spawnImpl)) ?? [];
 }
 
 async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail | null> {
@@ -266,12 +427,17 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
+          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
         ],
         spawnImpl,
         'graphql'
       );
-      return { raw: outcome.ok ? outcome.data : null };
+      if (!outcome.ok) return { raw: null };
+      const raw = { ...(outcome.data as Record<string, unknown>) };
+      const rollup = await readCheckRollup(url, raw, spawnImpl);
+      if (rollup === null) return { raw: null };
+      raw.statusCheckRollup = rollup;
+      return { raw };
     },
     ['url', 'spawnImpl'],
     'read'

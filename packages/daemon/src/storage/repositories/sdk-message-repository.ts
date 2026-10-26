@@ -1,3 +1,9 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { SessionRepository } from './session-repository.ts';
+import type { RunDbOp } from '../db-gateway/db-op.ts';
+import { sdkMessageWrites } from './sdk-message-writes.ts';
+import type { SdkMessageWriteMethod } from './sdk-message-writes.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { toSqlStringList } from '../sql-string-list.ts';
 import type {
   ChatMessage,
@@ -606,6 +612,11 @@ const runNormalizeDeliveryMessageForMailbox = (
   .pipe(applyDeliveryMessageRow, 'ctx', 'ctx')
   .end('ctx') as (ctx: NormalizeDeliveryMessageCtx) => NormalizeDeliveryMessageCtx;
 
+export type SdkMessageChanges = Pick<
+  ReactiveDatabase,
+  'notifyChange' | 'willEmitTableChange' | 'resolveTaskIdForSession'
+>;
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -614,8 +625,22 @@ export class SDKMessageRepository {
 
   constructor(
     private db: BunDatabase,
-    private reactiveDb?: ReactiveDatabase
+    private reactiveDb?: SdkMessageChanges
   ) {}
+
+  sessionExists(sessionId: string): boolean {
+    return new SessionRepository(this.db).getSession(sessionId) !== null;
+  }
+
+  readonly runWrite: RunDbOp = (op, args) => gatewayFor(this.db).run(op, args);
+  write<K extends SdkMessageWriteMethod>(
+    method: K,
+    ...args: Parameters<SDKMessageRepository[K]>
+  ): Promise<ReturnType<SDKMessageRepository[K]>> {
+    return this.runWrite(sdkMessageWrites, { method, args }) as Promise<
+      ReturnType<SDKMessageRepository[K]>
+    >;
+  }
 
   private hasMessageSearchIndex(): boolean {
     return this.tableExists('message_search_content');
@@ -801,17 +826,16 @@ export class SDKMessageRepository {
       .run(messageId, Date.now(), messageId);
   }
 
-  flushMessageSearchIndex(limit = 500): number {
-    if (!this.hasMessageSearchIndex()) return 0;
-    if (!this.tableExists('message_search_pending')) return 0;
+  flushMessageSearchIndex(limit = 500, skip = 0): { attempted: number; failed: number } {
+    if (!this.hasMessageSearchIndex()) return { attempted: 0, failed: 0 };
+    if (!this.tableExists('message_search_pending')) return { attempted: 0, failed: 0 };
     const pending = this.db
-      .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ?`)
-      .all(limit) as Array<{ message_id: string }>;
-    if (pending.length === 0) return 0;
+      .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ? OFFSET ?`)
+      .all(limit, skip) as Array<{ message_id: string }>;
     const deletePendingStmt = this.db.prepare(
       `DELETE FROM message_search_pending WHERE message_id = ?`
     );
-    let processed = 0;
+    let failed = 0;
     for (const { message_id } of pending) {
       try {
         withBusyRetry(() => {
@@ -821,11 +845,11 @@ export class SDKMessageRepository {
           })();
         });
       } catch (err) {
+        failed++;
         this.logger.warn('message search index flush failed, will retry next flush:', err);
       }
-      processed++;
     }
-    return processed;
+    return { attempted: pending.length, failed };
   }
 
   private isMessageSuperseded(rowId: string, sessionId: string, sdkMessage: SDKMessage): boolean {
@@ -1099,7 +1123,7 @@ export class SDKMessageRepository {
               AND newer.parent_tool_use_id IS NULL
               AND (
                 newer.timestamp > sdk_messages.timestamp
-                OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+                OR (newer.timestamp = sdk_messages.timestamp AND newer.rowid > sdk_messages.rowid)
               )
               AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
           )
@@ -1944,18 +1968,17 @@ export class SDKMessageRepository {
     comparison: TimestampComparison
   ): number {
     const isoTimestamp = new Date(timestamp).toISOString();
-    const rows = this.db
-      .prepare(
-        `SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
-      )
-      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
+    const select = this.db.prepare(
+      `SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+    );
     const stmt = this.db.prepare(
       `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
     );
-    let deleted = 0;
+    let rows: Array<{ id: string; sdk_uuid: string | null }> = [];
     let badgeChanged = false;
     this.db.transaction(() => {
-      deleted = stmt.run(sessionId, isoTimestamp).changes;
+      rows = select.all(sessionId, isoTimestamp) as typeof rows;
+      stmt.run(sessionId, isoTimestamp);
       badgeChanged = this.applyBadgeUpdate(sessionId, planBadgeRecompute());
       for (const { sdk_uuid } of rows) {
         if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
@@ -1963,7 +1986,7 @@ export class SDKMessageRepository {
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
-    return deleted;
+    return rows.length;
   }
 
   deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
@@ -2135,7 +2158,13 @@ export class SDKMessageRepository {
   getDeliveryContent(
     sessionId: string,
     uuid: string
-  ): { content: string | MessageContent[]; sendStatus: SendStatus; inputKind?: string } | null {
+  ): {
+    content: string | MessageContent[];
+    sendStatus: SendStatus;
+    inputKind?: string;
+    neoBatch?: true;
+    neoWorkerBatch?: true;
+  } | null {
     const row = this.db
       .prepare(
         hydrateSdkMessageBodies(
@@ -2152,13 +2181,19 @@ export class SDKMessageRepository {
       const message = JSON.parse(row.sdk_message) as {
         message?: { content?: string | MessageContent[] };
         inputKind?: string;
+        neoBatchContent?: string | MessageContent[];
+        neoWorkerBatch?: boolean;
       };
-      const content = message.message?.content ?? null;
+      const content = message.neoBatchContent ?? message.message?.content ?? null;
       if (content === null) return null;
       return {
         content,
         sendStatus: row.send_status,
         ...(message.inputKind ? { inputKind: message.inputKind } : {}),
+        ...(message.neoWorkerBatch ? { neoWorkerBatch: true as const } : {}),
+        ...(message.neoBatchContent !== undefined || message.neoWorkerBatch
+          ? { neoBatch: true as const }
+          : {}),
       };
     } catch {
       return null;
@@ -2861,3 +2896,10 @@ function parseSearchTimestamp(value: string | null): number {
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 }
+
+export const messageSearchIndexWrites = defineRepositoryOp(
+  'search.indexWrites',
+  'write',
+  SDKMessageRepository,
+  ['flushMessageSearchIndex']
+);

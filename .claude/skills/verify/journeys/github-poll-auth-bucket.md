@@ -13,7 +13,7 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   bun .claude/skills/verify/github-poll-auth-bucket.ts verify private 9363 "$RUN"
 ```
 
-Repeat with `exhausted`, then `secondary`, using new run directories and free
+Repeat with `exhausted`, `secondary`, then `stale`, using new run directories and free
 ports. The fake executable named gh only forwards structured API requests to
 its own loopback fixture. It refuses credential extraction and other commands.
 The daemon has no token in its environment or synthetic credential store.
@@ -33,6 +33,13 @@ Observe `evidence/auth-bucket.json`:
   remaining 4,900 and an hourly reset far away. RPC reports rate-limited with a
   near retryAt; after the helper waits 2.1 seconds, all ten repos are polled.
   The hourly reset must not replace the explicit secondary delay.
+- `stale` returns a successful first response with remaining zero and a reset
+  already due (the reported historical log signature). Before the expired-quota
+  fix this starts a global cooldown and leaves nine repos unpolled. Afterward,
+  both RPC cycles poll all ten repos and deliver all ten approvals. This proves
+  the mechanism, not which transport or bucket produced the historical logs.
+  Success-only expiry handling retains the 64-request slice cap; error responses,
+  future reset times, missing reset evidence and Retry-After remain authoritative.
 - Public `space.github.getTokenStatus` reports configured/source `gh` and the
   synthetic login without returning a token. This supports the existing
   self-echo classification; a failed configured credential-store read never
@@ -40,8 +47,9 @@ Observe `evidence/auth-bucket.json`:
 - Logs contain `GitHub polling credential bucket` with only repo, source name,
   HTTP status, resource, limit and remaining. A real deployment's old log lacked
   limit/resource/source, so it cannot retroactively prove anonymous attribution.
-- One synthetic ledger GraphQL read exercises `PR ledger GitHub read` logging:
-  resource graphql, fixture cost 7, remaining 4,866, reset and elapsed time. This
+- One synthetic ledger GraphQL read exercises `PR ledger sweep GitHub budget`
+  logging: fixture cost 7, remaining 4,866, reset and elapsed time after cheap
+  REST discovery. This
   validates telemetry, not actual live request volume or attribution.
 
 At the failing reproduction commit, `reproduce private` keeps all seven private

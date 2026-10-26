@@ -10,6 +10,8 @@ import type {
 import type { Database } from '../../storage/database.ts';
 import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
+import { writeToolDefaults } from '../tools/write-tool-defaults.ts';
+import type { ToolDefaultMutation } from '../../storage/repositories/tool-default-transition.ts';
 import { Logger } from '../logger.ts';
 import { isBuiltInMcpServerName } from './built-in-servers.ts';
 import { resolveWorkspaceMcpServerName } from './mcp-server-namespace.ts';
@@ -72,6 +74,11 @@ interface RefreshMcpImportsCtx {
   result?: RefreshAllResult;
 }
 
+type McpImportSnapshot = Pick<
+  RefreshMcpImportsCtx,
+  'targets' | 'declarations' | 'results' | 'skipOrphanPrune'
+>;
+
 function inferSourceType(entry: McpJsonEntry | null | undefined): 'stdio' | 'sse' | 'http' | null {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     return null;
@@ -117,7 +124,7 @@ export class McpImportService {
     this.log = new Logger('mcp-import');
   }
 
-  refreshFromFile(absolutePath: string): ImportResult {
+  async refreshFromFile(absolutePath: string): Promise<ImportResult> {
     if (!isAbsolute(absolutePath)) {
       throw new Error(
         `McpImportService.refreshFromFile requires absolute path, got: ${absolutePath}`
@@ -134,8 +141,10 @@ export class McpImportService {
 
     if (!existsSync(absolutePath)) {
       result.status = 'missing';
-      result.removed = this.pruneBySourcePath(absolutePath);
-      return result;
+      return this.commitImport(
+        { repository: 'imports', method: 'file', args: [absolutePath, null] },
+        result
+      );
     }
 
     let raw: string;
@@ -174,6 +183,28 @@ export class McpImportService {
       return result;
     }
 
+    return this.commitImport(
+      { repository: 'imports', method: 'file', args: [absolutePath, entries] },
+      result
+    );
+  }
+
+  persistFileEntries(
+    absolutePath: string,
+    entries: Record<string, McpJsonEntry> | null
+  ): ImportResult {
+    const result: ImportResult = {
+      sourcePath: absolutePath,
+      status: 'ok',
+      added: 0,
+      updated: 0,
+      removed: 0,
+    };
+    if (entries === null) {
+      result.status = 'missing';
+      result.removed = this.pruneBySourcePath(absolutePath);
+      return result;
+    }
     const declaredNames = new Set<string>();
     for (const [name, entry] of Object.entries(entries)) {
       const req = this.buildCreateRequest(name, entry, absolutePath);
@@ -196,6 +227,8 @@ export class McpImportService {
           this.db.appMcpServers.create(req);
           result.added += 1;
         } catch (err) {
+          result.status = 'failed';
+          result.error = err instanceof Error ? err.message : String(err);
           this.log.warn(
             `[mcp-import] ${absolutePath}: failed to create "${name}": ${err instanceof Error ? err.message : String(err)}`
           );
@@ -216,6 +249,8 @@ export class McpImportService {
           });
           result.updated += 1;
         } catch (err) {
+          result.status = 'failed';
+          result.error = err instanceof Error ? err.message : String(err);
           this.log.warn(
             `[mcp-import] ${absolutePath}: failed to update "${name}": ${err instanceof Error ? err.message : String(err)}`
           );
@@ -234,10 +269,10 @@ export class McpImportService {
     return result;
   }
 
-  refreshAll(
+  async refreshAll(
     sources?: readonly (string | McpImportSource)[],
     opts?: { skipOrphanPrune?: boolean; includeUserConfig?: boolean }
-  ): RefreshAllResult {
+  ): Promise<RefreshAllResult> {
     let mcpSources: McpImportSource[];
     if (sources === undefined) {
       try {
@@ -263,10 +298,19 @@ export class McpImportService {
       skipOrphanPrune: opts?.skipOrphanPrune,
       includeUserConfig: opts?.includeUserConfig,
     });
-    return ctx.result ?? { results: [], orphanPruned: 0 };
+    const snapshot = {
+      targets: ctx.targets,
+      declarations: ctx.declarations,
+      results: ctx.results,
+      skipOrphanPrune: ctx.skipOrphanPrune,
+    };
+    return this.commitImport(
+      { repository: 'imports', method: 'sources', args: [snapshot] },
+      { results: ctx.results ?? [], orphanPruned: 0 }
+    );
   }
 
-  refreshAllForPath(absoluteWorkspacePath: string): ImportResult {
+  async refreshAllForPath(absoluteWorkspacePath: string): Promise<ImportResult> {
     if (!isAbsolute(absoluteWorkspacePath)) {
       throw new Error(
         `McpImportService.refreshAllForPath requires absolute path, got: ${absoluteWorkspacePath}`
@@ -299,7 +343,7 @@ export class McpImportService {
         return false;
       }
     }) ?? { path: absoluteWorkspacePath, label: '' };
-    const result = this.refreshAll([source], {
+    const result = await this.refreshAll([source], {
       skipOrphanPrune: true,
       includeUserConfig: false,
     });
@@ -312,6 +356,43 @@ export class McpImportService {
         removed: 0,
       }
     );
+  }
+
+  persistSources(snapshot: McpImportSnapshot): RefreshAllResult {
+    return runPersistMcpImports({
+      ...snapshot,
+      db: this.db,
+      sources: [],
+      log: this.log,
+      service: this,
+    }).result!;
+  }
+
+  private async commitImport<T extends ImportResult | RefreshAllResult>(
+    mutation: Extract<ToolDefaultMutation, { repository: 'imports' }>,
+    fallback: T
+  ): Promise<T> {
+    try {
+      return (await writeToolDefaults(this.db, { mutations: [mutation], edits: [] }))
+        .results[0] as T;
+    } catch (error) {
+      const failed = (result: ImportResult): ImportResult =>
+        result.status === 'malformed'
+          ? result
+          : {
+              ...result,
+              status: 'failed',
+              added: 0,
+              updated: 0,
+              removed: 0,
+              error: error instanceof Error ? error.message : String(error),
+            };
+      return (
+        'results' in fallback
+          ? { results: fallback.results.map(failed), orphanPruned: 0 }
+          : failed(fallback)
+      ) as T;
+    }
   }
 
   private collectMcpImportSources(): McpImportSource[] {
@@ -926,6 +1007,10 @@ const runRefreshMcpImports = (superpipe({})('refresh-mcp-imports') as PipelineAP
   .pipe(buildMcpTargets, 'ctx', 'ctx')
   .pipe(loadMcpExistingNames, 'ctx', 'ctx')
   .pipe(extractMcpSources, 'ctx', 'ctx')
+  .end('ctx') as (ctx: RefreshMcpImportsCtx) => RefreshMcpImportsCtx;
+
+const runPersistMcpImports = (superpipe({})('persist-mcp-imports') as PipelineAPI)
+  .input(['ctx'])
   .pipe(persistMcpSources, 'ctx', 'ctx')
   .pipe(pruneMcpOrphans, 'ctx', 'ctx')
   .end('ctx') as (ctx: RefreshMcpImportsCtx) => RefreshMcpImportsCtx;

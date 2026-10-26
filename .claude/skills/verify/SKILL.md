@@ -20,9 +20,13 @@ root of your worktree.
 - Model turns go to a local mock of the Anthropic API (`mock-api.ts`, the same
   server CI's dev-proxy mode uses) on port 8000. Give the isolated daemon the
   dev-proxy key over RPC (step 3 below), never through its environment.
-- GitHub is a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
+- GitHub is normally a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
+  When the user requests real quota measurement, `journeys/coding-ledger-live-cost.md`
+  defines the read-only public-metadata exception: a parent CLI bridge, fresh
+  daemon homes and no credentials passed to the daemon. Other journeys retain
+  the refusing stub and network isolation.
 
 ## Launch
 
@@ -33,12 +37,42 @@ cd packages/web && bun run build && cd ../..
 
 - Pick any free port except 8399. `launch.sh` refuses a busy port, and refuses
   if 8000 (the mock API) is taken.
-- `$RUN` is a fresh directory (default: a new `mktemp -d`). It holds `data/`
+- If the host denies `taskpolicy` or `nice` priority changes, set
+  `VERIFY_NORMAL_PRIORITY=1`; isolation is unchanged. `VERIFY_REPO` selects
+  the source checkout for shared upgrade tooling only.
+- `$RUN` is a fresh `hyperneo-verify.*` directory. Create it by wrapping the
+  journey in `with-run.sh`, which removes it on success, failure and interrupt
+  (`VERIFY_KEEP_RUN=1` keeps it and prints the path), or by hand with
+  `mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX"` plus
+  `trap 'rm -rf "$RUN"' EXIT` in the owning shell. It holds `data/`
   (DB), `home/`, `bin/gh`, the logs, the pid files and `evidence/`.
 - Ready signal: `ready: http://127.0.0.1:<port>  run dir: <run>`. The daemon log
   shows `HyperNeo Test Server` and `Database: <run>/data/daemon.db`.
 - The daemon logs nothing in test mode. Set `VERIFY_LOG_LEVEL=error` (or `info`,
   `debug`) on `launch.sh` to see its errors in `daemon.log`.
+- Keep launch and proof in the same owning shell with a `stop.sh` EXIT trap;
+  exiting a tool shell can terminate its children before the next tool call.
+
+Headless browser helpers accept `VERIFY_BROWSER` for an installed Chromium
+executable and `NODE_PATH` for existing Playwright dependencies. A cached browser
+directory may be incomplete: if launch reports missing framework files, retain
+the error and report browser proof as pending. An aborted launch is not a pass;
+do not change browser permissions or system settings to work around it.
+An installed browser that aborts with `SIGABRT` or `EPERM` is blocked too. Keep
+its launch log and use component evidence as a fallback, explicitly leaving
+screenshots and visual layout unverified.
+If browser origin approval is denied, retain that refusal and leave visual proof
+unverified. Do not retry through another browser or transport to bypass it;
+release the helper and preserve its daemon evidence before cleanup.
+Trust the wrapper exit status, not a helper's PASS line. A closed-database error
+from background Neo recovery during shutdown makes the daemon proof fail, even
+if its reader assertions passed. Retain the log; ask-bookkeeping-actions provides
+a listener-free MCP/public-reader/audit proof, without claiming daemon startup
+or shutdown verification.
+
+The shared proof-run.sh wrapper forwards only these explicitly selected browser
+dependency paths, alongside VERIFY_CLAUDE. Other parent environment values stay
+scrubbed; set the browser paths on the wrapper invocation when using --web.
 
 Give it a model, once per run (stored in the run's DB only):
 
@@ -48,6 +82,75 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
 ```
 
 ## In-process RPC proofs
+
+On macOS, run `bash .claude/skills/verify/resource-check.sh` before every heavy
+verification job or dependency install. It checks `memory_pressure` and disk
+space; stop if free memory is below 25% or disk space below 25 GiB. Run only
+one heavy job at a time (proof daemon, suite, full check or build), and wait
+for it to finish and clean up before starting the next. Reuse one checkout
+and its dependencies; do not create baseline worktrees just to compare proofs.
+The resource check must succeed before launching a job; chain it with `&&`
+or use a shell with `set -e`. For example:
+
+```bash
+bash .claude/skills/verify/resource-check.sh && bun run check
+```
+
+In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
+target because the repository excludes `**/tmp`. If `format:check` reports zero
+files, run the same check chain with that one command replaced by
+`bunx biome format packages scripts .github *.json *.md`. Keep the failure log
+and report the explicit-directory equivalent separately; do not change the
+repository's ignore rules to accommodate a temporary checkout.
+
+If bare macOS `mktemp` still chooses a restricted system temp directory, run
+the shell-based guards under Bash with `mktemp() { /usr/bin/mktemp -p "$TMPDIR"
+"$@"; }; export -f mktemp`, where `TMPDIR` is the writable directory already
+selected above. Explicit-template calls and proof isolation remain unchanged.
+
+For a metadata-only Bun helper taking `[arguments] <run>`, use:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory "$PROOF" verify
+```
+
+For a dual-runtime native-filesystem helper, repeat with `VERIFY_PROOF_RUNTIME=deno`
+and the pinned Deno on PATH. The wrapper uses `deno run -A` and keeps its cache
+inside the disposable run; the default remains Bun.
+
+The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
+the helper's evidence JSON and log outside that run, then immediately removes
+its temporary daemon data. It preserves failure status and never deletes the
+run if saving evidence fails. Keep baseline and fixed evidence in separate
+directories; the helper must close its resources in finally.
+The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match helpers'
+normalized run paths, including macOS's default TMPDIR.
+For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
+wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
+Export a writable TMPDIR for web tests, build tooling and git commands too;
+their temporary files can otherwise fail before verification starts.
+The wrapper forwards NODE_PATH and VERIFY_BROWSER for browser helpers; its
+child environment remains otherwise scrubbed.
+Set TMPDIR to an existing writable temporary directory when the host restricts
+the default temp location; the wrapper creates its disposable run there.
+For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
+`node --import tsx` with the same isolated environment and cleanup. This tests
+the Deno/Node adapter seam; Node remains unsupported as a daemon runtime.
+
+The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
+`journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
+competing writer when fixtures overlap the booted daemon.
+
+If a metadata helper cannot bind its own listener (for example EPERM or an
+ephemeral port 0 reported as EADDRINUSE), preserve its log and mark daemon proof
+blocked. Use a journey's listener-free proof only for the narrower surface it
+explicitly covers; unit results do not establish a successful daemon run.
+Helpers requiring /private/tmp also need TMPDIR=/private/tmp. Never weaken host
+protections to make a proof run.
+
+
+The wrapper forwards an explicitly selected VERIFY_CLAUDE path for native SDK
+proofs. It does not forward provider credentials or the human's configuration.
 
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
@@ -59,8 +162,8 @@ for port in 8000 8001; do
   fi
 done
 RUN=$(mktemp -d /private/tmp/hyperneo-rpc-proof-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
+mkdir -p "$RUN/home" "$RUN/tmp"
+env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
   HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$RUN"
 ```
 
@@ -73,12 +176,41 @@ only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any
 additional ports; do not also start `launch.sh` for these helpers.
 
+For disk-bounded runs, keep `evidence/` outside the disposable daemon data.
+After stopping and waiting for the owned daemon, remove its synthetic data,
+HOME and temporary files immediately; retain the evidence and cleanup receipt.
+The worker-question-answer-routes helper does this in finally, including failures.
+
+Await session creation through the daemon DB facade before inserting dependent
+synthetic SDK or task records. Session writes use the asynchronous DB writer;
+an unawaited creation can race a foreign-key insert.
+
+When a journey specifies an ephemeral model mock, omit the 8000/8001 preflight.
+That helper must bind its model listener to port 0 and redirect both session and
+title requests to the assigned loopback URL. Never reuse another run's listener.
+
+A helper that starts another proof process must preserve the selected TMPDIR
+or give that child its own temporary directory inside its fresh run. A scrubbed
+child environment must not silently fall back to the host's default temp path.
+
 For a helper whose journey specifies no provider turn or only a synthetic ACP
 agent, omit the 8000/8001 preflight loop when it specifies no HTTP mock. Such
 helpers own their ephemeral listeners; the remaining isolated environment and
 data-directory setup applies.
 
+SDK helpers that explicitly support `HYPERNEO_TEST_DISABLE_SANDBOX=1` may use
+that setting for synthetic transport-only checks. Their journey must say so;
+this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
+
 ## Doctor
+
+Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
+They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
+`open`, so owner discovery cannot inspect or open the real desktop app.
+Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
+sends use the native app-server queue; their proofs must show no Desktop ownership
+probe, open or turn/start. Check the loaded list and resume saved unloaded threads
+before settings or enqueue; already loaded threads must not be resumed.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"
@@ -100,7 +232,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
-  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23). Artifact preview helpers
+  `seed-schedule-interrupt.ts` (journey 22), `external-reply-check.ts` (journey 23), and `feed-scope.sh` (work-feed-scope). Artifact preview helpers
   (including `preview-media-web.mjs seed`) delegate DB fixture creation to
   `preview-register.ts seed`, only in the fresh synthetic run.
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
@@ -124,7 +256,7 @@ state a user can observe.
 
 ## Evidence
 
-Keep everything in `$RUN/evidence/` and quote it in the pull request:
+Save `$RUN/evidence/` outside the disposable run and summarize it in the pull request:
 
 - the RPC replies and DB query output for each journey;
 - `voice.json` from journey 2 and `gh.log` from journey 3;
@@ -142,9 +274,15 @@ kill "$(cat "$RUN/asr-stub.pid")"   # only if journey 2 started it
 
 `stop.sh` stops only the daemon and mock it started, by their pid files, and
 waits for both to exit before the run directory can be reused. Close
-the browser tab you opened. Delete `$RUN` once the evidence is in the PR.
+the browser tab you opened. After saving evidence, immediately delete the
+temporary daemon data and run directory you created.
 
 ## Metadata-only daemon proofs
+
+A Windows compiled-startup proof also isolates `USERPROFILE`, `TEMP` and `TMP`.
+Use native Windows paths for `HOME` and `HYPERNEO_DATA_DIR` (PowerShell
+`Join-Path`). The helper passes `SystemRoot` for Windows process startup but
+does not inherit provider credentials or the human's executable search path.
 
 A journey that needs no model may start the source CLI directly under `env -i`
 with `NODE_ENV=test`, a fresh `HOME`, `HYPERNEO_DATA_DIR` and `--db-path` inside
@@ -152,3 +290,27 @@ its run directory. It must preflight its own non-8399 port, retain the daemon lo
 and RPC evidence, and own an EXIT trap that stops and waits for that exact child.
 No HTTP model mock or provider registration is needed. The worker-identity helper
 implements this setup; it never touches another process's occupied mock port.
+
+## Native worker sandbox proofs
+
+Native CLI sandbox journeys use scrubbed child-process environments and disposable
+homes too. They may supply a literal synthetic API key only to the native Claude
+child connected to the helper's loopback scripted model; never to the daemon or
+an external endpoint. Use absolute `VERIFY_CLAUDE` / `VERIFY_CODEX` executable
+paths so the daemon's synthetic CLI peers cannot replace the real OS probe.
+These helpers preserve CLI tool results and report simulated Desktop transport
+separately from actual OS enforcement. Never disable the sandbox for these proofs.
+
+
+Worker runtime cleanup uses its own OS write boundary: `sandbox-exec` on macOS,
+and `/usr/bin/bwrap` (the bubblewrap package) on Linux. The daemon test jobs
+install bubblewrap because cleanup enforcement stays enabled even when a model
+transport fixture disables the SDK sandbox. Missing cleanup enforcement must
+fail closed with runtime retained and no new archived status. Windows does not
+apply POSIX permission repair; native Windows cleanup isolation is unverified.
+
+Ubuntu runners must also permit the user-namespace UID mapping used by bubblewrap.
+The workflow configures that permission on its disposable CI VMs and runs a
+bubblewrap startup probe before testing. Local Ubuntu verification requires a
+host policy allowing those namespaces; this journey changes no local host policy.
+The cleanup OS boundary stays enabled during these tests.

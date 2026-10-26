@@ -3,6 +3,7 @@ import type { Session, SpaceTask } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -40,12 +41,12 @@ export type SpaceTransitionAdmissionDependencies = SpaceMcpSessionPolicyContext 
   db: Database;
   getSession: (sessionId: string) => Session | null;
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask'>;
-  notifyStandalone: () => void;
+  runOp: RunDbOp;
   requestDirectOutcome?: (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
 };
 type Deps = SpaceTransitionAdmissionDependencies;
 
-export function resolveOwner(input: In, deps: Deps): Gate<string, Result> {
+export async function resolveOwner(input: In, deps: Deps): Promise<Gate<string, Result>> {
   const owner = resolveSpaceTaskOwner(deps.db, input.taskId);
   if (owner === null) return { reason: null };
   if (owner.kind !== 'standalone') return { value: owner.spaceId };
@@ -57,7 +58,7 @@ export function resolveOwner(input: In, deps: Deps): Gate<string, Result> {
     result: input.result,
     expectedStatus: input.expectedStatus as StandaloneTaskStatus | undefined,
   };
-  return { reason: transitionStandaloneTask(deps.db, standalone, deps.notifyStandalone) };
+  return { reason: await deps.runOp(transitionStandaloneTask, standalone) };
 }
 export function admitCaller(
   spaceId: string,

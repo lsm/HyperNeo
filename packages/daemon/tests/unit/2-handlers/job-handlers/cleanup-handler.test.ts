@@ -1,3 +1,4 @@
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
@@ -119,6 +120,28 @@ describe('createCleanupHandler', () => {
     expect(remaining.every((j) => j.status === 'pending' && j.queue === JOB_QUEUE_CLEANUP)).toBe(
       true
     );
+  });
+
+  it('concurrent cleanup handlers leave exactly one pending successor', async () => {
+    const handler = createCleanupHandler(jobQueue, async () => 0);
+    await Promise.all([handler(fakeJob), handler(fakeJob)]);
+    const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
+    expect(pending).toHaveLength(1);
+    expect(pending[0].payload).toEqual({});
+  });
+
+  it('surfaces scheduling worker failure without an inline enqueue', async () => {
+    const gateway = new DbGateway(':memory:', null, undefined, () => {
+      throw new Error('enqueue worker unavailable');
+    });
+    bindGateway(db, gateway);
+    try {
+      const handler = createCleanupHandler(jobQueue, async () => 0);
+      await expect(handler(fakeJob)).rejects.toThrow('enqueue worker unavailable');
+      expect(jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending' })).toEqual([]);
+    } finally {
+      await gateway.close();
+    }
   });
 
   it('self-schedules the next cleanup job ~1 hour from now', async () => {

@@ -117,14 +117,17 @@ describe('Neo floating controls', () => {
     expect(screen.queryByRole('button', { name: /Your projects/ })).toBeNull();
   });
 
-  it('opens the settings drawer from the logo, with connection and projects, and leaves projects out of the header', () => {
+  it('opens the settings drawer with connection controls and no project management', () => {
     const { open } = renderLive();
     expect(within(banner()).queryByRole('button', { name: 'Projects' })).toBeNull();
     const logo = within(banner()).getByRole('button', { name: '设置和连接' });
     fireEvent.click(logo);
     const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
     expect(within(drawer).getByText('Connected')).toBeTruthy();
-    expect(within(drawer).getByLabelText('Path for Project a').textContent).toBe('Project a');
+    expect(within(drawer).queryByText('Projects')).toBeNull();
+    expect(within(drawer).getByRole('combobox', { name: '主题' })).toBeTruthy();
+    expect(within(drawer).queryByRole('combobox', { name: /Move under/ })).toBeNull();
+    expect(within(drawer).getByRole('button', { name: 'Reconnect' })).toBeTruthy();
     expect(logo.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(within(drawer).getByRole('button', { name: 'Refresh Neo' }));
     expect(open).toHaveBeenCalledWith();

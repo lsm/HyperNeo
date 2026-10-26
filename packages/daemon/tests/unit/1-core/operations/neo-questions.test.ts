@@ -1,3 +1,4 @@
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import {
@@ -5,6 +6,9 @@ import {
   neoQuestionAnsweredNote,
   planNeoQuestionAnswer,
 } from '../../../../src/lib/neo/question-operations.ts';
+import { addNeoTodo, NeoTodoDraftSchema } from '../../../../src/lib/neo/todo-operations.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import type { ArtifactRefReader } from '../../../../src/lib/artifacts/read-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -15,7 +19,11 @@ const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
 type Receipt = { ok: true; question: NeoQuestion } | { ok: false; reason: string };
 
-function setup() {
+function setup(
+  artifact?: ArtifactRefReader,
+  readSource?: Parameters<typeof createNeoQuestionOperations>[5],
+  receivedHumanInput?: Parameters<typeof createNeoQuestionOperations>[3]
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -46,7 +54,20 @@ function setup() {
         return refused.has(todoId)
           ? { ok: false, reason: 'already_started: this todo is removed.' }
           : { ok: true };
-      }
+      },
+      receivedHumanInput,
+      artifact,
+      readSource ??
+        (async (ref) =>
+          ref.id === 'missing'
+            ? null
+            : {
+                ...ref,
+                name: 'Review worker',
+                label: 'Codex · Review worker',
+                provider: 'Codex',
+                link: `codex://threads/${ref.id}`,
+              })
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -75,6 +96,348 @@ function setup() {
 }
 
 describe('neo.question operations', () => {
+  test('refuses a second todo question explicitly and accepts an explicit replacement', async () => {
+    const h = setup();
+    try {
+      const first = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      const distinct = {
+        askId: 'ask',
+        kind: 'choice',
+        text: 'Which database?',
+        options: ['SQLite', 'Postgres'],
+        todoId: h.fix.id,
+      };
+      const refused = await h.call('neo.question.ask', distinct);
+      expect(refused).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/^todo_question_open:/),
+      });
+      expect(h.store.listQuestions('ask')).toHaveLength(1);
+      expect(h.store.getQuestion(first.id)).toMatchObject({
+        text: 'Which environment?',
+        state: 'open',
+      });
+      const replacement = await h.call('neo.question.ask', { ...distinct, replaces: first.id });
+      expect(replacement).toMatchObject({
+        ok: true,
+        question: { text: distinct.text, options: distinct.options, state: 'open' },
+      });
+      expect(h.store.getQuestion(first.id)?.state).toBe('retired');
+      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('concurrent distinct todo questions produce one card and one explicit refusal', async () => {
+    const h = setup();
+    try {
+      const results = await Promise.all(
+        ['Which environment?', 'Which database?'].map((text) =>
+          h.call('neo.question.ask', { askId: 'ask', kind: 'reply', text, todoId: h.fix.id })
+        )
+      );
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      expect(results.find((result) => !result.ok)).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/^todo_question_open:/),
+      });
+      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each(['reply', 'yesno', 'choice', 'start'] as const)(
+    'refuses a %s question if its ask settles during source lookup',
+    async (kind) => {
+      let entered!: () => void;
+      let release!: (value: NonNullable<NeoQuestion['sourceSession']>) => void;
+      const reading = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const source = new Promise<NonNullable<NeoQuestion['sourceSession']>>((resolve) => {
+        release = resolve;
+      });
+      const f = setup(undefined, async () => {
+        entered();
+        return source;
+      });
+      try {
+        f.daemonStart(['t1']);
+        const pending = f.call('neo.question.ask', {
+          askId: 'ask',
+          kind,
+          text: 'Worker recommendation',
+          options: ['First', 'Second'],
+          noLabel: 'Wait',
+          yesLabel: 'Approve',
+          sourceSession: { adapter: 'codex-desktop', id: 'worker' },
+          focused: true,
+        });
+        await reading;
+        f.store.settleAsk(f.store.getAsk('ask')!, 'dropped', 'No longer needed', 2);
+        release({
+          adapter: 'codex-desktop',
+          id: 'worker',
+          name: 'Worker',
+          label: 'Codex · Worker',
+          provider: 'Codex',
+          link: 'codex://threads/worker',
+        });
+        expect(await pending).toEqual({ ok: false, reason: 'ask_settled: this ask is dropped.' });
+        expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
+        expect(f.store.getAsk('ask')).not.toHaveProperty('focusedSession');
+      } finally {
+        f.db.close();
+      }
+    }
+  );
+
+  test('refuses an unreadable source without opening or replacing a question', async () => {
+    const { asked, call, store } = setup();
+    const original = await asked({ kind: 'reply', text: 'Keep this question' });
+    const refused = await call('neo.question.ask', {
+      askId: 'ask',
+      kind: 'reply',
+      text: 'New worker output',
+      replaces: original.id,
+      sourceSession: { adapter: 'codex-desktop', id: 'missing' },
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('source_session_unavailable'),
+    });
+    expect(store.listQuestions('ask')).toEqual([original]);
+  });
+
+  test('retains the source when rewording the existing start question', async () => {
+    const { asked, daemonStart } = setup();
+    const initial = daemonStart(['t1']);
+    const question = await asked({
+      kind: 'start',
+      text: 'Start after the worker review?',
+      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+    });
+    expect(question).toMatchObject({
+      id: initial.id,
+      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+      startTodos: ['t1'],
+    });
+    const general = await asked({
+      kind: 'start',
+      text: 'A combined start question without one source',
+    });
+    expect(general.id).toBe(initial.id);
+    expect(general).not.toHaveProperty('sourceSession');
+  });
+
+  test.each(['add', 'move'] as const)(
+    'retains the captured source when an instructed todo joins through %s',
+    async (operation) => {
+      const { db, store, asked, call, daemonStart } = setup();
+      try {
+        daemonStart(['t1']);
+        const question = await asked({
+          kind: 'start',
+          text: 'Start after the worker review?',
+          sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
+        });
+        const draft = NeoTodoDraftSchema.parse({
+          check: pendingTodoCheck,
+          title: 'Additional work',
+          doneWhen: 'Merged',
+          instruction: 'Do the additional work',
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+        });
+        let joinedId: string;
+        if (operation === 'add') {
+          const result = await addNeoTodo(
+            store,
+            new NeoTodoSessionRepository(db),
+            async () => ({ ok: false, reason: 'not started' }),
+            store.getAsk('ask')!,
+            draft,
+            createTodoCheckPacks(db)
+          );
+          if (!result.ok) throw new Error(result.reason);
+          joinedId = result.todo.id;
+        } else {
+          store.openAsk({
+            id: 'other',
+            sessionId: 'neo-a',
+            projectId: null,
+            originMessageId: null,
+            title: 'Other work',
+            request: 'Other work',
+            createdAt: 1,
+          });
+          const todo = store.addTodo(
+            'moved',
+            'other',
+            { ...draft, doneWhen: 'Observed result' },
+            1
+          );
+          joinedId = store.moveTodo(todo, 'ask', '', 2).id;
+        }
+        expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
+          ok: true,
+          question: {
+            id: question.id,
+            state: 'open',
+            sourceSession: question.sourceSession,
+          },
+        });
+        expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1', joinedId]);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test('keeps the explicitly focused session on the ask after card retirement', async () => {
+    const { asked, call, store } = setup();
+    const sourceSession = { adapter: 'codex-desktop', id: 'discussion' };
+    const ordinary = await asked({ kind: 'reply', text: 'Ordinary report', sourceSession });
+    expect(store.getAsk('ask')).not.toHaveProperty('focusedSession');
+    const ready = await asked({
+      kind: 'reply',
+      text: 'Prepared discussion',
+      sourceSession,
+      focused: true,
+    });
+    const captured = ready.sourceSession;
+    expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
+    await call('neo.question.retire', { questionId: ready.id, reason: 'Discuss directly' });
+    await call('neo.question.retire', { questionId: ordinary.id, reason: 'Superseded' });
+    await asked({
+      kind: 'reply',
+      text: 'Unrelated worker',
+      sourceSession: { ...sourceSession, id: 'other' },
+    });
+    expect(store.getAsk('ask')).toMatchObject({ focusedSession: captured });
+    expect(store.getAsks(['ask'])[0]).toMatchObject({ focusedSession: captured });
+    expect(store.listAsks(undefined, 10)[0]).toMatchObject({ focusedSession: captured });
+  });
+
+  test('refuses a focused card without a single readable session', async () => {
+    const { call, store } = setup();
+    for (const sourceSession of [undefined, { adapter: 'codex-desktop', id: 'missing' }]) {
+      expect(
+        await call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Ready',
+          focused: true,
+          sourceSession,
+        })
+      ).toMatchObject({ ok: false });
+    }
+    expect(store.listQuestions('ask')).toEqual([]);
+    expect(store.getAsk('ask')).not.toHaveProperty('focusedSession');
+  });
+
+  test('retains one explicit source session through read, answer and list payloads', async () => {
+    const { asked, call, store } = setup();
+    const source = { adapter: 'codex-desktop', id: 'source-worker', daemon: 'remote-machine' };
+    const question = await asked({
+      kind: 'yesno',
+      text: 'Review the worker output?',
+      noLabel: 'Wait',
+      yesLabel: 'Approve',
+      sourceSession: source,
+    });
+    expect(question).toMatchObject({ sourceSession: source });
+    expect(store.getQuestion(question.id)).toMatchObject({ sourceSession: source });
+    expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
+      question: { sourceSession: source },
+    });
+    expect(
+      await call('neo.question.answer', { questionId: question.id, answer: 'yes' }, human)
+    ).toMatchObject({ question: { state: 'answered', answer: 'yes', sourceSession: source } });
+    expect(store.listQuestionsForAsks(['ask'])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: question.id,
+          sourceSession: expect.objectContaining(source),
+        }),
+      ])
+    );
+    const ordinary = await asked({
+      kind: 'reply',
+      text: 'No single worker produced this question',
+    });
+    expect(ordinary).not.toHaveProperty('sourceSession');
+  });
+
+  test('keeps registered artifact references on the question card', async () => {
+    const artifact = {
+      daemonId: '10000000-0000-4000-8000-000000000001',
+      artifactId: 'report',
+      title: 'Review report',
+      kind: 'markdown' as const,
+      byteLength: 42,
+    };
+    const { store, asked, call, daemonStart } = setup((id, caller) =>
+      id === artifact.artifactId && caller.sessionId === owner.sessionId ? artifact : null
+    );
+    for (const changed of [
+      { ...artifact, artifactId: 'missing' },
+      { ...artifact, title: 'Changed' },
+      { ...artifact, daemonId: crypto.randomUUID() },
+      { ...artifact, byteLength: 43 },
+      { ...artifact, kind: 'html' },
+    ]) {
+      expect(
+        await call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Review',
+          artifacts: [changed],
+        })
+      ).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_artifact_reference:'),
+      });
+    }
+    expect(store.listQuestions('ask')).toHaveLength(0);
+    const question = await asked({
+      kind: 'reply',
+      text: 'Please review the attached report.',
+      artifacts: [artifact],
+    });
+    expect(question).toMatchObject({ artifacts: [artifact] });
+    expect(store.getQuestion(question.id)).toMatchObject({ artifacts: [artifact] });
+    expect(await call('neo.question.get', { questionId: question.id })).toMatchObject({
+      question: { artifacts: [artifact] },
+    });
+    expect(
+      await call(
+        'neo.question.ask',
+        {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Foreign caller',
+          artifacts: [artifact],
+        },
+        { ...owner, sessionId: 'other' }
+      )
+    ).toMatchObject({ ok: false });
+    const start = daemonStart(['t1']);
+    const reworded = await asked({
+      kind: 'start',
+      text: 'Review before starting?',
+      artifacts: [artifact],
+    });
+    expect(reworded).toMatchObject({ id: start.id, artifacts: [artifact] });
+    expect(await asked({ kind: 'start', text: 'Start these?' })).toMatchObject({
+      artifacts: [artifact],
+    });
+    expect(
+      await asked({ kind: 'start', text: 'Start without attachment?', artifacts: [] })
+    ).toMatchObject({ artifacts: [] });
+  });
+
   test('a start question starts the ticked todos', async () => {
     const { store, call, daemonStart, told, started, fix, rows } = setup();
     store.updateTodo(rows, { state: 'doing', startedAt: 2 }, 2);
@@ -406,8 +769,16 @@ describe('neo.question.retire and replaces', () => {
     });
     expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
     expect(await call('neo.question.retire', { questionId: moot.id, reason: 'again' })).toEqual({
-      ok: false,
-      reason: 'question_closed: this question is retired.',
+      ok: true,
+      question: expect.objectContaining({
+        id: moot.id,
+        state: 'retired',
+        retiredReason: 'the root cause was found',
+      }),
+    });
+    expect(store.getQuestion(moot.id)).toMatchObject({
+      state: 'retired',
+      retiredReason: 'the root cause was found',
     });
   });
 
@@ -432,14 +803,18 @@ describe('neo.question.retire and replaces', () => {
         .filter((q) => q.state === 'open')
         .map((q) => q.id)
     ).toEqual([next.id]);
-    expect(
-      await call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'reply',
-        text: 'Again?',
-        replaces: old.id,
-      })
-    ).toEqual({ ok: false, reason: `question_closed: question ${old.id} is retired.` });
+    const again = await call('neo.question.ask', {
+      askId: 'ask',
+      kind: 'reply',
+      text: 'Again?',
+      replaces: old.id,
+    });
+    expect(again).toMatchObject({ ok: true, question: { text: 'Again?', state: 'open' } });
+    expect(store.getQuestion(old.id)).toMatchObject({
+      state: 'retired',
+      retiredReason: 'replaced by the new question',
+      replacedBy: next.id,
+    });
   });
 
   test('never retires or replaces the start question that carries the go-ahead', async () => {
@@ -506,6 +881,77 @@ describe('neo.question.retire and replaces', () => {
   });
 });
 
+describe('question reference gates warn or omit instead of refusing', () => {
+  test('omits reply references that are not received human inputs instead of refusing', async () => {
+    const received = new Set(['22222222-2222-4222-8222-222222222222']);
+    const { call, store, db } = setup(undefined, undefined, (_caller, id) => received.has(id));
+    try {
+      const valid = '22222222-2222-4222-8222-222222222222';
+      const stale = '33333333-3333-4333-8333-333333333333';
+      const mixed = await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Which one?',
+        replyTo: [valid, stale],
+      });
+      expect(mixed).toMatchObject({ ok: true, question: { state: 'open', replyTo: [valid] } });
+      const onlyStale = await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Only stale?',
+        replyTo: [stale],
+      });
+      expect(onlyStale).toMatchObject({ ok: true, question: { state: 'open', replyTo: [] } });
+      expect(store.listQuestions('ask')).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('asking with replaces naming an answered question opens the new one and leaves the answer', async () => {
+    const { store, call, asked } = setup();
+    const old = await asked({ kind: 'reply', text: 'Pick a port?' });
+    await call('neo.question.answer', { questionId: old.id, answer: '9311' }, human);
+    const next = await call('neo.question.ask', {
+      askId: 'ask',
+      kind: 'reply',
+      text: 'Pick a port for the rerun?',
+      replaces: old.id,
+    });
+    expect(next).toMatchObject({ ok: true, question: { state: 'open' } });
+    expect(store.getQuestion(old.id)).toMatchObject({
+      state: 'answered',
+      answer: '9311',
+      replacedBy: null,
+    });
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+  });
+
+  test('retiring an answered question leaves the recorded answer untouched', async () => {
+    const { store, call, asked } = setup();
+    const decided = await asked({
+      kind: 'yesno',
+      text: 'Merge it?',
+      noLabel: 'Wait',
+      yesLabel: 'Merge',
+    });
+    await call('neo.question.answer', { questionId: decided.id, answer: 'yes' }, human);
+    const retired = await call('neo.question.retire', {
+      questionId: decided.id,
+      reason: 'tidying up',
+    });
+    expect(retired).toMatchObject({
+      ok: true,
+      question: { id: decided.id, state: 'answered', answer: 'yes' },
+    });
+    expect(store.getQuestion(decided.id)).toMatchObject({
+      state: 'answered',
+      answer: 'yes',
+      retiredReason: null,
+    });
+  });
+});
+
 describe('todo-owned question cards', () => {
   test('retains explicit todo ownership and retires only settled todo cards', async () => {
     const h = setup();
@@ -544,7 +990,7 @@ describe('todo-owned question cards', () => {
       h.db.close();
     }
   });
-  test('refuses a foreign or settled todo instead of making an unowned question', async () => {
+  test('records a foreign or settled reference while opening an ask-level question', async () => {
     const h = setup();
     try {
       h.store.openAsk({
@@ -565,7 +1011,11 @@ describe('todo-owned question cards', () => {
           text: 'Which?',
           todoId,
         });
-        expect(result.ok).toBe(false);
+        expect(result).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('todo_closed:')],
+        });
+        expect(result.ok ? (result.question.todoId ?? null) : false).toBeNull();
       }
     } finally {
       h.db.close();

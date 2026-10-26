@@ -23,10 +23,12 @@ export class SessionConfigHandler {
     if (pending !== undefined) {
       ctx.session.config = { ...ctx.session.config, autoCompactPercent: pending ?? undefined };
       delete ctx.session.metadata.pendingAutoCompactPercent;
-      ctx.db.updateSession(ctx.session.id, {
-        config: ctx.session.config,
-        metadata: ctx.session.metadata,
-      });
+      ctx.db
+        .updateSession(ctx.session.id, {
+          config: ctx.session.config,
+          metadata: ctx.session.metadata,
+        })
+        .catch((error) => this.logger.error('Failed to persist pending auto-compact:', error));
     }
   }
 
@@ -50,7 +52,7 @@ export class SessionConfigHandler {
       }
     }
     session.config = { ...session.config, ...changes };
-    db.updateSession(session.id, {
+    await db.updateSession(session.id, {
       config: session.config,
       ...('autoCompactPercent' in configUpdates ? { metadata: session.metadata } : {}),
     });
@@ -77,7 +79,7 @@ export class SessionConfigHandler {
     this.ctx.session.metadata = metadata;
   }
 
-  updateMetadata(updates: Partial<Session>): void {
+  async updateMetadata(updates: Partial<Session>): Promise<void> {
     const { session, db } = this.ctx;
 
     if (updates.title) session.title = updates.title;
@@ -109,6 +111,6 @@ export class SessionConfigHandler {
     if ('worktree' in updates) session.worktree = updates.worktree;
     if ('acpSessionId' in updates) session.acpSessionId = updates.acpSessionId;
 
-    db.updateSession(session.id, updates);
+    await db.updateSession(session.id, updates);
   }
 }

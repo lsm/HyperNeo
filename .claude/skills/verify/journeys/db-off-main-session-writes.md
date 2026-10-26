@@ -21,3 +21,29 @@ every delta are kept in `evidence/session-write-live-query.json`.
 Run it on every step of the sessions-table move: the async-facade PR, the caller
 PRs and the gateway switch. A missing or stale delta means a change notification
 fired before its write landed.
+
+Before the gateway switch, every session write must be awaited or explicitly
+handed off with a `.catch`, since a write that fails after the switch can only
+reject. List the ones that are not:
+
+```bash
+bun .claude/skills/verify/session-write-awaits.ts
+```
+
+It type-checks `packages/daemon/src` and prints each un-settled call of the
+`Database` session writers, and of wrappers listed in the script, with its
+enclosing function. Exit 0 means none are left. Add a wrapper to its list when
+it starts returning the write's promise.
+
+Once session writes run on the DB gateway, prove they leave the main connection:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-writer-XXXXXX); mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" TMPDIR="$RUN" \
+  bun .claude/skills/verify/session-writes-on-writer.ts
+```
+
+It holds `BEGIN IMMEDIATE` on the main connection, issues `updateSession`, and
+requires the write to stay blocked until main commits, then land, read back and
+replay exactly one `sessions` change. A write still on main lands at once
+(`blockedWhileMainHeldLock: false`) and fails the check.

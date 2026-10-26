@@ -16,11 +16,19 @@ export function neoQuestionText(question: Pick<NeoQuestionEntry, 'text' | 'textC
   return neoCodedText(question.text, question.textCodes);
 }
 
+export function neoTodoHasMore(todo: NeoTodoEntry): boolean {
+  return (
+    neoTodoDetail(todo).length > 0 ||
+    (todo.artifacts?.length ?? 0) > 0 ||
+    (todo.state === 'blocked' && !!todo.nextAction)
+  );
+}
+
 export function neoTodoDetail(todo: NeoTodoEntry): string[] {
   const status = neoTodoStatus(todo).trim();
   return [
     ...new Set(
-      [todo.report, todo.evidence]
+      [todo.instruction, todo.report, todo.evidence]
         .map((text) => text?.trim())
         .filter((text): text is string => !!text && text !== status)
     ),

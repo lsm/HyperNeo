@@ -1,4 +1,5 @@
 import type { Session, SpaceTask } from '@hyperneo/shared';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { editStandaloneTaskWithDependencies } from '../../storage/tasks/set-task-dependencies.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -17,7 +18,7 @@ export interface SpaceTaskMetadataDependencies extends SpaceMcpSessionPolicyCont
   getTaskManager: (
     spaceId: string
   ) => Pick<SpaceTaskManager, 'getTask' | 'updateTask' | 'submitTaskForReview'>;
-  notifyStandalone: () => void;
+  runOp: RunDbOp;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
   blockExecution?: SpaceTaskFieldEffects['blockExecution'];
 }
@@ -108,7 +109,7 @@ export function admitSpaceTaskMutation(
 }
 
 export function createSpaceTaskMetadataEditor(dependencies: SpaceTaskMetadataDependencies) {
-  const { db, notifyStandalone, emitTaskUpdated } = dependencies;
+  const { db, runOp, emitTaskUpdated } = dependencies;
   const updateSpaceFields = createSpaceTaskFieldUpdater(dependencies);
   return createTaskMetadataEditor({
     resolveOwner: (taskId) => resolveSpaceTaskOwner(db, taskId),
@@ -116,7 +117,7 @@ export function createSpaceTaskMetadataEditor(dependencies: SpaceTaskMetadataDep
       const scope = admitSpaceTaskMutation(owner, caller, dependencies);
       if ('reason' in scope) return { accepted: false, reason: 'task_update_denied' };
     },
-    editStandalone: (input) => editStandaloneTaskWithDependencies(db, input, notifyStandalone),
+    editStandalone: (input) => runOp(editStandaloneTaskWithDependencies, input),
     editSpace: (spaceId, { taskId, ...fields }) => updateSpaceFields(spaceId, taskId, fields),
     afterEdit: async (owner, task, _input, handledByRuntime) => {
       if (owner.kind === 'space' && !handledByRuntime) {

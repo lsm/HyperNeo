@@ -44,6 +44,64 @@ afterEach(() => {
   db.close();
 });
 const snapshot = (input: unknown = {}) => invokeOperation(registry, 'neo.snapshot', input, caller);
+test('paired relays can open summarized cards without gaining mutation access', async () => {
+  const relay = { ...caller, device: { deviceId: 'relay', kind: 'relay' as const } };
+  const detail = await invokeOperation(registry, 'neo.ask.read', { askId: 'ask-18' }, relay);
+  expect(detail.kind).toBe('completed');
+  if (detail.kind !== 'completed') throw new Error(detail.message);
+  expect(
+    (detail.value as { entry: { todos: { instruction: string }[] } }).entry.todos[0].instruction
+  ).toBe('x'.repeat(1155));
+  expect(
+    await invokeOperation(
+      registry,
+      'neo.ask.settle',
+      { askId: 'ask-18', status: 'done', outcome: 'Not authorized' },
+      relay
+    )
+  ).toMatchObject({ kind: 'failed', code: 'forbidden' });
+});
+test('Work cards defer full todo bodies until the card is opened', async () => {
+  const value = read(await snapshot());
+  const todo = value.todoAsks
+    .flatMap((entry) => entry.todos)
+    .find((item) => item.id === 'todo-230')!;
+  expect(todo.instruction).toBeNull();
+  expect(todo.report).toBeNull();
+  const detail = await invokeOperation(registry, 'neo.ask.read', { todoId: todo.id }, caller);
+  expect(detail.kind).toBe('completed');
+  if (detail.kind !== 'completed') throw new Error(detail.message);
+  expect(
+    (
+      detail.value as { entry: { todos: (typeof value.todoAsks)[number]['todos'] } }
+    ).entry.todos.find((item) => item.id === todo.id)?.instruction
+  ).toBe('x'.repeat(1155));
+});
+test.each([20, 21])(
+  'summary counts include all %i completed todos across the paging cutoff',
+  async (count) => {
+    const before = read(await snapshot()).todoAsks.find((entry) => entry.ask.id === 'ask-18')!;
+    for (let index = 0; index < count; index++) {
+      const todo = service.todos.addTodo(
+        `count-done-${index}`,
+        'ask-18',
+        {
+          title: `Completed ${index}`,
+          doneWhen: 'Done',
+          instruction: null,
+          check: null,
+          named: null,
+        },
+        1
+      );
+      service.todos.updateTodo(todo, { state: 'done' }, 2);
+    }
+    const entry = read(await snapshot()).todoAsks.find((entry) => entry.ask.id === 'ask-18')!;
+    expect(entry.doneCount).toBe(count);
+    expect(entry.summary?.todoCount).toBe(before.summary!.todoCount + count);
+    expect(entry.todos.filter((todo) => todo.state === 'done')).toHaveLength(count === 20 ? 20 : 0);
+  }
+);
 function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
   expect(outcome.kind).toBe('completed');
   if (outcome.kind !== 'completed') throw new Error(outcome.message);
@@ -53,13 +111,13 @@ function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
 test('a 231-todo snapshot retains its rows using three child/link reads', async () => {
   const value = read(await snapshot());
   const todos = value.todoAsks.flatMap((entry) => entry.todos);
-  expect(value.todoAsks).toHaveLength(50);
+  expect(value.todoAsks).toHaveLength(60);
   expect(todos).toHaveLength(231);
-  expect(value.todoAsks.flatMap((entry) => entry.questions)).toHaveLength(66);
+  expect(value.todoAsks.flatMap((entry) => entry.questions)).toHaveLength(0);
   expect(todos.find((todo) => todo.id === 'todo-230')).toMatchObject({
     title: 'Synthetic todo 230',
     link: '/session/synthetic-230',
-    instruction: 'x'.repeat(1155),
+    instruction: null,
   });
   expect(observer.queries.filter((query) => query.child)).toHaveLength(3);
 });
@@ -94,12 +152,12 @@ test('different scopes stay distinct and revision responses remain per request',
   ).map(read);
   expect(a.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-18']);
   expect(b.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-17']);
-  expect(all.todoAsks).toHaveLength(50);
+  expect(all.todoAsks).toHaveLength(60);
   expect(observer.queries.filter((query) => query.child)).toHaveLength(9);
   observer.reset();
   const [same, full] = await Promise.all([snapshot({ sinceRev: all.rev }), snapshot()]);
   expect(same).toMatchObject({ kind: 'completed', value: { unchanged: true, rev: all.rev } });
-  expect(read(full).todoAsks).toHaveLength(50);
+  expect(read(full).todoAsks).toHaveLength(60);
   expect(observer.queries.filter((query) => query.build)).toHaveLength(1);
 });
 
@@ -126,12 +184,12 @@ test('a failed shared build reports failure and a later request can recover', as
   } finally {
     sql.prepare = original;
   }
-  expect(read(await snapshot()).todoAsks).toHaveLength(50);
+  expect(read(await snapshot()).todoAsks).toHaveLength(60);
 });
 
 test('RPC sharing does not mix the MCP view or bypass caller admission', async () => {
   const root = 'neo:synthetic';
-  db.createSession(createTestSession(root));
+  await db.createSession(createTestSession(root));
   service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   service.repo.saveProject(
     { id: 'private', title: 'Synthetic', summary: '', context: 'RPC context' },
@@ -194,7 +252,7 @@ test.each([3, 4, 20, 21])(
   'RPC keeps up to twenty done todos while MCP keeps three without losing asks (%i done)',
   async (doneCount) => {
     const root = 'neo:done-threshold';
-    db.createSession(createTestSession(root));
+    await db.createSession(createTestSession(root));
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     service.repo.saveProject({ id: 'threshold', title: 'Synthetic', summary: '', context: '' }, 0);
     for (let i = 0; i < 10; i++) {

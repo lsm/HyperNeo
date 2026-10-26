@@ -230,9 +230,8 @@ export class SDKMessageHandler {
       await this.handleCircuitBreakerTrip(reason, userMessage, invocationGeneration);
     });
 
-    ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
+    ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) =>
       this.handleMessageYielded(messageId, consumedAt);
-    };
 
     ctx.messageQueue.onInternalCompactionsAborted = () => {
       this.ctx.contextTracker.clearCompactionCooldown();
@@ -558,7 +557,7 @@ export class SDKMessageHandler {
       },
     } as unknown as SDKMessage;
 
-    if (!db.saveSDKMessage(session.id, assistantMessage)) {
+    if (!(await db.saveSDKMessage(session.id, assistantMessage))) {
       internalEventBus.publishAsync('session.error', {
         sessionId: session.id,
         error: text,
@@ -584,6 +583,7 @@ export class SDKMessageHandler {
     db.beginTransaction();
     try {
       const result = operation();
+      if (result instanceof Promise) return result.finally(() => db.commitTransaction?.()) as T;
       db.commitTransaction();
       return result;
     } catch (error) {
@@ -640,9 +640,9 @@ export class SDKMessageHandler {
   ): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
-    this.withDbChangeBatch(() => {
-      db.updateMessageStatus([persistedMessage.dbId], 'consumed');
-      db.updateMessageTimestamp(persistedMessage.dbId);
+    await this.withDbChangeBatch(async () => {
+      await db.updateMessageStatus([persistedMessage.dbId], 'consumed');
+      await db.updateMessageTimestamp(persistedMessage.dbId);
     });
 
     await internalEventBus.publish('messages.statusChanged', {
@@ -698,9 +698,12 @@ export class SDKMessageHandler {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
-      const consumed = db
-        .getSDKMessageRepo()
-        .markDeliveriesConsumedAtTurnEnd(session.id, [messageId], resultUuid);
+      const consumed = await db.writeSDKMessage(
+        'markDeliveriesConsumedAtTurnEnd',
+        session.id,
+        [messageId],
+        resultUuid
+      );
       const consumedId = consumed.ids[0];
       if (!consumedId) continue;
       if (messageQueue.acknowledgeYielded(messageId, invocationGeneration ?? undefined)) {
@@ -708,7 +711,7 @@ export class SDKMessageHandler {
           signalDeliveryConsumed(session.id, uuid);
         }
       }
-      db.updateMessageTimestamp(consumedId, consumedAt);
+      await db.updateMessageTimestamp(consumedId, consumedAt);
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
         messageIds: consumed.ids,
@@ -733,8 +736,8 @@ export class SDKMessageHandler {
     }
   }
 
-  markMessageSubmitted(messageId: string): boolean {
-    let persisted = this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+  async markMessageSubmitted(messageId: string): Promise<boolean> {
+    let persisted = await this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
     if (!persisted) {
       const already = this.ctx.db.getMessageByStatusAndUuid(
         this.ctx.session.id,
@@ -746,9 +749,9 @@ export class SDKMessageHandler {
     return persisted;
   }
 
-  markMessageAccepted(messageId: string): void {
+  async markMessageAccepted(messageId: string): Promise<void> {
     try {
-      this.handleMessageYielded(messageId, Date.now());
+      await this.handleMessageYielded(messageId, Date.now());
     } catch {}
     const consumed = this.ctx.db.getMessageByStatusAndUuid(
       this.ctx.session.id,
@@ -760,9 +763,9 @@ export class SDKMessageHandler {
     }
   }
 
-  markACPDeliveryFailed(messageId: string): void {
+  async markACPDeliveryFailed(messageId: string): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
-    const flipped = db.getSDKMessageRepo().markDeliveryFailedByUuid(session.id, messageId);
+    const flipped = await db.writeSDKMessage('markDeliveryFailedByUuid', session.id, messageId);
     if (!flipped) return;
     internalEventBus
       .publish('messages.statusChanged', {
@@ -773,15 +776,15 @@ export class SDKMessageHandler {
       .catch(() => {});
   }
 
-  private transitionPersistedMessage(
+  private async transitionPersistedMessage(
     messageId: string,
     fromStatus: 'enqueued',
     toStatus: 'submitted'
-  ): boolean {
+  ): Promise<boolean> {
     const { session, db, internalEventBus } = this.ctx;
     const message = db.getMessageByStatusAndUuid(session.id, fromStatus, messageId);
     if (!message) return false;
-    db.updateMessageStatus([message.dbId], toStatus);
+    await db.updateMessageStatus([message.dbId], toStatus);
     internalEventBus
       .publish('messages.statusChanged', {
         sessionId: session.id,
@@ -792,7 +795,7 @@ export class SDKMessageHandler {
     return true;
   }
 
-  private handleMessageYielded(messageId: string, consumedAt: number): void {
+  private async handleMessageYielded(messageId: string, consumedAt: number): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
     const enqueuedMessage =
@@ -803,9 +806,9 @@ export class SDKMessageHandler {
       if (!deferredMessage) {
         return;
       }
-      this.withDbChangeBatch(() => {
-        db.updateMessageStatus([deferredMessage.dbId], 'consumed');
-        db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
+      await this.withDbChangeBatch(async () => {
+        await db.updateMessageStatus([deferredMessage.dbId], 'consumed');
+        await db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
       });
       internalEventBus
         .publish('messages.statusChanged', {
@@ -867,9 +870,9 @@ export class SDKMessageHandler {
       return;
     }
 
-    this.withDbChangeBatch(() => {
-      db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
-      db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
+    await this.withDbChangeBatch(async () => {
+      await db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
+      await db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
     });
 
     internalEventBus
@@ -911,7 +914,7 @@ export class SDKMessageHandler {
       if (session.metadata.titleSetBy !== 'user') {
         const metadata = { ...session.metadata, titleGenerated: false };
         session.metadata = metadata;
-        db.updateSession(session.id, { metadata, title: 'New Session' });
+        await db.updateSession(session.id, { metadata, title: 'New Session' });
       }
       this.logFilteredSDKMessage('conversation_reset', message);
       return;
@@ -1074,7 +1077,7 @@ export class SDKMessageHandler {
         this.resolveInternalCompactionResultStamp(message) !== null;
       let deferredSuccessfully: boolean;
       try {
-        deferredSuccessfully = this.withDbChangeBatch(() =>
+        deferredSuccessfully = await this.withDbChangeBatch(() =>
           stampsInternalCompactionTurn
             ? db.saveSDKMessage(session.id, message, undefined, {
                 stampInternalCompactionTurn: true,
@@ -1222,7 +1225,8 @@ export class SDKMessageHandler {
         const resultUuid = (message as SDKResultMessage).uuid;
         if (resultUuid) {
           try {
-            db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
+            await db.writeSDKMessage(
+              'markResultRecoveryIntercepted',
               session.id,
               resultUuid,
               limitBillingTerminal
@@ -1333,7 +1337,7 @@ export class SDKMessageHandler {
       const sdkCapabilities = [...(message.capabilities ?? [])];
       this.sdkCapabilities = new Set(sdkCapabilities);
       session.metadata = { ...session.metadata, sdkCapabilities };
-      db.updateSession(session.id, { metadata: session.metadata });
+      await db.updateSession(session.id, { metadata: session.metadata });
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
         source: 'metadata',
@@ -1352,7 +1356,7 @@ export class SDKMessageHandler {
       const sdkOriginPath = sessionSdkPath(session) ?? undefined;
       session.sdkOriginPath = sdkOriginPath;
 
-      db.updateSession(session.id, {
+      await db.updateSession(session.id, {
         sdkSessionId: message.session_id,
         sdkOriginPath,
       });
@@ -1387,7 +1391,7 @@ export class SDKMessageHandler {
       ...session.metadata,
       refusalRewindTargetUuid: refusedUserMessageUuid,
     };
-    db.updateSession(session.id, { metadata: session.metadata });
+    await db.updateSession(session.id, { metadata: session.metadata });
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
       source: 'metadata',
@@ -1421,7 +1425,7 @@ export class SDKMessageHandler {
       ...usage,
     };
 
-    db.updateSession(session.id, {
+    await db.updateSession(session.id, {
       lastActiveAt: session.lastActiveAt,
       metadata: hadRefusalRewindTarget
         ? { ...session.metadata, refusalRewindTargetUuid: null }
@@ -1818,7 +1822,7 @@ export class SDKMessageHandler {
       ...session.config,
       model: fallbackModel,
     };
-    db.updateSession(session.id, { config: session.config });
+    await db.updateSession(session.id, { config: session.config });
     const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
@@ -1891,7 +1895,7 @@ export class SDKMessageHandler {
     const progress = applyProgressToolResults(session.metadata?.progress, results);
     if (progress) {
       session.metadata = { ...session.metadata, progress };
-      db.updateSession(session.id, { metadata: session.metadata });
+      await db.updateSession(session.id, { metadata: session.metadata });
     }
   }
 
@@ -1917,7 +1921,7 @@ export class SDKMessageHandler {
         toolCallCount: (session.metadata?.toolCallCount || 0) + toolCalls.length,
         ...(progress ? { progress } : {}),
       };
-      db.updateSession(session.id, {
+      await db.updateSession(session.id, {
         metadata: session.metadata,
       });
 

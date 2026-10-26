@@ -764,7 +764,9 @@ export class AskUserQuestionHandler {
     const updatedMetadata = { ...session.metadata, resolvedQuestions };
     session.metadata = updatedMetadata;
 
-    db.updateSession(session.id, { metadata: updatedMetadata });
+    db.updateSession(session.id, { metadata: updatedMetadata }).catch((error) =>
+      this.logger.error(`Failed to persist resolved question ${toolUseId}:`, error)
+    );
   }
 
   async updateQuestionDraft(draftResponses: QuestionDraftResponse[]): Promise<void> {

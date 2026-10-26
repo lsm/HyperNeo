@@ -1,3 +1,4 @@
+import { mockMailboxAdmission } from '../../../helpers/mock-mailbox-admission';
 import { describe, expect, mock, test } from 'bun:test';
 import type { Session, Space } from '@hyperneo/shared';
 import {
@@ -72,12 +73,12 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
     attachSpaceTools: async (sessionId) => {
       h.attached.push(sessionId);
     },
-    jobQueue: {
+    jobQueue: mockMailboxAdmission({
       enqueueUniquePending: mock((job: unknown) => {
         h.enqueued.push(job);
         return { id: 'job-1' };
       }),
-    } as unknown as JobQueueRepository,
+    }) as unknown as JobQueueRepository,
   };
   return h;
 }

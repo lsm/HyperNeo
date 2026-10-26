@@ -1,5 +1,3 @@
-import { ContentDisclosureControl } from './ui/ContentDisclosureControl.tsx';
-import { NativeContentDisclosure } from './ui/NativeContentDisclosure.tsx';
 import { GoalJournal, goalMandateLink } from './SessionGoalJournal.tsx';
 import type {
   SessionScheduleListResult,
@@ -40,9 +38,11 @@ function RunTime({ at }: { at: number | null }) {
 export function GoalDefinition({
   ownerSessionId,
   goalId,
+  explicit,
 }: {
   ownerSessionId: string;
   goalId: string;
+  explicit?: boolean;
 }) {
   const [goal, setGoal] = useState<SessionGoal | null>(null);
   const [remote, setRemote] = useState<string | null>(null);
@@ -136,6 +136,7 @@ export function GoalDefinition({
             key={`${ownerSessionId}:${goalId}`}
             ownerSessionId={ownerSessionId}
             goalId={goalId}
+            explicit={explicit}
           />
         </>
       )}
@@ -192,17 +193,14 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
     }
   }
   return (
-    <NativeContentDisclosure
-      label={t('schedules.title')}
+    <details
       class="mx-4 my-2 shrink-0 rounded-lg border border-line text-xs text-fg-muted"
       data-session-schedules={sessionId}
-      summary={
-        <span>
-          <span class="font-medium text-fg">{t('schedules.title')}</span>
-          {!loading && !error && <> · {rows.length}</>}
-        </span>
-      }
     >
+      <summary class="cursor-pointer px-3 py-2">
+        <span class="font-medium text-fg">{t('schedules.title')}</span>
+        {!loading && !error && <> · {rows.length}</>}
+      </summary>
       <div class="max-h-64 space-y-2 overflow-y-auto px-3 pb-3">
         <Button
           variant="ghost"
@@ -223,7 +221,18 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
           <article key={row.id} data-schedule={row.id} class="border-t border-line py-2">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0 break-words font-medium text-fg">
-                {row.sourceLabel ?? t('schedules.unavailable')}
+                {row.sourceKind === 'goal' && row.sourceLabel ? (
+                  <button
+                    type="button"
+                    class="text-left text-accent hover:underline"
+                    aria-expanded={goal === row.id}
+                    onClick={() => setGoal(goal === row.id ? null : row.id)}
+                  >
+                    {row.sourceLabel}
+                  </button>
+                ) : (
+                  (row.sourceLabel ?? t('schedules.unavailable'))
+                )}
               </div>
               {row.status !== 'done' && (
                 <Button
@@ -245,35 +254,24 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
             <p>
               {t('schedules.next')}: <RunTime at={row.nextRunAt} />
             </p>
-            <div class="flow-root">
-              <span>
-                {t('schedules.last')}: <RunTime at={row.lastRunAt} />
-                {row.lastOutcome && (
-                  <>
-                    {' '}
-                    ·{' '}
-                    {row.lastOutcome.startsWith('skipped_')
-                      ? t('schedules.skipped')
-                      : factLabel('outcome', row.lastOutcome)}
-                    {row.lastSkipReason && <> · {factLabel('reason', row.lastSkipReason)}</>}
-                  </>
-                )}
-              </span>
-              {goal === row.id && (
-                <GoalDefinition ownerSessionId={sessionId} goalId={row.sourceId} />
+            <p>
+              {t('schedules.last')}: <RunTime at={row.lastRunAt} />
+              {row.lastOutcome && (
+                <>
+                  {' '}
+                  ·{' '}
+                  {row.lastOutcome.startsWith('skipped_')
+                    ? t('schedules.skipped')
+                    : factLabel('outcome', row.lastOutcome)}
+                  {row.lastSkipReason && <> · {factLabel('reason', row.lastSkipReason)}</>}
+                </>
               )}
-              {row.sourceKind === 'goal' && row.sourceLabel && (
-                <ContentDisclosureControl
-                  expanded={goal === row.id}
-                  onToggle={() => setGoal(goal === row.id ? null : row.id)}
-                  aria-label={row.sourceLabel}
-                />
-              )}
-            </div>
+            </p>
+            {goal === row.id && <GoalDefinition ownerSessionId={sessionId} goalId={row.sourceId} />}
           </article>
         ))}
       </div>
-    </NativeContentDisclosure>
+    </details>
   );
 }
 export function SessionSchedules({

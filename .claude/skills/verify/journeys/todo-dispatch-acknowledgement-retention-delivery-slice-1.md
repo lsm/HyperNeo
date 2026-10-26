@@ -9,7 +9,7 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 ```
 
 The real isolated daemon's MCP `neo.todo.add` and `neo.todo.continue` operations
-use the production Codex and Claude CLI adapters. Synthetic Unix-socket peers
+use the production Codex and Claude CLI adapters. Synthetic Desktop IPC and inbox peers
 return a Codex opening turn ID, confirm a steer turn ID, or accept Claude inbox bytes
 without confirming consumption. CLI discovery and registrations are synthetic;
 `claude` and `gh` are stubbed. No real app/CLI, credentials, provider, live DB,

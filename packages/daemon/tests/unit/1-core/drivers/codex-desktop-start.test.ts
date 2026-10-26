@@ -1,9 +1,10 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
-import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import {
   codexStartReceipt,
@@ -130,6 +131,7 @@ describe('codexStartReceipt', () => {
 describe('codex-desktop start receipt', () => {
   let dir = '';
   afterEach(() => {
+    configureWorkerSandbox(() => 'off');
     if (dir) rmSync(dir, { recursive: true, force: true });
     dir = '';
   });
@@ -168,6 +170,12 @@ describe('codex-desktop start receipt', () => {
 });
 
 describe('codex-desktop start', () => {
+  beforeEach(() => configureWorkerSandbox(() => 'always'));
+  let dir = '';
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = '';
+  });
   test('tells a new Codex worker how to trim only its own merged or closed PR links', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -198,6 +206,8 @@ describe('codex-desktop start', () => {
   });
 
   test('starts in the prepared location instead of another HEAD worktree and keeps its resource', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
+    mkdirSync(join(dir, '.git'));
     const prepared: unknown[] = [];
     let released = false;
     const { instance, calls, spawned } = adapter(
@@ -211,7 +221,7 @@ describe('codex-desktop start', () => {
           return {
             ok: true,
             value: {
-              directory: '/fresh/remote-base',
+              directory: dir,
               release: async () => {
                 released = true;
               },
@@ -228,12 +238,56 @@ describe('codex-desktop start', () => {
         location: { directory: '/focus/dolmen', destination: '/codex/worktrees/abcd1234/dolmen' },
       },
     ]);
-    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/fresh/remote-base' }]);
+    expect(calls[0]).toMatchObject([
+      'thread/start',
+      {
+        cwd: dir,
+        sandbox: 'workspace-write',
+        config: {
+          sandbox_workspace_write: {
+            writable_roots: expect.arrayContaining([dir, join(dir, '.git')]),
+            exclude_slash_tmp: true,
+            exclude_tmpdir_env_var: true,
+          },
+        },
+      },
+    ]);
+    expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
+      sandboxPolicy: { type: 'workspaceWrite', excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+    });
     expect(spawned).toEqual([]);
     expect(released).toBe(false);
   });
 
+  test('with the default worker sandbox preference a prepared Codex start has full access', async () => {
+    configureWorkerSandbox(() => 'off');
+    dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
+    mkdirSync(join(dir, '.git'));
+    const { instance, calls } = adapter(
+      { call: async () => ({ thread: { id: 'fresh' } }) },
+      undefined,
+      {
+        root: '/focus/dolmen',
+        linked: true,
+        prepareExecution: async () => ({
+          ok: true,
+          value: { directory: dir, release: async () => {} },
+        }),
+      }
+    );
+    expect(
+      await instance.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user)
+    ).toMatchObject({ ok: true });
+    expect(calls[0]).toMatchObject(['thread/start', { cwd: dir, sandbox: 'danger-full-access' }]);
+    expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
+      sandboxPolicy: { type: 'dangerFullAccess' },
+    });
+    expect(existsSync(join(dir, '.git/hyperneo-worker-sandbox'))).toBe(false);
+  });
+
   test('failed preparation creates no thread and a failed thread start releases the prepared directory', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
+    mkdirSync(join(dir, '.git'));
     let released = false;
     for (const failedPreparation of [true, false]) {
       const { instance, calls, spawned } = adapter(
@@ -250,7 +304,7 @@ describe('codex-desktop start', () => {
               : {
                   ok: true,
                   value: {
-                    directory: '/fresh',
+                    directory: dir,
                     release: async () => {
                       released = true;
                     },
@@ -466,6 +520,39 @@ describe('codex-desktop start', () => {
     });
   }
 
+  test.each([undefined, 'unavailable'])(
+    'prepares an authorized missing folder only after configuration admission: %s',
+    async (requestedModel) => {
+      const dir = mkdtempSync(join(tmpdir(), 'codex-folder-admission-'));
+      const folder = join(dir, 'new-folder');
+      try {
+        const { instance } = adapter(
+          {
+            call: async (method) =>
+              method === 'model/list' ? { data: [model] } : { thread: { id: 'th1' } },
+          },
+          []
+        );
+        const result = await instance.start!(
+          {
+            ...request,
+            place: { ...place, folder },
+            ...(requestedModel ? { model: requestedModel } : {}),
+            prepareFolder: () => {
+              mkdirSync(folder);
+              return { value: folder };
+            },
+          },
+          user
+        );
+        expect(result).toMatchObject({ ok: !requestedModel });
+        expect(existsSync(folder)).toBe(!requestedModel);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  );
+
   test('starts a named thread in the folder and sends the first turn', async () => {
     const { instance, calls, closed } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -538,6 +625,21 @@ describe('codex-desktop start', () => {
       'thread/start',
       { ...threadAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
     ]);
+  });
+
+  test('keeps a shared non-coding home in place despite its Git parent', async () => {
+    const { instance, calls, spawned, projectFolders } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+      ['/focus/dolmen'],
+      { root: '/focus', linked: false }
+    );
+    expect(await instance.start?.({ ...request, inPlace: true }, user)).toMatchObject({
+      ok: true,
+      value: { place },
+    });
+    expect(spawned).toEqual([]);
+    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }]);
+    expect(projectFolders).toEqual(['/focus/dolmen']);
   });
 
   test('runs in place when the folder is already a linked worktree', async () => {

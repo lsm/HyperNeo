@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { vi, type MockInstance } from 'vitest';
+import * as dataDirectory from '../../../../src/lib/data-dir';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { applyStoredProviderCredentials } from '../../../../src/app';
 import {
+  DatabaseCredentialStore,
   KeychainUnavailableError,
   type CredentialStore,
 } from '../../../../src/lib/credentials/credential-store';
@@ -36,6 +39,13 @@ interface ScenarioOptions {
 }
 
 const openDatabases: SqliteDatabase[] = [];
+let defaultCredentialPath: MockInstance<() => string>;
+
+beforeEach(() => {
+  defaultCredentialPath = vi.spyOn(dataDirectory, 'getDataDir').mockImplementation(() => {
+    throw new Error('Reconciliation fixture must not resolve the default credential key path');
+  });
+});
 
 async function runScenario(options: ScenarioOptions) {
   const db = new SqliteDatabase(':memory:');
@@ -55,9 +65,11 @@ async function runScenario(options: ScenarioOptions) {
       configJson: options.configJson,
     });
   }
-  const credentialManager = options.store
-    ? new ProviderCredentialManager(options.store(providers), db, options.env ?? {})
-    : ProviderCredentialManager.create(db, options.env ?? {});
+  const credentialManager = new ProviderCredentialManager(
+    options.store?.(providers) ?? new DatabaseCredentialStore(db, 'reconciliation-fixture-key'),
+    db,
+    options.env ?? {}
+  );
   if (options.stored) {
     await (options.stored.type === 'api_key'
       ? credentialManager.storeApiKey(providerId, options.stored.apiKey)
@@ -87,6 +99,9 @@ async function runScenario(options: ScenarioOptions) {
 
 afterEach(() => {
   for (const db of openDatabases.splice(0)) db.close();
+  const defaultPathCalls = defaultCredentialPath.mock.calls.length;
+  defaultCredentialPath.mockRestore();
+  expect(defaultPathCalls).toBe(0);
 });
 
 describe('startup persisted-discovery reconciliation', () => {

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MessageHub, Space, McpImportsRefreshResponse } from '@hyperneo/shared';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -87,6 +88,7 @@ function createSpaceManagerMock(spaces: Space[]): SpaceManager {
 
 describe('space-mcp-handlers', () => {
   let bunDb: BunDatabase;
+  let gateway: DbGateway;
   let reactiveDb: ReactiveDatabase;
   let db: Database;
   let appMcpRepo: AppMcpServerRepository;
@@ -100,6 +102,12 @@ describe('space-mcp-handlers', () => {
     bunDb.exec('PRAGMA foreign_keys = ON');
     createTables(bunDb);
     createSpaceTables(bunDb);
+    gateway = new DbGateway(':memory:', bunDb);
+    bunDb
+      .prepare(
+        "INSERT INTO spaces (id,slug,name,workspace_path,config,created_at,updated_at) VALUES ('space-A','space-a','Space A','/tmp/space-A','{}',1,1)"
+      )
+      .run();
     reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
 
     appMcpRepo = new AppMcpServerRepository(bunDb, reactiveDb);
@@ -107,6 +115,7 @@ describe('space-mcp-handlers', () => {
 
     const workspaceHistory = new WorkspaceHistoryRepository(bunDb);
     db = {
+      gateway,
       appMcpServers: appMcpRepo,
       mcpEnablement: enablementRepo,
       getDatabase: () => bunDb,
@@ -119,7 +128,8 @@ describe('space-mcp-handlers', () => {
     process.env.HOME = tmpRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await gateway.close();
     bunDb.close();
     if (originalHome === undefined) {
       delete process.env.HOME;

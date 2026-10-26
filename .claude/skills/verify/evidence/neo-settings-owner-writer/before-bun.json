@@ -1,0 +1,63 @@
+{
+  "mode": "before",
+  "races": [
+    {
+      "name": "neo.session.mute",
+      "reply": {
+        "ok": true,
+        "mutedSessions": [
+          "synthetic-muted"
+        ]
+      },
+      "persisted": {
+        "autoDispatch": true,
+        "standingRules": [],
+        "mutedSessions": [
+          "synthetic-muted"
+        ]
+      },
+      "autoScroll": false
+    },
+    {
+      "name": "neo.rule.save",
+      "reply": {
+        "ok": true,
+        "standingRules": [
+          "Keep the complete synthetic rule."
+        ]
+      },
+      "persisted": {
+        "autoDispatch": true,
+        "standingRules": [
+          "Keep the complete synthetic rule."
+        ],
+        "mutedSessions": []
+      },
+      "autoScroll": false
+    },
+    {
+      "name": "neo.preferences.set",
+      "reply": {
+        "ok": true,
+        "preferences": {
+          "model": "synthetic-model",
+          "provider": "anthropic",
+          "thinkingLevel": "off"
+        }
+      },
+      "persisted": {
+        "autoDispatch": true,
+        "standingRules": [],
+        "mutedSessions": [],
+        "preferences": {
+          "model": "synthetic-model",
+          "provider": "anthropic",
+          "thinkingLevel": "off"
+        }
+      },
+      "autoScroll": false
+    }
+  ],
+  "mainWrites": 3,
+  "verified": true
+}

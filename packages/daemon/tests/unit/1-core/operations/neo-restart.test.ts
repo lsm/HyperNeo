@@ -11,7 +11,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 describe('neo.restart operation', () => {
   test('clears context without enqueueing a seed after reset or compaction', async () => {
     const db = await createTestDb();
-    db.createSession(createTestSession('neo:root'));
+    await db.createSession(createTestSession('neo:root'));
     const clear = mock(async () => {});
     const events = new InternalEventBus();
     const service = createNeoService(
@@ -19,7 +19,7 @@ describe('neo.restart operation', () => {
       {
         getSessionForControl: async () => ({ startFreshContext: clear }),
         updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
-          db.updateSession(id, updates);
+          await db.updateSession(id, updates);
         },
       } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,

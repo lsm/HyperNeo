@@ -1,3 +1,9 @@
+import {
+  subscribeToStructuredLogs,
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+} from '../../../../src/lib/logger.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
@@ -23,7 +29,15 @@ interface Message {
 }
 
 describe('withCodexDesktopIpc', () => {
-  const noDesktopOpen = () => {
+  const noDesktopOpen: import('../../../../src/lib/runtime-spawn').SpawnFn = (args) => {
+    if (args[0] === 'ps')
+      return {
+        stdout: new Response('/Applications/Codex.app/Contents/MacOS/Codex\n').body,
+        stderr: null,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
     throw new Error('Synthetic Desktop open refused');
   };
   let directory = '';
@@ -79,8 +93,244 @@ describe('withCodexDesktopIpc', () => {
     return { path, seen, closed };
   }
 
+  describe('steerCodexDesktopTurn Desktop admission', () => {
+    test.each([
+      ['/Applications/ChatGPT.app/Contents/MacOS/ChatGPT', true],
+      ['/Users/test/Applications/Codex.app/Contents/MacOS/Codex', true],
+      ['/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex', false],
+      ['/usr/bin/sleep', false],
+    ])(
+      'detects the Desktop executable rather than its background CLI: %s',
+      async (path, running) => {
+        const probes: string[][] = [];
+        const result = await steerCodexDesktopTurn(
+          undefined,
+          (args) => {
+            probes.push(args);
+            return {
+              stdout: new Response(`${path}\n`).body,
+              stderr: null,
+              exited: Promise.resolve(0),
+              exitCode: 0,
+              kill: () => {},
+            };
+          },
+          'thread-1',
+          'marker',
+          'input-1'
+        );
+        expect(probes).toEqual([['ps', '-axo', 'comm=']]);
+        expect(result).toMatchObject(
+          running ? { reason: { ok: false, reason: 'not_delivered' } } : { value: 'app-server' }
+        );
+      }
+    );
+
+    test.each(['linux', 'win32', 'darwin'] as const)(
+      'probe launch failure respects the host contract: %s',
+      async (platform) => {
+        const result = await steerCodexDesktopTurn(
+          undefined,
+          () => {
+            throw new Error('Synthetic ps missing');
+          },
+          'thread-1',
+          'marker',
+          'input-1',
+          'auto',
+          undefined,
+          platform
+        );
+        expect(result).toMatchObject(
+          platform === 'darwin'
+            ? { reason: { ok: false, reason: 'not_delivered' } }
+            : { value: 'app-server' }
+        );
+      }
+    );
+
+    test('opens while negative owner discovery is pending and waits for asynchronous ownership', async () => {
+      let opened = false;
+      let readyAt = Infinity;
+      const f = await fixture((message, _socket, send) => {
+        if (message.method === 'thread-owner-discovery' && Date.now() < readyAt) return;
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'success',
+          handledByClientId: 'desktop-owner',
+          result: { result: { turnId: 'desktop-turn' } },
+        });
+      });
+      const started = performance.now();
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        () => {
+          opened = true;
+          readyAt = Date.now() + 400;
+          return {
+            stdout: null,
+            stderr: null,
+            exited: Promise.resolve(0),
+            exitCode: 0,
+            kill: () => {},
+          };
+        },
+        'thread-1',
+        'marker',
+        'input-1',
+        'auto',
+        async () => true
+      );
+      expect(result).toMatchObject({
+        reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
+      });
+      expect(opened).toBe(true);
+      expect(performance.now() - started).toBeLessThan(3_000);
+    }, 10_000);
+
+    test('refuses within eight seconds when Desktop never acquires the thread', async () => {
+      const started = performance.now();
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'error',
+          error: 'no-client-found',
+        })
+      );
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        () => ({
+          stdout: null,
+          stderr: null,
+          exited: Promise.resolve(0),
+          exitCode: 0,
+          kill: () => {},
+        }),
+        'thread-1',
+        'marker',
+        'input-1',
+        'auto',
+        async () => true
+      );
+      expect(result).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('No background writer was started'),
+        },
+      });
+      expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
+      expect(performance.now() - started).toBeLessThan(9_000);
+    }, 10_000);
+
+    test('kills a stalled launcher and closes IPC at the existing-turn deadline', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'error',
+          error: 'no-client-found',
+        })
+      );
+      let killed = false;
+      const started = performance.now();
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        () => ({
+          stdout: null,
+          stderr: null,
+          exited: new Promise<number>(() => {}),
+          exitCode: null,
+          kill: () => {
+            killed = true;
+          },
+        }),
+        'thread-1',
+        'marker',
+        'input-1',
+        'auto',
+        async () => true
+      );
+      await f.closed;
+      expect(result).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+      expect(killed).toBe(true);
+      expect(performance.now() - started).toBeLessThan(9_000);
+      expect(f.seen.some((message) => message.method?.startsWith('thread-follower-'))).toBe(false);
+    }, 10_000);
+
+    test('opens an unloaded thread and waits for its Desktop owner before delivering', async () => {
+      let opened = false;
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          ...(message.method === 'thread-owner-discovery'
+            ? opened
+              ? { resultType: 'success', handledByClientId: 'desktop-owner' }
+              : { resultType: 'error', error: 'no-client-found' }
+            : { resultType: 'success', result: { result: { turnId: 'desktop-turn' } } }),
+        })
+      );
+      const launched: string[][] = [];
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        (args) => {
+          if (args[0] === 'ps')
+            return {
+              stdout: new Response('/Applications/Codex.app/Contents/MacOS/Codex\n').body,
+              stderr: null,
+              exited: Promise.resolve(0),
+              exitCode: 0,
+              kill: () => {},
+            };
+          launched.push(args);
+          return {
+            stdout: null,
+            stderr: null,
+            exitCode: null,
+            exited: new Promise<number>((resolve) =>
+              setTimeout(() => {
+                opened = true;
+                resolve(0);
+              }, 20)
+            ),
+            kill: () => {},
+          };
+        },
+        'thread-1',
+        'ownership marker',
+        'input-1'
+      );
+      expect(result).toEqual({
+        reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
+      });
+      expect(launched).toEqual([['open', '-g', 'codex://threads/thread-1']]);
+      expect(f.seen.at(-1)).toMatchObject({
+        method: 'thread-follower-steer-turn',
+        targetClientId: 'desktop-owner',
+      });
+    });
+
+    test('refuses instead of creating a background writer if running Desktop cannot be reached', async () => {
+      directory = mkdtempSync(join(tmpdir(), 'codex-running-no-ipc-'));
+      expect(
+        await steerCodexDesktopTurn(
+          join(directory, 'missing.sock'),
+          noDesktopOpen,
+          'thread-1',
+          'ownership marker',
+          'input-1',
+          'auto',
+          async () => true
+        )
+      ).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+    });
+  });
+
   describe('steerCodexDesktopTurn discovery fallback', () => {
-    test('tries app-server when Desktop discovery refuses before dispatch', async () => {
+    test('refuses when running Desktop discovery rejects the protocol before dispatch', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -91,8 +341,12 @@ describe('withCodexDesktopIpc', () => {
       );
       expect(
         await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', 'now', 'input-1')
-      ).toEqual({
-        value: 'app-server',
+      ).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('request-version-mismatch'),
+        },
       });
       expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
     });
@@ -100,16 +354,16 @@ describe('withCodexDesktopIpc', () => {
 
   describe('existing-thread work.send without a Desktop owner', () => {
     test.each(
-      (['steer', 'resume', 'queue'] as const).flatMap((route) =>
+      (['active', 'completed'] as const).flatMap((state) =>
         (['refused', 'hung'] as const).flatMap((launcher) =>
-          (['ownerless', 'missing', 'stale'] as const).map(
-            (connection) => [route, launcher, connection] as const
+          (['missing', 'stale'] as const).map(
+            (connection) => [state, launcher, connection] as const
           )
         )
       )
     )(
-      'delivers through %s if Desktop open is %s and socket is %s',
-      async (route, launcher, connection) => {
+      'queues %s input even if Desktop open would be %s and socket is %s',
+      async (state, launcher, connection) => {
         const f = await fixture((message, _socket, send) =>
           send({
             type: 'response',
@@ -128,7 +382,13 @@ describe('withCodexDesktopIpc', () => {
         }
         const statePath = join(directory, 'state.sqlite');
         const rollout = join(directory, 'rollout.jsonl');
-        writeFileSync(rollout, '');
+        writeFileSync(
+          rollout,
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: state === 'active' ? 'task_started' : 'task_complete' },
+          }) + '\n'
+        );
         const db = new Database(statePath);
         db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
         CREATE TABLE projects (id TEXT, name TEXT);
@@ -146,6 +406,9 @@ describe('withCodexDesktopIpc', () => {
         const driver = createCodexDesktopAdapter({
           statePath,
           desktopSocketPath,
+          desktopRunning: async () => {
+            throw new Error('Automatic input must not inspect Desktop ownership');
+          },
           worktreesDir: directory,
           machine: 'test',
           now: Date.now,
@@ -163,19 +426,7 @@ describe('withCodexDesktopIpc', () => {
           appServer: async () => ({
             call: async (method, params) => {
               calls.push(method);
-              if (method === 'thread/turns/list')
-                return {
-                  data: [
-                    { id: 'existing-turn', status: route === 'steer' ? 'inProgress' : 'completed' },
-                  ],
-                };
-              if (method === 'turn/steer') return { turnId: 'existing-turn' };
-              if (method === 'thread/resume') {
-                if (route === 'queue')
-                  throw new Error('thread thread-1 already has an active writer');
-                return {};
-              }
-              if (method === 'turn/start') return { turn: { id: 'resumed-turn' } };
+              if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
               if (method === 'thread/queue/add') {
                 const text = (params.input as { text: string }[])[0].text;
                 appendFileSync(
@@ -186,7 +437,7 @@ describe('withCodexDesktopIpc', () => {
                     payload: {
                       type: 'message',
                       role: 'user',
-                      id: 'queued-input',
+                      id: params.clientUserMessageId,
                       content: [{ type: 'input_text', text }],
                     },
                   }) + '\n'
@@ -216,6 +467,7 @@ describe('withCodexDesktopIpc', () => {
           createWorkVerbOperations({
             adapters: () => [driver],
             daemonName: 'test',
+            isOpenTodo: (todoId) => todoId === 'open-todo',
             remote: { list: () => [], invoke: async () => ({}) },
           })
         );
@@ -225,7 +477,11 @@ describe('withCodexDesktopIpc', () => {
             invokeOperation(
               registry,
               'work.send',
-              { ref: { adapter: driver.id, id: 'thread-1' }, message: 'Existing worker input' },
+              {
+                ref: { adapter: driver.id, id: 'thread-1' },
+                message: 'Existing worker input',
+                todoId: 'open-todo',
+              },
               { source: 'mcp', role: 'neo', sessionId: 'neo' }
             ),
             new Promise<never>((_, reject) => {
@@ -241,32 +497,38 @@ describe('withCodexDesktopIpc', () => {
               ok: true,
               value: {
                 delivered: true,
-                ...(route === 'steer'
-                  ? { steeredIntoTurnId: 'existing-turn' }
-                  : route === 'resume'
-                    ? { startedTurnId: 'resumed-turn' }
-                    : {
-                        queuedSubmissionId: 'existing-queue',
-                        receipt: { executionId: 'thread-1', inputId: 'queued-input' },
-                      }),
+                queuedSubmissionId: 'existing-queue',
+                receipt: { executionId: 'thread-1', inputId: 'existing-input' },
               },
             },
           });
-          expect(calls).toContain(
-            route === 'steer'
-              ? 'turn/steer'
-              : route === 'resume'
-                ? 'turn/start'
-                : 'thread/queue/add'
-          );
-          if (route !== 'resume') expect(calls).not.toContain('turn/start');
-          expect(launches).toEqual([['open', '-g', 'codex://threads/thread-1']]);
+          expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
+          expect(f.seen).toEqual([]);
+          expect(launches).toEqual([]);
         } finally {
           clearTimeout(timer);
           releaseOpen(1);
         }
       }
     );
+  });
+
+  test('an absolute IPC deadline prevents a delayed turn dispatch', async () => {
+    const f = await fixture((message, _socket, send) =>
+      send({ type: 'response', requestId: message.requestId, resultType: 'success' })
+    );
+    await expect(
+      withCodexDesktopIpc(
+        f.path,
+        async ({ call }) => {
+          await new Promise((done) => setTimeout(done, 100));
+          return call('thread-follower-start-turn', {}, 2);
+        },
+        Date.now() + 25
+      )
+    ).rejects.toThrow('timed out');
+    await f.closed;
+    expect(f.seen.some((message) => message.method === 'thread-follower-start-turn')).toBe(false);
   });
 
   test('correlates out-of-order fragmented replies and declines discovery requests', async () => {
@@ -416,7 +678,7 @@ describe('withCodexDesktopIpc', () => {
       });
     });
 
-    test('work.send returns the Desktop steer receipt through the operation result schema', async () => {
+    test('explicit work.send steer returns the Desktop receipt through the operation result schema', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -437,6 +699,7 @@ describe('withCodexDesktopIpc', () => {
       const driver = createCodexDesktopAdapter({
         statePath,
         desktopSocketPath: f.path,
+        desktopRunning: async () => true,
         worktreesDir: directory,
         machine: 'test',
         now: Date.now,
@@ -465,6 +728,7 @@ describe('withCodexDesktopIpc', () => {
         createWorkVerbOperations({
           adapters: () => [driver],
           daemonName: 'test',
+          isOpenTodo: (todoId) => todoId === 'open-todo',
           remote: { list: () => [], invoke: async () => ({}) },
         })
       );
@@ -472,7 +736,12 @@ describe('withCodexDesktopIpc', () => {
         await invokeOperation(
           registry,
           'work.send',
-          { ref: { adapter: driver.id, id: 'thread-1' }, message: 'use the parser' },
+          {
+            ref: { adapter: driver.id, id: 'thread-1' },
+            message: 'use the parser',
+            mode: 'steer',
+            todoId: 'open-todo',
+          },
           { source: 'mcp', role: 'neo', sessionId: 'neo' }
         )
       ).toEqual({
@@ -480,7 +749,7 @@ describe('withCodexDesktopIpc', () => {
         value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
       });
       expect(f.seen.at(-1)?.params?.restoreMessage).toMatchObject({
-        text: 'use the parser\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send neo "<text>" (not SendMessage). Keep working after you send.\n[HyperNeo agent input]',
+        text: 'use the parser\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.\n[HyperNeo agent input]',
       });
     });
 
@@ -538,7 +807,7 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
-    test('uses app-server only when Desktop has no owner', async () => {
+    test('refuses if running Desktop has no owner and its open fails', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -549,8 +818,12 @@ describe('withCodexDesktopIpc', () => {
       );
       expect(
         await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', 'hi', 'input-1')
-      ).toEqual({
-        value: 'app-server',
+      ).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('Synthetic Desktop open refused'),
+        },
       });
       expect(f.seen.map((message) => message.method)).toEqual([
         'initialize',
@@ -587,4 +860,50 @@ describe('withCodexDesktopIpc', () => {
       }
     );
   });
+});
+
+describe('Desktop admission refusal diagnostics', () => {
+  test.each(['socket-missing', 'process-probe-failed'])(
+    'refuses with a route reason and no spawn: %s',
+    async (failure) => {
+      const events: Record<string, unknown>[] = [];
+      const config = getLoggerConfig();
+      configureLogger({ level: LogLevel.WARN, filter: ['*'], excludeFilter: [] });
+      const off = subscribeToStructuredLogs((event) => {
+        if (event.message.startsWith('work.send route'))
+          events.push(JSON.parse(event.message.slice('work.send route '.length)));
+      });
+      try {
+        const result = await steerCodexDesktopTurn(
+          undefined,
+          () => {
+            throw new Error('Must not spawn');
+          },
+          'synthetic-thread',
+          'synthetic message',
+          'synthetic-message',
+          'auto',
+          async () => {
+            if (failure === 'process-probe-failed') throw new Error('Synthetic probe failed');
+            return true;
+          }
+        );
+        expect(result).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            threadId: 'synthetic-thread',
+            messageId: 'synthetic-message',
+            path: 'refused',
+            reason:
+              failure === 'socket-missing'
+                ? 'desktop_socket_missing'
+                : 'desktop_running_probe_failed',
+          })
+        );
+      } finally {
+        off();
+        configureLogger(config);
+      }
+    }
+  );
 });

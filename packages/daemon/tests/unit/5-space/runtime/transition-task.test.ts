@@ -27,6 +27,7 @@ import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import type { DirectTaskWorkerIdentity } from '../../../../src/lib/tasks/direct-task-worker-identity';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { fixtureChanges, runDbOpOn } from '../../helpers/run-db-op';
 
 let db: Database;
 let spaces: SpaceRepository;
@@ -139,7 +140,7 @@ function deps(
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     resolveDirectWorker: taskWorkerIdentity,
     getTaskManager: (id) => new SpaceTaskManager(db, id),
-    notifyStandalone,
+    runOp: runDbOpOn(db, notifyStandalone),
     emitTaskUpdated,
     isWorkflowRunActive,
     ...overrides,
@@ -164,7 +165,7 @@ function readStandaloneStatus(taskId: string): string {
 }
 
 test('a standalone task passes through to the plain status writer', async () => {
-  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const task = createStandaloneTask.run(db, { input: { title: 'Solo' } }, fixtureChanges());
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc);
   expect(result).toMatchObject({
     kind: 'completed',
@@ -240,7 +241,7 @@ test.each([
   ['a block reason', { status: 'blocked', blockReason: 'human_input_requested' }],
   ['a review reason', { status: 'done', reviewReason: 'Ready' }],
 ] as const)('a standalone task rejects %s instead of dropping it', async (_name, fields) => {
-  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const task = createStandaloneTask.run(db, { input: { title: 'Solo' } }, fixtureChanges());
 
   const result = await invoke({ taskId: task.id, ...fields }, rpc);
 
@@ -617,7 +618,7 @@ test('a stale expectedStatus rejects before a runtime executor can run', async (
 });
 
 test('a stale expectedStatus rejects a standalone transition inside its transaction', async () => {
-  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const task = createStandaloneTask.run(db, { input: { title: 'Solo' } }, fixtureChanges());
   const result = await invoke(
     { taskId: task.id, status: 'in_progress', expectedStatus: 'done' },
     rpc
@@ -627,7 +628,7 @@ test('a stale expectedStatus rejects a standalone transition inside its transact
 });
 
 test('a matching expectedStatus lets a standalone transition through', async () => {
-  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const task = createStandaloneTask.run(db, { input: { title: 'Solo' } }, fixtureChanges());
   const result = await invoke(
     { taskId: task.id, status: 'in_progress', expectedStatus: 'open' },
     rpc

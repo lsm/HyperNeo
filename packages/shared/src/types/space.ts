@@ -3,6 +3,7 @@ import type { ThinkingLevel } from '../types.ts';
 import type { TaskRestriction } from './neo.ts';
 import type { McpServerConfig } from './sdk-config.ts';
 import type { SettingSource } from './settings.ts';
+import type { SessionToolSelection } from './session-tool-choice.ts';
 
 export type SpaceStatus = 'active' | 'archived';
 
@@ -272,6 +273,7 @@ export const MAX_SPACE_CONCURRENT_TASKS = 20;
 export type SpaceApprovalSource = 'human' | 'auto_policy' | 'agent';
 
 export interface SpaceConfig {
+  toolSelectionDefaults?: SessionToolSelection;
   maxConcurrentTasks?: number;
   taskTimeoutMs?: number;
 }

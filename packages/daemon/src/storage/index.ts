@@ -1,8 +1,8 @@
-import { DbGateway } from './db-gateway/db-gateway.ts';
+import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
+import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
-import { runLagPhase } from '../lib/event-loop-activity.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { Logger } from '../lib/logger.ts';
 import type {
@@ -19,13 +19,28 @@ import { DatabaseCore } from './database-core.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
 import { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
-import { SessionRepository } from './repositories/session-repository.ts';
+import {
+  sessionConfigReplacer,
+  type SessionCreationOptions,
+  SessionRepository,
+  sessionWrites,
+} from './repositories/session-repository.ts';
+import type {
+  SessionMcpPreferenceEdit,
+  ToolPreferenceSnapshot,
+} from './repositories/tool-preference-commit.ts';
 import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
+import type { SessionWriteOutcome } from './repositories/session-status-write.ts';
 import type {
   RuntimeSettingsPatch,
   SessionRuntimeSettingsSnapshot,
 } from './repositories/session-runtime-settings-write.ts';
-import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository.ts';
+import {
+  messageSearchIndexWrites,
+  SDKMessageRepository,
+  type SendStatus,
+} from './repositories/sdk-message-repository.ts';
+import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
 import {
   InboxItemRepository,
@@ -131,6 +146,7 @@ export class Database {
   private shortIdAllocator!: ShortIdAllocator;
   private reactiveDb?: ReactiveDatabase;
   private messageSearchIndexTimer: ReturnType<typeof setInterval> | null = null;
+  private messageSearchIndexFlushing = false;
   private readonly messageSearchIndexFlushIntervalMs: number;
 
   private static readonly MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS = 2_000;
@@ -148,6 +164,8 @@ export class Database {
     return this.core.getDbPath();
   }
 
+  readonly runSpaceTaskOp: RunDbOp = (op, args) => this.gateway.run(op, args);
+
   notifyChange(table: string, scope?: { sessionId?: string; taskId?: string }): void {
     this.reactiveDb?.notifyChange(table, scope);
   }
@@ -155,6 +173,16 @@ export class Database {
   async initialize(reactiveDb: ReactiveDatabase): Promise<void> {
     await this.core.initialize();
     this.reactiveDb = reactiveDb;
+    bindGateway(this.core.getDb(), this.gateway);
+    bindSpaceTaskLane(this.core.getDb(), this.gateway);
+    if (reactiveDb) {
+      const replay = (changes: TableChange[]) => {
+        reactiveDb.beginTransaction();
+        for (const { table, scope } of changes) reactiveDb.notifyChange(table, scope);
+        reactiveDb.commitTransaction();
+      };
+      this.gateway.onChanges = replay;
+    }
 
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);
@@ -175,29 +203,47 @@ export class Database {
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
     this.agentMemoryRepo.backfillPendingEmbeddings();
-    try {
-      runLagPhase('search:index_flush', () => this.sdkMessageRepo.flushMessageSearchIndex());
-    } catch (err) {
-      this.logger.warn('startup message search index flush failed:', err);
-    }
+    await this.flushMessageSearchIndex();
     if (this.messageSearchIndexFlushIntervalMs > 0) {
-      this.messageSearchIndexTimer = setInterval(() => {
-        try {
-          runLagPhase('search:index_flush', () => this.sdkMessageRepo.flushMessageSearchIndex());
-        } catch (err) {
-          this.logger.warn('message search index flush failed:', err);
-        }
-      }, this.messageSearchIndexFlushIntervalMs);
+      this.messageSearchIndexTimer = setInterval(
+        () => void this.flushMessageSearchIndex(),
+        this.messageSearchIndexFlushIntervalMs
+      );
       this.messageSearchIndexTimer.unref?.();
     }
   }
 
-  createSession(
-    session: Session,
-    options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
-  ): Promise<void> {
-    this.sessionRepo.createSession(session, options);
-    return Promise.resolve();
+  private async flushMessageSearchIndex(): Promise<void> {
+    if (this.messageSearchIndexFlushing) return;
+    this.messageSearchIndexFlushing = true;
+    try {
+      let skip = 0;
+      for (let batch = 0; batch < 5; batch++) {
+        const { attempted, failed } = await this.gateway.call(
+          messageSearchIndexWrites,
+          'flushMessageSearchIndex',
+          100,
+          skip
+        );
+        if (attempted < 100) return;
+        skip += failed;
+      }
+    } catch (err) {
+      this.logger.warn('message search index flush failed:', err);
+    } finally {
+      this.messageSearchIndexFlushing = false;
+    }
+  }
+
+  async createSession(session: Session, options?: SessionCreationOptions): Promise<void> {
+    const selection = await this.gateway.call(
+      sessionWrites,
+      'createSessionWithToolDefaults',
+      structuredClone(postable(session)),
+      options ? structuredClone(options) : undefined
+    );
+    session.config.toolSelection = selection;
+    this.reactiveDb?.forgetSessionTask(session.id);
   }
 
   isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
@@ -228,73 +274,104 @@ export class Database {
     return this.sessionRepo.listSessionsBySpaceAgent(spaceId, agentId);
   }
 
-  clearAcpSessionIds(): Promise<void> {
-    this.sessionRepo.clearAcpSessionIds();
-    return Promise.resolve();
+  async clearAcpSessionIds(): Promise<void> {
+    return this.gateway.call(sessionWrites, 'clearAcpSessionIds');
   }
 
   listProcessingSessionIds(): string[] {
     return this.sessionRepo.listProcessingSessionIds();
   }
 
-  markRestartInterruptedTurns(): number {
-    return this.sessionRepo.markRestartInterruptedTurns();
+  async markRestartInterruptedTurns(): Promise<number> {
+    return this.gateway.call(sessionWrites, 'markRestartInterruptedTurns');
   }
 
   listRestartCooldownResumes(): Array<{ sessionId: string; resumeAt: number }> {
     return this.sessionRepo.listRestartCooldownResumes();
   }
 
-  takeRestartCooldownResume(sessionId: string): boolean {
-    return this.sessionRepo.takeRestartCooldownResume(sessionId);
+  async takeRestartCooldownResume(sessionId: string): Promise<boolean> {
+    return this.gateway.call(sessionWrites, 'takeRestartCooldownResume', sessionId);
   }
 
   listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
     return this.sessionRepo.listAcpSessionIds();
   }
 
-  updateSession(id: string, updates: Partial<Session>): Promise<void> {
-    this.sessionRepo.updateSession(id, updates);
-    return Promise.resolve();
+  async updateSession(id: string, updates: Partial<Session>): Promise<SessionWriteOutcome> {
+    const readStatus = updates.status ? (this.sessionRepo.getSession(id)?.status ?? null) : null;
+    const outcome = await this.gateway.call(
+      sessionWrites,
+      'guardedUpdateSession',
+      id,
+      postable(updates),
+      readStatus
+    );
+    if (outcome !== 'written') {
+      this.logger.warn(
+        `refused status ${updates.status} for session ${id}: ${outcome} (read ${readStatus})`
+      );
+      return outcome;
+    }
+    if (updates.type !== undefined || 'context' in updates) this.reactiveDb?.forgetSessionTask(id);
+    return outcome;
   }
 
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
     return this.sessionRepo.captureSessionInputDraft(id);
   }
-  casSessionInputDraft(
+  async casSessionInputDraft(
     snapshot: SessionInputDraftSnapshot,
     text: string | null
-  ): 'won' | 'superseded' | 'invalid' {
-    return this.sessionRepo.casSessionInputDraft(snapshot, text);
+  ): Promise<'won' | 'superseded' | 'invalid'> {
+    return this.gateway.call(sessionWrites, 'casSessionInputDraft', snapshot, text);
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
     return this.sessionRepo.captureSessionRuntimeSettings(id);
   }
-  casSessionRuntimeSettings(
+  async casSessionRuntimeSettings(
     snapshot: SessionRuntimeSettingsSnapshot,
     patch: RuntimeSettingsPatch
-  ): 'won' | 'superseded' {
-    return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
+  ): Promise<'won' | 'superseded'> {
+    return this.gateway.call(sessionWrites, 'casSessionRuntimeSettings', snapshot, patch);
   }
 
-  deleteSession(id: string): Promise<void> {
-    this.sessionRepo.deleteSession(id);
-    return Promise.resolve();
+  async casSessionToolPreferences(
+    snapshot: SessionRuntimeSettingsSnapshot,
+    patch: RuntimeSettingsPatch,
+    guards: readonly ToolPreferenceSnapshot[],
+    override?: SessionMcpPreferenceEdit
+  ): Promise<'won' | 'superseded'> {
+    return this.gateway.call(
+      sessionWrites,
+      'casSessionToolPreferences',
+      snapshot,
+      patch,
+      guards,
+      override
+    );
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    await this.gateway.call(sessionWrites, 'deleteSession', id);
+    this.reactiveDb?.forgetSessionTask(id);
   }
 
   listChildSessions(parentId: string): Session[] {
     return this.sessionRepo.listChildren(parentId);
   }
 
-  detachSessionFromParent(id: string): Promise<void> {
-    this.sessionRepo.detachFromParent(id);
-    return Promise.resolve();
+  async detachSessionFromParent(id: string): Promise<void> {
+    return this.gateway.call(sessionWrites, 'detachFromParent', id);
   }
 
-  setSessionParent(id: string, parentId: string | null): Promise<void> {
-    this.sessionRepo.setParent(id, parentId);
-    return Promise.resolve();
+  async setSessionParent(id: string, parentId: string | null): Promise<void> {
+    return this.gateway.call(sessionWrites, 'setParent', id, parentId);
+  }
+
+  async setSessionLastError(id: string, lastError: string | null): Promise<void> {
+    return this.gateway.call(sessionWrites, 'setLastError', id, lastError);
   }
 
   saveSDKMessage(
@@ -302,8 +379,8 @@ export class Database {
     message: SDKMessage,
     origin?: MessageOrigin,
     options?: { stampInternalCompactionTurn?: boolean }
-  ): boolean {
-    return this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin, options);
+  ): Promise<boolean> {
+    return this.writeSDKMessage('saveSDKMessage', sessionId, message, origin, options);
   }
 
   getSDKMessages(
@@ -353,13 +430,13 @@ export class Database {
     return this.sdkMessageRepo.getSDKMessageCount(sessionId);
   }
 
-  saveUserMessage(
+  async saveUserMessage(
     sessionId: string,
     message: SDKMessage,
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
-  ): string {
-    return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
+  ): Promise<string> {
+    return this.writeSDKMessage('saveUserMessage', sessionId, message, sendStatus, origin);
   }
 
   getUserMessagesByStatus(
@@ -435,7 +512,7 @@ export class Database {
   get gateway(): DbGateway {
     return (this.dbGateway ??= new DbGateway(
       this.getDbPath(),
-      this.getDbPath() === ':memory:' ? this.getDatabase() : null,
+      this.getDbPath() === ':memory:' || typeof Worker === 'undefined' ? this.getDatabase() : null,
       this.options?.queryObservability
     ));
   }
@@ -445,7 +522,14 @@ export class Database {
       this.getDbPath(),
       undefined,
       undefined,
-      this.options?.queryObservability
+      this.options?.queryObservability,
+      (args) =>
+        'codexSnapshot' in args
+          ? Promise.resolve()
+          : this.core.waitForSdkMessageColumns(
+              'sessionId' in args ? args.sessionId : undefined,
+              false
+            )
     ));
   }
 
@@ -472,39 +556,39 @@ export class Database {
     return this.sdkMessageRepo.getUserMessageIdsByStatus(sessionId, status);
   }
 
-  updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
-    this.sdkMessageRepo.updateMessageStatus(messageIds, newStatus);
+  async updateMessageStatus(messageIds: string[], newStatus: SendStatus): Promise<void> {
+    return this.writeSDKMessage('updateMessageStatus', messageIds, newStatus);
   }
 
-  updateMessageTimestamp(messageId: string, timestampMs?: number): void {
-    this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
+  async updateMessageTimestamp(messageId: string, timestampMs?: number): Promise<void> {
+    return this.writeSDKMessage('updateMessageTimestamp', messageId, timestampMs);
   }
 
-  deletePendingUserMessage(
+  async deletePendingUserMessage(
     sessionId: string,
     messageId: string,
     expectedStatus?: 'deferred' | 'enqueued'
-  ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
-    return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId, expectedStatus);
+  ): Promise<{ dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null> {
+    return this.writeSDKMessage('deletePendingUserMessage', sessionId, messageId, expectedStatus);
   }
 
-  deferEnqueuedUserMessage(
+  async deferEnqueuedUserMessage(
     sessionId: string,
     messageId: string
-  ): { dbId: string; uuid: string } | null {
-    return this.sdkMessageRepo.deferEnqueuedUserMessage(sessionId, messageId);
+  ): Promise<{ dbId: string; uuid: string } | null> {
+    return this.writeSDKMessage('deferEnqueuedUserMessage', sessionId, messageId);
   }
 
   beginTransaction?(): void;
   commitTransaction?(): void;
   abortTransaction?(): void;
 
-  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
-    return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
+  async deleteMessagesAfter(sessionId: string, afterTimestamp: number): Promise<number> {
+    return this.writeSDKMessage('deleteMessagesAfter', sessionId, afterTimestamp);
   }
 
-  deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
-    return this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
+  async deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): Promise<number> {
+    return this.writeSDKMessage('deleteMessagesAtAndAfter', sessionId, atTimestamp);
   }
 
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
@@ -522,20 +606,28 @@ export class Database {
     return this.sdkMessageRepo.countMessagesAfter(sessionId, afterTimestamp);
   }
 
-  saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
-    return this.sdkMessageRepo.saveHyperNeoActionMessage(sessionId, message);
+  async saveHyperNeoActionMessage(
+    sessionId: string,
+    message: HyperNeoActionMessage
+  ): Promise<string> {
+    return this.writeSDKMessage('saveHyperNeoActionMessage', sessionId, message);
   }
 
-  updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
-    this.sdkMessageRepo.updateHyperNeoActionMessage(rowId, updated);
+  async updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): Promise<void> {
+    return this.writeSDKMessage('updateHyperNeoActionMessage', rowId, updated);
   }
 
-  updateHyperNeoActionMessageByUuid(
+  async updateHyperNeoActionMessageByUuid(
     sessionId: string,
     messageUuid: string,
     updated: HyperNeoActionMessage
-  ): void {
-    this.sdkMessageRepo.updateHyperNeoActionMessageByUuid(sessionId, messageUuid, updated);
+  ): Promise<void> {
+    return this.writeSDKMessage(
+      'updateHyperNeoActionMessageByUuid',
+      sessionId,
+      messageUuid,
+      updated
+    );
   }
 
   getGlobalToolsConfig(): GlobalToolsConfig {
@@ -574,6 +666,13 @@ export class Database {
     return this.sdkMessageRepo;
   }
 
+  async writeSDKMessage<K extends SdkMessageWriteMethod>(
+    method: K,
+    ...args: Parameters<SDKMessageRepository[K]>
+  ): Promise<ReturnType<SDKMessageRepository[K]>> {
+    return this.sdkMessageRepo.write(method, ...args);
+  }
+
   getSpaceTaskRepo(): SpaceTaskRepository {
     return this.spaceTaskRepo;
   }
@@ -588,6 +687,22 @@ export class Database {
 
   getDatabasePath(): string {
     return this.core.getDbPath();
+  }
+
+  getDataMigrationStatus() {
+    return this.core.getDataMigrationStatus();
+  }
+
+  waitForSdkMessageColumns(sessionId?: string, wait = true) {
+    return this.core.waitForSdkMessageColumns(sessionId, wait);
+  }
+
+  stopSdkMessageColumnsBackfill(): void {
+    this.core.stopSdkMessageColumnsBackfill();
+  }
+
+  startSdkMessageColumnsBackfill(changed?: () => void) {
+    return this.core.startSdkMessageColumnsBackfill(changed);
   }
 
   startMessageSearchMerges(): void {
@@ -655,4 +770,14 @@ export class Database {
         .finally(() => this.core.close());
     this.core.close();
   }
+}
+
+function postable<T extends Partial<Session>>(session: T): T {
+  if (!session.config) return session;
+  const config = Object.fromEntries(
+    Object.entries(session.config).filter(
+      ([key, value]) => value === undefined || sessionConfigReplacer(key, value) !== undefined
+    )
+  );
+  return { ...session, config };
 }
