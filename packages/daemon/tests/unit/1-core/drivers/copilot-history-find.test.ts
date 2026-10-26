@@ -111,6 +111,50 @@ afterEach(async () => {
 });
 
 describe('Copilot owned history and discovery', () => {
+  test('finds an exact input marker beyond the recent input and byte windows after restart', async () => {
+    const f = setup();
+    const work = await f.start();
+    const file = f.history(work);
+    const event = (id: string, type: string, content: string, timestamp = '1990-01-01T00:00:00Z') =>
+      JSON.stringify({ type, timestamp, data: { messageId: id, content } }) + '\n';
+    appendFileSync(file, event('old-marker', 'user.message', '[worker-answer:old]\nStored answer'));
+    appendFileSync(
+      file,
+      event(
+        'future-marker',
+        'user.message',
+        '[worker-answer:future]\nStored answer',
+        '2090-01-01T00:00:00Z'
+      )
+    );
+    appendFileSync(
+      file,
+      event('quote', 'assistant.message', '[worker-answer:quote]\nAgent quotation')
+    );
+    appendFileSync(
+      file,
+      event('partial', 'user.message', '[worker-answer:partial]suffix\nAnother identity')
+    );
+    for (let n = 0; n < 160; n++)
+      appendFileSync(file, event(`noise-${n}`, 'user.message', 'x'.repeat(2000)));
+    expect(
+      f.read(work, undefined, 10, 10)?.turns.some((turn) => turn.text.includes('[worker-answer:'))
+    ).toBe(false);
+    await f.restart();
+    for (const [marker, id] of [
+      ['old', 'old-marker'],
+      ['future', 'future-marker'],
+    ])
+      expect(await f.adapter.readInput?.(work.ref.id, `[worker-answer:${marker}]`)).toMatchObject({
+        messageId: `user:${id}`,
+        role: 'user',
+      });
+    for (const marker of ['quote', 'partial', 'missing'])
+      expect(await f.adapter.readInput?.(work.ref.id, `[worker-answer:${marker}]`)).toBeNull();
+    expect(await f.adapter.readInput?.('external', '[worker-answer:old]')).toBeNull();
+    expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+  });
+
   test('reads user/tool/assistant text with stable IDs, deduplicates and survives restart without resume', async () => {
     const f = setup();
     const work = await f.start();

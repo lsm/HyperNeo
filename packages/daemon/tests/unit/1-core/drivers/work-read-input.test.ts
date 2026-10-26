@@ -60,6 +60,18 @@ describe('work.read exact input identity', () => {
     ).toMatchObject({ ok: false, reason: 'unsupported' });
   });
 
+  test.each(['claude-desktop', 'copilot-cli'])(
+    'reads the exact input marker through %s',
+    async (adapter) => {
+      const input = { ...identity, adapter };
+      const deps = { ...local, readInput: async () => turn };
+      expect(await invoke({ sessionId: 'worker', input }, deps)).toMatchObject({
+        ok: true,
+        value: { turns: [turn], matchedInput: input },
+      });
+    }
+  );
+
   test('routes only to the named owner and preserves its identity acknowledgement', async () => {
     const requests: unknown[] = [];
     const deps = {
