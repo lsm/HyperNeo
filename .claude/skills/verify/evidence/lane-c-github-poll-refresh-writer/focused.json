@@ -1,9 +1,9 @@
 {
-  "ciRunnerPasses": 44,
+  "ciRunnerPasses": 45,
   "ciRunnerFailures": 0,
-  "files": 3,
+  "files": 4,
   "refreshWriterCases": 17,
-  "productionChangedLines": 92,
+  "productionChangedLines": 93,
   "authorizedCoreCompanionReplacements": 3,
   "transactionalDeleteAndAdmissionRollback": true,
   "legacyPendingDeletionLimit": 100,
@@ -24,5 +24,7 @@
   "startupImmediateReplay": false,
   "startupRetryCancelledOnStop": true,
   "startupUnknownReceiptRechecksJob": true,
-  "generalStartupCleanupIssue": 8956
+  "generalStartupCleanupIssue": 8956,
+  "queueIdentityCases": 1,
+  "registeredQueueIdentityShared": true
 }

@@ -4,5 +4,5 @@
   "registeredQueue": "synthetic.renamed.github.poll",
   "pendingJobsInRegisteredQueue": 0,
   "expectedPendingJobs": 1,
-  "legacyQueueUntouched": true
+  "expectedLegacyQueueUntouched": true
 }

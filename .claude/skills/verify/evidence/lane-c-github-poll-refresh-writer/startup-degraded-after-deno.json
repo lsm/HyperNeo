@@ -14,7 +14,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 624,
+    "uptime": 544,
     "sessions": {
       "active": 0,
       "total": 0
@@ -22,7 +22,7 @@
   },
   "admitted": [
     {
-      "id": "3f3370b0-40a6-4ffb-adf7-c47123cbf324",
+      "id": "1f970914-c1d0-45f8-96ab-2f920fb26604",
       "queue": "github.poll",
       "status": "pending",
       "payload": {},
@@ -31,8 +31,8 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1793003656256,
-      "createdAt": 1793003656257,
+      "runAt": 1793006893577,
+      "createdAt": 1793006893577,
       "startedAt": null,
       "heartbeatAt": null,
       "completedAt": null,
@@ -45,24 +45,24 @@
     "GitHub polling refresh persistence failed Error: synthetic startup admission rejected"
   ],
   "completed": {
-    "id": "3f3370b0-40a6-4ffb-adf7-c47123cbf324",
+    "id": "1f970914-c1d0-45f8-96ab-2f920fb26604",
     "queue": "github.poll",
     "status": "completed",
     "payload": {},
     "result": {
       "polled": true,
-      "nextRunAt": 1793003776271
+      "nextRunAt": 1793007013590
     },
     "error": null,
     "priority": 0,
     "maxRetries": 3,
     "retryCount": 0,
-    "runAt": 1793003656256,
-    "createdAt": 1793003656257,
-    "startedAt": 1793003656271,
+    "runAt": 1793006893577,
+    "createdAt": 1793006893577,
+    "startedAt": 1793006893590,
     "heartbeatAt": null,
-    "completedAt": 1793003656272,
-    "claimToken": "b6f4a4f6-66cb-4b4b-926d-3be7d52b6804"
+    "completedAt": 1793006893590,
+    "claimToken": "4b6a098f-4e82-457f-aed6-a0eb2d8098b4"
   },
   "healthAfter": {
     "status": "ok",
@@ -73,7 +73,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 641,
+    "uptime": 559,
     "sessions": {
       "active": 0,
       "total": 0
