@@ -52,6 +52,11 @@ remote commits during push, incorrect/unanswered choices and
 wrong protected hashes. A successful save updates the current runtime wake's
 sync receipt so a subsequent Neo read returns the applied bytes rather than its
 old cached conflict, without another pull.
+The pruned-version contract rewrites only synthetic histories, expires their
+reflogs and prunes the selected recorded object. Applying that answer must return
+a typed refusal with both heads unchanged, rather than throwing an infrastructure
+error. This checks actual object availability, without reinstating a current-head
+or stale-revision veto.
 
 This operation resolves **one regular conflicting document**. Multi-file
 conflicts, deletion/symlink choices and Review together refuse for further human

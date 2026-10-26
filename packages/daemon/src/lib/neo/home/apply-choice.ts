@@ -26,7 +26,7 @@ export async function applyHomeChoice(
     upstream.code ||
     !upstream.text.startsWith('refs/remotes/origin/')
   )
-    return refuse('sync_failed: restore the selected home branch and its origin tracking.');
+    return refuse('stale_conflict: restore the selected home branch and its origin tracking.');
   const remoteBranch = `refs/heads/${upstream.text.slice('refs/remotes/origin/'.length)}`;
   const reference = `refs/neo-home-choice/${crypto.randomUUID()}`;
   const temporary = await mkdtemp(join(tmpdir(), 'neo-home-choice-stage-'));
@@ -42,7 +42,7 @@ export async function applyHomeChoice(
     if (fetched.code) return refuse(`sync_failed: ${fetched.error}`);
     const remote = (await git(['rev-parse', reference])).text;
     const selected = input.resolution!.revision;
-    const mode = (await git(['ls-tree', selected, '--', input.path])).text.slice(0, 6);
+    const mode = (await git(['ls-tree', selected, '--', input.path], true)).text.slice(0, 6);
     const content = await git(['show', `${selected}:${input.path}`], true);
     if (!['100644', '100755'].includes(mode) || content.code)
       return refuse(
