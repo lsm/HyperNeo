@@ -6,15 +6,21 @@ import {
   type OperationRefusal,
 } from './mcp-adapter.ts';
 import type { CallerIdentity } from './caller.ts';
-import { resolveOperationRegistry, type OperationRegistrySource } from './registry.ts';
+import {
+  resolveOperationRegistry,
+  type OperationCallerRole,
+  type OperationRegistrySource,
+} from './registry.ts';
 import { coreOperationSignatures } from './core-signatures.ts';
 
 export function createOperationMcpServer(
   registry: OperationRegistrySource,
   resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
-  recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>
+  recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
+  descriptionRole?: OperationCallerRole
 ) {
-  const signatures = coreOperationSignatures(resolveOperationRegistry(registry));
+  const signatures =
+    descriptionRole === 'neo' ? coreOperationSignatures(resolveOperationRegistry(registry)) : '';
   const tools = [
     tool(
       'invoke',

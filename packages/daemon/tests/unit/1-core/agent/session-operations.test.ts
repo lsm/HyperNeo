@@ -22,7 +22,7 @@ import {
   createTestInternalEventBus,
   createTestSession,
 } from '../../../helpers/database';
-import { operationInvoke } from '../../../helpers/operation-mcp';
+import { operationInvoke, operationInvokeTool } from '../../../helpers/operation-mcp';
 
 describe('session operation MCP attachment', () => {
   let db: Database;
@@ -56,6 +56,78 @@ describe('session operation MCP attachment', () => {
     sessions.push(session);
     return session;
   }
+
+  test('only the Neo caller role receives core call shapes, regardless of session name or model', async () => {
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'neo.snapshot',
+        description: 'Read a snapshot',
+        inputSchema: z.object({ projectId: z.string().optional() }),
+        resultSchema: z.unknown(),
+        execute: async () => null,
+      }),
+    ]);
+    for (const [index, role] of (
+      [
+        undefined,
+        'neo',
+        'workflow_worker',
+        'direct_task_worker',
+        'long_term_agent',
+        'universal_read',
+      ] as const
+    ).entries()) {
+      const record = createTestSession(`inbox-${index}`);
+      record.title = 'Neo';
+      await db.createSession(record);
+      const session = await restore(record.id);
+      session.setOperationRegistryProvider(() => registry);
+      session.setCallerScopeResolver(() => ({ role }));
+      for (const origin of [undefined, () => ({ messageId: 'input' })]) {
+        const description = operationInvokeTool(session.getOperationMcpServer(origin)).description;
+        if (role === 'neo') {
+          expect(description).toContain('Core input shapes:');
+          expect(description).toContain('neo.snapshot {projectId?}');
+        } else {
+          expect(description).toBe(
+            'Invoke {name,input}. operations.list discovers others; operations.describe {name} returns full schemas. message.send acceptance means durable mailbox persistence, not an agent reply.'
+          );
+        }
+      }
+    }
+  });
+
+  test('refreshes cached call shapes when the resolved caller role changes', async () => {
+    const record = createTestSession('changing-role');
+    await db.createSession(record);
+    const session = await restore(record.id);
+    session.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'neo.snapshot',
+          description: 'Read a snapshot',
+          inputSchema: z.object({}),
+          resultSchema: z.unknown(),
+          execute: async () => null,
+        }),
+      ])
+    );
+    const initial = operationInvokeTool(session.getOperationMcpServer()).description;
+    expect(initial).not.toContain('Core input shapes:');
+    session.setCallerScopeResolver(() => ({ role: 'neo' }));
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
+      'neo.snapshot'
+    );
+    let role: 'neo' | undefined;
+    session.setCallerScopeResolver(() => ({ role }));
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
+    role = 'neo';
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
+      'neo.snapshot'
+    );
+    role = undefined;
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
+  });
 
   test('manager provider adoption reaches cached, restored, new and registered session servers', async () => {
     const manager = new SessionManager(

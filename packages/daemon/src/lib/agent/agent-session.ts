@@ -56,7 +56,11 @@ import {
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
-import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
+import type {
+  OperationCallerRole,
+  OperationRegistry,
+  OperationRegistryProvider,
+} from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
 import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import {
@@ -286,6 +290,7 @@ export class AgentSession
   readonly modelSwitchHandler: ModelSwitchHandler;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   private operationMcpServer?: ReturnType<typeof createOperationMcpServer>;
+  private operationMcpServerRole?: OperationCallerRole;
 
   private operationRegistryProvider?: () => OperationRegistry | undefined;
   private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
@@ -336,16 +341,22 @@ export class AgentSession
   getOperationMcpServer(
     inputOrigin?: () => { messageId: string } | null
   ): ReturnType<typeof createOperationMcpServer> {
-    if (!inputOrigin && this.operationMcpServer) return this.operationMcpServer;
+    const descriptionRole = this.operationCallerIdentity().role;
+    if (!inputOrigin && this.operationMcpServer && this.operationMcpServerRole === descriptionRole)
+      return this.operationMcpServer;
     const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
       () => ({
         ...this.operationCallerIdentity(),
         consumedInputId: inputOrigin?.()?.messageId,
       }),
-      this.recordOperationRefusal
+      this.recordOperationRefusal,
+      descriptionRole
     );
-    if (!inputOrigin) this.operationMcpServer = server;
+    if (!inputOrigin) {
+      this.operationMcpServer = server;
+      this.operationMcpServerRole = descriptionRole;
+    }
     return server;
   }
 
