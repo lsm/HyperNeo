@@ -90,8 +90,8 @@ try {
   const rows = [
     {
       id: 'pr',
-      title: 'Land https://github.com/example/project/pull/42',
-      report: 'Synthetic PR result',
+      title: 'Finish the reported work',
+      report: 'Land https://github.com/example/project/pull/42',
     },
     { id: 'issue', title: 'Issue example/project#9', report: null },
     { id: 'observed', title: 'Finish example/project#50 and #51', report: null },
