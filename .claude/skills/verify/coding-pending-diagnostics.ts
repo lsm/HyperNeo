@@ -10,7 +10,7 @@ import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
-const run = resolve(process.argv[2]), repo = 'synthetic/pending', root = 'synthetic-neo', owner = 'synthetic-owner';
+const run = resolve(process.argv[2]), repo = 'synthetic/pending', alias = 'synthetic/old-pending', root = 'synthetic-neo', owner = 'synthetic-owner';
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSync(join(run, 'data')));
 for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(process.env[key], undefined);
@@ -59,6 +59,8 @@ try {
   const coding = pack();
   await coding.observeSessions!([{ ref: { adapter: 'hyperneo', id: owner }, status: 'running', lastActivityAt: start, remotes: [], branches: [], openedPrs: [`https://github.com/${repo}/pull/1`] }], start);
   await coding.sweep!(start); assert.equal(jobs().length, 0);
+  await new CodingPrLedgerRepository(sql()).write('recordAlias', alias, repo);
+  assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'watchedRepos', value: [alias] })).ok, true);
   phase = 'rate'; await coding.sweep!(stale);
   proof.beforeRestart = { snapshot: await rpc('neo.snapshot', {}), health: new CodingPrLedgerRepository(sql()).health.read(repo), jobs: jobs() };
   const pending = new CodingPrLedgerRepository(sql()).snapshot(null, stale)[0];

@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { initializeCodingWatches } from '../../../../src/lib/neo/packs/coding/watched-repos.ts';
+import { deliverCodingHealth } from '../../../../src/lib/neo/packs/coding/health-delivery.ts';
 import {
   CodingPrLedgerRepository,
   reconcileCodingPrLedger,
@@ -142,6 +144,60 @@ describe('ledger reconciliation health', () => {
         lastErrorAt: stale,
       });
       expect(ledger.health.read(repos[0])?.notices?.[0].pending).toEqual(notices[0].pending);
+    }));
+  test('an aliased target exposes canonical pending diagnostics and delivers one durable notice', () =>
+    using(async (db, ledger) => {
+      const alias = 'synthetic/old',
+        canonical = 'synthetic/renamed';
+      const start = 10_000_000,
+        stale = start + 15 * 60_000,
+        reset = stale + 60_000;
+      initializeCodingWatches(db, [alias]);
+      ledger.recordHealth(alias, { at: start, outcome: 'complete' });
+      ledger.recordAlias(alias, canonical);
+      ledger.replace(
+        canonical,
+        [
+          {
+            repo: canonical,
+            number: 1,
+            title: 'Renamed pending work',
+            branch: 'topic',
+            head: 'renamed-head',
+            state: 'approved_pending',
+            closedAt: null,
+          },
+        ],
+        start
+      );
+      await reconcileCodingPrLedger(
+        ledger,
+        [alias.toUpperCase()],
+        async () => ({ error: 'HTTP 429', retryAt: reset }),
+        stale
+      );
+      expect(ledger.snapshot([alias], stale)[0]).toMatchObject({
+        pr: `${canonical}#1`,
+        readAt: start,
+        completeAt: start,
+        nextRetryAt: reset,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+      const wakes: string[] = [];
+      for (const instance of [ledger, new CodingPrLedgerRepository(db)])
+        await deliverCodingHealth(
+          instance,
+          [alias],
+          async (key) => {
+            wakes.push(key);
+            return true;
+          },
+          stale + 1
+        );
+      expect(wakes).toEqual([`github-pending:${canonical}#1:renamed-head:${start}`]);
+      expect(ledger.health.read(alias)?.notices?.[0].acceptedAt).toBe(stale + 1);
+      expect(ledger.health.read(canonical)).toEqual(ledger.health.read(alias));
     }));
   test('unattributed low-budget summaries do not starve targets across reopening', () =>
     using(async (db, ledger) => {
