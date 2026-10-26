@@ -261,11 +261,11 @@ describe('repo child cards', () => {
     ).toEqual([2, 1]);
     expect(
       await open({ ...request, todos: [...request.todos, { ...draft, title: 'Write notes' }] })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('ask_settled') });
+    ).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled')] });
     expect(store.listTodos(receipt.ask.id)).toEqual([]);
     expect(
       await open({ ...request, todos: [...request.todos, pr('HyperNeo', 5), pr('ops', 4)] })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('nothing was added') });
+    ).toMatchObject({ ok: true, records: [expect.stringContaining('nothing was added')] });
     expect(store.listChildAsks(receipt.ask.id)).toHaveLength(2);
     expect(
       store.listChildAsks(receipt.ask.id).map((child) => store.listTodos(child.id).length)

@@ -161,7 +161,7 @@ export function createNeoWorkerQuestionWriter(
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type QuestionReceipt = { ok: true; question: NeoQuestion };
+type QuestionReceipt = { ok: true; question: NeoQuestion; records?: string[] };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
@@ -321,10 +321,16 @@ const QuestionResult = z.union([
   z.object({
     ok: z.literal(true),
     question: NeoQuestionSchema,
+    records: z.array(z.string()).optional(),
   }),
 ]);
 
-type QuestionPlan = { ask: NeoAsk; draft: NeoQuestionDraft; reworded: NeoQuestion | null };
+type QuestionPlan = {
+  ask: NeoAsk;
+  draft: NeoQuestionDraft;
+  reworded: NeoQuestion | null;
+  records?: string[];
+};
 
 export function planNeoQuestion(
   ask: NeoAsk,
@@ -335,15 +341,22 @@ export function planNeoQuestion(
 ): Gate<QuestionPlan> {
   if (input.focused && !sourceSession)
     return fail('source_session_unavailable: focused discussion needs one readable session.');
-  const todoId = 'todoId' in input ? input.todoId : undefined;
-  if (
-    todoId &&
-    (!todo ||
-      todo.id !== todoId ||
-      todo.askId !== ask.id ||
-      ['done', 'removed'].includes(todo.state))
-  )
-    return fail('todo_closed: choose a current todo on this ask.');
+  const requestedTodoId = 'todoId' in input ? input.todoId : undefined;
+  const todoId =
+    requestedTodoId &&
+    todo?.id === requestedTodoId &&
+    todo.askId === ask.id &&
+    !['done', 'closed_unverified', 'removed'].includes(todo.state)
+      ? requestedTodoId
+      : undefined;
+  const records =
+    requestedTodoId && !todoId
+      ? {
+          records: [
+            'todo_closed: the todo reference is not current; this question is recorded on the ask without linking that todo.',
+          ],
+        }
+      : {};
   const confirm = input.confirm ?? null;
   if (confirm) {
     if (input.kind !== 'yesno')
@@ -367,10 +380,17 @@ export function planNeoQuestion(
     startTodos: null,
     confirm,
   };
-  if (input.kind !== 'start') return { value: { ask, draft, reworded: null } };
+  if (input.kind !== 'start') return { value: { ask, draft, reworded: null, ...records } };
   const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
   return open
-    ? { value: { ask, draft: { ...draft, startTodos: open.startTodos }, reworded: open } }
+    ? {
+        value: {
+          ask,
+          draft: { ...draft, startTodos: open.startTodos },
+          reworded: open,
+          ...records,
+        },
+      }
     : fail(
         'no_start_question: no todo on this ask is waiting to start; add todos with an instruction and the daemon asks.'
       );
@@ -599,7 +619,9 @@ export function createNeoQuestionOperations(
             : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
         });
         if (question && reply.context) publicationChanged(reply.context.conversationId);
-        return question ? { ok: true, question } : { ok: false, reason };
+        return question
+          ? { ok: true, question, ...(plan.records ? { records: plan.records } : {}) }
+          : { ok: false, reason };
       },
       ['outcome', 'reply'],
       'outcome'

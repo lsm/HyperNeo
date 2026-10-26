@@ -156,14 +156,6 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(h.started).toEqual([]);
     expect(
       await h.call(
-        'neo.ask.settle',
-        { askId: opened.ask.id, status: 'done', outcome: 'Done' },
-        turn('m3')
-      )
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('todos_unfinished') });
-    expect(h.store.getAsk(opened.ask.id)).toMatchObject({ status: 'open', outcome });
-    expect(
-      await h.call(
         'neo.ask.open',
         {
           title: 'Choose positioning',
@@ -174,6 +166,14 @@ describe('neo.ask.open and neo.ask.settle', () => {
       )
     ).toMatchObject({ ok: true, ask: { id: opened.ask.id, outcome } });
     expect(h.store.listTodos(opened.ask.id)).toHaveLength(2);
+    expect(
+      await h.call(
+        'neo.ask.settle',
+        { askId: opened.ask.id, status: 'done', outcome: 'Done' },
+        turn('m3')
+      )
+    ).toMatchObject({ ok: true, records: [expect.stringContaining('todos_unfinished')] });
+    expect(h.store.getAsk(opened.ask.id)).toMatchObject({ status: 'done', outcome: 'Done' });
   });
 
   test('refuses recording by a worker, another Neo, or on an unfocused or settled ask', async () => {
@@ -299,20 +299,24 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(stopped).toEqual([first.id, second.id, first.id]);
   });
 
-  test('a settle whose stop fails leaves the ask open and says so', async () => {
-    const { call, store, stopFails } = setup();
-    const opened = await call('neo.ask.open', opening, turn('m5'));
-    if (!opened.ok) throw new Error(opened.reason);
-    stopFails.value = true;
-    const settled = await call(
-      'neo.ask.settle',
-      { askId: opened.ask.id, status: 'dropped', outcome: 'x' },
-      turn('m5')
-    );
-    expect(settled.ok).toBe(false);
-    expect(!settled.ok && settled.reason).toContain('the ask is still open');
-    expect(store.getAsk(opened.ask.id)?.status).toBe('open');
-  });
+  test.each(['done', 'dropped'] as const)(
+    'a %s settle whose stop fails leaves the ask open and says so',
+    async (status) => {
+      const { call, store, stopFails } = setup();
+      const opened = await call('neo.ask.open', opening, turn('m5'));
+      if (!opened.ok) throw new Error(opened.reason);
+      stopFails.value = true;
+      const settled = await call(
+        'neo.ask.settle',
+        { askId: opened.ask.id, status, outcome: 'x' },
+        turn('m5')
+      );
+      expect(settled.ok).toBe(false);
+      expect(!settled.ok && settled.reason).toContain('the ask is still open');
+      expect(store.getAsk(opened.ask.id)?.status).toBe('open');
+      expect(store.listTodos(opened.ask.id).map((todo) => todo.state)).toEqual(['doing', 'todo']);
+    }
+  );
 
   test('the human can mark an ask done with unfinished coding todos', async () => {
     const { call, store, stopped } = setup();
@@ -326,34 +330,29 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(settled.ok && settled.ask.status).toBe('done');
     expect(store.getAsk(opened.ask.id)?.status).toBe('done');
     expect(stopped).toEqual(opened.todos.map((todo) => todo.id));
-    expect(store.listTodos(opened.ask.id).every((todo) => todo.state === 'removed')).toBe(true);
+    expect(store.listTodos(opened.ask.id).every((todo) => todo.state === 'closed_unverified')).toBe(
+      true
+    );
   });
 
-  test('done is refused while a todo is neither done nor removed with a reason', async () => {
+  test('settling unfinished work records it and closes each todo visibly unverified', async () => {
     const { call, store, stopped } = setup();
     const opened = await call('neo.ask.open', opening, turn('m7'));
     if (!opened.ok) throw new Error(opened.reason);
-    const [fix, deploy] = opened.todos;
-    const settle = () =>
-      call(
-        'neo.ask.settle',
-        { askId: opened.ask.id, status: 'done', outcome: 'Shipped.' },
-        turn('m7')
-      );
-    expect(await settle()).toEqual({
-      ok: false,
-      reason: `todos_unfinished: finish or remove these todos first: "Fix it" (${fix.id}, doing), "Deploy" (${deploy.id}, todo).`,
-    });
-    expect(store.getAsk(opened.ask.id)?.status).toBe('open');
-    expect(stopped).toEqual([]);
-    store.updateTodo(fix, { state: 'done', evidence: '#8 merged', finishedAt: 3 }, 3);
-    store.updateTodo(deploy, { state: 'removed', reason: 'The human deploys it.' }, 3);
     const settled = await call(
       'neo.ask.settle',
-      { askId: opened.ask.id, status: 'done', outcome: 'Shipped.' },
+      { askId: opened.ask.id, status: 'done', outcome: 'Closed.' },
       turn('m7')
     );
-    expect(settled.ok && settled.ask.status).toBe('done');
+    expect(settled).toMatchObject({
+      ok: true,
+      records: [expect.stringContaining('todos_unfinished:')],
+    });
+    expect(store.listTodos(opened.ask.id).map((todo) => todo.state)).toEqual([
+      'closed_unverified',
+      'closed_unverified',
+    ]);
+    expect(stopped).toEqual(opened.todos.map((todo) => todo.id));
   });
 
   test('settling stops running sessions, retires open questions and ends the ask', async () => {

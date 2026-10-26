@@ -983,7 +983,7 @@ describe('todo-owned question cards', () => {
       h.db.close();
     }
   });
-  test('refuses a foreign or settled todo instead of making an unowned question', async () => {
+  test('records a foreign or settled reference while opening an ask-level question', async () => {
     const h = setup();
     try {
       h.store.openAsk({
@@ -1004,7 +1004,11 @@ describe('todo-owned question cards', () => {
           text: 'Which?',
           todoId,
         });
-        expect(result.ok).toBe(false);
+        expect(result).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('todo_closed:')],
+        });
+        expect(result.ok ? (result.question.todoId ?? null) : false).toBeNull();
       }
     } finally {
       h.db.close();
