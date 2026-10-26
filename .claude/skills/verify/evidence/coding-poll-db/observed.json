@@ -3928,5 +3928,74 @@
         "temporaryDaemonDataRemoved": true
       }
     }
+  },
+  "proofBinding": {
+    "testedCodeCommit": "fa136e7fa6a7b867b3b7378f9bda10f1b414c2de",
+    "testedGitTree": "fafea7a2eebf6dd5e510cbc6c84ddee8c927d4c6",
+    "applicationTrees": {
+      "packages": "145be3c8edcfccc6202b6ca929a4f2f40ec54a4b",
+      "scripts": "8fbc0932caa3c1dd0b07e05b5a16445c5601ff8f"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/coding-poll-db.ts": "af9c0b5404cfcd1ef73093c96a8cc6c9b2796f65",
+      ".claude/skills/verify/github-poll-git.ts": "aeb5d27248f7bf2cb90e162b39185ceb2edfb60e",
+      ".claude/skills/verify/coding-poll-db-run.py": "b990cb59950bc2b45be9799296b62839a95cd444",
+      ".claude/skills/verify/resource-check.sh": "98061f6451380da36ea306fc9052f11ea575a7f4",
+      ".claude/skills/verify/coding-poll-proof-binding.ts": "5128ec3124db9fbf005921a2e0361282b79564bf"
+    },
+    "runs": {
+      "bun": "bun-verify-2",
+      "deno": "deno-verify-2"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only",
+    "redRegressionCommit": "fa136e7fa6a7b867b3b7378f9bda10f1b414c2de",
+    "historicalRegressionCommitMeaning": "regressionCommit identifies the original failing production regression; run.json.head identifies the committed application under test.",
+    "latestEvidence": {
+      "bun": {
+        "folder": "bun-verify-2",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 256,
+        "maxLoopLagMs": 4.829541999999947,
+        "contention": {
+          "healthMs": 0.47245799999973315,
+          "collectionMs": 1512.6837919999998,
+          "affectedCollectionUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 52,
+        "freeGiBBefore": 251.27972412109375,
+        "temporaryDaemonDataRemoved": true
+      },
+      "deno": {
+        "folder": "deno-verify-2",
+        "verified": true,
+        "mainConnectionTargetSql": 0,
+        "gatewayCommands": 256,
+        "maxLoopLagMs": 6.2479590000002645,
+        "contention": {
+          "healthMs": 0.6267910000005941,
+          "collectionMs": 1605.2289999999998,
+          "affectedCollectionUnder250ms": false
+        },
+        "freeMemoryPercentBefore": 54,
+        "freeGiBBefore": 251.2794418334961,
+        "temporaryDaemonDataRemoved": true
+      }
+    },
+    "validation": {
+      "fullCheck": "passed",
+      "focusedTests": 19,
+      "focusedAssertions": 98,
+      "productionChangedLines": 99,
+      "mainThreadRatchet": {
+        "prepare": 1416,
+        "transaction": 151,
+        "exec": 118,
+        "query": 13,
+        "run": 611,
+        "open": 4
+      },
+      "baselineFilesChanged": false
+    }
   }
 }
