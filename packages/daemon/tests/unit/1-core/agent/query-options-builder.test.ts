@@ -2234,7 +2234,9 @@ describe('QueryOptionsBuilder', () => {
                 excludedCommands: [],
                 enableWeakerNetworkIsolation: true,
               });
-              expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/test/workspace');
+              expect(enforced.sandbox?.filesystem?.allowWrite).toContain('/test/workspace');
+              expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/');
+              expect(enforced.sandbox?.filesystem?.denyWrite).toBeUndefined();
               for (const key of [
                 'allowAppleEvents',
                 'enableWeakerNestedSandbox',
