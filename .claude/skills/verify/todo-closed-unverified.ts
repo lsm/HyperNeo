@@ -43,6 +43,11 @@ try {
         id = opened.todos[0].id;
         const closed = await invoke('neo.todo.close', { todoId: id, reason: 'Stopping before delivery is verified' });
         assert.equal(closed.todo.state, 'closed_unverified');
+        const followup = await invoke('neo.todo.add', {
+          askId: closed.todo.askId, title: 'Verify the delivery', doneWhen: 'PR merged',
+          check: closed.todo.check,
+        });
+        assert.equal(followup.todo.state, 'todo');
       }
       assert.equal(store.getTodo(id)?.state, 'closed_unverified');
       const snapshot = await invoke('neo.ask.read', { askId: store.getTodo(id)!.askId });
