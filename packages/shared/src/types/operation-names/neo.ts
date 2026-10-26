@@ -50,6 +50,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.edit',
   'neo.todo.remove',
   'neo.todo.retry',
+  'neo.workerSocket.ask',
   'pack.preferences.applyAnswer',
   'pack.preferences.ask',
   'pack.preferences.get',

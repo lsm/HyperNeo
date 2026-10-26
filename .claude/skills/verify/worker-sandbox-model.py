@@ -50,6 +50,24 @@ finally:
     with probe.open('a') as script:
         script.write('/usr/bin/python3 ./loopback-probe.py\nprintf "loopback-status=%s\\n" "$?"\n')
 requests = []
+if (run / 'verify-sockets').exists():
+    (worker / 'socket-probe.py').write_text('''import json, socket, sys
+from pathlib import Path
+run, engine = Path(sys.argv[1]), sys.argv[2]
+observed = {}
+for name in ['allowed', 'denied']:
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(3)
+        try:
+            client.connect(str(run / (name + '.sock')))
+            observed[name] = client.recv(128) == b'synthetic-socket-ok'
+        except OSError:
+            observed[name] = False
+Path('socket-observed.json').write_text(json.dumps(observed))
+assert observed == {'allowed': True, 'denied': False}, observed
+''')
+    with probe.open('a') as script:
+        script.write(f"/usr/bin/python3 ./socket-probe.py '{run}' '{engine}'\nprintf 'socket-status=%s\\n' \"$?\"\n")
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -115,13 +133,11 @@ else:
     expected_env = config['shell_environment_policy']['set']
     env['CODEX_HOME'] = str(home)
     args = [os.environ['VERIFY_CODEX'], '--no-daemon', '-a', 'never', '-c', 'model_provider="synthetic"', '-c', 'model_providers.synthetic.name="Synthetic"', '-c', f'model_providers.synthetic.base_url="http://127.0.0.1:{server.server_port}/v1"', '-c', 'model_providers.synthetic.wire_api="responses"', '-c', 'model_providers.synthetic.requires_openai_auth=false', '-c', 'features.shell_snapshot=false']
-    for key, value in config.items():
+    def configure(value, keys=()):
         if isinstance(value, dict):
-            for subkey, subvalue in value.items():
-                if isinstance(subvalue, dict):
-                    for leaf, scalar in subvalue.items(): args += ['-c', key + '.' + subkey + '.' + leaf + '=' + json.dumps(scalar)]
-                else: args += ['-c', key + '.' + subkey + '=' + json.dumps(subvalue)]
-        else: args += ['-c', key + '=' + json.dumps(value)]
+            for key, child in value.items(): configure(child, keys + (json.dumps(key),))
+        else: args.extend(['-c', '.'.join(keys) + '=' + json.dumps(value)])
+    configure(config)
     args += ['exec', '-s', launch['sandbox'], '-C', str(worker), '--json', '-m', 'synthetic', 'Run the synthetic probe.']
 try:
     result = subprocess.run(args, cwd=worker, env=env, capture_output=True, text=True, timeout=90)
@@ -137,6 +153,10 @@ try:
         (run / f'evidence/{engine}-observed.json').write_text(json.dumps(observed, indent=2))
         assert observed['localServer'] and observed['localServer']['connected'], 'Worker could not listen on loopback and connect to its server'
     print(json.dumps(observed))
+    if (run / 'verify-sockets').exists():
+        sockets = json.loads((worker / 'socket-observed.json').read_text())
+        (run / f'evidence/{engine}-sockets.json').write_text(json.dumps(sockets))
+        assert sockets == {'allowed': True, 'denied': False}, sockets
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'
     assert observed['policyIntact'], 'BUG: worker removed its sandbox gate or settings'
     assert observed['networkAllowed'], 'Sandbox network probe failed'
