@@ -5,6 +5,7 @@ import {
   deliveryConsumptionTimeoutOrDefault,
   type DriveTurnOutcome,
   deliverMessage,
+  DeliveryEnqueueRejectedError,
   drainDeliveryWaitersOnTerminalSDKMessage,
   flattenDeliveryText,
   isTerminalTurnError,
@@ -22,6 +23,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { runMigration182 } from '../../../../src/storage/schema/migrations';
 import { runMigration221 } from '../../../../src/storage/schema/m221-drop-message-delivery-active-turn-index';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 
 const SESSION = 'sess-conformance';
 
@@ -76,8 +78,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   afterEach(() => db.close());
 
   describe('deliverMessage — plain enqueue (§7: durable insertion)', () => {
-    it('enqueues a role-free FIFO payload', () => {
-      deliverMessage(repo, SESSION, 'msg-A', { origin: 'chat' });
+    it('enqueues a role-free FIFO payload', async () => {
+      await deliverMessage(repo, SESSION, 'msg-A', { origin: 'chat' });
       const jobs = jobsFor(repo, SESSION);
       expect(jobs).toHaveLength(1);
       expect(jobs[0].payload).toEqual({
@@ -89,9 +91,9 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(jobs[0].maxRetries).toBeGreaterThan(0);
     });
 
-    it('a second message enqueues alongside the first — FIFO orders them, no arbiter', () => {
-      deliverMessage(repo, SESSION, 'msg-A', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'msg-B', { origin: 'chat' });
+    it('a second message enqueues alongside the first — FIFO orders them, no arbiter', async () => {
+      await deliverMessage(repo, SESSION, 'msg-A', { origin: 'chat' });
+      await deliverMessage(repo, SESSION, 'msg-B', { origin: 'chat' });
       const jobs = jobsFor(repo, SESSION);
       expect(jobs).toHaveLength(2);
       const [head] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
@@ -101,15 +103,91 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(tail?.payload.messageUuid).toBe('msg-B');
     });
 
-    it('propagates enqueue failures to the caller', () => {
-      const stub = {
-        enqueue: () => {
-          throw new Error('disk I/O error');
-        },
-      } as unknown as JobQueueRepository;
-      expect(() => deliverMessage(stub, SESSION, 'io-fail', { origin: 'chat' })).toThrow(
+    it('propagates enqueue failures to the caller', async () => {
+      db.exec(`CREATE TRIGGER refuse_enqueue BEFORE INSERT ON job_queue
+        BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+      await expect(deliverMessage(repo, SESSION, 'io-fail', { origin: 'chat' })).rejects.toThrow(
         /disk I\/O error/
       );
+    });
+
+    it('rolls back insertion if receipt loading fails before commit', async () => {
+      const prepare = db.prepare;
+      db.prepare = (...args) => {
+        if (args[0] === 'SELECT * FROM job_queue WHERE id = ?') {
+          throw new Error('synthetic receipt read failure');
+        }
+        return Reflect.apply(prepare, db, args);
+      };
+      try {
+        await expect(
+          deliverMessage(repo, SESSION, 'read-failed', { origin: 'chat' })
+        ).rejects.toBeInstanceOf(DeliveryEnqueueRejectedError);
+      } finally {
+        db.prepare = prepare;
+      }
+      expect(jobsFor(repo, SESSION)).toEqual([]);
+    });
+
+    it('waits for the writer receipt before resolving durable insertion', async () => {
+      const gateway = new DbGateway(':memory:', db);
+      bindGateway(db, gateway);
+      let release!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let queued!: () => void;
+      const arrived = new Promise<void>((resolve) => {
+        queued = resolve;
+      });
+      const run = gateway.run.bind(gateway);
+      gateway.run = async (op, input) => {
+        queued();
+        await hold;
+        return run(op, input);
+      };
+      let settled = false;
+      const pending = deliverMessage(repo, SESSION, 'held-insert', { origin: 'chat' }).then(() => {
+        settled = true;
+      });
+      try {
+        await arrived;
+        expect(settled).toBe(false);
+        expect(jobsFor(repo, SESSION)).toEqual([]);
+        release();
+        await pending;
+        expect(jobsFor(repo, SESSION)).toHaveLength(1);
+      } finally {
+        release();
+        await pending;
+        await gateway.close();
+      }
+    });
+
+    it('rejects an unavailable writer without replaying insertion on main', async () => {
+      const gateway = new DbGateway('synthetic-file', null, undefined, () => {
+        throw new Error('writer unavailable');
+      });
+      bindGateway(db, gateway);
+      const prepare = db.prepare;
+      let mainAttempts = 0;
+      db.prepare = (...args) => {
+        if (/INSERT INTO job_queue/.test(args[0])) {
+          mainAttempts++;
+          throw new Error('main enqueue forbidden');
+        }
+        return Reflect.apply(prepare, db, args);
+      };
+      try {
+        await expect(
+          deliverMessage(repo, SESSION, 'unavailable', { origin: 'chat' })
+        ).rejects.toThrow('writer unavailable');
+        expect(mainAttempts).toBe(0);
+        expect(jobsFor(repo, SESSION)).toEqual([]);
+      } finally {
+        db.prepare = prepare;
+        await gateway.close();
+      }
     });
   });
 
@@ -150,9 +228,9 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       ]);
     });
 
-    it('a running-but-unconsumed predecessor blocks the session lane until it settles', () => {
-      deliverMessage(repo, SESSION, 'head', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'tail', { origin: 'chat' });
+    it('a running-but-unconsumed predecessor blocks the session lane until it settles', async () => {
+      await deliverMessage(repo, SESSION, 'head', { origin: 'chat' });
+      await deliverMessage(repo, SESSION, 'tail', { origin: 'chat' });
       const [head] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 1);
       expect(head?.payload.messageUuid).toBe('head');
       expect(repo.dequeueSessionFifo(MESSAGE_DELIVERY, 5)).toHaveLength(0);
@@ -161,12 +239,12 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(tail?.payload.messageUuid).toBe('tail');
     });
 
-    it('an unreleased held job blocks the lane and releases unblock it', () => {
-      deliverMessage(repo, SESSION, 'held', { origin: 'chat' });
+    it('an unreleased held job blocks the lane and releases unblock it', async () => {
+      await deliverMessage(repo, SESSION, 'held', { origin: 'chat' });
       db.prepare(
         `UPDATE job_queue SET payload = json_set(payload, '$.released', json('false'))`
       ).run();
-      deliverMessage(repo, SESSION, 'next', { origin: 'chat' });
+      await deliverMessage(repo, SESSION, 'next', { origin: 'chat' });
       expect(repo.dequeueSessionFifo(MESSAGE_DELIVERY, 5, { releasedPath: '$.released' })).toEqual(
         []
       );
@@ -181,8 +259,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('requeue — park a blocked delivery (§8: runAt, no retry bump)', () => {
-    it('returns a processing job to pending with runAt without touching retry_count', () => {
-      deliverMessage(repo, SESSION, 'parked', { origin: 'chat' });
+    it('returns a processing job to pending with runAt without touching retry_count', async () => {
+      await deliverMessage(repo, SESSION, 'parked', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       const retryAt = Date.now() + 5_000;
       repo.requeue(job.id, retryAt);
@@ -193,8 +271,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(after?.retryCount).toBe(0);
     });
 
-    it('no-ops (returns null) when the job is no longer processing', () => {
-      deliverMessage(repo, SESSION, 'gone', { origin: 'chat' });
+    it('no-ops (returns null) when the job is no longer processing', async () => {
+      await deliverMessage(repo, SESSION, 'gone', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       repo.complete(job.id, { ok: true });
       expect(repo.requeue(job.id, Date.now() + 5_000)).toBeNull();
@@ -202,8 +280,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('reclaimStale — crash mid-delivery → redelivered (§10, §13)', () => {
-    it('returns a long-processing job to pending (the durable redelivery)', () => {
-      deliverMessage(repo, SESSION, 'crashed', { origin: 'chat' });
+    it('returns a long-processing job to pending (the durable redelivery)', async () => {
+      await deliverMessage(repo, SESSION, 'crashed', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       const staleStartedAt = Date.now() - 10 * 60 * 1000;
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
@@ -227,16 +305,16 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('atomic claim — no double-delivery (§13 headline)', () => {
-    it('a claimed (processing) job is NOT re-claimed by a second dequeue', () => {
-      deliverMessage(repo, SESSION, 'msg-once', { origin: 'chat' });
+    it('a claimed (processing) job is NOT re-claimed by a second dequeue', async () => {
+      await deliverMessage(repo, SESSION, 'msg-once', { origin: 'chat' });
       const first = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(first).toHaveLength(1);
       expect(first[0].status).toBe('processing');
       expect(repo.dequeue(MESSAGE_DELIVERY, 1)).toHaveLength(0);
     });
 
-    it('dequeue(limit > 1) claims a pending job exactly once', () => {
-      deliverMessage(repo, SESSION, 'msg-once2', { origin: 'chat' });
+    it('dequeue(limit > 1) claims a pending job exactly once', async () => {
+      await deliverMessage(repo, SESSION, 'msg-once2', { origin: 'chat' });
       const claimed = repo.dequeue(MESSAGE_DELIVERY, 10);
       expect(claimed).toHaveLength(1);
       expect(claimed[0].status).toBe('processing');
@@ -244,8 +322,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('heartbeat — processing claim lease', () => {
-    it('advances heartbeat_at without changing started_at and fends off reclaimStale', () => {
-      deliverMessage(repo, SESSION, 'live-turn', { origin: 'chat' });
+    it('advances heartbeat_at without changing started_at and fends off reclaimStale', async () => {
+      await deliverMessage(repo, SESSION, 'live-turn', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       const stale = Date.now() - 10 * 60 * 1000;
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
@@ -262,8 +340,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(repo.getJob(job.id)?.status).toBe('processing');
     });
 
-    it('is fenced by claim token and clears on ownership exit', () => {
-      deliverMessage(repo, SESSION, 'fenced-turn', { origin: 'chat' });
+    it('is fenced by claim token and clears on ownership exit', async () => {
+      await deliverMessage(repo, SESSION, 'fenced-turn', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(repo.heartbeat(job.id, 'wrong-token')).toBe(false);
       expect(repo.complete(job.id, { ok: true }, job.claimToken)?.heartbeatAt).toBeNull();
@@ -271,10 +349,10 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('activeDeliveryMessageUuids — legacy-replay guard', () => {
-    it('lists UUIDs with an active (pending/processing) v2 job; empty when none', () => {
+    it('lists UUIDs with an active (pending/processing) v2 job; empty when none', async () => {
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set());
-      deliverMessage(repo, SESSION, 'msg-a', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'msg-b', { origin: 'chat' });
+      await deliverMessage(repo, SESSION, 'msg-a', { origin: 'chat' });
+      await deliverMessage(repo, SESSION, 'msg-b', { origin: 'chat' });
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-a', 'msg-b']));
       const [first] = repo.dequeue(MESSAGE_DELIVERY, 1);
       repo.complete(first.id, { ok: true });
@@ -283,14 +361,14 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('cancelHeldDeliveryJob — failed deferred-retry cleanup', () => {
-    it('deletes only the pending held job for that session and uuid', () => {
-      deliverMessage(repo, SESSION, 'held-uuid', { origin: 'chat' });
+    it('deletes only the pending held job for that session and uuid', async () => {
+      await deliverMessage(repo, SESSION, 'held-uuid', { origin: 'chat' });
       db.prepare(
         `UPDATE job_queue SET payload = json_set(payload, '$.released', json('false'))
           WHERE json_extract(payload, '$.messageUuid') = 'held-uuid'`
       ).run();
-      deliverMessage(repo, SESSION, 'released-uuid', { origin: 'chat' });
-      deliverMessage(repo, 'sess-other', 'held-uuid', { origin: 'chat' });
+      await deliverMessage(repo, SESSION, 'released-uuid', { origin: 'chat' });
+      await deliverMessage(repo, 'sess-other', 'held-uuid', { origin: 'chat' });
       db.prepare(
         `UPDATE job_queue SET payload = json_set(payload, '$.released', json('false'))
           WHERE json_extract(payload, '$.messageUuid') = 'held-uuid'
@@ -320,8 +398,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('isProcessingDelivery — terminal-idle turn-end marker gate', () => {
-    it('true only for a job currently processing; false when pending or absent', () => {
-      deliverMessage(repo, SESSION, 'proc', { origin: 'chat' });
+    it('true only for a job currently processing; false when pending or absent', async () => {
+      await deliverMessage(repo, SESSION, 'proc', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(repo.isProcessingDelivery(SESSION, 'proc')).toBe(true);
       repo.requeue(job.id, Date.now(), job.claimToken);
@@ -331,8 +409,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('hasActiveDeliveryJob — ownership probe for the ack path', () => {
-    it('is true while a pending or processing job carries the message', () => {
-      deliverMessage(repo, SESSION, 'owned', { origin: 'chat' });
+    it('is true while a pending or processing job carries the message', async () => {
+      await deliverMessage(repo, SESSION, 'owned', { origin: 'chat' });
       expect(repo.hasActiveDeliveryJob(SESSION, 'owned')).toBe(true);
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(repo.hasActiveDeliveryJob(SESSION, 'owned')).toBe(true);
@@ -377,8 +455,8 @@ class MockSession implements MessageDeliverySession {
   }
 }
 
-function turnJob(repo: JobQueueRepository, uuid: string): Job {
-  deliverMessage(repo, SESSION, uuid, { origin: 'chat' });
+async function turnJob(repo: JobQueueRepository, uuid: string): Promise<Job> {
+  await deliverMessage(repo, SESSION, uuid, { origin: 'chat' });
   const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
   return job!;
 }
@@ -394,7 +472,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
 
   it('admission completed → handler returns completed outcome', async () => {
     const session = new MockSession();
-    const job = turnJob(repo, 'msg-turn');
+    const job = await turnJob(repo, 'msg-turn');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -433,7 +511,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
   it('blocked startup → parks (requeue) and the job stays pending (§13: blocked→parked, not failed)', async () => {
     const session = new MockSession();
     session.driveResult = { outcome: 'blocked', retryAt: 12345 };
-    const job = turnJob(repo, 'msg-blocked');
+    const job = await turnJob(repo, 'msg-blocked');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -448,7 +526,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
   it('drive throws → handler rejects so the processor fails the job (§13: double-fault survives)', async () => {
     const session = new MockSession();
     session.shouldThrow = true;
-    const job = turnJob(repo, 'msg-fault');
+    const job = await turnJob(repo, 'msg-fault');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -459,7 +537,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
   });
 
   it('session gone → handler rejects (so reclaimStale/processor re-drives it)', async () => {
-    const job = turnJob(repo, 'msg-gone');
+    const job = await turnJob(repo, 'msg-gone');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => null,
@@ -470,7 +548,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
 
   it('content missing → completes (no_content) instead of spinning', async () => {
     const session = new MockSession();
-    const job = turnJob(repo, 'msg-rewound');
+    const job = await turnJob(repo, 'msg-rewound');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -493,7 +571,7 @@ describe('handler — status-aware delivery (§8)', () => {
 
   it('a consumed row completes without re-feeding the SDK (#2592)', async () => {
     const session = new MockSession();
-    const job = turnJob(repo, 'msg-consumed');
+    const job = await turnJob(repo, 'msg-consumed');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -516,7 +594,7 @@ describe('handler — status-aware delivery (§8)', () => {
       }),
     });
 
-    deliverMessage(repo, SESSION, 'zombie-turn', { origin: 'chat' });
+    await deliverMessage(repo, SESSION, 'zombie-turn', { origin: 'chat' });
     const [zombie] = repo.dequeue(MESSAGE_DELIVERY, 1);
     const staleLease = Date.now() - 10 * 60 * 1000;
     db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
@@ -525,7 +603,7 @@ describe('handler — status-aware delivery (§8)', () => {
       zombie.id
     );
 
-    deliverMessage(repo, SESSION, 'new-msg', { origin: 'chat' });
+    await deliverMessage(repo, SESSION, 'new-msg', { origin: 'chat' });
 
     expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toHaveLength(1);
 
@@ -548,7 +626,7 @@ describe('handler — status-aware delivery (§8)', () => {
   it('a consumed row observes no feed through the injected metrics sink (review P2.2a)', async () => {
     const session = new MockSession();
     const metrics = new DeliveryMetrics();
-    const job = turnJob(repo, 'msg-consumed-m');
+    const job = await turnJob(repo, 'msg-consumed-m');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -563,7 +641,7 @@ describe('handler — status-aware delivery (§8)', () => {
 
   it('a submitted row is re-admitted, not skipped (review P2.2a)', async () => {
     const session = new MockSession();
-    const job = turnJob(repo, 'msg-submitted-m');
+    const job = await turnJob(repo, 'msg-submitted-m');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -576,7 +654,7 @@ describe('handler — status-aware delivery (§8)', () => {
 
   it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {
     const session = new MockSession();
-    const job = turnJob(repo, 'msg-deferred');
+    const job = await turnJob(repo, 'msg-deferred');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -589,7 +667,7 @@ describe('handler — status-aware delivery (§8)', () => {
 
   it('failed message is skipped (terminal)', async () => {
     const session = new MockSession();
-    const job = turnJob(repo, 'msg-failed');
+    const job = await turnJob(repo, 'msg-failed');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -602,7 +680,7 @@ describe('handler — status-aware delivery (§8)', () => {
 
   it('archived session is rejected, terminalized, and not driven (#3742616723/#3744225587)', async () => {
     const session = new MockSession();
-    const job = turnJob(repo, 'msg-archived');
+    const job = await turnJob(repo, 'msg-archived');
     const markFailed = mock(async () => null);
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
@@ -625,7 +703,7 @@ describe('handler — status-aware delivery (§8)', () => {
       retryAt: sessionRetryAt,
       reason: 'sdk_resume_choice',
     };
-    const job = turnJob(repo, 'msg-park');
+    const job = await turnJob(repo, 'msg-park');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -650,7 +728,7 @@ describe('handler — status-aware delivery (§8)', () => {
       getSession: () => session,
       getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
-    const job = turnJob(repo, 'msg-park-counted');
+    const job = await turnJob(repo, 'msg-park-counted');
 
     const counts: Array<number | undefined> = [];
     for (let pass = 0; pass < 3; pass++) {
@@ -667,7 +745,7 @@ describe('handler — status-aware delivery (§8)', () => {
   it('turn aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
     const session = new MockSession();
     session.driveResult = { outcome: 'aborted' };
-    const job = turnJob(repo, 'msg-abort-turn');
+    const job = await turnJob(repo, 'msg-abort-turn');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -707,17 +785,17 @@ describe('repo — payload-match dequeue + requeueAllProcessing (#2587/#2593)', 
     expect((exempt[0].payload as { messageUuid: string }).messageUuid).toBe('urgent-1');
   });
 
-  it('dequeue without an exclude spec is a no-op filter', () => {
-    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
-    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+  it('dequeue without an exclude spec is a no-op filter', async () => {
+    await deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    await deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
     const claimed = repo.dequeue(MESSAGE_DELIVERY, 10);
     expect(claimed).toHaveLength(2);
   });
 
-  it('requeueAllProcessing returns every processing job to pending (runAt, no heartbeat) (#2593)', () => {
-    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
-    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
-    deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
+  it('requeueAllProcessing returns every processing job to pending (runAt, no heartbeat) (#2593)', async () => {
+    await deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    await deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+    await deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
     repo.dequeue(MESSAGE_DELIVERY, 10);
     const runAt = Date.now();
     const requeued = repo.requeueAllProcessing(MESSAGE_DELIVERY, runAt);
@@ -728,10 +806,10 @@ describe('repo — payload-match dequeue + requeueAllProcessing (#2587/#2593)', 
     ).toBe(true);
   });
 
-  it('cancelForSession deletes pending+processing jobs for the session, leaves others (#3672)', () => {
-    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
-    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
-    deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
+  it('cancelForSession deletes pending+processing jobs for the session, leaves others (#3672)', async () => {
+    await deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    await deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+    await deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
     repo.dequeue(MESSAGE_DELIVERY, 1);
     const n = repo.cancelForSession(SESSION);
     expect(n).toBe(2);
@@ -740,9 +818,9 @@ describe('repo — payload-match dequeue + requeueAllProcessing (#2587/#2593)', 
     expect((remaining[0].payload as { sessionId: string }).sessionId).toBe('other-session');
   });
 
-  it('cancelForSessionWithMessages returns cancelled UUIDs and cancelDelivery is scoped', () => {
-    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
-    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+  it('cancelForSessionWithMessages returns cancelled UUIDs and cancelDelivery is scoped', async () => {
+    await deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    await deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
     expect(repo.cancelDelivery(SESSION, 'b')).toBe(true);
     expect(repo.cancelDelivery(SESSION, 'b')).toBe(false);
     expect(repo.cancelForSessionWithMessages(SESSION)).toEqual(['a']);
@@ -899,7 +977,7 @@ describe('message-delivery v2 — blocked delivery requeue bound', () => {
       getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
 
-    let current = turnJob(repo, 'msg-blocked-bound');
+    let current = await turnJob(repo, 'msg-blocked-bound');
     for (let i = 0; i < 3; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: 4321 });

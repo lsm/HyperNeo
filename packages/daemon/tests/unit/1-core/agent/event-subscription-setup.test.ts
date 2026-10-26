@@ -198,7 +198,7 @@ describe('EventSubscriptionSetup', () => {
             new Date().toISOString(),
             messageUuid
           );
-        deliverMessage(jobQueueRepo, sessionId, messageUuid, { origin: 'chat' });
+        await deliverMessage(jobQueueRepo, sessionId, messageUuid, { origin: 'chat' });
         expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
           1
         );
@@ -268,7 +268,7 @@ describe('EventSubscriptionSetup', () => {
             new Date().toISOString(),
             messageUuid
           );
-        deliverMessage(jobQueueRepo, sessionId, messageUuid, { origin: 'space_inject' });
+        await deliverMessage(jobQueueRepo, sessionId, messageUuid, { origin: 'space_inject' });
         expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
           1
         );
