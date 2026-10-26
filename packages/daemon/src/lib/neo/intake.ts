@@ -238,7 +238,8 @@ export function recordNeoReplyAnswer(
       reply.question,
       neoChoiceByLetter(words, reply.question) ?? words,
       'chat',
-      Date.now()
+      Date.now(),
+      { sessionId, messageId: input.requestId }
     );
   return receipt;
 }

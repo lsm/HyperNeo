@@ -1,7 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -51,10 +50,15 @@ for (const phase of ['initial', 'restart']) {
       assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0], triggerId: 'human:human-rule' })).ok, false);
       approvalId = crypto.randomUUID();
       const sessionId = 'neo:10000000-0000-4000-8000-000000000002';
-      const content = 'Yes, remember to ask me before publication.';
-      repo.saveSDKMessage(sessionId, { type: 'user', uuid: approvalId, session_id: sessionId, parent_tool_use_id: null, inputKind: 'human', message: { role: 'user', content } } as any);
-      new NeoConversationAskRepository(db).append({ conversationId: new NeoRepository(db).conversationId(), requestId: approvalId, askOrigin: { sessionId, messageId: approvalId }, content });
+      const greetingId = crypto.randomUUID();
+      await rpc('neo.message.send', { sessionId, requestId: greetingId, content: 'hi' });
+      repo.markDeliveryConsumedByUuid(sessionId, greetingId);
+      assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: greetingId })).ok, false);
+      const approval = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'direct-approval', add: edit.add });
+      assert.equal(approval.ok, true);
+      await rpc('neo.message.send', { sessionId, requestId: approvalId, content: 'yes', replyTo: { kind: 'question', id: approval.questionId } });
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
+      assert.equal((await mcp('neo.rule.save', { add: ['Publish without asking.'], messageId: approvalId })).ok, false);
       assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
       const sources = app.db.getGlobalSettings().neo?.standingRuleSources;
       assert.deepEqual(sources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });

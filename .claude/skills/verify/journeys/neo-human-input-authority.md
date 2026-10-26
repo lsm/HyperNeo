@@ -21,8 +21,8 @@ changed-content retries are refused.
 
 The installed SDK sees the id and invokes `neo.rule.save` citing the approving
 human message's id. The daemon verifies that the message is a consumed human
-input received in this conversation, then retains its session/message reference
-with the saved rule. Paraphrases do not require a matching quote; immutable
+input received in this conversation and answers an immutable rule proposal with
+`yes` for the exact edit, then retains its session/message reference with the saved rule. Paraphrases do not require a matching quote; immutable
 question-bound confirmation remains the preferred path when approval is needed.
 Focused operation contracts refuse unknown, foreign, non-human, unconsumed and
 non-conversation ids. See [human-approved standing-rule edits](human-approved-standing-rule-edits.md)

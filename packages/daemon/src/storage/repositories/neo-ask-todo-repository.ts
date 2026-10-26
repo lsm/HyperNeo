@@ -827,7 +827,8 @@ export class NeoAskTodoRepository {
     question: NeoQuestion,
     answer: NeoQuestionAnswer,
     by: 'button' | 'chat',
-    now: number
+    now: number,
+    approval?: { sessionId: string; messageId: string }
   ): NeoQuestion | null {
     let rulesChanged = false;
     const changed = this.db.transaction(() => {
@@ -840,7 +841,7 @@ export class NeoAskTodoRepository {
         this.releaseStartTodos(question.id, now);
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
-          const rules = applyNeoRuleAnswer(this.db, question.id);
+          const rules = applyNeoRuleAnswer(this.db, question.id, approval);
           rulesChanged = rules.ok && rules.changed;
         }
       }

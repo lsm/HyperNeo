@@ -79,13 +79,20 @@ describe('human-approved standing rules', () => {
       },
       human
     );
-    expect(db.getGlobalSettings().neo?.standingRuleSources?.[edit.add[0]]).toEqual({ sessionId: agent.sessionId, messageId });
+    expect(db.getGlobalSettings().neo?.standingRuleSources?.[edit.add[0]]).toEqual({
+      sessionId: agent.sessionId,
+      messageId,
+    });
     const input = { add: edit.add, messageId };
     expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
     const repo = db.getSDKMessageRepo();
     repo.updateMessageStatus([repo.findMessageIdByUuid(agent.sessionId!, messageId)!], 'consumed');
-    expect(await invoke('neo.rule.save', { ...input, add: ['Publish without asking.'] })).toMatchObject({ value: { ok: false } });
-    expect(await invoke('neo.rule.save', { ...input, remove: ['Keep this rule.'] })).toMatchObject({ value: { ok: false } });
+    expect(
+      await invoke('neo.rule.save', { ...input, add: ['Publish without asking.'] })
+    ).toMatchObject({ value: { ok: false } });
+    expect(await invoke('neo.rule.save', { ...input, remove: ['Keep this rule.'] })).toMatchObject({
+      value: { ok: false },
+    });
     expect(await invoke('neo.rule.save', input)).toMatchObject({
       value: { ok: true, standingRules: ['Keep this rule.', ...edit.add] },
     });
@@ -98,9 +105,15 @@ describe('human-approved standing rules', () => {
 
   test.each(['add', 'remove'] as const)('a consumed greeting cannot authorize %s', async (kind) => {
     const messageId = crypto.randomUUID();
-    await invoke('neo.message.send', { sessionId: agent.sessionId, requestId: messageId, content: 'hi' }, human);
+    await invoke(
+      'neo.message.send',
+      { sessionId: agent.sessionId, requestId: messageId, content: 'hi' },
+      human
+    );
     db.getSDKMessageRepo().markDeliveryConsumedByUuid(agent.sessionId!, messageId);
-    expect(await invoke('neo.rule.save', { messageId, [kind]: kind === 'add' ? edit.add : edit.remove })).toMatchObject({ value: { ok: false } });
+    expect(
+      await invoke('neo.rule.save', { messageId, [kind]: kind === 'add' ? edit.add : edit.remove })
+    ).toMatchObject({ value: { ok: false } });
     expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
   });
 
@@ -108,9 +121,20 @@ describe('human-approved standing rules', () => {
     const questionId = await propose('prior-approval', { add: edit.add, remove: [] });
     await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
     const messageId = crypto.randomUUID();
-    await invoke('neo.message.send', { sessionId: agent.sessionId, requestId: messageId, content: 'hi', replyTo: { kind: 'question', id: questionId } }, human);
+    await invoke(
+      'neo.message.send',
+      {
+        sessionId: agent.sessionId,
+        requestId: messageId,
+        content: 'hi',
+        replyTo: { kind: 'question', id: questionId },
+      },
+      human
+    );
     db.getSDKMessageRepo().markDeliveryConsumedByUuid(agent.sessionId!, messageId);
-    expect(await invoke('neo.rule.save', { messageId, add: edit.add })).toMatchObject({ value: { ok: false } });
+    expect(await invoke('neo.rule.save', { messageId, add: edit.add })).toMatchObject({
+      value: { ok: false },
+    });
     expect(db.getGlobalSettings().neo?.standingRuleSources?.[edit.add[0]]).toBeUndefined();
   });
 

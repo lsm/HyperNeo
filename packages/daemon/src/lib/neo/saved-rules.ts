@@ -1,3 +1,6 @@
+import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { Database } from '../../storage/sqlite-compat.ts';
+
 type NeoRuleRefusal = { reason: { ok: false; reason: string } };
 const refuseRule = (reason: string): NeoRuleRefusal => ({ reason: { ok: false, reason } });
 
@@ -28,4 +31,33 @@ export function planNeoRuleSources(
     ...Object.entries(current).filter(([rule]) => rules.includes(rule)),
     ...(approval ? add.filter((rule) => rules.includes(rule)).map((rule) => [rule, approval]) : []),
   ]);
+}
+
+export function neoRuleApprovalMatches(
+  db: Database,
+  human: NeoConversationAsk | null,
+  edit: { add?: readonly string[]; remove?: readonly string[] }
+): boolean {
+  if (human?.replyTo?.kind !== 'question') return false;
+  const words =
+    typeof human.content === 'string'
+      ? human.content
+      : human.content
+          .flatMap((part: { type: string; text?: string }) =>
+            part.type === 'text' ? [part.text] : []
+          )
+          .join(' ');
+  if (words.trim() !== 'yes') return false;
+  const proposal = db
+    .prepare(`SELECT p.edit_json FROM neo_rule_proposals p
+    JOIN neo_questions q ON q.id=p.question_id JOIN neo_asks a ON a.id=q.ask_id
+    WHERE q.id=? AND a.session_id=? AND q.state='answered' AND q.kind='yesno'
+      AND q.answered_by='chat' AND q.answer='"yes"' AND q.text=p.question_text`)
+    .get(human.replyTo.id, human.askOrigin.sessionId) as { edit_json: string } | undefined;
+  if (!proposal) return false;
+  const approved = JSON.parse(proposal.edit_json) as { add?: string[]; remove?: string[] };
+  return (
+    JSON.stringify(edit.add ?? []) === JSON.stringify(approved.add ?? []) &&
+    JSON.stringify(edit.remove ?? []) === JSON.stringify(approved.remove ?? [])
+  );
 }

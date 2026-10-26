@@ -91,6 +91,7 @@ import {
   PackSettingSchema,
 } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
+import { neoRuleApprovalMatches } from './saved-rules.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -554,13 +555,13 @@ export function createNeoOperations(service: NeoService) {
           input.messageId && caller.sessionId
             ? receivedNeoHumanInput(service, caller.sessionId, input.messageId)
             : null;
-        return human
+        return neoRuleApprovalMatches(service.db.getDatabase(), human, input)
           ? { value: caller }
           : {
               reason: {
                 ok: false as const,
                 reason:
-                  'Cite the messageId of a received human approval in this Neo conversation, or use neo.rule.ask for confirmation.',
+                  'Cite a received human yes to the exact neo.rule.ask proposal in this conversation, or use neo.rule.ask for confirmation.',
               },
             };
       },
@@ -821,7 +822,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.rule.save',
       description:
-        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules only with human approval: pass messageId from the approving human message’s [message id: ...] line. The daemon records that message reference with each added rule, so consent stays traceable; paraphrasing is allowed. The message must be a consumed human input received in this Neo conversation; system notes and other sessions cannot authorize edits. Remove uses exact saved rule text. Each rule may have up to 500 characters.',
+        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules only with human approval: pass messageId from the approving human message’s [message id: ...] line. The daemon records that message reference with each added rule, so consent stays traceable; paraphrasing is allowed. The message must be a consumed human yes replying to the immutable neo.rule.ask proposal for these exact add/remove arrays in this Neo conversation; system notes and other sessions cannot authorize edits. Remove uses exact saved rule text. Each rule may have up to 500 characters.',
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

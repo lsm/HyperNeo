@@ -3,7 +3,11 @@ import { neoStandingRules } from '@hyperneo/shared/types/settings';
 import { SettingsRepository } from './settings-repository.ts';
 import { planNeoRuleEdit, planNeoRuleSources } from '../../lib/neo/saved-rules.ts';
 
-export function applyNeoRuleAnswer(db: Database, questionId: string) {
+export function applyNeoRuleAnswer(
+  db: Database,
+  questionId: string,
+  approval?: { sessionId: string; messageId: string }
+) {
   return db.transaction(() => {
     const row = db
       .prepare(`SELECT p.edit_json, p.question_text, p.applied_at,
@@ -33,13 +37,19 @@ export function applyNeoRuleAnswer(db: Database, questionId: string) {
     if (row.text !== row.question_text) throw new Error('proposal_question_changed');
     const settings = new SettingsRepository(db);
     const current = settings.getGlobalSettings();
-    const plan = planNeoRuleEdit(neoStandingRules(current.neo), JSON.parse(row.edit_json));
+    const edit = JSON.parse(row.edit_json) as { add?: string[]; remove?: string[] };
+    const plan = planNeoRuleEdit(neoStandingRules(current.neo), edit);
     if ('reason' in plan) return plan.reason;
     settings.updateGlobalSettings({
       neo: {
         ...current.neo,
         standingRules: plan.value,
-        standingRuleSources: planNeoRuleSources(plan.value, current.neo?.standingRuleSources),
+        standingRuleSources: planNeoRuleSources(
+          plan.value,
+          current.neo?.standingRuleSources,
+          edit.add,
+          approval
+        ),
       },
     });
     const now = Date.now();
