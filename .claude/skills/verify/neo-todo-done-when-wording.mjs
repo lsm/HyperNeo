@@ -31,6 +31,7 @@ const added = rpc('neo.todo.add', {
   title: 'Reword the gauge',
   doneWhen: 'gauge level reads 5',
   instruction: 'Reword the done-when.',
+  target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'verify' } },
 });
 assert.equal(added.ok, true, JSON.stringify(added));
 const edited = rpc('neo.todo.edit', { todoId: added.todo.id, doneWhen: 'gauge level reads 6' });
