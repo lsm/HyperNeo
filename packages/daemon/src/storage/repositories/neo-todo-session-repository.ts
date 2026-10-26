@@ -55,6 +55,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'nudgeContext',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['nudgeContext']>>;
+  read(
+    method: 'stopContext',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['stopContext']>>;
   read(method: (typeof neoTodoSessionReads.methods)[number], todoId?: string) {
     return gatewayFor(this.db).call(
       neoTodoSessionReads,
@@ -142,6 +146,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       ask?.status === 'open'
       ? { todo, ask, ref }
       : null;
+  }
+
+  stopContext(todoId: string) {
+    const store = new NeoAskTodoRepository(this.db),
+      todo = store.getTodo(todoId);
+    const card = this.readCard(todoId);
+    return {
+      ask: todo ? store.getAsk(todo.askId) : null,
+      ref: card?.ref ?? null,
+      live: card?.liveStatus ?? null,
+      adopted: card?.target?.verb === 'adopt',
+    };
   }
 
   claimNudge(
@@ -274,7 +290,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'neo.todoSessionReads',
   'read',
   NeoTodoSessionRepository,
-  ['unrecordedStarts', 'awaitingReports', 'nudgeContext']
+  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext']
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',

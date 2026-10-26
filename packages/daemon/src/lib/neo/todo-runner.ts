@@ -741,11 +741,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const stop = async (todo: NeoTodo) => {
-    const ref = sessions.readRef(todo.id);
-    const ask = store.getAsk(todo.askId);
-    const live = sessions.readLiveStatus(todo.id);
+    const { ref, ask, live, adopted } = await sessions.read('stopContext', todo.id);
     const settled = live === 'done' || live === 'failed' || live === 'stopped';
-    const adopted = sessions.get(todo.id)?.verb === 'adopt';
     if (!ref || !ask || adopted || (todo.state !== 'doing' && settled)) return null;
     const stopped = await deps
       .invoke(caller(ask), 'work.stop', { ref })

@@ -219,7 +219,9 @@ export class NeoAskTodoRepository {
     ...args: Parameters<InstanceType<typeof neoTodoMutations.Repository>['commit']>
   ) {
     const { neoTodoMutations } = await import('./neo-todo-mutation-writes.ts');
-    return gatewayFor(this.db).call(neoTodoMutations, 'commit', ...args);
+    const result = await gatewayFor(this.db).call(neoTodoMutations, 'commit', ...args);
+    if (result.ok) this.changed();
+    return result;
   }
 
   snapshot(projectId: string | null | undefined, limit: number) {

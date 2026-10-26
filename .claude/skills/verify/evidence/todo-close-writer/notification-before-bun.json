@@ -1,0 +1,24 @@
+{
+  "mode": "verify",
+  "surface": "real close RPC and neo.snapshot",
+  "refused": [
+    {
+      "kind": "close",
+      "error": "MessageHubResponseError: synthetic finalization refusal",
+      "observed": {
+        "state": "doing",
+        "card": "open",
+        "visibleState": "doing"
+      }
+    }
+  ],
+  "rollbackNotifications": {
+    "websocket": 0,
+    "internal": 0
+  },
+  "notificationCounts": {
+    "websocket": 0,
+    "internal": 0
+  },
+  "mainSql": 0
+}

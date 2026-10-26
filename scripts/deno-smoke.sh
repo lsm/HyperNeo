@@ -654,4 +654,10 @@ env -i HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRI
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-shutdown-order.ts" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN"
 
+TODO_CLOSE_WRITER_RUN="$WORK_DIR/todo-close-writer"
+mkdir -p "$TODO_CLOSE_WRITER_RUN/home" "$TODO_CLOSE_WRITER_RUN/tmp"
+env -i HOME="$TODO_CLOSE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_CLOSE_WRITER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_CLOSE_WRITER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-close-writer.ts" verify "$TODO_CLOSE_WRITER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

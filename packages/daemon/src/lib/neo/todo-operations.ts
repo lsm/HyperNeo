@@ -11,11 +11,7 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './pack-contract.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
-import {
-  readNeoTodoCompletion,
-  requireNeoTodoMayFinish,
-  sameNeoTodoCheck,
-} from './todo-completion.ts';
+import { readNeoTodoCompletion, sameNeoTodoCheck } from './todo-completion.ts';
 import { planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
@@ -328,6 +324,7 @@ export function planNeoTodoRemove(
 const Continue = z.object({ todoId: Text, message: Text });
 const Retry = z.object({ todoId: Text });
 const Close = z.object({ todoId: Text, reason: Text });
+type CloseInput = { kind: 'close' } & z.infer<typeof Close>;
 
 export function planNeoTodoClose(
   todo: NeoTodo,
@@ -443,13 +440,13 @@ export function createNeoTodoOperations(
     result.ok
       ? { ...result, todos: result.todo ? todos.listTodos(result.todo.askId) : [] }
       : result;
-  const admit = (ask: NeoAsk | null, todo?: NeoTodo) =>
+  const admit = (ask: NeoAsk | null, todo?: NeoTodo, knownTodos?: NeoTodo[]) =>
     ask && ask.status !== 'open'
       ? {
           reason: {
             ok: true as const,
             ...(todo ? { todo } : {}),
-            todos: todos.listTodos(ask.id),
+            todos: knownTodos ?? todos.listTodos(ask.id),
             records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
           },
         }
@@ -577,17 +574,67 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  const close = owned(superpipe({})('neo.todo.close') as PipelineAPI)
-    .pipe(planNeoTodoClose, ['outcome', 'input'], 'result:outcome')
+  const finalize = (superpipe({})('neo.todo.finalize') as PipelineAPI)
+    .input(['input'])
+    .pipe(
+      async (input: CloseInput) => {
+        const facts = await todos.read('askFacts', { todoId: input.todoId });
+        const todo = facts.todos.find((todo) => todo.id === input.todoId);
+        return todo ? admit(facts.ask, todo, facts.todos) : requireNeoOpenTodo(null, facts.ask);
+      },
+      'input',
+      'result:outcome'
+    )
+    .pipe(
+      async (input: CloseInput) => {
+        const prepared = await todos.prepareMutation(input, Date.now());
+        return prepared.ok ? { value: prepared } : { reason: prepared };
+      },
+      'input',
+      'result:outcome'
+    )
     .pipe(completion, 'outcome', 'completion')
-    .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
-    .pipe(cards, 'outcome', 'questions')
-    .pipe(requireNeoTodoCardsAnswered, ['outcome', 'questions'], 'result:outcome')
-    .pipe(stopAndWrite, 'outcome', 'outcome')
-    .endAsync('outcome') as (
-    input: z.infer<typeof Close>,
-    caller: OperationCaller
-  ) => Promise<TodoReceipt | Rejection>;
+    .pipe(
+      async (plan: TodoPlan) =>
+        requireNeoTodoCardsAnswered(
+          plan,
+          plan.patch.state === 'done'
+            ? (await todos.read('askFacts', { todoId: plan.todo.id })).questions
+            : []
+        ),
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(
+      async (plan: TodoPlan) => {
+        const failed = await controls.stop(plan.todo);
+        return failed
+          ? fail(`${failed}; the todo is unchanged, its session may still run.`)
+          : { value: plan };
+      },
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(
+      async (
+        plan: TodoPlan,
+        input: CloseInput,
+        completion: Awaited<ReturnType<typeof readNeoTodoCompletion>>
+      ) => {
+        const result = await todos.mutateTodo(
+          input,
+          { check: plan.todo.check, result: completion },
+          Date.now()
+        );
+        if (!result.ok) return result;
+        const { startNext, ...receipt } = result;
+        if (startNext) await controls.start(startNext);
+        return receipt;
+      },
+      ['outcome', 'input', 'completion'],
+      'outcome'
+    )
+    .endAsync('outcome') as (input: CloseInput) => Promise<TodoReceipt | Rejection>;
 
   return [
     defineOperation({
@@ -651,7 +698,7 @@ export function createNeoTodoOperations(
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => present(await close(input, caller)),
+      execute: async (input) => present(await finalize({ kind: 'close', ...input })),
     }),
   ];
 }
