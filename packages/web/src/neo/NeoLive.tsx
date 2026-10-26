@@ -53,6 +53,15 @@ import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/Artif
 import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
+async function loadNeoAskDetails(askId: string): Promise<NeoAskEntry> {
+  const hub = await connectionManager.getHub();
+  const result = await invokeOperation<
+    { ok: true; entry: NeoAskEntry } | { ok: false; reason: string }
+  >(hub, 'neo.ask.read', { askId });
+  if (!result.ok) throw new Error(result.reason);
+  return result.entry;
+}
+
 export function NeoLive() {
   const neo = useNeo();
   const attachments = useNeoAttachments(neo.sessionId);
@@ -890,15 +899,7 @@ export function NeoLive() {
                         })
                       )
                     }
-                    onLoadDetails={(askId) =>
-                      connectionManager.getHub().then(async (hub) => {
-                        const result = await invokeOperation<
-                          { ok: true; entry: NeoAskEntry } | { ok: false; reason: string }
-                        >(hub, 'neo.ask.read', { askId });
-                        if (!result.ok) throw new Error(result.reason);
-                        return result.entry;
-                      })
-                    }
+                    onLoadDetails={loadNeoAskDetails}
                     onOpen={(link) =>
                       link.startsWith('/session/')
                         ? setChat({ sessionId: link.slice('/session/'.length) })

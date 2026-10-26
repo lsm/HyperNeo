@@ -80,6 +80,13 @@ try {
   }, Date.now());
   const task = store.getTodo("synthetic-task")!;
   store.updateTodo(task, { report: "Full synthetic worker report", state: "doing" }, Date.now());
+  for (let index = 0; index < 21; index++) {
+    const done = store.addTodo(`synthetic-done-${index}`, 'a-api', {
+      title: `Completed task ${index}`, doneWhen: 'Done',
+      check: null, instruction: null, named: null,
+    }, Date.now());
+    store.updateTodo(done, { state: 'done' }, Date.now());
+  }
   store.askQuestion("synthetic-choice", "a-api", { text: "Which synthetic option?", kind: "choice", options: ["Ship", "Wait"], multiple: false, noLabel: null, yesLabel: null, startTodos: null, confirm: null }, Date.now());
   if (process.argv.includes('--manual')) {
     writeFileSync(process.argv[3], JSON.stringify({ port: front.port, run }));

@@ -38,3 +38,11 @@ title without sending question bodies; wake question links must load and focus
 the full question via its summary reference. Paired relays can read full cards
 through neo.ask.read but cannot mutate work; paired-device and snapshot tests
 cover that admission boundary.
+
+The browser fixture also has 21 completed todos beyond the RPC window. Its closed
+card must say 22 todos alongside the 21-done paging control. At desktop width the
+browser holds one real detail response while editing an unsent draft, then releases
+it and checks the full bodies arrive without another read. A second opening injects
+a failed detail response; editing the draft must retain its error without retrying.
+Only those detail replies are delayed or failed; all snapshots and other RPCs use
+the isolated daemon. Inspect failed-read-1280.png as well as summary/detail images.

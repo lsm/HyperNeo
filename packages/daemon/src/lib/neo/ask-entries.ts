@@ -86,7 +86,7 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
   return {
     ...entry,
     summary: {
-      todoCount: entry.todos.length,
+      todoCount: entry.todos.filter((todo) => todo.state !== 'done').length + entry.doneCount,
       questionCount: entry.questions.length,
       openQuestionCount: entry.questions.filter((question) => question.state === 'open').length,
       questionRefs: entry.questions.map(({ id, replacedBy }) => ({ id, replacedBy })),
