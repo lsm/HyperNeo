@@ -40,7 +40,7 @@ if [ -n "$DENO_SMOKE_BIN" ] && [ ! -x "$DENO_SMOKE_BIN" ]; then
 	exit 1
 fi
 
-WORK_DIR="$(mktemp -d)"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/deno-smoke.XXXXXX")"
 DB_PATH="$WORK_DIR/deno-smoke.db"
 LOG_FILE="$WORK_DIR/daemon.log"
 mkdir -p "$WORK_DIR/home"
@@ -183,6 +183,59 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" den
 	dump_log
 	exit 1
 fi
+
+if ! SMOKE_DB_PATH="$DB_PATH" deno eval '
+	const { DatabaseSync } = await import("node:sqlite");
+	const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"), { readOnly: true });
+	const row = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = ?").get("table");
+	db.close();
+	const tables = Number(row.n);
+	if (!(tables > 80)) {
+		console.error(`[deno-smoke] FAIL: expected > 80 sqlite tables, found ${tables}`);
+		Deno.exit(1);
+	}
+	console.log(`[deno-smoke] sqlite tables: ${tables} (> 80)`);
+'; then
+	dump_log
+	exit 1
+fi
+
+echo "[deno-smoke] sending SIGTERM"
+kill -TERM "$DAEMON_PID"
+EXITED=0
+for _ in $(seq 1 30); do
+	if ! kill -0 "$DAEMON_PID" 2> /dev/null; then
+		EXITED=1
+		break
+	fi
+	sleep 1
+done
+if [ "$EXITED" != "1" ]; then
+	echo "[deno-smoke] FAIL: daemon still alive 30s after SIGTERM"
+	dump_log
+	exit 1
+fi
+EXIT_STATUS=0
+wait "$DAEMON_PID" || EXIT_STATUS=$?
+if [ "$EXIT_STATUS" != "0" ]; then
+	echo "[deno-smoke] FAIL: daemon exited with status $EXIT_STATUS after SIGTERM"
+	dump_log
+	exit 1
+fi
+if ! grep -q "Received SIGTERM, shutting down gracefully" "$LOG_FILE"; then
+	echo "[deno-smoke] FAIL: no 'Received SIGTERM' shutdown log line"
+	dump_log
+	exit 1
+fi
+if ! grep -q "Graceful shutdown complete" "$LOG_FILE"; then
+	echo "[deno-smoke] FAIL: no 'Graceful shutdown complete' log line"
+	dump_log
+	exit 1
+fi
+DAEMON_PID=""
+
+# Repository fixtures own the migrated DB only after the daemon writer has exited.
+echo "[deno-smoke] daemon stopped; running isolated database fixtures"
 
 if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/storage/sdk-status-reader.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
   const { SDKStatusReader } = await import("file://" + Deno.env.get("SMOKE_READER_PATH"));
@@ -420,56 +473,6 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   dump_log
   exit 1
 fi
-
-if ! SMOKE_DB_PATH="$DB_PATH" deno eval '
-	const { DatabaseSync } = await import("node:sqlite");
-	const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"), { readOnly: true });
-	const row = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = ?").get("table");
-	db.close();
-	const tables = Number(row.n);
-	if (!(tables > 80)) {
-		console.error(`[deno-smoke] FAIL: expected > 80 sqlite tables, found ${tables}`);
-		Deno.exit(1);
-	}
-	console.log(`[deno-smoke] sqlite tables: ${tables} (> 80)`);
-'; then
-	dump_log
-	exit 1
-fi
-
-echo "[deno-smoke] sending SIGTERM"
-kill -TERM "$DAEMON_PID"
-EXITED=0
-for _ in $(seq 1 30); do
-	if ! kill -0 "$DAEMON_PID" 2> /dev/null; then
-		EXITED=1
-		break
-	fi
-	sleep 1
-done
-if [ "$EXITED" != "1" ]; then
-	echo "[deno-smoke] FAIL: daemon still alive 30s after SIGTERM"
-	dump_log
-	exit 1
-fi
-EXIT_STATUS=0
-wait "$DAEMON_PID" || EXIT_STATUS=$?
-if [ "$EXIT_STATUS" != "0" ]; then
-	echo "[deno-smoke] FAIL: daemon exited with status $EXIT_STATUS after SIGTERM"
-	dump_log
-	exit 1
-fi
-if ! grep -q "Received SIGTERM, shutting down gracefully" "$LOG_FILE"; then
-	echo "[deno-smoke] FAIL: no 'Received SIGTERM' shutdown log line"
-	dump_log
-	exit 1
-fi
-if ! grep -q "Graceful shutdown complete" "$LOG_FILE"; then
-	echo "[deno-smoke] FAIL: no 'Graceful shutdown complete' log line"
-	dump_log
-	exit 1
-fi
-DAEMON_PID=""
 
 CLEANUP_ENQUEUE_RUN="$WORK_DIR/cleanup-enqueue"
 mkdir -p "$CLEANUP_ENQUEUE_RUN/home"

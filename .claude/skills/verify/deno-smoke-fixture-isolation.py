@@ -19,18 +19,17 @@ def shim():
     writer = None
     if not (path and args[0] == 'eval' and 'INSERT INTO message_search_content' in sql):
         os.execv(os.environ['SMOKE_REAL_DENO'], [os.environ['SMOKE_REAL_DENO'], *args])
-    if path and args[0] == 'eval' and 'INSERT INTO message_search_content' in sql:
-        try:
-            connection = socket.create_connection(
-                ('127.0.0.1', int(os.environ['DENO_SMOKE_PORT'])), timeout=1
-            )
-        except OSError:
-            print('[fixture-isolation] daemon stopped before fixture writes', flush=True)
-        else:
-            connection.close()
-            writer = sqlite3.connect(path, timeout=5)
-            writer.execute('BEGIN IMMEDIATE')
-            print('[fixture-isolation] competing writer acquired while daemon serves', flush=True)
+    try:
+        connection = socket.create_connection(
+            ('127.0.0.1', int(os.environ['DENO_SMOKE_PORT'])), timeout=1
+        )
+    except OSError:
+        print('[fixture-isolation] daemon stopped before fixture writes', flush=True)
+    else:
+        connection.close()
+        writer = sqlite3.connect(path, timeout=5)
+        writer.execute('BEGIN IMMEDIATE')
+        print('[fixture-isolation] competing writer acquired while daemon serves', flush=True)
     try:
         return subprocess.call([os.environ['SMOKE_REAL_DENO'], *args])
     finally:
@@ -57,7 +56,7 @@ def main():
         wrapper.write_text(
             '#!/bin/sh\nexport SMOKE_REAL_DENO=' + shlex.quote(deno)
             + '\nexport DENO_SMOKE_PORT=' + shlex.quote(port)
-            + '\nexec ' + shlex.quote(shutil.which('python3')) + ' '
+            + '\nexec ' + shlex.quote(sys.executable) + ' '
             + shlex.quote(str(Path(__file__).resolve())) + ' --deno-shim "$@"\n'
         )
         wrapper.chmod(0o755)
