@@ -19,10 +19,17 @@ export function neoAskEntryGroup(entry: Pick<NeoAskEntry, 'state' | 'todos'>): N
       : 'running';
 }
 
-export function neoAskEntriesInOrder<T extends Pick<NeoAskEntry, 'todos'>>(
+export function neoAskEntriesInOrder<T extends Pick<NeoAskEntry, 'ask' | 'state' | 'todos'>>(
   entries: readonly T[]
 ): T[] {
-  return [...entries].sort((a, b) => Number(holdsBlocked(b)) - Number(holdsBlocked(a)));
+  return [...entries].sort((a, b) => {
+    const waiting = Number(b.state === 'waiting') - Number(a.state === 'waiting');
+    if (waiting) return waiting;
+    if (a.state === 'waiting') {
+      return b.ask.createdAt - a.ask.createdAt || a.ask.id.localeCompare(b.ask.id);
+    }
+    return Number(holdsBlocked(b)) - Number(holdsBlocked(a));
+  });
 }
 
 export function neoDonePageMerge(
