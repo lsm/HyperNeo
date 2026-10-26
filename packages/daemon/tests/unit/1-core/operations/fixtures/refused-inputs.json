@@ -1,0 +1,20 @@
+[
+  {
+    "operation": "neo.question.get",
+    "input": { "id": "synthetic-question" },
+    "canonical": { "questionId": "synthetic-question" },
+    "error": "Invalid input: expected string, received undefined at questionId"
+  },
+  {
+    "operation": "neo.coding.write.plan",
+    "input": {
+      "repo": "synthetic/repo",
+      "targets": [{ "adapter": "codex-desktop", "model": "synthetic-model" }]
+    },
+    "canonical": {
+      "repo": "synthetic/repo",
+      "candidates": [{ "adapter": "codex-desktop", "model": "synthetic-model" }]
+    },
+    "error": "Invalid input: expected array, received undefined at candidates"
+  }
+]
