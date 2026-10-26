@@ -40,7 +40,11 @@ cd packages/web && bun run build && cd ../..
 - If the host denies `taskpolicy` or `nice` priority changes, set
   `VERIFY_NORMAL_PRIORITY=1`; isolation is unchanged. `VERIFY_REPO` selects
   the source checkout for shared upgrade tooling only.
-- `$RUN` is a fresh directory (default: a new `mktemp -d`). It holds `data/`
+- `$RUN` is a fresh `hyperneo-verify.*` directory. Create it by wrapping the
+  journey in `with-run.sh`, which removes it on success, failure and interrupt
+  (`VERIFY_KEEP_RUN=1` keeps it and prints the path), or by hand with
+  `mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX"` plus
+  `trap 'rm -rf "$RUN"' EXIT` in the owning shell. It holds `data/`
   (DB), `home/`, `bin/gh`, the logs, the pid files and `evidence/`.
 - Ready signal: `ready: http://127.0.0.1:<port>  run dir: <run>`. The daemon log
   shows `HyperNeo Test Server` and `Database: <run>/data/daemon.db`.

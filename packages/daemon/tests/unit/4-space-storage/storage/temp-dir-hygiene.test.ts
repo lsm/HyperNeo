@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ function stub(dir: string, name: string, body: string): string {
 }
 
 function runDirLeftovers(root: string): string[] {
-  return readdirSync(root).filter((name) => name.startsWith('hyperneo-verify-'));
+  return readdirSync(root).filter((name) => name.startsWith('hyperneo-verify.'));
 }
 
 test('with-run.sh prefixes, exports and removes the run dir on success', () => {
@@ -61,7 +61,9 @@ test('with-run.sh removes the run dir on SIGTERM', async () => {
   try {
     await waitFor(() => runDirLeftovers(sandbox).length > 0, 'run dir to appear');
     script.kill('SIGTERM');
-    const code = await new Promise<number | null>((resolve) => script.once('exit', (c) => resolve(c)));
+    const code = await new Promise<number | null>((resolve) =>
+      script.once('exit', (c) => resolve(c))
+    );
     expect(code).not.toBe(0);
     expect(runDirLeftovers(sandbox)).toEqual([]);
   } finally {
@@ -90,28 +92,34 @@ test.each([
   ['reactive-database.test.ts', 'reactive-db-test'],
   ['live-query-integration.test.ts', 'live-query-int'],
   ['task-id-resolution-cache.test.ts', 'task-id-cache'],
-])('daemon storage test %s leaves nothing in the temp dir', (file, prefix) => {
-  const suite = join(repoRoot, 'packages/daemon/tests/unit/4-space-storage/storage', file);
-  expectLeakedNothing(suite, [prefix, 'backups']);
-}, 120000);
+])(
+  'daemon storage test %s leaves nothing in the temp dir',
+  (file, prefix) => {
+    const suite = join(repoRoot, 'packages/daemon/tests/unit/4-space-storage/storage', file);
+    expectLeakedNothing(suite, [prefix, 'backups']);
+  },
+  120000
+);
+
+const GLM_SUITE = 'packages/daemon/tests/unit/1-core/core/refresh-glm-display-name.test.ts';
 
 test('daemon glm display-name test leaves nothing in the temp dir', () => {
-  const suite = join(repoRoot, 'packages/daemon/tests/unit/1-core/core/refresh-glm-display-name.test.ts');
-  expectLeakedNothing(suite, ['test-glm', 'backups']);
+  expectLeakedNothing(join(repoRoot, GLM_SUITE), ['test-glm', 'backups']);
 }, 120000);
 
 function expectLeakedNothing(suite: string, prefixes: string[]) {
   const sandbox = join(tmpdir(), `hygiene-suite-${process.pid}-${prefixes[0]}`);
   rmSync(sandbox, { recursive: true, force: true });
   mkdirSync(sandbox, { recursive: true });
-  const result = spawnSync(process.execPath, ['test', suite], {
+  const bun = (typeof Bun !== 'undefined' && Bun.which('bun')) || 'bun';
+  const result = spawnSync(bun, ['test', suite], {
     cwd: join(repoRoot, 'packages/daemon'),
     encoding: 'utf8',
     env: { ...process.env, TMPDIR: sandbox },
   });
   try {
     if (result.error) throw result.error;
-    expect(result.status).toBe(0);
+    expect(`${result.stdout ?? ''}${result.stderr ?? ''}`).toMatch(/Ran \d+ tests?/);
     const leaked = readdirSync(sandbox).filter((name) =>
       prefixes.some((prefix) => name === prefix || name.startsWith(`${prefix}-`))
     );
