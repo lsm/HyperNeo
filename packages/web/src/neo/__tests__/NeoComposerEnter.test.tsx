@@ -164,9 +164,10 @@ describe('NeoComposer Enter behavior', () => {
   it.each([
     [true, 'Return adds a line · Tap the arrow to send'],
     [false, 'Enter to send · Shift + Enter for a new line'],
-  ])('puts the send hint in the input placeholder (coarse=%s)', (coarse, hint) => {
+  ])('puts the send hint in the focused input placeholder (coarse=%s)', (coarse, hint) => {
     setPointerCoarse(coarse);
-    renderComposer();
+    const { textarea } = renderComposer();
+    fireEvent.focus(textarea());
     expect(document.querySelector('textarea')!.getAttribute('placeholder')).toContain(hint);
     const status = document.querySelector('[role="status"]') as HTMLElement;
     expect(status.className).toContain('hidden');
@@ -183,7 +184,8 @@ describe('NeoComposer Enter behavior', () => {
 
   it('keeps the send button labeled and keyboard reachable', () => {
     setPointerCoarse(true);
-    renderComposer();
+    const { textarea } = renderComposer();
+    fireEvent.focus(textarea());
     const button = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
     expect(button.tagName).toBe('BUTTON');
     expect(button.getAttribute('type')).toBe('submit');
