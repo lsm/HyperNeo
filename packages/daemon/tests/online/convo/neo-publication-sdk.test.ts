@@ -225,7 +225,6 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                   : round === 3
                     ? {
                         messageId: requestId,
-                        from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
                         add: ['Keep synthetic garden changes as drafts.'],
                       }
                     : {
@@ -650,12 +649,10 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
         created: true,
         publication: { publicationId: verbatim[0].publicationId },
       },
-      { ok: true, standingRules: ['Keep synthetic garden changes as drafts.'] },
+      { ok: false, reason: expect.stringContaining('human yes') },
       { ok: true, question: { replyTo: [requestId] } },
     ]);
-    expect(daemon.db.getGlobalSettings().neo?.standingRules).toEqual([
-      'Keep synthetic garden changes as drafts.',
-    ]);
+    expect(daemon.db.getGlobalSettings().neo?.standingRules ?? []).toEqual([]);
     expect(todos.listQuestions('fictional-garden')).toEqual([
       expect.objectContaining({ replyTo: [requestId] }),
     ]);

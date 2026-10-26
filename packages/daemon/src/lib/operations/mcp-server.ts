@@ -6,18 +6,19 @@ import {
   type OperationRefusal,
 } from './mcp-adapter.ts';
 import type { CallerIdentity } from './caller.ts';
-import type { OperationRegistrySource } from './registry.ts';
+import { resolveOperationRegistry, type OperationRegistrySource } from './registry.ts';
+import { coreOperationSignatures } from './core-signatures.ts';
 
 export function createOperationMcpServer(
   registry: OperationRegistrySource,
   resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
-  signatures = '',
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>
 ) {
+  const signatures = coreOperationSignatures(resolveOperationRegistry(registry));
   const tools = [
     tool(
       'invoke',
-      `Invoke a daemon operation by name. Core operation input fields are included below when available. operations.list discovers other operations; operations.describe {name} returns their schemas. A message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nInput fields of the core operations (? marks optional); call operations.describe only for others:\n${signatures}` : ''}`,
+      `Invoke {name,input}. operations.list discovers others; operations.describe {name} returns full schemas. message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nCore input shapes:\n${signatures}` : ''}`,
       OperationMcpInvocationSchema.shape,
       createOperationMcpHandler(registry, resolveCaller, recordRefusal)
     ),

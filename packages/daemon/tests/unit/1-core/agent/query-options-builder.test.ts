@@ -2218,6 +2218,7 @@ describe('QueryOptionsBuilder', () => {
               'WebFetch',
               'Bash',
               'mcp__hyperneo-operations__invoke',
+              'mcp__fetch-mcp',
               'Bash(sleep:*)',
             ]);
             expect(options.permissionMode).toBe('dontAsk');

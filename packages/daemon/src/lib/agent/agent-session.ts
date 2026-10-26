@@ -345,7 +345,6 @@ export class AgentSession
           consumedInputId: inputOrigin?.()?.messageId,
         };
       },
-      '',
       this.recordOperationRefusal
     );
     if (!inputOrigin) this.operationMcpServer = server;

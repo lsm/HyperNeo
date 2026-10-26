@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { NEO_STANDING_RULE_MAX_CHARS, NEO_STANDING_RULES_MAX } from '@hyperneo/shared';
+import { NEO_STANDING_RULE_MAX_CHARS } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { invokeOperation } from '../../lib/operations.ts';
 import { connectionState, globalSettings } from '../../lib/state.ts';
@@ -17,12 +17,7 @@ export function NeoRulesSettings() {
   useEffect(() => setRules(savedRules ?? []), [savedRules]);
 
   const rule = text.trim();
-  const problem =
-    rules.length >= NEO_STANDING_RULES_MAX
-      ? `Neo keeps at most ${NEO_STANDING_RULES_MAX} rules; remove one first.`
-      : rules.includes(rule)
-        ? 'This rule is already saved.'
-        : '';
+  const problem = rules.includes(rule) ? 'This rule is already saved.' : '';
   const busy = saving || edit !== null || connectionState.value !== 'connected';
 
   function ask(next: RuleEdit) {
@@ -95,9 +90,7 @@ export function NeoRulesSettings() {
           one rule at a time.
         </p>
       </div>
-      <p class="text-xs text-fg-faint">
-        {rules.length} of {NEO_STANDING_RULES_MAX} rules
-      </p>
+      <p class="text-xs text-fg-faint">{rules.length} rules</p>
       {rules.length ? (
         <ol class="space-y-2">
           {rules.map((saved, index) => (
