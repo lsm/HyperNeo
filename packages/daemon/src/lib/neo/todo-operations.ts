@@ -360,7 +360,8 @@ export function createNeoTodoOperations(
     if (!input.addUrls && !input.check) return { value: plan };
     const requested = { ...plan.todo, check: input.check ?? plan.todo.check };
     const pack = packs().find((pack) => pack.id === requested.check?.pack)?.todos;
-    const check = input.addUrls ? pack?.addUrls?.(requested, input.addUrls) : requested.check;
+    const appended = input.addUrls ? pack?.addUrls?.(requested, input.addUrls) : null;
+    const check = appended ?? input.check;
     if (!check)
       return {
         value: {
@@ -376,11 +377,19 @@ export function createNeoTodoOperations(
       todos.listTodos(plan.todo.askId)
     );
     if ('reason' in accepted) return accepted;
+    const records = [
+      ...(accepted.value.records ?? []),
+      ...(input.addUrls && !appended
+        ? [
+            `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
+          ]
+        : []),
+    ];
     return {
       value: {
         todo: accepted.value,
         patch: { ...plan.patch, check, doneWhen: accepted.value.doneWhen },
-        ...(accepted.value.records ? { records: accepted.value.records } : {}),
+        ...(records.length ? { records } : {}),
       },
     };
   };

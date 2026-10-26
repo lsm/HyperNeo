@@ -15,7 +15,9 @@ with only a title and free-text completion sentence. The fixed daemon refuses
 that request, accepts a supported check without doneWhen, and derives its
 completion sentence. Unknown packs are refused. A synthetic old row with no
 check remains readable; editing its check derives new wording and creating the
-named result file lets the normal completion operation mark it done.
+named result file lets the normal completion operation mark it done. The same
+check edit includes PR URLs unsupported by the new check: these must be recorded
+without dropping the requested check or its derived sentence.
 
 The shared draft schema also covers todos supplied to neo.ask.open. Focused
 contracts cover missing/null checks, unsupported kinds, removed input fields,

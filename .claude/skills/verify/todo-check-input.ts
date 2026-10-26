@@ -109,7 +109,11 @@ try {
     { title: 'Old todo', doneWhen: 'Remember it', check: null, instruction: null, named: null },
     1
   );
-  const edited = await rpc('neo.todo.edit', { todoId: legacy.id, check, addUrls: ['https://github.com/example/project/pull/42'] });
+  const edited = await rpc('neo.todo.edit', {
+    todoId: legacy.id,
+    check,
+    addUrls: ['https://github.com/example/project/pull/42'],
+  });
   assert(edited.ok && edited.todo, JSON.stringify(edited));
   assert.equal(edited.todo.doneWhen, `File ${check.params.path} exists.`);
   assert.deepEqual(edited.todo.check, check);
