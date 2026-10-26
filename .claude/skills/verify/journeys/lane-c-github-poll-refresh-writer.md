@@ -20,7 +20,7 @@ credential-gated GitHub service is absent in this fixture; production credential
 bootstrap and its app subscription are not exercised.
 
 The baseline must fail with forbidden main SQL and no initial job. Save
- evidence/github-poll-refresh-writer.json before deleting the owned run.
+evidence/github-poll-refresh-writer.json before deleting the owned run.
 Focused tests cover transactional deletion/admission rollback, pending-only limits,
 receipt waiting, lost receipts, missing queues/processors and concurrent refresh.
 Real GitHub, provider auth, UI, worker death and contention remain unverified.

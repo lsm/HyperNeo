@@ -78,6 +78,7 @@ try {
     evidence.completed = repo.getJob(initial[0].id);
     assert.equal(repo.getJob(initial[0].id)?.status, 'completed');
     assert.equal(repo.getJob(initial[0].id)?.result?.polled, true);
+    const completed = repo.getJob(initial[0].id);
     const successor = repo.listJobs({ queue: 'github.poll', status: 'pending' });
     assert.equal(successor.length, 1);
     const update = async (githubPollingInterval: number) => {
@@ -106,6 +107,7 @@ try {
     assert.equal(service.isPolling(), true);
     assert.deepEqual(repo.listJobs({ queue: 'github.poll', status: 'pending' }), []);
     assert.deepEqual(repo.getJob(claimed.id), claimed);
+    assert.deepEqual(repo.getJob(initial[0].id), completed);
     evidence.processingLeaseRetained = true;
     evidence.jobs = repo.listJobs({ queue: 'github.poll' });
     evidence.healthAfter = await hub.request('system.health', {});

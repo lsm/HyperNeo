@@ -1,0 +1,16 @@
+{
+  "ciRunnerPasses": 39,
+  "ciRunnerFailures": 0,
+  "files": 3,
+  "refreshWriterCases": 12,
+  "productionChangedLines": 70,
+  "authorizedCoreCompanionReplacements": 3,
+  "transactionalDeleteAndAdmissionRollback": true,
+  "legacyPendingDeletionLimit": 100,
+  "processingLeasePreserved": true,
+  "waitsForStartupAndDisableReceipts": true,
+  "newerEnableSurvivesStaleDisableReceipt": true,
+  "lostReceiptDoesNotReplay": true,
+  "temporaryHomesRemoved": true,
+  "credentialGatedAppBootstrapVerified": false
+}

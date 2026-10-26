@@ -571,4 +571,10 @@ env -i HOME="$SESSION_TITLE_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SESSION_TITL
 	HYPERNEO_DATA_DIR="$SESSION_TITLE_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-title-enqueue-writer.ts" "$SESSION_TITLE_ENQUEUE_RUN"
 
+GITHUB_POLL_REFRESH_RUN="$WORK_DIR/github-poll-refresh-writer"
+mkdir -p "$GITHUB_POLL_REFRESH_RUN/home" "$GITHUB_POLL_REFRESH_RUN/tmp"
+env -i HOME="$GITHUB_POLL_REFRESH_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$GITHUB_POLL_REFRESH_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-refresh-writer.ts" "$GITHUB_POLL_REFRESH_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
