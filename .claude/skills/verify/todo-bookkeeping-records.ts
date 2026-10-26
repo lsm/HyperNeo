@@ -52,12 +52,12 @@ try {
         assert(duplicate.records[0].startsWith('pr_already_tracked:'));
         const edited = await invoke('neo.todo.edit', { todoId: opened.todos[0].id, addUrls: [url], title: 'PR now identified' });
         assert(edited.records[0].startsWith('pr_already_tracked:'));
-        const plain = await invoke('neo.todo.add', { askId: first.todo.askId, title: 'Plain', doneWhen: 'Observed' });
+        const plain = await invoke('neo.todo.add', { askId: first.todo.askId, title: 'Plain', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } });
         const unsupported = await invoke('neo.todo.edit', { todoId: plain.todo.id, addUrls: [url], title: 'URL recorded' });
         assert(unsupported.records[0].startsWith('check_urls_unsupported:'));
         assert(unsupported.records[0].includes(url));
         assert.equal(unsupported.todo.title, 'URL recorded');
-        assert.equal(unsupported.todo.check, null);
+        assert.deepEqual(unsupported.todo.check, plain.todo.check);
         const malformed = await handler({ name: 'neo.todo.add', input: { askId: first.todo.askId, title: 'Malformed', doneWhen: 'Merged', check: { ...check, params: { urls: ['not-a-pr'] } } } });
         const rejected = JSON.parse(malformed.content[0].text);
         evidence.push({ phase, malformed: rejected });
