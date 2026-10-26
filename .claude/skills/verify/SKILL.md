@@ -36,7 +36,9 @@ cd packages/web && bun run build && cd ../..
 ```
 
 - Pick any free port except 8399. `launch.sh` refuses a busy port, and refuses
-  if 8000 (the mock API) is taken.
+  if the mock API's port is taken. The mock defaults to 8000; set
+  `VERIFY_MOCK_PORT` to run parallel isolated sessions beside each other (the
+  daemon's dev-proxy base URL follows it).
 - If the host denies `taskpolicy` or `nice` priority changes, set
   `VERIFY_NORMAL_PRIORITY=1`; isolation is unchanged. `VERIFY_REPO` selects
   the source checkout for shared upgrade tooling only.
