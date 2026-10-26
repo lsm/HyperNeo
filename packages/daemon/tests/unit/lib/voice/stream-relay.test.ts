@@ -125,6 +125,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
   let batches: string[];
   let logs: StructuredLogEvent[];
   let unsubscribe: () => void;
+  let connections: URL[];
 
   beforeEach(async () => {
     logs = [];
@@ -134,6 +135,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     received = 0;
     pushed = [];
     batches = [];
+    connections = [];
     onAudio = (socket, bytes) => socket.send(results(`heard ${bytes}`, false));
     onCloseStream = (socket) => {
       socket.send(results(`heard ${received}`, true));
@@ -145,6 +147,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     port = (server.address() as { port: number }).port;
     server.on('connection', (socket, request) => {
       const url = new URL(request.url!, 'http://stub');
+      connections.push(url);
       expect(url.pathname).toBe('/v1/listen');
       expect(url.searchParams.get('sample_rate')).toBe('16000');
       socket.on('message', (data: Buffer, isBinary: boolean) => {
@@ -184,6 +187,20 @@ describe('VoiceStream against a stub Deepgram server', () => {
     if ('error' in started) throw new Error(started.error);
     return started;
   };
+
+  test.each([undefined, 'zh', 'en'] as const)(
+    'sends language %s on the ASR connection request',
+    async (language) => {
+      const started = await VoiceStream.start('language', { ...deps(), language });
+      if ('error' in started) throw new Error(started.error);
+      try {
+        expect(started.via).toBe('streaming');
+        expect(connections[0].searchParams.getAll('language')).toEqual(language ? [language] : []);
+      } finally {
+        started.stream.close();
+      }
+    }
+  );
 
   test('relays chunks, pushes interim text, and returns the finals the server flushes on CloseStream', async () => {
     const { stream, via } = await start();

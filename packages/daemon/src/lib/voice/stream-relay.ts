@@ -28,6 +28,7 @@ export interface VoiceStreamText {
 
 export interface VoiceStreamDeps {
   clientId?: string;
+  language?: 'zh' | 'en';
   voice: () => VoiceSettings | undefined;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
   transcribeWav: (wavBase64: string) => Promise<VoiceTranscribeOutcome>;
@@ -116,6 +117,7 @@ async function openAsrSocket(
     if (apiKey && url.protocol !== 'wss:')
       return { reason: 'Voice API keys are only sent over TLS' };
     const target = new URL(url);
+    if (deps.language) target.searchParams.set('language', deps.language);
     target.hostname = resolved.hostname;
     const pinned = target.hostname !== url.hostname;
     const tls = { ...voiceStreamTls(voice), ...(pinned ? { servername: url.hostname } : {}) };
