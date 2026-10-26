@@ -125,9 +125,21 @@ try {
   assert.equal(jobs().length, 3);
   assert.equal(jobs().filter(job => job.messageUuid === 'neo-pr-event:synthetic/mixedcase#23:head-23:approved_green').length, 1);
   proof.reportedClaim = { duplicate: reportedDuplicate, mailbox: jobs(), ledger: new CodingPrLedgerRepository(sql()).snapshot(null, now + 7000) };
+  reportStore.openAsk({ id: 'pinned-ask', projectId: null, sessionId: root, originMessageId: null, title: 'Explicit PR tracking', request: 'Track this PR independently', createdAt: Date.now() });
+  const pin = await rpc('neo.todo.add', { askId: 'pinned-ask', title: 'Explicit PR pin', doneWhen: 'PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/mixedcase/pull/20'] } } });
+  assert.equal(pin.ok, true);
+  const pinId = (pin.todo as { id: string }).id;
+  const originalReadPrs = neo!.readPrs;
+  neo!.readPrs = async urls => urls.map(url => ({ url, state: 'MERGED', checks: 'passing', review: 'approved', head: 'head-20' }));
+  try { await neo!.todoRunner.checkNow([pinId], (_message, error) => { throw error; }); }
+  finally { neo!.readPrs = originalReadPrs; }
+  const completedPin = reportStore.getTodo(pinId);
+  assert.equal(completedPin?.state, 'done');
+  assert.match(completedPin?.evidence ?? '', /#20 merged/);
+  proof.explicitPin = { added: pin, completed: completedPin, snapshot: await rpc('neo.snapshot', {}) };
   proof.upstreamRequests = readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').length;
   proof.verified = true;
-  console.log(JSON.stringify({ verified: true, ownerMailboxEvents: jobs().length, duplicateEvents: 0, providerTurns: 0 }));
+  console.log(JSON.stringify({ verified: true, ownerMailboxEvents: jobs().filter(job => job.messageUuid.startsWith('neo-pr-event:')).length, duplicateEvents: 0, providerTurns: 0 }));
 } finally {
   await close(); globalThis.fetch = network;
   proof.resourcesStopped = true;

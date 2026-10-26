@@ -33,6 +33,13 @@ of the issue-closing PR must preserve that reported PR's owner, its duplicate
 refusal, and exactly one ready event. Its owner must survive the issue todo
 settling, without needing another worker report to restore a deleted claim.
 
+Finally public `neo.todo.add` pins the issue-closing PR on a different ask after
+the issue todo settles. The real Neo todo runner checks a scripted merged PR;
+the new pinned todo must become done and retain its merge evidence in the public
+snapshot. Its explicit pin must not be starved by the earlier body-derived claim.
+Focused regressions also require the pinned worker to receive the ready event
+when both todos are active, regardless of which claim was discovered first.
+
 This proves mailbox acceptance and application reopen, not model consumption,
 OS process restart, live quota behavior or deployed delivery. No live daemon,
 real DB, human configuration, port 8399 or network request is used. The helper
