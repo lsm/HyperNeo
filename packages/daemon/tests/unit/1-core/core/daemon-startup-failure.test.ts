@@ -23,6 +23,8 @@ test('failed daemon startup releases its port and database and stops started pro
           HYPERNEO_DATA_DIR: join(run, 'data'),
         },
         stdio: 'ignore',
+        timeout: 20_000,
+        killSignal: 'SIGKILL',
       }
     );
     const code = await new Promise<number | null>((done, reject) => {
