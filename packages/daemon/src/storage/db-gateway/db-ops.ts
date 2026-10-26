@@ -104,6 +104,7 @@ import { skillValidationEnqueueWrites } from '../repositories/skill-validation-e
 import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-write.ts';
 import { sessionListReads } from '../repositories/session-list-read.ts';
 import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
+import { healthSessionCountReads } from '../repositories/health-session-count-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -191,5 +192,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     githubPollRefreshWrites,
     sessionListReads,
     readLiveSessionList,
+    healthSessionCountReads,
   ].map((op) => [op.name, op])
 );
