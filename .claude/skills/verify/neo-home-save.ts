@@ -50,7 +50,6 @@ const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
 const head = await git('rev-parse', 'HEAD');
-<<<<<<< HEAD
 if (mode === 'ignore-edits') {
   await writeFile(`${root}/.gitignore`, '# Legacy home\n');
   await git('commit', '-am', 'Legacy ignores');
