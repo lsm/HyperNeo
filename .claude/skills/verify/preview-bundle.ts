@@ -54,7 +54,9 @@ const source = await call('artifact.file.read', { artifactId });
 assert.equal(Buffer.from(String(source.data), 'base64').toString(), html);
 assert.deepEqual(await call('artifact.file.register', { ...input, bundle }), first);
 assert.deepEqual(await call('artifact.file.register', { ...input, bundle: [...bundle].reverse() }), first);
-assert.deepEqual(await call('artifact.file.register', { ...input, bundle: [{ ...bundle[0], path: 'other.css' }, bundle[1]] }), { accepted: false, reason: 'source_changed' });
+const revisedBundle = await call('artifact.file.register', { ...input, bundle: [{ ...bundle[0], path: 'other.css' }, bundle[1]] });
+assert.equal(revisedBundle.accepted, true);
+assert.notDeepEqual(revisedBundle.artifact, first.artifact);
 assert.deepEqual(await call('artifact.file.register', { ...input, requestId: 'unknown-asset', bundle: [{ path: 'missing.png', artifactId: 'unknown' }] }), { accepted: false, reason: 'unavailable' });
 writeFileSync(join(workspace, 'large.css'), ' '.repeat(2 * 1024 * 1024));
 const large = await call('artifact.file.register', { ...input, requestId: 'large-css', path: 'large.css' });
@@ -76,14 +78,15 @@ const foreign = await call('artifact.file.register', { ...input, context: { kind
 assert.equal(foreign.accepted, true);
 assert.deepEqual(await call('artifact.file.register', { ...input, requestId: 'foreign-asset', bundle: [{ path: 'theme.css', artifactId: (foreign.artifact as { artifactId: string }).artifactId }] }), { accepted: false, reason: 'unavailable' });
 
+const latest = await call('artifact.file.register', { ...input, bundle });
 mkdirSync(join(workspace, 'retained'));
 for (const file of ['theme.css', 'chart.png', 'report.html']) renameSync(join(workspace, file), join(workspace, 'retained', file));
-assert.deepEqual(await call('artifact.file.register', { ...input, bundle }), first);
+assert.deepEqual(await call('artifact.file.register', { ...input, bundle }), latest);
 assert.deepEqual(await call('artifact.file.html', { artifactId }), prepared);
 db.close();
 db = new Database(join(data, 'daemon.db'));
 assert.deepEqual(await call('artifact.file.html', { artifactId }), prepared);
-assert.deepEqual(await call('artifact.file.register', { ...input, bundle }), first);
+assert.deepEqual(await call('artifact.file.register', { ...input, bundle }), latest);
 db.prepare("UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = 'todo'").run(JSON.stringify({ adapter: 'hyperneo', id: 'replacement' }));
 assert.deepEqual(await call('artifact.file.html', { artifactId }), { accepted: false, reason: 'unavailable' });
 db.close();

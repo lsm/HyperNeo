@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import { spyOn } from 'bun:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync, symlinkSync, truncateSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -6,8 +8,6 @@ import { createTables, runMigrations } from '../../../packages/daemon/src/storag
 import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import fs from 'node:fs/promises';
-import { spyOn } from 'bun:test';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
@@ -41,7 +41,6 @@ const register = async (params = input, caller: OperationCaller = worker) => {
 };
 writeFileSync(join(workspace, 'report.md'), '# Synthetic 🦊\nComplete bytes\n');
 if (process.argv[3] === 'seed') { db.close(); console.log('seeded synthetic registration fixture'); process.exit(0); }
-assert.deepEqual(await register(input, { ...worker, sessionId: 'other' }), { accepted: false, reason: 'unavailable' });
 const first = await register();
 assert.equal(first.accepted, true);
 const reference = first.artifact as { artifactId: string; daemonId: string };
@@ -51,14 +50,19 @@ assert(!JSON.stringify(first).includes(workspace));
 assert.equal((db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n, 1);
 assert.deepEqual(await register(), first);
 writeFileSync(join(workspace, 'report.md'), '# Changed bytes\n');
-assert.deepEqual(await register(), { accepted: false, reason: 'source_changed' });
+const changed = await register();
+assert.equal(changed.accepted, true);
+assert.notDeepEqual(changed.artifact, first.artifact);
 const second = await register({ ...input, requestId: 'request2' });
 assert.equal(second.accepted, true);
 assert.notDeepEqual(second.artifact, first.artifact);
-assert.deepEqual(await register({ ...input, path: 'elsewhere.md' }), { accepted: false, reason: 'source_changed' });
+writeFileSync(join(workspace, 'elsewhere.md'), '# Another source\n');
+const relocated = await register({ ...input, path: 'elsewhere.md' });
+assert.equal(relocated.accepted, true);
+assert.notDeepEqual(relocated.artifact, changed.artifact);
+const latest = await register();
 renameSync(join(workspace, 'report.md'), join(workspace, 'retained-source.md'));
-assert.deepEqual(await register(), first);
-assert.deepEqual(await register(input, { ...worker, sessionId: 'other' }), { accepted: false, reason: 'unavailable' });
+assert.deepEqual(await register(), latest);
 const originalLstat = fs.lstat;
 const revokeDuringRetry = spyOn(fs, 'lstat').mockImplementation(async (...args) => {
   if (String(args[0]) === join(workspace, 'report.md')) sessions.recordRef('todo', { adapter: 'hyperneo', id: 'replacement' });
@@ -72,10 +76,24 @@ const secondCatalogOperation = createArtifactRegistration(() => db, data, join(r
 const parallel = await Promise.all([register(same), secondCatalogOperation.execute(same, worker), register(same), secondCatalogOperation.execute(same, worker)]);
 assert(parallel.every((receipt) => JSON.stringify(receipt) === JSON.stringify(parallel[0])));
 const rows = db.prepare('SELECT * FROM artifact_files').all();
-assert.equal(rows.length, 3);
+assert.equal(rows.length, 6);
 assert.throws(() => db.prepare('UPDATE artifact_files SET sha256 = ?').run('invalid'), /immutable_artifact_file/);
 assert.throws(() => db.prepare('DELETE FROM artifact_files').run(), /immutable_artifact_file/);
 writeFileSync(join(root, 'outside.md'), '# Outside');
+const outsideInput = { ...input, requestId: 'outside-owner', path: join(root, 'outside.md') };
+const ownerOutside = await register(outsideInput);
+const foreignOutside = await register({ ...outsideInput, requestId: 'outside-foreign' }, { ...worker, sessionId: 'foreign-worker' });
+const ownUnknown = { ...outsideInput, requestId: 'unknown-own', context: { kind: 'ask', id: worker.sessionId } };
+const ownUnknownReply = await register(ownUnknown);
+const foreignUnknownReply = await register({ ...ownUnknown, requestId: 'unknown-foreign' }, { ...worker, sessionId: 'foreign-worker' });
+const arbitraryUnknownReply = await register({ ...ownUnknown, context: { kind: 'ask', id: 'unknown-other-session' } });
+mkdirSync(join(root, 'evidence'), { recursive: true });
+writeFileSync(join(root, 'evidence/caller-authorization.json'), JSON.stringify({ ownerOutside, foreignOutside, ownUnknownReply, foreignUnknownReply, arbitraryUnknownReply }, null, 2));
+assert.equal(ownerOutside.accepted, true);
+assert.deepEqual(foreignOutside, { accepted: false, reason: 'unavailable' });
+assert.equal(ownUnknownReply.accepted, true);
+assert.deepEqual(foreignUnknownReply, { accepted: false, reason: 'unavailable' });
+assert.deepEqual(arbitraryUnknownReply, { accepted: false, reason: 'unavailable' });
 symlinkSync(join(root, 'outside.md'), join(workspace, 'symlink.md'));
 assert.deepEqual(await register({ ...input, requestId: 'symlink', path: 'symlink.md' }), { accepted: false, reason: 'unsafe_path' });
 writeFileSync(join(workspace, 'invalid.png'), '# This is not a PNG');
@@ -87,10 +105,45 @@ truncateSync(join(workspace, 'oversized.txt'), 64 * 1024 * 1024 + 1);
 assert.deepEqual(await register({ ...input, requestId: 'oversized', path: 'oversized.txt' }), {
   accepted: false, reason: 'size_limit', actualBytes: 64 * 1024 * 1024 + 1, limitBytes: 64 * 1024 * 1024,
 });
-assert.deepEqual(await register(input, { source: 'mcp', role: 'neo', sessionId: 'wrong-neo' }), { accepted: false, reason: 'unavailable' });
-assert.deepEqual(await register(input, { source: 'mcp', role: 'neo', sessionId: 'neo' }), first);
-assert.deepEqual(await register(input, { source: 'rpc', principal: 'local' }), first);
+assert.deepEqual(await register({ ...input, path: 'elsewhere.md' }, { source: 'mcp', role: 'neo', sessionId: 'wrong-neo' }), { accepted: false, reason: 'unavailable' });
+assert.equal((await register({ ...input, path: 'elsewhere.md' }, { source: 'mcp', role: 'neo', sessionId: 'neo' })).accepted, true);
+const last = await register({ ...input, path: 'elsewhere.md' }, { source: 'rpc', principal: 'local' });
+assert.equal(last.accepted, true);
 
+const callerStable = await register({ ...input, requestId: 'caller-stable', path: 'elsewhere.md' });
+const callerRetry = await register({ ...input, requestId: 'caller-stable', path: 'elsewhere.md' }, { source: 'mcp', role: 'neo', sessionId: 'neo' });
+const homeFolders = ['.claude/reports/report.md', '.codex/cache/report.md', '.config/app/report.md', '.hidden/report.md'];
+const folderReplies: unknown[] = [];
+for (const path of homeFolders) {
+  const file = join(root, 'home', path);
+  mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true });
+  writeFileSync(file, '# Synthetic protected folder sentinel\n');
+  folderReplies.push(await register({ ...input, requestId: 'home-folder:' + path, path: file }));
+}
+const credentialDirectory = join(root, 'backup/.config/gh/report.md');
+mkdirSync(credentialDirectory.slice(0, credentialDirectory.lastIndexOf('/')), { recursive: true });
+writeFileSync(credentialDirectory, '# Synthetic credential-directory sentinel\n');
+const credentialDirectoryReply = await register({ ...input, requestId: 'credential-directory', path: credentialDirectory });
+const chosenFile = join(root, 'unrelated/project/report.md');
+mkdirSync(chosenFile.slice(0, chosenFile.lastIndexOf('/')), { recursive: true });
+writeFileSync(chosenFile, '# Explicitly chosen outside file\n');
+const outsideReply = await register({ ...input, requestId: 'outside-preserved', path: chosenFile });
+mkdirSync(join(root, 'evidence'), { recursive: true });
+writeFileSync(join(root, 'evidence/home-folder-policy.json'), JSON.stringify({ homeFolders, folderReplies, credentialDirectoryReply, outsideReply }, null, 2));
+for (const reply of [...folderReplies, credentialDirectoryReply]) assert.deepEqual(reply, { accepted: false, reason: 'sensitive_path' });
+assert.equal(outsideReply.accepted, true);
+const credentialStores = ['.claude.json', '.config/gh/hosts.yml', '.claude/projects/synthetic/session.jsonl', '.bash_history', '.zsh_history', 'Library/Application Support/Synthetic/Default/Cookies'];
+const storeReplies: unknown[] = [];
+for (const path of credentialStores) {
+  const file = join(root, 'home', path);
+  mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true });
+  writeFileSync(file, '{"synthetic":"not-a-credential"}\n');
+  storeReplies.push(await register({ ...input, path: file }));
+}
+mkdirSync(join(root, 'evidence'), { recursive: true });
+writeFileSync(join(root, 'evidence/review-findings.json'), JSON.stringify({ callerStable, callerRetry, credentialStores, storeReplies }, null, 2));
+for (const reply of storeReplies) assert.deepEqual(reply, { accepted: false, reason: 'sensitive_path' });
+assert.deepEqual(callerRetry, callerStable);
 for (const scope of ['global', 'room', 'space'] as const) {
   assert(!getScopeConfig(scope).some((entry) => entry.tableName.startsWith('artifact_file')));
 }
@@ -100,11 +153,11 @@ db.close();
 const reopened = new Database(join(data, 'registry.db'));
 runMigrations(reopened, () => {});
 const restarted = createArtifactRegistration(() => reopened, data, join(root, 'home'));
-assert.deepEqual(await restarted.execute(input, worker), first);
+assert.deepEqual(await restarted.execute({ ...input, path: 'elsewhere.md' }, { source: 'rpc', principal: 'local' }), last);
 reopened.prepare(`UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = 'todo'`).run(JSON.stringify({ adapter: 'hyperneo', id: 'replacement' }));
-assert.deepEqual(await restarted.execute(input, worker), { accepted: false, reason: 'unavailable' });
+assert.deepEqual(await restarted.execute({ ...input, path: join(workspace, 'elsewhere.md') }, worker), { accepted: false, reason: 'unavailable' });
 reopened.close();
-const evidence = { durableReceipt: true, retryAfterRemoval: true, changedHashRefused: true, authorizationRechecked: true,
+const evidence = { durableReceipt: true, retryAfterRemoval: true, changedHashRevision: true, callerAuthorizationRechecked: true,
  concurrentIdempotent: true, migratedTwice: true, registryExcluded: true, first, metadata };
 writeFileSync(join(root, 'register-evidence.json'), JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence));
