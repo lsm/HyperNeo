@@ -106,7 +106,7 @@ test('the worker sandbox shows off when unset and saves the chosen mode', async 
   render(<NeoModelSettings />);
   const select = screen.getByRole('combobox', { name: 'Worker sandbox' }) as HTMLSelectElement;
   expect(select.value).toBe('off');
-  expect([...select.options].map((option) => option.value)).toEqual(['off', 'always']);
-  fireEvent.change(select, { target: { value: 'always' } });
-  expect(updateGlobalSettings).toHaveBeenCalledWith({ workerSandbox: 'always' });
+  expect([...select.options].map((option) => option.value)).toEqual(['off', 'always', 'on-demand']);
+  fireEvent.change(select, { target: { value: 'on-demand' } });
+  expect(updateGlobalSettings).toHaveBeenCalledWith({ workerSandbox: 'on-demand' });
 });
