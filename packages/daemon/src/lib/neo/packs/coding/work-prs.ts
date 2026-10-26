@@ -174,6 +174,27 @@ const DetailSchema = z.object({
 const DETAIL_QUERY =
   'query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}';
 
+function requiredCheckContexts(rules: readonly BranchRule[]): string[] {
+  return rules
+    .filter((rule) => rule.type === 'required_status_checks')
+    .flatMap((rule) => {
+      const parameters = rule.parameters as Record<string, unknown> | null | undefined;
+      const checks = parameters?.required_status_checks;
+      if (Array.isArray(checks))
+        return checks.flatMap((check) =>
+          typeof check === 'string'
+            ? [check]
+            : check && typeof check === 'object' && typeof check.context === 'string'
+              ? [check.context]
+              : []
+        );
+      const contexts = parameters?.contexts;
+      return Array.isArray(contexts)
+        ? contexts.flatMap((context) => (typeof context === 'string' ? [context] : []))
+        : [];
+    });
+}
+
 export function wantsNeoWorkPrBlockers(pr: NeoWorkPr, base: string | undefined): boolean {
   return !!base && pr.state === 'OPEN' && pr.checks !== 'pending';
 }
@@ -227,12 +248,16 @@ function gh(args: string[], spawnImpl: SpawnFn, resourceHint: 'core' | 'graphql'
 const CheckRunsSchema = z.array(
   z.object({
     check_runs: z.array(
-      z.object({ status: z.string().nullish(), conclusion: z.string().nullish() })
+      z.object({
+        name: z.string().nullish(),
+        status: z.string().nullish(),
+        conclusion: z.string().nullish(),
+      })
     ),
   })
 );
 const CombinedStatusSchema = z.array(
-  z.object({ statuses: z.array(z.object({ state: z.string() })) })
+  z.object({ statuses: z.array(z.object({ state: z.string(), context: z.string().nullish() })) })
 );
 
 const REST_PAGE_SIZE = 100;
@@ -287,6 +312,19 @@ async function readCheckRollup(
     for (const page of parsedStatuses.data)
       for (const status of page.statuses) rollup.push({ state: status.state.toUpperCase() });
   if (!parsedRuns?.success || !parsedStatuses?.success) return null;
+  const covered = new Set([
+    ...(parsedRuns?.data ?? []).flatMap((page) =>
+      page.check_runs.flatMap((run) => (run.name ? [run.name.toUpperCase()] : []))
+    ),
+    ...(parsedStatuses?.data ?? []).flatMap((page) =>
+      page.statuses.flatMap((status) => (status.context ? [status.context.toUpperCase()] : []))
+    ),
+  ]);
+  if (typeof raw.baseRefName === 'string' && raw.baseRefName) {
+    const rules = await readBranchRules(`${meta.owner}/${meta.repo}`, raw.baseRefName, spawnImpl);
+    for (const context of requiredCheckContexts(rules))
+      if (!covered.has(context.toUpperCase())) rollup.push({ state: 'EXPECTED' });
+  }
   return rollup;
 }
 

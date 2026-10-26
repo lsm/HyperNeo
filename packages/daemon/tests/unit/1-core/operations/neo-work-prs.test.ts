@@ -199,7 +199,7 @@ describe('readGithubPrs', () => {
       };
     };
     await readGithubPrs(['https://ghe.example.com/lsm/HyperNeo/pull/42'], spawn as never);
-    expect(asked.map((args) => args[1])).toEqual(['pr', 'api', 'api']);
+    expect(asked.map((args) => args[1])).toEqual(['pr', 'api', 'api', 'api']);
     asked.length = 0;
     await readGithubPrs(['https://github.com/lsm/Rules/pull/42'], spawn as never);
     expect(asked.map((args) => args[1])).toEqual(['pr', 'api', 'api', 'api', 'api']);
@@ -290,6 +290,50 @@ describe('readGithubPrs REST check rollup', () => {
     );
     const read = await readGithubPrs([url], spawn as never);
     expect(read).toBe(null);
+  });
+
+  test('keeps a not-yet-started required check pending instead of ready', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredA/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? [{ check_runs: [] }]
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: { required_status_checks: [{ context: 'All Tests Pass' }] },
+                },
+              ]
+            : [{ statuses: [] }]
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredA/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('pending');
+  });
+
+  test('keeps a started required check out of the expected set', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredB/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? [
+              {
+                check_runs: [
+                  { name: 'All Tests Pass', status: 'completed', conclusion: 'success' },
+                ],
+              },
+            ]
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: { contexts: ['All Tests Pass'] },
+                },
+              ]
+            : [{ statuses: [] }]
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredB/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('passing');
   });
 
   test('follows check-runs pagination to a failure past the first page', async () => {
