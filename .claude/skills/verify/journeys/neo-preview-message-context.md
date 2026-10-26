@@ -171,3 +171,16 @@ revisions for later explicit recovery, bind scope and generation, refuse stale/A
 writes, and confirm read-back before reporting success. Quota/ambiguous writes
 cannot silently switch to a memory outbox or remove the previous record first.
 Default sessionStorage access stays deferred until the port is explicitly used.
+
+Resource hydration Build additionally requires `intakeSnapshotHydration` and
+`intakeSnapshotHydrationRestartReplay`. Restore the storage-loaded batch into a
+fresh existing intake resource and assert no transport occurs until explicit
+retry. That retry uses the original request ID and exact quote/Preview through
+the existing send pipeline, before and after the owned daemon restart, retaining
+one message/job. Focused cases require whole-batch codec validation, one-shot
+pristine ownership, interrupted sends displayed as unconfirmed failures, accepted
+entries settled only by the existing ledger, legacy/unavailable context and exact
+prepared thumbnail retention without regeneration. Mutating display projections
+must not alter private retry payloads; discard/settlement cannot re-admit a stale
+restore. This explicit API is not application hydration activation, outgoing
+durable admission or automatic replay. Those later children still gate activation.

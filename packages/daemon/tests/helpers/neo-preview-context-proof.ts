@@ -347,8 +347,18 @@ try {
   Object.assign(pendingAsks[0].previewContext!, { snapshot: 'b'.repeat(64) });
   const quotedRetry = await intake.retry(quotedId);
   assert(quotedRetry?.ok && !quotedRetry.created);
-  const snapshotReplay = await submitNeoDraft(loadedIntake.snapshot.entries[0], async () => hub);
-  assert(snapshotReplay.ok && !snapshotReplay.created);
+  let recoveryTransportCalls = 0;
+  const restoredIntake = createNeoIntakeClient(async () => {
+    recoveryTransportCalls++;
+    return hub;
+  });
+  assert.deepEqual(restoredIntake.snapshots.restore(JSON.stringify(loadedIntake.snapshot)), {
+    restored: 1,
+  });
+  assert.equal(recoveryTransportCalls, 0);
+  const snapshotReplay = await restoredIntake.retry(quotedId);
+  assert(snapshotReplay?.ok && !snapshotReplay.created);
+  assert.equal(recoveryTransportCalls, 1);
   assert.deepEqual(snapshotReplay.previewContext, reference);
   const quotedRows = database()
     .getDatabase()
@@ -407,8 +417,12 @@ try {
     .snapshots.storage(intakeScope, () => captureStorage)
     .read();
   assert(!('kind' in reopenedIntake));
-  const storedReplay = await submitNeoDraft(reopenedIntake.snapshot.entries[0], async () => hub);
-  assert(storedReplay.ok && !storedReplay.created);
+  const restartedIntake = createNeoIntakeClient(async () => hub);
+  assert.deepEqual(restartedIntake.snapshots.restore(JSON.stringify(reopenedIntake.snapshot)), {
+    restored: 1,
+  });
+  const storedReplay = await restartedIntake.retry(quotedId);
+  assert(storedReplay?.ok && !storedReplay.created);
   const storedMessages = database()
     .getDatabase()
     .prepare('SELECT COUNT(*) AS n FROM sdk_messages WHERE sdk_uuid = ?')
@@ -536,6 +550,8 @@ try {
     intakeSnapshotLongQuote: true,
     intakeSnapshotStorage: true,
     intakeSnapshotStorageRestartReplay: true,
+    intakeSnapshotHydration: true,
+    intakeSnapshotHydrationRestartReplay: true,
   });
 } finally {
   try {
