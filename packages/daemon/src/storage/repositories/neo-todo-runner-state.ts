@@ -1,3 +1,4 @@
+import { recoverNeoTodoStart } from './neo-todo-start-recovery.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
@@ -108,7 +109,10 @@ class NeoTodoRunnerState {
   private readonly sessions: NeoTodoSessionRepository;
   private readonly policies: readonly NeoTodoPolicy[];
   private changed = false;
-  constructor(db: Database, changes?: Pick<ReactiveDatabase, 'notifyChange'>) {
+  constructor(
+    db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {
     const notify = (table: string) => {
       this.changed = true;
       changes?.notifyChange(table);
@@ -137,11 +141,16 @@ class NeoTodoRunnerState {
   claim(id: string, now: number) {
     return { ...claim(this.store, this.sessions, this.policies, id, now), changed: this.changed };
   }
+  recover(id: string, now: number) {
+    const recovery = recoverNeoTodoStart(this.store, this.sessions, id, now);
+    if (recovery) this.changes?.notifyChange('neo_todo_sessions');
+    return { recovery, changed: this.changed };
+  }
 }
 
 export const neoTodoRunnerWrites = defineRepositoryOp(
   'neo.todoRunnerWrites',
   'write',
   NeoTodoRunnerState,
-  ['recompute', 'claim']
+  ['recompute', 'claim', 'recover']
 );
