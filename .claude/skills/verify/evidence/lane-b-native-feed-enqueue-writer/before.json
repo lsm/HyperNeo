@@ -1,0 +1,78 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 342,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "claimed": 2,
+  "jobs": [
+    {
+      "id": "8b9fd0c8-c767-4c06-8882-7d59b1e7728d",
+      "queue": "work.feed.claude",
+      "status": "pending",
+      "payload": {
+        "scope": "claude"
+      },
+      "result": null,
+      "error": "native feed job admission SQL reached main connection",
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 1,
+      "runAt": 1792987782538,
+      "createdAt": 1792987781535,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": "8c73df5f-15e5-4522-be3b-659c11faa7b6"
+    },
+    {
+      "id": "4701608e-d24f-4d01-8383-0030f5f6fe00",
+      "queue": "work.feed.codex",
+      "status": "pending",
+      "payload": {
+        "scope": "codex"
+      },
+      "result": null,
+      "error": "native feed job admission SQL reached main connection",
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 1,
+      "runAt": 1792987782540,
+      "createdAt": 1792987781535,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": "0b2908d7-0da5-4adf-b477-142423c3cff4"
+    }
+  ],
+  "successors": [
+    [],
+    []
+  ],
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 346,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 2
+}
