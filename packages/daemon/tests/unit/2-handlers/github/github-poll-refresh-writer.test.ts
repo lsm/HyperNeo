@@ -248,6 +248,98 @@ describe('GitHubService refresh writer', () => {
     }
   });
 
+  test('repeated startup failures retry once per poll interval and stop cancels recovery', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    bindGateway(fixture.db, {
+      call: async () => {
+        attempts++;
+        throw new Error('still unavailable');
+      },
+    } as unknown as DbGateway);
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      await service.start();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toBe(2);
+      expect(service.pollRefreshDegraded).toBe(true);
+      service.stop();
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(attempts).toBe(2);
+      expect(service.isPolling()).toBe(false);
+    } finally {
+      service.stop();
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  test('stop during a rejected startup receipt cannot resurrect a retry', async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let entered!: () => void;
+    let attempts = 0;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    bindGateway(fixture.db, {
+      call: async () => {
+        attempts++;
+        entered();
+        await gate;
+        throw new Error('late rejection');
+      },
+    } as unknown as DbGateway);
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      const started = service.start();
+      await requested;
+      service.stop();
+      release();
+      await started;
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(attempts).toBe(1);
+      expect(pending()).toEqual([]);
+      expect(service.isPolling()).toBe(false);
+    } finally {
+      release();
+      service.stop();
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  test('a later startup retry rechecks a committed job after its receipt was lost', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    bindGateway(fixture.db, {
+      call: async (...args) => {
+        attempts++;
+        const receipt = await Reflect.apply(inline.call, inline, args);
+        if (attempts === 1) throw new Error('committed receipt lost');
+        return receipt;
+      },
+    } as DbGateway);
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      await service.start();
+      const committed = pending();
+      expect(committed).toHaveLength(1);
+      expect(service.pollRefreshDegraded).toBe(true);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toBe(2);
+      expect(pending()).toEqual(committed);
+      expect(service.pollRefreshDegraded).toBe(false);
+    } finally {
+      service.stop();
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   test('logs admission failure once and rethrows without automatically replaying', async () => {
     const error = new Error('synthetic admission failure');
     let attempts = 0;
@@ -259,7 +351,7 @@ describe('GitHubService refresh writer', () => {
     } as unknown as DbGateway);
     const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     try {
-      await expect(service.start()).rejects.toBe(error);
+      await expect(service.refreshPolling()).rejects.toBe(error);
       expect(attempts).toBe(1);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith('GitHub polling refresh persistence failed', error);

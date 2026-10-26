@@ -64,6 +64,9 @@ export class GitHubService {
   private getPollingIntervalSeconds?: () => number | undefined;
   private pollJobHandlerRegistered = false;
   private pollingRefreshVersion = 0;
+  private pollRefreshRetry?: ReturnType<typeof setTimeout>;
+  private stopped = false;
+  pollRefreshDegraded = false;
 
   constructor(options: GitHubServiceOptions) {
     this.db = options.db;
@@ -100,6 +103,8 @@ export class GitHubService {
   }
 
   async start(): Promise<void> {
+    this.stopped = false;
+    clearTimeout(this.pollRefreshRetry);
     if (this.config.githubWebhookSecret) {
       this.webhookHandler = createWebhookHandler(this.config.githubWebhookSecret, async (event) => {
         await this.processEvent(event);
@@ -107,7 +112,18 @@ export class GitHubService {
       log.info('Webhook handler initialized');
     }
 
-    await this.refreshPolling();
+    const refreshVersion = this.pollingRefreshVersion + 1;
+    try {
+      await this.refreshPolling();
+      if (refreshVersion === this.pollingRefreshVersion) this.pollRefreshDegraded = false;
+    } catch {
+      if (this.stopped || refreshVersion !== this.pollingRefreshVersion) return;
+      this.pollRefreshDegraded = true;
+      this.pollRefreshRetry = setTimeout(
+        () => void this.start(),
+        (this.getPollingIntervalSecondsValue() || DEFAULT_GITHUB_POLLING_INTERVAL_SECONDS) * 1000
+      );
+    }
 
     log.info('GitHub service started');
   }
@@ -189,6 +205,9 @@ export class GitHubService {
   }
 
   stop(): void {
+    this.stopped = true;
+    this.pollingRefreshVersion++;
+    clearTimeout(this.pollRefreshRetry);
     if (this.pollingService) {
       this.pollingService.stop();
       this.pollingService = undefined;
