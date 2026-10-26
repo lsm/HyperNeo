@@ -109,8 +109,9 @@ describe('neo.todo operations', () => {
     const { db, call } = setup();
     db.exec("UPDATE neo_asks SET status = 'done'");
     expect(await call('neo.todo.add', { askId: 'ask', title: 'x', doneWhen: 'y' })).toEqual({
-      ok: false,
-      reason: 'ask_settled: this ask is done.',
+      ok: true,
+      todos: [],
+      records: ['ask_settled: this ask is done; no change was made.'],
     });
     expect(await call('neo.todo.add', { askId: 'none', title: 'x', doneWhen: 'y' })).toEqual({
       ok: false,
@@ -155,12 +156,6 @@ describe('neo.todo operations', () => {
     const old = await call('neo.todo.add', { askId: 'ask', title: 'Old', doneWhen: 'x' });
     const next = await call('neo.todo.add', { askId: 'ask', title: 'New', doneWhen: 'x' });
     if (!old.ok || !next.ok) throw new Error('add failed');
-    expect(
-      await call('neo.todo.remove', { todoId: old.todo.id, reason: 'r', replacedBy: old.todo.id })
-    ).toEqual({
-      ok: false,
-      reason: 'replacement_missing: replacedBy is not another todo on this ask.',
-    });
     const removed = await call('neo.todo.remove', {
       todoId: old.todo.id,
       reason: 'The human chose a new session',

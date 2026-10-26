@@ -24,7 +24,7 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type TodoReceipt = { ok: true; todo: NeoTodo; todos: NeoTodo[]; records?: string[] };
+type TodoReceipt = { ok: true; todo?: NeoTodo; todos: NeoTodo[]; records?: string[] };
 type TodoPlan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
@@ -114,7 +114,7 @@ export async function addNeoTodo(
   input: z.infer<typeof NeoTodoDraftSchema>,
   packs: readonly NeoPack[],
   split = false
-): Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection> {
+): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const planned = planNeoTodoDraft(input, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
@@ -122,8 +122,8 @@ export async function addNeoTodo(
   const home = neoTodoHome(todos, ask, repo, split || todos.listChildAsks(ask.id).length > 0);
   if (home.status !== 'open')
     return {
-      ok: false,
-      reason: `ask_settled: ${home.title} is settled; open a new ask for this todo.`,
+      ok: true,
+      records: [`ask_settled: ${home.title} is settled; nothing was added.`],
     };
   const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
   if ('reason' in accepted) return accepted.reason;
@@ -241,7 +241,7 @@ const TodoResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({
     ok: z.literal(true),
-    todo: NeoTodoSchema,
+    todo: NeoTodoSchema.optional(),
     todos: z.array(NeoTodoSchema),
     records: z.array(z.string()).optional(),
   }),
@@ -314,15 +314,24 @@ export function planNeoTodoRemove(
   input: z.infer<typeof Remove>
 ): Gate<TodoPlan> {
   if (todo.state === 'removed') return fail('todo_removed: this todo was already removed.');
-  if (
+  const invalid =
     input.replacedBy &&
-    !todos.some((other) => other.id === input.replacedBy && other.id !== todo.id)
-  )
-    return fail('replacement_missing: replacedBy is not another todo on this ask.');
+    !todos.some((other) => other.id === input.replacedBy && other.id !== todo.id);
   return {
     value: {
       todo,
-      patch: { state: 'removed', reason: input.reason, replacedBy: input.replacedBy ?? null },
+      patch: {
+        state: 'removed',
+        reason: input.reason,
+        replacedBy: invalid ? null : (input.replacedBy ?? null),
+      },
+      ...(invalid
+        ? {
+            records: [
+              `replacement_missing: ${input.replacedBy} is not another todo on this ask; removal recorded without a replacement link.`,
+            ],
+          }
+        : {}),
     },
   };
 }
@@ -352,6 +361,7 @@ export function createNeoTodoOperations(
 ) {
   const present = async (result: TodoReceipt | Rejection) => {
     if (!result.ok) return result;
+    if (!result.todo) return { ...result, todos: await project(result.todos) };
     const [todo, ...todos] = await project([result.todo, ...result.todos]);
     return { ...result, todo, todos };
   };
@@ -422,28 +432,47 @@ export function createNeoTodoOperations(
       ...(plan.records ? { records: plan.records } : {}),
     };
   };
-  const stopAndWrite = async (plan: {
-    todo: NeoTodo;
-    patch: NeoTodoPatch;
-  }): Promise<TodoReceipt | Rejection> => {
+  const stopAndWrite = async (plan: TodoPlan): Promise<TodoReceipt | Rejection> => {
     const failed = await controls.stop(plan.todo);
     return failed
       ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
       : write(plan);
   };
-  const ran = async (result: Awaited<Ran>): Promise<TodoReceipt | Rejection> =>
-    result.ok ? { ...result, todos: todos.listTodos(result.todo.askId) } : result;
+  const ran = async (
+    result: Awaited<ReturnType<typeof addNeoTodo>>
+  ): Promise<TodoReceipt | Rejection> =>
+    result.ok
+      ? { ...result, todos: result.todo ? todos.listTodos(result.todo.askId) : [] }
+      : result;
+  const admit = (ask: NeoAsk | null, todo?: NeoTodo) =>
+    ask && ask.status !== 'open'
+      ? {
+          reason: {
+            ok: true as const,
+            ...(todo ? { todo } : {}),
+            todos: todos.listTodos(ask.id),
+            records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
+          },
+        }
+      : todo
+        ? requireNeoOpenTodo(todo, ask)
+        : requireNeoOpenAsk(ask);
   const owned = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
       .pipe((input: { todoId: string }) => todos.getTodo(input.todoId), 'input', 'todo')
       .pipe((todo: NeoTodo | null) => (todo ? todos.getAsk(todo.askId) : null), 'todo', 'ask')
-      .pipe(requireNeoOpenTodo, ['todo', 'ask'], 'result:outcome');
+      .pipe(
+        (todo: NeoTodo | null, ask: NeoAsk | null) =>
+          todo ? admit(ask, todo) : requireNeoOpenTodo(todo, ask),
+        ['todo', 'ask'],
+        'result:outcome'
+      );
 
   const add = (superpipe({})('neo.todo.add') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Add>) => requireNeoOpenAsk(todos.getAsk(input.askId)),
+      (input: z.infer<typeof Add>) => admit(todos.getAsk(input.askId)),
       'input',
       'result:outcome'
     )
@@ -569,7 +598,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.remove',
       description:
-        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. replacedBy names the todo that replaces it. A removed todo stays listed, struck through.',
+        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. replacedBy names the todo that replaces it. A removed todo stays listed, struck through.',
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -578,7 +607,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.continue',
       description:
-        "Send a started todo's session its next step. The todo goes back to doing until the session reports again.",
+        "Send a started todo's session its next step. The todo goes back to doing until the session reports again. An unstarted todo or settled ask returns a record without dispatching or approving a start.",
       inputSchema: Continue,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -587,7 +616,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.retry',
       description:
-        'Retry a failed todo in place with a new attempt, keeping its todoId. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. Choose the delivery channel or adapter for reaching the same worker session yourself; never ask the human to choose it. Ask the human before changing which worker or target does the work.',
+        'Retry a failed todo in place with a new attempt, keeping its todoId. A nonretryable todo or settled ask returns a record without dispatching. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. Choose the delivery channel or adapter for reaching the same worker session yourself; never ask the human to choose it. Ask the human before changing which worker or target does the work.',
       inputSchema: Retry,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

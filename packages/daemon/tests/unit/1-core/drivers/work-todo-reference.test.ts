@@ -43,7 +43,7 @@ function fixture() {
       (!owner || owner === (id === 'open-todo' ? 'root' : 'another-root')),
   };
   const registry = createOperationRegistry(createWorkVerbOperations(deps));
-  return { delivered, registry };
+  return { delivered, registry, adapter, deps };
 }
 
 describe('Neo work todo reference', () => {
@@ -53,7 +53,7 @@ describe('Neo work todo reference', () => {
         ? { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' }
         : { ref, message: 'New work' };
 
-    test(`${name} refuses Neo MCP work without an explicit todo before delivery`, async () => {
+    test(`${name} records a missing Neo MCP todo reference without blocking delivery`, async () => {
       const { registry, delivered } = fixture();
       const call = createOperationMcpHandler(registry, () => neo);
       const reply = await call({
@@ -65,34 +65,34 @@ describe('Neo work todo reference', () => {
         },
       });
       expect(JSON.parse(reply.content[0].text)).toMatchObject({
-        ok: false,
-        reason: 'todo_required',
+        ok: true,
+        records: [expect.stringContaining('todo_required:')],
       });
       expect(reply.content[0].text).not.toContain('neo.todo.start');
-      expect(delivered).toEqual([]);
+      expect(delivered).toHaveLength(1);
     });
 
-    test(`${name} refuses an unknown or closed-ask todo`, async () => {
+    test(`${name} records an unknown, closed-ask or foreign todo`, async () => {
       for (const todoId of ['missing-todo', 'closed-ask-todo', 'foreign-todo']) {
         const { registry, delivered } = fixture();
         const reply = await invokeOperation(registry, name, { ...input, todoId }, neo);
         expect(reply).toMatchObject({
           kind: 'completed',
-          value: { ok: false, reason: 'todo_required' },
+          value: { ok: true, records: [expect.stringContaining('todo_required:')] },
         });
-        expect(delivered).toEqual([]);
+        expect(delivered).toHaveLength(1);
       }
     });
 
-    test(`${name} also requires the todo on a Neo RPC call`, async () => {
+    test(`${name} records a missing todo on a Neo RPC call`, async () => {
       const { registry, delivered } = fixture();
       expect(await invokeOperation(registry, name, input, { ...neo, source: 'rpc' })).toMatchObject(
         {
           kind: 'completed',
-          value: { ok: false, reason: 'todo_required' },
+          value: { ok: true, records: [expect.stringContaining('todo_required:')] },
         }
       );
-      expect(delivered).toEqual([]);
+      expect(delivered).toHaveLength(1);
     });
 
     test(`${name} accepts an open-ask reference and trusted internal dispatch`, async () => {
@@ -108,6 +108,70 @@ describe('Neo work todo reference', () => {
         });
       }
       expect(delivered).toHaveLength(3);
+      const tracked = await invokeOperation(registry, name, { ...input, todoId: 'open-todo' }, neo);
+      expect(tracked.kind === 'completed' && tracked.value).not.toHaveProperty('records');
     });
   }
+  test.each(['steer', 'queue'] as const)(
+    'work.send mode %s records a missing todo',
+    async (mode) => {
+      const { registry, adapter, delivered } = fixture();
+      adapter.capabilities.push('steer');
+      adapter.steer = adapter.send;
+      const reply = await invokeOperation(
+        registry,
+        'work.send',
+        { ref, message: 'Follow-up', mode },
+        neo
+      );
+      expect(reply).toMatchObject({
+        kind: 'completed',
+        value: { ok: true, records: [expect.stringContaining('todo_required:')] },
+      });
+      expect(delivered).toEqual(['Follow-up']);
+    }
+  );
+
+  test('a missing todo does not hide an unsupported delivery route', async () => {
+    const { registry, delivered } = fixture();
+    const reply = await invokeOperation(
+      registry,
+      'work.send',
+      { ref, message: 'Follow-up', mode: 'steer' },
+      neo
+    );
+    expect(reply).toMatchObject({ kind: 'completed', value: { ok: false, reason: 'unsupported' } });
+    expect(delivered).toEqual([]);
+  });
+
+  test('remote records survive forwarding alongside the local bookkeeping record', async () => {
+    const { deps } = fixture();
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        ...deps,
+        remote: {
+          list: () => [],
+          invoke: async () => ({
+            ok: true,
+            value: { delivered: false, queuedSubmissionId: 'queued' },
+            records: ['remote_note: retained'],
+          }),
+        },
+      })
+    );
+    const reply = await invokeOperation(
+      registry,
+      'work.send',
+      { ref: { ...ref, daemon: 'remote' }, message: 'Follow-up' },
+      neo
+    );
+    expect(reply).toMatchObject({
+      kind: 'completed',
+      value: {
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'queued' },
+        records: ['remote_note: retained', expect.stringContaining('todo_required:')],
+      },
+    });
+  });
 });

@@ -117,10 +117,13 @@ The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
 `journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
 competing writer when fixtures overlap the booted daemon.
 
-If the isolated daemon cannot bind its ephemeral listener, preserve the startup
-error and mark the daemon proof blocked. An EADDRINUSE report for port 0 is
-inconclusive too; do not count unit results as a successful daemon run or weaken
-host protections to make the listener start.
+If a metadata helper cannot bind its own listener (for example EPERM or an
+ephemeral port 0 reported as EADDRINUSE), preserve its log and mark daemon proof
+blocked. Use a journey's listener-free proof only for the narrower surface it
+explicitly covers; unit results do not establish a successful daemon run.
+Helpers requiring /private/tmp also need TMPDIR=/private/tmp. Never weaken host
+protections to make a proof run.
+
 
 The wrapper forwards an explicitly selected VERIFY_CLAUDE path for native SDK
 proofs. It does not forward provider credentials or the human's configuration.

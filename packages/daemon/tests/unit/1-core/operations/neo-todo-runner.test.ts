@@ -1054,9 +1054,10 @@ describe('neo todo runner follow-ups', () => {
   test('continue sends the next step and reopens the todo; retry goes again only before a session', async () => {
     const { store, runner, calls, add, setStatus } = setup();
     const todo = add();
-    expect(await runner.proceed(todo.id, 'next')).toEqual({
-      ok: false,
-      reason: 'not_started: this todo is todo and has no session to continue.',
+    expect(await runner.proceed(todo.id, 'next')).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'todo' },
+      records: [expect.stringContaining('not_started:')],
     });
     await runner.start(todo.id);
     store.updateTodo(store.getTodo(todo.id)!, { state: 'done', report: 'Done' }, 3);
@@ -1065,9 +1066,10 @@ describe('neo todo runner follow-ups', () => {
     expect(continued.ok && continued.todo).toMatchObject({ state: 'doing', report: null });
     expect(calls.at(-1)).toMatchObject({ name: 'work.send', input: { ref } });
     expect(String(calls.at(-1)?.input.message)).toContain('Now add tests.');
-    expect(await runner.retry(todo.id)).toEqual({
-      ok: false,
-      reason: 'not_retryable: only a failed todo with a worker target can be retried.',
+    expect(await runner.retry(todo.id)).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'doing' },
+      records: [expect.stringContaining('not_retryable:')],
     });
   });
 });
@@ -1959,8 +1961,14 @@ describe('current explicit removal behavior before recompute', () => {
         await runner.refresh(() => {});
         await runner.refresh(() => {});
         expect(await runner.start(todo.id)).toMatchObject({ ok: false });
-        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({ ok: false });
-        expect(await runner.retry(todo.id)).toMatchObject({ ok: false });
+        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_started:')],
+        });
+        expect(await runner.retry(todo.id)).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_retryable:')],
+        });
         expect(store.getTodo(todo.id)).toEqual(removed);
         expect(store.getTodo(todo.id)?.report).toBe(report);
         expect(store.getTodo(sibling.id)?.state).toBe('doing');
