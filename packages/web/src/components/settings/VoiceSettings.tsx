@@ -140,7 +140,7 @@ export function VoiceSettings() {
 
         <SettingsRow
           label="Live transcription language"
-          description="Saved in this browser. Applies to the next recording; Auto lets the server detect the language."
+          description="Saved in this browser. Applies to the next live ASR connection only, excluding batch transcription and fallback. Auto keeps server defaults."
         >
           <select
             aria-label="Live transcription language"
