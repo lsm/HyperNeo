@@ -17,6 +17,34 @@ import {
   releaseWorkerSandbox,
 } from '../../../../src/lib/drivers/worker-sandbox';
 
+test('release removes only one worker scratch root and keeps evidence locations', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = dataDir;
+  const first = mkdtempSync(join(tmpdir(), 'worker-sibling-a-'));
+  const second = mkdtempSync(join(tmpdir(), 'worker-sibling-b-'));
+  mkdirSync(join(first, '.git'));
+  mkdirSync(join(second, '.git'));
+  try {
+    const a = (await prepareWorkerSandbox(first)) as Record<string, string>;
+    const b = (await prepareWorkerSandbox(second)) as Record<string, string>;
+    writeFileSync(join(b.TMPDIR, 'sibling'), 'kept');
+    await releaseWorkerSandbox(first);
+    expect(existsSync(a.TMPDIR)).toBe(false);
+    expect(existsSync(join(b.TMPDIR, 'sibling'))).toBe(true);
+    expect(existsSync(join(dataDir, 'work', 'scratch'))).toBe(true);
+    expect(existsSync(a.HYPERNEO_EVIDENCE)).toBe(true);
+    expect(existsSync(a.HYPERNEO_BUILDS)).toBe(true);
+    await releaseWorkerSandbox(second);
+  } finally {
+    await releaseWorkerSandbox(first);
+    await releaseWorkerSandbox(second);
+    rmSync(first, { recursive: true, force: true });
+    rmSync(second, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
+    delete process.env.HYPERNEO_DATA_DIR;
+  }
+});
+
 test.skipIf(process.platform === 'win32')(
   'releases nonempty chmod-000 runtime directories without touching symlink targets',
   async () => {

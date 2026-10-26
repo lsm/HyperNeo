@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   EvolutionLesson,
   Space,
@@ -369,6 +372,27 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).toContain('## Standing Instructions');
     expect(message).toContain('Run tests before finishing.');
     expect(message).toContain('Use conventional commits.');
+  });
+
+  it('states the data-root work locations in the runtime brief', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'hyperneo-brief-'));
+    process.env.HYPERNEO_DATA_DIR = dataDir;
+    try {
+      const message = buildCustomAgentTaskMessage(
+        makeConfig({ workspacePath: '/workspaces/auth' })
+      );
+      expect(message).toContain('HYPERNEO_WORKTREES');
+      expect(message).toContain(join(dataDir, 'worktrees'));
+      expect(message).toContain('HYPERNEO_EVIDENCE');
+      expect(message).toContain(join(dataDir, 'work', 'evidence'));
+      expect(message).toContain('HYPERNEO_BUILDS');
+      expect(message).toContain(join(dataDir, 'work', 'builds'));
+      expect(message).toContain('TMPDIR');
+      expect(message).toContain(join(dataDir, 'work', 'scratch'));
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+      delete process.env.HYPERNEO_DATA_DIR;
+    }
   });
 
   it('renders task description in the first 500 characters (action-first ordering)', () => {

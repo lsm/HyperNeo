@@ -13,14 +13,19 @@ import {
 
 let fixture: string;
 let root: string;
+let dataDir: string;
 beforeEach(() => {
   fixture = mkdtempSync(join(tmpdir(), 'worker-loopback-'));
   root = join(fixture, 'worker');
   mkdirSync(join(root, '.git/info'), { recursive: true });
+  dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = dataDir;
 });
 afterEach(() => {
   rmSync(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
   rmSync(fixture, { recursive: true, force: true });
+  rmSync(dataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
 });
 
 const settings = () => JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
@@ -57,4 +62,25 @@ test('both Codex policy shapes enable network access for local servers', () => {
   const policy = codexWorkerSandbox(root);
   expect(policy.config.sandbox_workspace_write.network_access).toBe(true);
   expect(policy.sandboxPolicy.networkAccess).toBe(true);
+});
+
+test('installed Claude worker settings export the data-root work locations', async () => {
+  await installClaudeNativeWrites(root, [join(root, 'source')]);
+  const env = settings().env as Record<string, string>;
+  expect(env.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
+  expect(env.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
+  expect(env.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
+  expect(env.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
+});
+
+test('the Codex worker sandbox exports the work locations as writable roots', () => {
+  const policy = codexWorkerSandbox(root);
+  const set = policy.config.shell_environment_policy.set as Record<string, string>;
+  expect(set.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
+  expect(set.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
+  expect(set.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
+  expect(set.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
+  for (const path of [set.HYPERNEO_WORKTREES, set.HYPERNEO_EVIDENCE, set.HYPERNEO_BUILDS, set.TMPDIR]) {
+    expect(policy.sandboxPolicy.writableRoots).toContain(path);
+  }
 });
