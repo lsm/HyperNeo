@@ -13,7 +13,9 @@ through `neo.ask.read`. The before run rejects main-thread todo SQL in the old
 edit path. The fixed run must perform that admission and edit in reader/writer
 workers, with zero matching SQL on main. External completion checks and worker
 stop observations remain outside the write transaction; this journey does not
-claim to move those existing observations off main.
+claim to move those existing observations off main. The held-lock edit has no
+successor; the separate operation unit contract verifies successor ordering.
+Runner start/stop observation reads remain for the later approved runner slice.
 
 The synthetic WAL lock must delay the public edit receipt and table events
 without freezing health/read RPCs. After release, both receipt and public card

@@ -26,7 +26,8 @@ hub.registerTransport(transport);
 const db = app.db.getDatabase(), store = new NeoAskTodoRepository(db);
 const prepare = db.prepare.bind(db), replay = app.db.gateway.onChanges;
 let record = false, mainSql = 0, events = 0, held = false;
-db.prepare = ((sql:string) => { if(record && /neo_todos|neo_asks|neo_questions|pack_coding_pr_claims/.test(sql)) { mainSql++; throw new Error('Main-thread todo mutation SQL'); } return prepare(sql); }) as typeof db.prepare;
+const mainSqlSites:string[]=[];
+db.prepare = ((sql:string) => { if(record && /neo_todos|neo_asks|neo_questions|pack_coding_pr_claims/.test(sql)) { mainSql++; mainSqlSites.push(`${sql}\n${new Error().stack}`); throw new Error('Main-thread todo mutation SQL'); } return prepare(sql); }) as typeof db.prepare;
 app.db.gateway.onChanges = changes => { if(record) events += changes.length; replay(changes); };
 type Result = {ok:false;reason:string}|{ok:true;todo:NeoTodo;todos:NeoTodo[];records?:string[]};
 const commit = ({kind,...input}:{kind:string;[key:string]:unknown}) => hub.request<Result>('operation.invoke',{name:`neo.todo.${kind}`,input});
@@ -41,7 +42,7 @@ try {
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Atomic work',request:'Keep full work',createdAt:1});
   const check={pack:'core',kind:'evidence',params:{path:join(run,'not-created')}};
-  for(const id of ['first','peer']) store.addTodo(id,'ask',{title:id,doneWhen:'Merged',check,instruction:null,named:null},1);
+  store.addTodo('first','ask',{title:'first',doneWhen:'Merged',check,instruction:null,named:null},1);
   const before=await visible(), text='Committed full report 🦊\n'.repeat(20000).trim();
   await hub.request('system.health',{});
   db.exec('BEGIN IMMEDIATE'); held=true; record=true;
@@ -65,6 +66,7 @@ try {
   result.notificationsAfterCommit=true;
   result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
   const prior=events;
+  store.addTodo('peer','ask',{title:'peer',doneWhen:'Pending evidence',check,instruction:null,named:null},3);
   store.askQuestion('reply','ask',{kind:'reply',todoId:'peer',text:'Answer first',options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const withCard=await visible();
   const blocked=await commit({kind:'close',todoId:'peer',reason:'Finished'});
@@ -87,6 +89,7 @@ try {
   off(); db.prepare=prepare; app.db.gateway.onChanges=replay;
   await transport.close(); await app.cleanup(); globalThis.fetch=network;
   result.resourcesStopped=true;
+  result.mainSqlSites=mainSqlSites;
   writeFileSync(join(run,'evidence/todo-mutation-activation.json'),JSON.stringify(result,null,2).replaceAll(run,'<synthetic-run>'));
 }
 console.log(JSON.stringify(result).replaceAll(run,'<synthetic-run>'));

@@ -76,6 +76,7 @@ import {
 } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
+import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
@@ -740,13 +741,25 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
-    ...createNeoTodoOperations(
-      service.todos,
-      service.todoSessions,
-      todoControls,
-      () => service.installedPacks(),
-      createArtifactRefReader(() => service.db.getDatabase()),
-      (todos) => service.todoWorkers(todos)
+    ...wireNeoTodoMutations(
+      createNeoTodoOperations(
+        service.todos,
+        service.todoSessions,
+        todoControls,
+        () => service.installedPacks(),
+        createArtifactRefReader(() => service.db.getDatabase()),
+        (todos) => service.todoWorkers(todos)
+      ),
+      {
+        gateway: gatewayFor(service.db.getDatabase()),
+        write: service.db.gateway.run.bind(service.db.gateway),
+        packs: () => service.installedPacks(),
+        artifact: createArtifactRefReader(() => service.db.getDatabase()),
+        stop: (todo) => service.todoRunner.stop(todo),
+        start: (id) => service.todoRunner.start(id),
+        changed: () => service.notifyChanged(),
+        project: (todos) => service.todoWorkers(todos),
+      }
     ),
     createNeoAskReadOperation(
       service.todos,
