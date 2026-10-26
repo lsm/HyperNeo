@@ -7,7 +7,7 @@ needed: this journey changes the registration RPC, with no viewer change.
 
 The helper owns an ephemeral loopback daemon and synthetic native-session state.
 Through `operation.invoke` it registers a file outside the workspace, a blocked
-report in a protected home dot-folder, and an absolute file with an unknown context or
+report in a protected home dot-folder, and an absolute file for a known owner with
 missing native cwd. Relative paths still need an authoritative workspace.
 
 Reusing a request after editing its source must return a new artifact ID. Read
@@ -54,3 +54,13 @@ synthetic report.md files; afterward all refuse sensitive_path while the ordinar
 explicit outside file still registers. Policy tests cover absolute and relative
 forms. Native adapter binding tests preserve normal repository worktrees while
 denying sources inside protected home application folders.
+
+Caller-authorization regression: the native helper saves caller-authorization.json.
+A bound worker can register a file outside its workspace, but a foreign worker
+cannot register into that todo. Unknown contexts synthesize a binding only when
+the context ID is the calling session ID; other sessions and arbitrary missing
+contexts refuse unavailable. Recheck authority before returning retry receipts
+or saving a revision, including revocation during a source-removal retry. Missing
+native cwd retains the authoritative owner binding and still permits an absolute
+file. The RPC helper refuses arbitrary unknown contexts, and the native helper
+proves own-session fallback. Cross-caller unchanged retries remain identical.

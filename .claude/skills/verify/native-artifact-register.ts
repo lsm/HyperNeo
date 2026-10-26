@@ -65,13 +65,13 @@ try {
   const register = createArtifactRegistration(() => db, join(root, 'data'));
   const worker = { source: 'mcp' as const, role: 'direct_task_worker' as const, sessionId: 'codex-desktop:synthetic-worker' };
   assert.deepEqual(await register.execute(input, worker), first);
-  assert.equal((await register.execute(input, { ...worker, sessionId: 'codex-desktop:other' }) as { accepted: boolean }).accepted, true);
+  assert.deepEqual(await register.execute(input, { ...worker, sessionId: 'codex-desktop:other' }), { accepted: false, reason: 'unavailable' });
   const getter = createArtifactReadOperations(() => db).find((op) => op.name === 'artifact.file.get')!;
   assert.equal((await getter.execute({ artifactId: first.artifact.artifactId }, worker) as { accepted: boolean }).accepted, true);
   assert.deepEqual(await getter.execute({ artifactId: first.artifact.artifactId }, { ...worker, sessionId: 'other' }), { accepted: false, reason: 'unavailable' });
   const neoCaller = { source: 'mcp' as const, role: 'neo' as const, sessionId: neoId };
   assert.deepEqual(await register.execute(neoInput, neoCaller), neo);
-  assert.equal((await register.execute(neoInput, { ...neoCaller, sessionId: 'wrong-neo' }) as { accepted: boolean }).accepted, true);
+  assert.deepEqual(await register.execute(neoInput, { ...neoCaller, sessionId: 'wrong-neo' }), { accepted: false, reason: 'unavailable' });
   db.prepare('UPDATE neo_todos SET artifacts_json = ? WHERE id = ?').run(JSON.stringify([first.artifact, png.artifact]), context.id);
   const projected = new NeoAskTodoRepository(db).getTodo(context.id)!;
   assert.deepEqual(projected.artifacts, [first.artifact, png.artifact]);
@@ -94,7 +94,7 @@ try {
     } finally { web.stop(true); }
   }
   db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'codex-desktop', id: 'replacement' }), context.id);
-  assert.equal((await register.execute({ ...input, path: join(root, 'workspace/report.md') }, worker) as { accepted: boolean }).accepted, true);
+  assert.deepEqual(await register.execute({ ...input, path: join(root, 'workspace/report.md') }, worker), { accepted: false, reason: 'unavailable' });
   assert.deepEqual(await getter.execute({ artifactId: first.artifact.artifactId }, worker), { accepted: false, reason: 'unavailable' });
   evidence.revocationRechecked = true;
   const customHome = join(root, 'custom-home');

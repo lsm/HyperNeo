@@ -3,8 +3,9 @@
 Run daemon `preview-register.test.ts` plus the existing capture, descriptor, policy
 and contract tests. Registration's native proof creates only synthetic work/ask,
 session, SQLite and workspace fixtures. It first failed on the missing operation;
-registration admission now treats context as path-resolution metadata rather than
-an ownership veto. Snapshot reads retain their separate current ownership checks.
+registration enforces current caller ownership independently of source-path
+resolution and rechecks it before returning receipts. Snapshot reads also retain
+their separate current ownership checks.
 The native test changes to an unrelated synthetic working directory before launch;
 its helper is anchored to the test file URL, so runner cwd cannot change resolution.
 
@@ -40,7 +41,7 @@ env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
 ```
 
 The RPC proof registers a short reference without absolute source paths, confirms
-same-request receipts, refuses traversal and sensitive paths, accepts explicit absolute files without contexts, creates a
+same-request receipts, refuses traversal and sensitive paths, accepts explicit absolute files for known owners without native cwd, creates a
 new version after changed bytes, retains the source under a renamed path, then
 retries successfully after daemon restart. Its read-only synthetic DB inspection
 checks the receipt's blob size/hash and exact bytes. Keep evidence in
@@ -52,7 +53,8 @@ Discovery constructs metadata only and performs no SQLite access. First invocati
 initializes one service per daemon DB handle, which owns reservations and registration serialization;
 all catalogs reuse it. No request may supply owner IDs, roots or kind. This first
 registration binding supports local HyperNeo todo worker sessions and ask sessions
-with persisted workspaces; missing native cwd or context requires an absolute path instead of vetoing registration.
+with persisted workspaces; missing native cwd requires an absolute path without losing ownership. Unknown
+contexts synthesize only when their ID is the calling session ID.
 No new evidence-root approval UI is introduced, so the binding loader grants none.
 Registered-ID get/list/read and clients remain slices 7 onward. Kind comes from
 extension plus bounded byte/MIME checks; preview-specific parsing/decoding remains

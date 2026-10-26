@@ -138,20 +138,25 @@ describe('native artifact workspace ownership', () => {
     ).toEqual({ reason: { accepted: false, reason: 'unavailable' } });
   });
 
-  test('refuses remote, missing, unknown and subagent records without a target-folder fallback', () => {
+  test('preserves ownership without cwd and refuses remote or unknown adapters', () => {
     for (const ref of [
       { adapter: 'codex-desktop', id: 'worker', daemon: 'remote' },
       { adapter: 'codex-desktop', id: 'missing' },
       { adapter: 'unknown', id: 'worker' },
     ]) {
       sessions.recordRef('todo', ref);
-      expect(load()).toBeNull();
+      if (ref.adapter === 'codex-desktop' && !('daemon' in ref))
+        expect(load()).toMatchObject({
+          workspacePath: null,
+          workerSessionId: 'codex-desktop:missing',
+        });
+      else expect(load()).toBeNull();
     }
     sessions.recordRef('todo', { adapter: 'codex-desktop', id: 'worker' });
     native.exec("UPDATE threads SET source = 'subagent' WHERE id = 'worker'");
-    expect(load()).toBeNull();
+    expect(load()?.workspacePath).toBeNull();
     native.exec("UPDATE threads SET source = 'cli', cwd = NULL WHERE id = 'worker'");
-    expect(load()).toBeNull();
+    expect(load()?.workspacePath).toBeNull();
   });
 
   test('denies home application folders and rereads cwd instead of caching it', () => {

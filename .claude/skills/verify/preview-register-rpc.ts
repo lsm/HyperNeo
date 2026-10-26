@@ -28,7 +28,7 @@ assert.deepEqual(await rpc(input), receipt);
 if (phase === 'capture') {
   assert.deepEqual(await rpc({ ...input, path: '../outside.md' }), { accepted: false, reason: 'unsafe_path' });
   assert.deepEqual(await rpc({ ...input, path: '.env' }), { accepted: false, reason: 'sensitive_path' });
-  assert.equal((await rpc({ ...input, path: join(workspace, 'report.md'), context: { kind: 'todo', id: 'foreign' } })).accepted, true);
+  assert.deepEqual(await rpc({ ...input, path: join(workspace, 'report.md'), context: { kind: 'todo', id: 'foreign' } }), { accepted: false, reason: 'unavailable' });
   writeFileSync(join(workspace, 'report.md'), '# Changed synthetic bytes\n');
   const version2 = await rpc(input);
   assert.equal(version2.accepted, true);

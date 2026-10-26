@@ -68,7 +68,7 @@ assert.deepEqual(await call('artifact.file.html', { artifactId: (largeBundle.art
 const markdown = await call('artifact.file.register', { ...input, requestId: 'markdown', path: 'report.md', title: 'Markdown' });
 assert.equal(markdown.accepted, true);
 assert.deepEqual(await call('artifact.file.register', { ...input, requestId: 'wrong-kind', bundle: [{ path: 'a.css', artifactId: (markdown.artifact as { artifactId: string }).artifactId }] }), { accepted: false, reason: 'unsupported_type' });
-assert.equal((await call('artifact.file.register', { ...input, bundle }, { ...caller, sessionId: 'foreign' })).accepted, true);
+assert.deepEqual(await call('artifact.file.register', { ...input, bundle }, { ...caller, sessionId: 'foreign' }), { accepted: false, reason: 'unavailable' });
 new NeoAskTodoRepository(db).addTodo('foreign-todo', 'ask', { title: 'Foreign', doneWhen: '', check: null, instruction: '', named: null }, 1);
 const sessions = new NeoTodoSessionRepository(db);
 sessions.create('foreign-todo', { verb: 'start', adapter: 'hyperneo', place: { machine: 'local', name: 'Foreign synthetic', folder: workspace } });

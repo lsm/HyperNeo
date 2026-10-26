@@ -106,18 +106,26 @@ function registrationService(db: Database, data: string, home: string) {
       createHash('sha256')
         .update(JSON.stringify([plan, producerRef, input.title]))
         .digest('hex');
+    async function finish(receipt: () => unknown) {
+      const current = await prepare(input, caller);
+      return 'reason' in current ? current.reason : receipt();
+    }
     const previous = registry.receipt(input.context, input.requestId);
     const owner = await artifactCaptureOwner(db, data);
     if (previous && previous.fingerprint === fingerprint(previous.producer_ref)) {
       const hash = await owner.hashSource(plan.root, plan.relativePath.split('/'));
       if (hash.accepted && hash.sha256 === previous.sha256)
-        return { accepted: true, artifact: JSON.parse(previous.receipt).artifact };
+        return finish(() => ({ accepted: true, artifact: JSON.parse(previous.receipt).artifact }));
       if (!hash.accepted && hash.reason === 'unsafe_path') {
         const absent = await fs.lstat(join(plan.root, plan.relativePath)).then(
           () => false,
           (error: NodeJS.ErrnoException) => error.code === 'ENOENT'
         );
-        if (absent) return { accepted: true, artifact: JSON.parse(previous.receipt).artifact };
+        if (absent)
+          return finish(() => ({
+            accepted: true,
+            artifact: JSON.parse(previous.receipt).artifact,
+          }));
       }
       if (!hash.accepted) return hash;
     }
@@ -132,23 +140,25 @@ function registrationService(db: Database, data: string, home: string) {
       const limit = artifactBundleLimit(snapshot.byteLength, bound.value);
       if (limit) return limit;
     }
-    return registry.save(
-      input.context,
-      previous ? randomUUID() : input.requestId,
-      fingerprint(producer),
-      snapshot.sha256,
-      {
-        daemonId: registry.daemonId,
-        artifactId: randomUUID(),
-        title: input.title,
-        kind: kind.value!,
-        byteLength: snapshot.byteLength,
-      },
-      producer,
-      plan.relativePath,
-      { kind: 'worktree' },
-      plan.bundle,
-      input.requestId
+    return finish(() =>
+      registry.save(
+        input.context,
+        previous ? randomUUID() : input.requestId,
+        fingerprint(producer),
+        snapshot.sha256,
+        {
+          daemonId: registry.daemonId,
+          artifactId: randomUUID(),
+          title: input.title,
+          kind: kind.value!,
+          byteLength: snapshot.byteLength,
+        },
+        producer,
+        plan.relativePath,
+        { kind: 'worktree' },
+        plan.bundle,
+        input.requestId
+      )
     );
   }
   const register = (superpipe({})('artifact-file-register') as PipelineAPI)

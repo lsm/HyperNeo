@@ -41,7 +41,7 @@ try {
   const second = await invoke('artifact.file.register', revisionInput);
   Object.assign(evidence, { outside, unknownContext, first, second });
   assert.equal(outside.accepted, true, JSON.stringify(outside));
-  assert.equal(unknownContext.accepted, true, JSON.stringify(unknownContext));
+  assert.deepEqual(unknownContext, { accepted: false, reason: 'unavailable' });
   assert.equal(first.accepted, true);
   assert.equal(second.accepted, true, JSON.stringify(second));
   assert.notEqual(first.artifact!.artifactId, second.artifact!.artifactId);
@@ -90,7 +90,7 @@ try {
     assert.deepEqual(await invoke('artifact.file.register', { ...input, path }), { accepted: false, reason: 'unsafe_path' });
   daemon.db.getDatabase().prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'codex-desktop', id: 'missing-native-cwd' }), 'worker-todo');
   assert.equal((await invoke('artifact.file.register', { ...input, requestId: 'missing-native' })).accepted, true);
-  Object.assign(evidence, { changedPath, refusals, oldAndNewBytesRead: true, noContextVeto: true, passed: true });
+  Object.assign(evidence, { changedPath, refusals, oldAndNewBytesRead: true, knownOwnerWithoutCwd: true, passed: true });
 } finally {
   await writeFile(join(root, 'evidence/attachment-paths.json'), JSON.stringify(evidence, null, 2));
   await transport.close();

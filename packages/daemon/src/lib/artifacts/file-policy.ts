@@ -50,15 +50,17 @@ export function admitArtifactContext(context: ArtifactContext): Gate<ArtifactCon
 
 export async function loadArtifactContextBinding(
   context: ArtifactContext,
-  deps: ArtifactPolicyDependencies
+  deps: ArtifactPolicyDependencies,
+  caller?: OperationCaller
 ) {
   const binding = await deps.loadBinding(context);
+  if (!binding && caller?.sessionId !== context.id) return refused('unavailable');
   return {
     value: binding ?? {
       context,
       daemonId: deps.daemonId,
-      neoSessionId: null,
-      workerSessionId: null,
+      neoSessionId: context.id,
+      workerSessionId: context.id,
       workspacePath: null,
       approvedEvidenceRoots: [],
     },
@@ -158,7 +160,8 @@ export function resolveArtifactSource(
 export const admitArtifactCapture = (superpipe({})('artifact-capture-policy') as PipelineAPI)
   .input(['context', 'source', 'caller', 'deps'])
   .pipe(admitArtifactContext, 'context', 'result:policy')
-  .pipe(loadArtifactContextBinding, ['policy', 'deps'], 'result:policy')
+  .pipe(loadArtifactContextBinding, ['policy', 'deps', 'caller'], 'result:policy')
+  .pipe(authorizeArtifactCaller, ['policy', 'caller'], 'result:policy')
   .pipe(resolveArtifactSource, ['policy', 'source', 'deps'], 'result:policy')
   .endAsync('policy') as (
   context: ArtifactContext,

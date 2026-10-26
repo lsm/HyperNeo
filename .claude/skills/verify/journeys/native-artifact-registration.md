@@ -28,4 +28,6 @@ port and run directory; use it to open the todo's existing ArtifactCards preview
 Explicit non-sensitive paths need no project/evidence root approval. No sensitive
 path exemptions apply; see attachment-paths.md for the current policy proof.
 Relative paths require the adapter's authoritative working-directory reader.
-Missing or unsupported adapter records do not veto explicit absolute files.
+Missing native cwd preserves the known ownership binding for absolute files.
+Foreign callers are refused; unknown-context fallback is limited to the calling
+session ID, and unsupported/remote ownership records remain unavailable.

@@ -107,7 +107,7 @@ describe('loadRegistrationBinding for Claude workers', () => {
     });
   });
 
-  test('refuses remote, missing, mismatched and unsafe Claude refs', () => {
+  test('preserves ownership without accepting a missing or unsafe Claude cwd', () => {
     desktopRecord({ sessionId: 'local_other', cwd: worktree });
     transcript('');
     for (const ref of [
@@ -119,11 +119,11 @@ describe('loadRegistrationBinding for Claude workers', () => {
       { adapter: 'claude-code', id: '../-repo/cli-w' },
     ]) {
       sessions.recordRef('todo', ref);
-      expect(load()).toBeNull();
+      expect(load()?.workspacePath ?? null).toBeNull();
     }
     mkdirSync(join(home, '.claude/projects/-other/cli-dir.jsonl'), { recursive: true });
     sessions.recordRef('todo', { adapter: 'claude-code', id: 'cli-dir' });
-    expect(load()).toBeNull();
+    expect(load()?.workspacePath ?? null).toBeNull();
   });
 
   test('denies home application folders while accepting repo worktree reports', () => {

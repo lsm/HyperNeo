@@ -48,7 +48,7 @@ describe('artifact registration', () => {
         durableReceipt: true,
         retryAfterRemoval: true,
         changedHashRevision: true,
-        contextDoesNotVeto: true,
+        callerAuthorizationRechecked: true,
         concurrentIdempotent: true,
         migratedTwice: true,
         registryExcluded: true,
@@ -83,7 +83,7 @@ describe('artifact registration', () => {
       );
       expect(
         JSON.parse(readFileSync(join(root, 'evidence/attachment-paths.json'), 'utf8'))
-      ).toMatchObject({ passed: true, oldAndNewBytesRead: true, noContextVeto: true });
+      ).toMatchObject({ passed: true, oldAndNewBytesRead: true, knownOwnerWithoutCwd: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

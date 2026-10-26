@@ -74,8 +74,8 @@ describe('artifact capture policy', () => {
       reason: 'sensitive_path',
     });
   });
-  test('does not veto an explicitly chosen file because context or ownership is unavailable', async () => {
-    for (const loadBinding of [() => null, () => ({ ...binding, workspacePath: null })]) {
+  test('allows an owner to choose an explicit file without a workspace', async () => {
+    for (const loadBinding of [() => ({ ...binding, workspacePath: null })]) {
       expect(await admit('/tmp/report.md', worker, { ...deps, loadBinding })).toEqual({
         context,
         root: '/tmp',
@@ -86,7 +86,26 @@ describe('artifact capture policy', () => {
         reason: 'ambiguous_context',
       });
     }
-    expect(await admit('/tmp/report.md', { ...worker, sessionId: 'other' })).toHaveProperty('root');
+    expect(await admit('/tmp/report.md', { ...worker, sessionId: 'other' })).toEqual({
+      accepted: false,
+      reason: 'unavailable',
+    });
+  });
+  test('synthesizes an unknown context only for its own session', async () => {
+    const own = { kind: 'ask' as const, id: worker.sessionId! };
+    const missing = { ...deps, loadBinding: () => null };
+    expect(await admitArtifactCapture(own, '/tmp/report.md', worker, missing)).toEqual({
+      context: own,
+      root: '/tmp',
+      relativePath: 'report.md',
+    });
+    expect(
+      await admitArtifactCapture(own, '/tmp/report.md', { ...worker, sessionId: 'other' }, missing)
+    ).toEqual({ accepted: false, reason: 'unavailable' });
+    expect(await admit('/tmp/report.md', worker, missing)).toEqual({
+      accepted: false,
+      reason: 'unavailable',
+    });
   });
   test('checks sensitive ancestors of relative sources', async () => {
     expect(
