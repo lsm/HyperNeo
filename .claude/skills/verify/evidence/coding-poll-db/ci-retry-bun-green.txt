@@ -1,0 +1,31 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-poll-writer.test.ts:
+(pass) HTTP page collection does not read coverage through the main repository [3.48ms]
+(pass) external page cleanup commits on the bound writer before HTTP acquisition [1.84ms]
+(pass) HTTP page writer retries preserve one acquisition and one observation [78.59ms]
+(pass) HTTP page writer exhaustion leaves missing coverage and allows a fresh retry [79.50ms]
+(pass) external cleanup failure rolls back and prevents the HTTP effect [1.37ms]
+
+tests/unit/1-core/operations/coding-poll-proof-evidence.test.ts:
+(pass) retained polling proofs identify one committed application tree for both runtimes [0.73ms]
+
+tests/unit/1-core/operations/neo-ledger-poll-http.test.ts:
+(pass) ledger HTTP polling pages > old-schema migration adds nullable metadata without rewriting old rows or values [11.40ms]
+(pass) ledger HTTP polling pages > metadata stores only allow-listed rate/validator headers and never changes fact revision [1.23ms]
+(pass) ledger HTTP polling pages > same-cycle pages are reused sequentially with rate and next-page coverage; later cycles refresh [3.18ms]
+(pass) ledger HTTP polling pages > overlapping cycles share one complete observation and both consume its response [1.74ms]
+(pass) ledger HTTP polling pages > a cached cycle cannot lend its old coverage to an overlapping new cycle [1.73ms]
+(pass) ledger HTTP polling pages > overlapping observations keep separate credential identities isolated [1.32ms]
+(pass) ledger HTTP polling pages > a valid 304 refreshes its metadata without changing the fact; mismatched validators stay unknown [1.38ms]
+(pass) ledger HTTP polling pages > unreadable responses cannot certify cached coverage and retain previous successful bytes [1.39ms]
+(pass) ledger HTTP polling pages > late response consumers cannot replace or return a newer cycle as their own [0.91ms]
+(pass) ledger HTTP polling pages > concurrent collection accepts one durable observation and gives both callers coherent pages [0.84ms]
+(pass) ledger HTTP polling pages > oversized valid JSON stays partial instead of certifying page coverage [14.60ms]
+(pass) ledger HTTP polling pages > 304 retains prior validators but never promotes omitted old rate headers to a new observation [2.04ms]
+(pass) external-event raw pages expire as window, page and credential identities advance; legacy bytes survive [4.92ms]
+
+ 19 pass
+ 0 fail
+ 98 expect() calls
+Ran 19 tests across 3 files. [251.00ms]
