@@ -97,6 +97,7 @@ import {
   mailboxExpiryReads,
   mailboxExpiryWrites,
 } from '../repositories/mailbox-expiry-commands.ts';
+import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -177,5 +178,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobStaleReclaimWrites,
     mailboxExpiryReads,
     mailboxExpiryWrites,
+    githubPollSuccessorWrites,
   ].map((op) => [op.name, op])
 );
