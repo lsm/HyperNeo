@@ -36,10 +36,7 @@ import { hashString32 } from '../runtime-hash.ts';
 import type { NeoService } from './service.ts';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { type NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import {
-  NEO_STANDING_RULE_MAX_CHARS,
-  neoStandingRules,
-} from '@hyperneo/shared/types/settings';
+import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
@@ -91,7 +88,7 @@ import {
   PackSettingSchema,
 } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
-import { neoRuleApprovalMatches } from './saved-rules.ts';
+import { readNeoRuleApproval } from './saved-rules.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -555,8 +552,16 @@ export function createNeoOperations(service: NeoService) {
           input.messageId && caller.sessionId
             ? receivedNeoHumanInput(service, caller.sessionId, input.messageId)
             : null;
-        return neoRuleApprovalMatches(service.db.getDatabase(), human, input)
-          ? { value: caller }
+        const approval = readNeoRuleApproval(service.db.getDatabase(), human, input);
+        return approval
+          ? approval.applied
+            ? {
+                reason: {
+                  ok: true as const,
+                  standingRules: neoStandingRules(service.db.getGlobalSettings().neo),
+                },
+              }
+            : { value: caller }
           : {
               reason: {
                 ok: false as const,
@@ -570,8 +575,14 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
-        gatewayFor(service.db.getDatabase()).call(globalSettingsWrites, 'neoRules', input,
-          input.messageId && caller.sessionId ? { sessionId: caller.sessionId, messageId: input.messageId } : undefined),
+        gatewayFor(service.db.getDatabase()).call(
+          globalSettingsWrites,
+          'neoRules',
+          input,
+          input.messageId && caller.sessionId
+            ? { sessionId: caller.sessionId, messageId: input.messageId }
+            : undefined
+        ),
       ['input', 'caller'],
       'result:save'
     )
@@ -822,7 +833,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.rule.save',
       description:
-        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules only with human approval: pass messageId from the approving human message’s [message id: ...] line. The daemon records that message reference with each added rule, so consent stays traceable; paraphrasing is allowed. The message must be a consumed human yes replying to the immutable neo.rule.ask proposal for these exact add/remove arrays in this Neo conversation; system notes and other sessions cannot authorize edits. Remove uses exact saved rule text. Each rule may have up to 500 characters.',
+        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules only with human approval: pass messageId from the approving human message’s [message id: ...] line. The daemon records that message reference with each added rule, so consent stays traceable; paraphrasing is allowed. The message must be a consumed human yes replying to the immutable neo.rule.ask proposal for these exact add/remove arrays in this Neo conversation; system notes and other sessions cannot authorize edits. Remove uses exact saved rule text. Already-applied approvals return the current rules without replaying the edit. Each rule may have up to 500 characters.',
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

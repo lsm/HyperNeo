@@ -33,11 +33,11 @@ export function planNeoRuleSources(
   ]);
 }
 
-export function neoRuleApprovalMatches(
+export function readNeoRuleApproval(
   db: Database,
   human: NeoConversationAsk | null,
   edit: { add?: readonly string[]; remove?: readonly string[] }
-): boolean {
+): false | { applied: boolean } {
   if (human?.replyTo?.kind !== 'question') return false;
   const words =
     typeof human.content === 'string'
@@ -49,15 +49,17 @@ export function neoRuleApprovalMatches(
           .join(' ');
   if (words.trim() !== 'yes') return false;
   const proposal = db
-    .prepare(`SELECT p.edit_json FROM neo_rule_proposals p
+    .prepare(`SELECT p.edit_json, p.applied_at FROM neo_rule_proposals p
     JOIN neo_questions q ON q.id=p.question_id JOIN neo_asks a ON a.id=q.ask_id
     WHERE q.id=? AND a.session_id=? AND q.state='answered' AND q.kind='yesno'
       AND q.answered_by='chat' AND q.answer='"yes"' AND q.text=p.question_text`)
-    .get(human.replyTo.id, human.askOrigin.sessionId) as { edit_json: string } | undefined;
+    .get(human.replyTo.id, human.askOrigin.sessionId) as
+    | { edit_json: string; applied_at: number | null }
+    | undefined;
   if (!proposal) return false;
   const approved = JSON.parse(proposal.edit_json) as { add?: string[]; remove?: string[] };
-  return (
-    JSON.stringify(edit.add ?? []) === JSON.stringify(approved.add ?? []) &&
+  return JSON.stringify(edit.add ?? []) === JSON.stringify(approved.add ?? []) &&
     JSON.stringify(edit.remove ?? []) === JSON.stringify(approved.remove ?? [])
-  );
+    ? { applied: proposal.applied_at !== null }
+    : false;
 }

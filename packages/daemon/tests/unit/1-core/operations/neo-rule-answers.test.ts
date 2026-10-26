@@ -138,19 +138,35 @@ describe('human-approved standing rules', () => {
     expect(db.getGlobalSettings().neo?.standingRuleSources?.[edit.add[0]]).toBeUndefined();
   });
 
-  test.each([false, true])('an applied removal approval is an idempotent receipt (replacement=%s)', async (replacement) => {
-    const change = { remove: edit.remove, ...(replacement ? { add: edit.add } : {}) };
-    const questionId = await propose('removal-receipt', change);
-    const messageId = crypto.randomUUID();
-    await invoke('neo.message.send', { sessionId: agent.sessionId, requestId: messageId, content: 'yes', replyTo: { kind: 'question', id: questionId } }, human);
-    db.getSDKMessageRepo().markDeliveryConsumedByUuid(agent.sessionId!, messageId);
-    const after = saved();
-    expect(await invoke('neo.rule.save', { ...change, messageId })).toMatchObject({ value: { ok: true, standingRules: after } });
-    expect(saved()).toEqual(after);
-    await invoke('neo.rule.save', { remove: after, add: ['Later human rule.'] }, human);
-    expect(await invoke('neo.rule.save', { ...change, messageId })).toMatchObject({ value: { ok: true, standingRules: ['Later human rule.'] } });
-    expect(saved()).toEqual(['Later human rule.']);
-  });
+  test.each([false, true])(
+    'an applied removal approval is an idempotent receipt (replacement=%s)',
+    async (replacement) => {
+      const change = { remove: edit.remove, ...(replacement ? { add: edit.add } : {}) };
+      const questionId = await propose('removal-receipt', change);
+      const messageId = crypto.randomUUID();
+      await invoke(
+        'neo.message.send',
+        {
+          sessionId: agent.sessionId,
+          requestId: messageId,
+          content: 'yes',
+          replyTo: { kind: 'question', id: questionId },
+        },
+        human
+      );
+      db.getSDKMessageRepo().markDeliveryConsumedByUuid(agent.sessionId!, messageId);
+      const after = saved();
+      expect(await invoke('neo.rule.save', { ...change, messageId })).toMatchObject({
+        value: { ok: true, standingRules: after },
+      });
+      expect(saved()).toEqual(after);
+      await invoke('neo.rule.save', { remove: after, add: ['Later human rule.'] }, human);
+      expect(await invoke('neo.rule.save', { ...change, messageId })).toMatchObject({
+        value: { ok: true, standingRules: ['Later human rule.'] },
+      });
+      expect(saved()).toEqual(['Later human rule.']);
+    }
+  );
 
   test.each(['unknown', 'foreign', 'system', 'task', 'not-in-conversation'])(
     'refuses %s message ids without changing standing rules',

@@ -54,12 +54,13 @@ for (const phase of ['initial', 'restart']) {
       await rpc('neo.message.send', { sessionId, requestId: greetingId, content: 'hi' });
       repo.markDeliveryConsumedByUuid(sessionId, greetingId);
       assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: greetingId })).ok, false);
-      const approval = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'direct-approval', add: edit.add });
+      await rpc('neo.rule.save', { add: edit.remove });
+      const approval = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'direct-approval', ...edit });
       assert.equal(approval.ok, true);
       await rpc('neo.message.send', { sessionId, requestId: approvalId, content: 'yes', replyTo: { kind: 'question', id: approval.questionId } });
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
       assert.equal((await mcp('neo.rule.save', { add: ['Publish without asking.'], messageId: approvalId })).ok, false);
-      assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
+      assert.equal((await mcp('neo.rule.save', { ...edit, messageId: approvalId })).ok, true);
       const sources = app.db.getGlobalSettings().neo?.standingRuleSources;
       assert.deepEqual(sources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
       evidence.push({ approvalSources: sources });
@@ -120,7 +121,14 @@ for (const phase of ['initial', 'restart']) {
     assert.equal((await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'accepted', add: ['Tampered.'] })).ok, false);
     assert.equal((await mcp('neo.rule.applyAnswer', { questionId })).ok, true);
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.add);
-    if (phase === 'initial') assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
+    if (phase === 'initial') {
+      const renewed = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'final-reference', add: edit.add });
+      assert.equal(renewed.ok, true);
+      approvalId = crypto.randomUUID();
+      await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: approvalId, content: 'yes', replyTo: { kind: 'question', id: renewed.questionId } });
+      app.db.getSDKMessageRepo().markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
+      assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
+    }
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRuleSources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
   } finally { ws?.close(); await app.cleanup(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }

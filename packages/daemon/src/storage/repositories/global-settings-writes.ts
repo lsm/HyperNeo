@@ -36,13 +36,31 @@ class GlobalSettingsWriter extends SettingsRepository {
     });
   }
 
-  neoRules(edit: { add?: readonly string[]; remove?: readonly string[] }, approval?: { sessionId: string; messageId: string }) {
+  neoRules(
+    edit: { add?: readonly string[]; remove?: readonly string[] },
+    approval?: { sessionId: string; messageId: string }
+  ) {
     const neo = this.getGlobalSettings().neo;
     const plan = planNeoRuleEdit(neoStandingRules(neo), edit);
     if ('reason' in plan) return plan;
-    return { value: super.updateGlobalSettings({ neo: { ...neo, standingRules: plan.value,
-      ...(approval || neo?.standingRuleSources ? { standingRuleSources: planNeoRuleSources(plan.value, neo?.standingRuleSources, edit.add, approval) } : {}),
-    } }) };
+    return {
+      value: super.updateGlobalSettings({
+        neo: {
+          ...neo,
+          standingRules: plan.value,
+          ...(approval || neo?.standingRuleSources
+            ? {
+                standingRuleSources: planNeoRuleSources(
+                  plan.value,
+                  neo?.standingRuleSources,
+                  edit.add,
+                  approval
+                ),
+              }
+            : {}),
+        },
+      }),
+    };
   }
 
   apply(updates: Patch): GlobalSettingsCommit {
