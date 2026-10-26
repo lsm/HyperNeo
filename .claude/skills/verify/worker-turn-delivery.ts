@@ -79,6 +79,7 @@ try {
     };
     put(`${worker}-input`, 'user', 'Observe this worker');
     if (explicit) evidence.explicitReceipt = await rpc('message.send', { to: root, text: 'PR opened: synthetic milestone', kind: 'done', from: `session:${worker}` });
+    await new Promise((done) => setTimeout(done, 5));
     put(`${worker}-result`, 'result', 'PR opened: synthetic milestone');
     await refresh();
     if (drifting) {
@@ -93,6 +94,14 @@ try {
     }
     await new Promise((done) => setTimeout(done, 500));
     await refresh();
+    if (mode === 'verify') {
+      const beforeReplay = messages().length;
+      put(`${worker}-repeat-result`, 'result', 'PR opened: synthetic milestone');
+      await refresh();
+      await new Promise((done) => setTimeout(done, 500));
+      assert.equal(messages().length, beforeReplay);
+      evidence[`${worker}-replay`] = { before: beforeReplay, after: messages().length };
+    }
     const delivered = messages().filter((text) => text.startsWith('Worker turn report') && text.includes(`todo ${worker}-`));
     evidence[worker] = { reportInputs: delivered.length, delivered, stored: [0, 1].map((index) => todos.getTodo(`${worker}-${index}`)) };
     assert.equal(delivered.length, mode === 'before' || (mode === 'status-before' && drifting) ? 2 : explicit ? 0 : 1);

@@ -167,7 +167,7 @@ try {
   service.todoSessions.bind(second.id, ref, now);
   const secondDispatch = await service.todoSessions.inputs.accept(second.id, root, { verb: 'send', ref }, 'Other', now);
   await service.todoSessions.inputs.recordOutcome(secondDispatch, { ref }, now);
-  await expectTurns('sameReportDifferentTodo', 7);
+  await expectTurns('sameReportDifferentTodo', 6);
   await app.jobProcessor.stop();
   const historyCount = (id: string) => (app.db.getDatabase().prepare(
     'SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id=? AND sdk_uuid=?'
@@ -187,11 +187,11 @@ try {
   }
   app.jobProcessor.start();
   const overlapDeadline = Date.now() + 45000;
-  while (results().n < 9 && Date.now() < overlapDeadline) await Bun.sleep(100);
-  assert.equal(results().n, 9);
-  assert.equal(modelTurns, 9);
+  while (results().n < 8 && Date.now() < overlapDeadline) await Bun.sleep(100);
+  assert.equal(results().n, 8);
+  assert.equal(modelTurns, 8);
   for (const phase of ['pending', 'queued']) assert.equal(historyCount(`synthetic-urgent-${phase}`), 1);
-  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 7, urgentHistoryRows: 2, finalTurns: modelTurns, finalResults: results().n });
+  Object.assign(observed, { readOnlyQuiet, urgentOverlaps: overlaps, urgentTurns: modelTurns - 6, urgentHistoryRows: 2, finalTurns: modelTurns, finalResults: results().n });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
 } finally {

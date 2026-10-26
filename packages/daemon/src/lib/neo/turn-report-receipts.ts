@@ -50,7 +50,6 @@ export class NeoTurnReportReceipts {
         ref.id,
         ref.daemon ?? null,
         turn.id,
-        observation.live?.status ?? null,
         hash,
       ])
     );
@@ -74,6 +73,7 @@ export class NeoTurnReportReceipts {
     return {
       live: observation.live,
       messageId,
+      previousId,
       skip: this.receipts.submissionReceipt<boolean>(messageId, 'v2') === true,
     };
   }

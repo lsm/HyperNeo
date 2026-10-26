@@ -24,15 +24,15 @@ An exact report repeat with a different transport turn ID/time produces no new
 request, including after recreating NeoService against the same SQLite DB.
 Changed text under a reused transport ID adds the fifth request. Changed current
 status and waiting reason on that same historical turn add none. A new turn
-ending after the persisted cutoff adds the sixth request; another todo's report
-adds the seventh.
+ending after the persisted cutoff adds the sixth request; the same turn observed
+by another bound todo adds none.
 The unit contracts also distinguish whitespace and empty text from the literal
 fallback sentence. Preserve observed.json and the model request JSON files.
 
 Finally pause only this daemon's job processor. Deliver two urgent notes and
 retry each with a quiet kind while pending or queued. Each must retain one
 mailbox job and no premature history row. Resume the owned processor; the two
-reports add exactly two requests and history rows, reaching nine results.
+reports add exactly two requests and history rows, reaching eight results.
 Retain overlaps.json and readonly-quiet.json. Ordinary quiet notices remain
 queued; only structured worker turn reports use the immediate report path.
 

@@ -19,6 +19,16 @@ inputs; the other must yield one turn-report input. Both todos record the comple
 receipt-bound final report and remain doing, awaiting coding facts. Baseline `before` mode
 on the test-only commit observes two turn reports for each worker instead.
 
+The status-drift case first binds one todo and delivers its completed turn while
+the worker is done, then binds a second todo while that same worker is running.
+Both first observations of the old turn must share one delivery receipt. A final
+refresh while done must retain the complete report on both todos. On the
+pre-review-fix head, `status-before` mode reproduces two delivered reports with
+different statuses. `firstStatus` and `secondStatus` preserve the real work.status
+RPC results alongside the actual recipient inputs.
+Each scenario then exposes an unchanged report under a new terminal record ID.
+No additional input may reach Neo; preserve the per-scenario replay counts.
+
 Evidence is observed.json with all recipient input bytes, send receipt, counts
 and todo records. This proves daemon receipt/storage, not model consumption or
 GUI rendering. The wrapper preserves evidence and removes synthetic daemon data.

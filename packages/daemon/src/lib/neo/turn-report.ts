@@ -49,13 +49,15 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       ask: NeoAsk,
       todo: NeoTodo,
       text: string,
-      observation: { messageId: string; skip: boolean },
+      observation: { messageId: string; previousId: string; skip: boolean },
       tell: Tell,
       receipts: NeoTurnReportReceipts
     ) => {
-      if (observation.skip) return;
-      await tell(ask, todo, text, observation.messageId, 'event');
-      receipts.acknowledge(observation.messageId);
+      if (!observation.skip) {
+        await tell(ask, todo, text, observation.messageId, 'event');
+        receipts.acknowledge(observation.messageId);
+      }
+      receipts.acknowledge(observation.previousId);
     },
     ['ask', 'todo', 'text', 'observation', 'tell', 'receipts'],
     'delivered'
