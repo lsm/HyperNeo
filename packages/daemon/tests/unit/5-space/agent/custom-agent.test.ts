@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -14,19 +14,19 @@ import type {
 import {
   buildCustomAgentTaskMessage,
   type CustomAgentConfig,
-  type TaskMessageContext,
   createCustomAgentInit,
   expandPrompt,
   resolveAgentInit,
   resolveCustomAgentPrompt,
   type SlotOverrides,
+  type TaskMessageContext,
 } from '../../../../src/lib/agents/custom-agent';
-import { REVIEWER_SYSTEM_CONTRACT } from '../../../helpers/system-contracts.ts';
 import {
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   REVIEW_POLICY_GUIDANCE,
 } from '../../../../src/lib/workflows/built-in-workflows.ts';
+import { REVIEWER_SYSTEM_CONTRACT } from '../../../helpers/system-contracts.ts';
 
 function makeAgent(overrides?: Partial<SpaceLongHorizonAgent>): SpaceLongHorizonAgent {
   return {
@@ -374,13 +374,14 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).toContain('Use conventional commits.');
   });
 
-  it('states the data-root work locations in the runtime brief', () => {
+  it('states the data-root work locations in a sandboxed worker brief', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'hyperneo-brief-'));
     process.env.HYPERNEO_DATA_DIR = dataDir;
+    const workspace = join(dataDir, 'workspace');
+    mkdirSync(join(workspace, '.git'), { recursive: true });
+    writeFileSync(join(workspace, '.git/hyperneo-worker-sandbox'), 'restricted');
     try {
-      const message = buildCustomAgentTaskMessage(
-        makeConfig({ workspacePath: '/workspaces/auth' })
-      );
+      const message = buildCustomAgentTaskMessage(makeConfig({ workspacePath: workspace }));
       expect(message).toContain('HYPERNEO_WORKTREES');
       expect(message).toContain(join(dataDir, 'worktrees'));
       expect(message).toContain('HYPERNEO_EVIDENCE');
@@ -389,6 +390,23 @@ describe('buildCustomAgentTaskMessage', () => {
       expect(message).toContain(join(dataDir, 'work', 'builds'));
       expect(message).toContain('TMPDIR');
       expect(message).toContain(join(dataDir, 'work', 'scratch'));
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+      delete process.env.HYPERNEO_DATA_DIR;
+    }
+  });
+
+  it('omits the work locations when the workspace is not a sandboxed worker', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'hyperneo-brief-'));
+    process.env.HYPERNEO_DATA_DIR = dataDir;
+    try {
+      const message = buildCustomAgentTaskMessage(
+        makeConfig({ workspacePath: join(dataDir, 'plain-workspace') })
+      );
+      expect(message).toContain('## Runtime Location');
+      expect(message).toContain(`- Worktree: ${join(dataDir, 'plain-workspace')}`);
+      expect(message).not.toContain('HYPERNEO_WORKTREES');
+      expect(message).not.toContain('TMPDIR');
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
       delete process.env.HYPERNEO_DATA_DIR;

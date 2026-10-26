@@ -1,11 +1,11 @@
-import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
-import { collectWithMaxBuffer } from '../utils/script-utils.ts';
-import { spawnProcess } from '../runtime-spawn/index.ts';
 import { existsSync } from 'node:fs';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { workerWorkLocations } from '../work-locations.ts';
 import type { WorkerSandboxMode } from '@hyperneo/shared';
+import { spawnProcess } from '../runtime-spawn/index.ts';
+import { collectWithMaxBuffer } from '../utils/script-utils.ts';
+import { workerWorkLocations } from '../work-locations.ts';
+import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 
 let readWorkerSockets = (): string[] => [];
 let readWorkerSandbox = (): WorkerSandboxMode => 'off';
@@ -21,6 +21,11 @@ export function configureWorkerSockets(read: () => string[]) {
 }
 
 export const workerUnixSockets = () => readWorkerSockets();
+
+export function workerWritableRoots(root: string) {
+  const locations = workerWorkLocations(root);
+  return [locations.evidence, locations.builds, locations.scratch, locations.cache];
+}
 
 export function workerSandboxPaths(root: string) {
   const locations = workerWorkLocations(root);
@@ -96,7 +101,7 @@ export async function prepareWorkerSandbox(root: string) {
 
 export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) {
   const env = workerSandboxPaths(root);
-  const writableRoots = [root, join(root, '.git'), ...new Set(Object.values(env))];
+  const writableRoots = [root, join(root, '.git'), ...new Set(workerWritableRoots(root))];
   return {
     sandbox: 'workspace-write',
     config: {

@@ -114,7 +114,13 @@ reintroduce the shared-temp fallback this journey rejects.
 
 `evidence/work-locations.json` records all three routes (Claude policy env,
 Codex `shell_environment_policy.set`, SDK settings env); each entry must sit
-under the run's `HYPERNEO_DATA_DIR` and exist on disk. The worker brief's
+under the run's `HYPERNEO_DATA_DIR` and exist on disk. The shared `worktrees/`
+root is also the Neo read-checkout tree, so it is exported as a location hint
+only: neither the Claude policy's `allowWrite` nor Codex `writable_roots` may
+include it, and resume replaces runtime-managed env keys (`TMPDIR`,
+`XDG_CACHE_HOME`, the `HYPERNEO_*` locations) so pre-upgrade workers adopt the
+data-root layout. The brief states the four paths only for workspaces carrying
+the worker-sandbox marker. The worker brief's
 `## Runtime Location` section states the same four paths (unit-covered in
 `custom-agent.test.ts`).
 

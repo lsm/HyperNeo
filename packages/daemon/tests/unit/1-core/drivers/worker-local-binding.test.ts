@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -73,19 +73,32 @@ test('installed Claude worker settings export the data-root work locations', asy
   expect(env.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
 });
 
-test('the Codex worker sandbox exports the work locations as writable roots', () => {
+test('the Codex worker sandbox keeps the shared worktrees root read-only', () => {
   const policy = codexWorkerSandbox(root);
   const set = policy.config.shell_environment_policy.set as Record<string, string>;
   expect(set.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
   expect(set.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
   expect(set.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(set.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
-  for (const path of [
-    set.HYPERNEO_WORKTREES,
-    set.HYPERNEO_EVIDENCE,
-    set.HYPERNEO_BUILDS,
-    set.TMPDIR,
-  ]) {
+  for (const path of [set.HYPERNEO_EVIDENCE, set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
     expect(policy.sandboxPolicy.writableRoots).toContain(path);
   }
+  expect(policy.sandboxPolicy.writableRoots).not.toContain(set.HYPERNEO_WORKTREES);
+});
+
+test('resuming a pre-upgrade worker adopts the data-root runtime env', async () => {
+  await installClaudeNativeWrites(root, [join(root, 'source')]);
+  const legacy = settings();
+  legacy.env = {
+    SYNTHETIC_WORKER_HINT: 'keep',
+    TMPDIR: '/tmp/hn-legacy/tmp',
+    XDG_CACHE_HOME: '/tmp/hn-legacy/cache',
+  };
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify(legacy));
+  const resumed = await readClaudeWorkerSandbox(root);
+  expect(resumed?.env.SYNTHETIC_WORKER_HINT).toBe('keep');
+  expect(resumed?.env.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
+  expect(resumed?.env.XDG_CACHE_HOME.startsWith(resumed!.env.TMPDIR)).toBe(true);
+  expect(resumed?.env.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
+  expect(settings().env).toEqual(resumed?.env);
 });

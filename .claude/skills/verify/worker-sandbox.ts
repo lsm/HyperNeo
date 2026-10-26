@@ -133,6 +133,10 @@ try {
   assert.equal(proof.status, 0, proof.stdout + proof.stderr);
   const originalPolicy = JSON.parse(readFileSync(join(worker, '.claude/settings.local.json'), 'utf8'));
   assertWorkLocations(originalPolicy.env, 'claude');
+  assert(
+    !originalPolicy.sandbox.filesystem.allowWrite.includes(originalPolicy.env.HYPERNEO_WORKTREES),
+    'The shared worktrees root must stay outside worker writable roots'
+  );
   const runtime = originalPolicy.env.TMPDIR;
   await releaseWorkerSandbox(worker);
   const next = await rpc('work.start', { ...request, title: 'Sibling after runtime release' }) as Result<WorkStarted>;
@@ -177,6 +181,12 @@ try {
   assert(codexResult.ok, JSON.stringify(codexResult));
   const codexLaunch = JSON.parse(readFileSync(join(run, 'evidence/codex-launch.json'), 'utf8'));
   assertWorkLocations(codexLaunch.config?.shell_environment_policy?.set ?? {}, 'codex');
+  assert(
+    !codexLaunch.config.sandbox_workspace_write.writable_roots.includes(
+      codexLaunch.config.shell_environment_policy.set.HYPERNEO_WORKTREES
+    ),
+    'Codex writable roots must exclude the shared worktrees tree'
+  );
   await app.jobProcessor.stop();
   const registry = await rpc('rpc:mcp.registry.list', {}) as { servers: { id: string }[] };
   for (const server of registry.servers) await rpc('rpc:mcp.registry.setEnabled', { id: server.id, enabled: false });
