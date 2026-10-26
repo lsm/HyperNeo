@@ -5,6 +5,7 @@ import { WebSocketServerTransport } from '../../../packages/daemon/src/lib/webso
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import type { SessionManager } from '../../../packages/daemon/src/lib/session-manager.ts';
 import { createBunServer } from '../../../packages/daemon/src/lib/runtime-server/bun-backend.ts';
+import { createNodeServer } from '../../../packages/daemon/src/lib/runtime-server/node-backend.ts';
 
 const mode = process.argv[2];
 const run = process.argv[3];
@@ -12,13 +13,14 @@ const router = new MessageHubRouter();
 const transport = new WebSocketServerTransport({ router });
 const handlers = createWebSocketHandlers(transport, {} as SessionManager);
 let drops = 0;
+let backpressures = 0;
 let resyncs = 0;
 let maxBufferedBytes = 0;
 let maxQueuedMessages = 0;
 let received = Buffer.alloc(0);
 const count = 384;
 const payload = 'x'.repeat(64 * 1024);
-const server = await createBunServer({
+const server = await (mode.startsWith('node') ? createNodeServer : createBunServer)({
   hostname: '127.0.0.1',
   port: 0,
   fetch(req, upgrade) {
@@ -32,9 +34,10 @@ const server = await createBunServer({
       ws.send = (data) => {
         const result = send(data);
         if (result === 0) drops++;
+        if (result === -1) backpressures++;
         maxBufferedBytes = Math.max(
           maxBufferedBytes,
-          (ws as unknown as { getBufferedAmount(): number }).getBufferedAmount()
+          ws.getBufferedAmount?.() ?? 0
         );
         return result;
       };
@@ -74,11 +77,11 @@ try {
     if (opcode === 1) ids.push(JSON.parse(received.subarray(offset + header, offset + header + size).toString()).id);
     offset += header + size;
   }
-  const evidence = { mode, count, messageBytes: Buffer.byteLength(JSON.stringify({ type: 'EVENT', method: 'proof.burst', id: '383', sessionId: 'global', data: { payload } })), drops, resyncs, maxBufferedBytes, maxQueuedMessages, maxQueuedBytesUpperBound: maxQueuedMessages * (payload.length + 100), delivered: ids.length, ordered: ids.every((id, i) => id === `${i}`) };
+  const evidence = { mode, count, messageBytes: Buffer.byteLength(JSON.stringify({ type: 'EVENT', method: 'proof.burst', id: '383', sessionId: 'global', data: { payload } })), drops, backpressures, resyncs, maxBufferedBytes, maxQueuedMessages, maxQueuedBytesUpperBound: maxQueuedMessages * (payload.length + 100), delivered: ids.length, ordered: ids.every((id, i) => id === `${i}`) };
   await mkdir(`${run}/evidence`, { recursive: true });
   await writeFile(`${run}/evidence/backpressure.json`, JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
-  if (mode === 'baseline' ? drops === 0 : drops !== 0 || resyncs !== 0 || ids.length !== count || !evidence.ordered) throw new Error('Slow-client proof failed');
+  if (mode === 'baseline' ? drops === 0 : drops !== 0 || resyncs !== 0 || ids.length !== count || !evidence.ordered || backpressures === 0 || maxBufferedBytes > 1024 * 1024) throw new Error('Slow-client proof failed');
 } finally {
   socket.destroy();
   server.stop(true);

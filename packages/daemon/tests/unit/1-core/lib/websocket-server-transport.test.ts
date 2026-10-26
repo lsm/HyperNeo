@@ -71,6 +71,26 @@ describe('WebSocketServerTransport', () => {
   });
 
   describe('registerClient', () => {
+    it('uses supplied envelope metadata to diagnose opaque serialized frames', () => {
+      const events: { metadata: Record<string, unknown> }[] = [];
+      const stop = subscribeToStructuredLogs((event) => {
+        if (event.message === 'client.websocket.pressure') events.push(event);
+      });
+      try {
+        const ws = createMockWebSocket();
+        transport.registerClient(ws, 'premeasured-client');
+        (ws.send as ReturnType<typeof mock>).mockImplementation(() => -1);
+        registeredConnection!.send('opaque serialized frame', {
+          bytes: 23, type: 'EVENT', method: 'proof.premeasured',
+        });
+        expect(events[0].metadata).toMatchObject({
+          messageBytes: 23, type: 'EVENT', method: 'proof.premeasured',
+        });
+      } finally {
+        stop();
+      }
+    });
+
     it('reports pressure type, UTF-8 bytes, buffer and offered rate without message bodies', () => {
       const events: { metadata: Record<string, unknown> }[] = [];
       const stop = subscribeToStructuredLogs((event) => {
