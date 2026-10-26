@@ -2,7 +2,7 @@ import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
 import type { ChatDisplayMode, SettingSource } from './types/settings.ts';
 import type { DeclarativeToolGuard } from './types/space.ts';
-import type { SessionToolSelection } from './types/session-tool-choice.ts';
+import type { SessionToolProfile, SessionToolSelection } from './types/session-tool-choice.ts';
 
 export type {
   ModelTier,
@@ -246,6 +246,7 @@ export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = 
 
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
   toolSelection?: SessionToolSelection;
+  toolProfile?: SessionToolProfile;
 
   provider?: Provider;
 

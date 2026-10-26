@@ -338,7 +338,12 @@ describe('createDriverSession', () => {
     const { created, manager } = sessionManager(true);
     expect(await createDriverSession(manager as never, '/repo', 'font size')).toBe('new');
     expect(created).toEqual([
-      { workspacePath: '/repo', title: 'font size', worktreeMode: 'worktree' },
+      {
+        workspacePath: '/repo',
+        title: 'font size',
+        worktreeMode: 'worktree',
+        config: { toolProfile: 'worker' },
+      },
     ]);
   });
 

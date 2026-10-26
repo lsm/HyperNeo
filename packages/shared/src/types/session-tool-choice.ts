@@ -1,3 +1,5 @@
+export type SessionToolProfile = 'worker' | 'neo' | 'manual';
+
 export type SessionToolChoiceKey = `skill:${string}` | `mcp:${string}`;
 
 export interface SessionToolChoice {
