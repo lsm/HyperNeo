@@ -121,5 +121,5 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
     await writePolicy(directory, { ...computed, ...existing });
   }
-  return computed;
+  return { ...computed, ...existing } as typeof computed;
 }

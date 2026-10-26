@@ -37,3 +37,8 @@ unrelated missing settings directory. After the fix all settings tests pass and
 `fixture-isolation.json` records the stale marker unchanged with no policy written
 there. The simulated shared directory belongs entirely to the proof; the host's
 shared temp entries are never seeded or changed.
+
+The settings regressions also cover persisted true/false choices on resume and
+require the policy returned to callers to match the persisted file. The SDK
+query-options regression must retain an explicit `allowLocalBinding: false`;
+backfilling a missing default must never turn an explicit opt-out into true.
