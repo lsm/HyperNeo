@@ -601,4 +601,10 @@ env -i HOME="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$GIT
 	HYPERNEO_DATA_DIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-capability-failure.ts" "$GITHUB_POLL_CAPABILITY_FAILURE_RUN"
 
+TRANSCRIPT_SESSION_READER_RUN="$WORK_DIR/transcript-session-reader"
+mkdir -p "$TRANSCRIPT_SESSION_READER_RUN/home" "$TRANSCRIPT_SESSION_READER_RUN/tmp"
+env -i HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SESSION_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRANSCRIPT_SESSION_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" "$TRANSCRIPT_SESSION_READER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

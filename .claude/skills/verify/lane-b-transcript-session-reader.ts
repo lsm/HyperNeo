@@ -14,6 +14,7 @@ for (const name of ['home', 'workspace', 'evidence']) mkdirSync(join(run, name),
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
+const { capSdkMessage } = await import('../../../packages/daemon/src/lib/rpc-handlers/message-output-cap.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
 const NativeWorker = globalThis.Worker;
 const fetch = globalThis.fetch;
@@ -72,7 +73,11 @@ try {
   await app.db.saveSDKMessage(sessionId, { type: 'system', subtype: 'task_started', uuid: 'history-task', task_id: 'synthetic-task' } as SDKMessage);
   const raw = app.db.getDatabase();
   raw.prepare('UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?').run('2026-10-26T00:00:00.000Z', sessionId);
-  const reference = (page: { limit: number; before?: number; beforeRowid?: number; since?: number; sinceRowid?: number }) => app!.db.getSDKMessagePageAsync(sessionId, page);
+  const reference = (page: { limit: number; before?: number; beforeRowid?: number; since?: number; sinceRowid?: number }) => {
+    const repo = app!.db.getSDKMessageRepo();
+    const selected = repo.getSDKMessages(sessionId, page.limit, page.before, page.since, page.beforeRowid, page.sinceRowid);
+    return { sdkMessages: selected.messages.map(capSdkMessage), hasMore: selected.hasMore, backgroundTaskMessages: repo.getBackgroundTaskMessages(sessionId).map(capSdkMessage) };
+  };
   const latest = await reference({ limit: 3 });
   const first = latest.sdkMessages[0] as { timestamp: number; rowid: number };
   const queries = [
@@ -102,29 +107,51 @@ try {
     return Reflect.apply(prepare, raw, args);
   };
   try {
-    const started = performance.now();
-    const cold = await hub.request('message.sdkMessages', { sessionId, ...queries[0] });
-    evidence.coldMs = performance.now() - started;
-    assert.deepEqual(cold, JSON.parse(JSON.stringify(expected[0])));
-    const warmAt = performance.now();
-    const replies = await Promise.all(queries.map((page) => hub.request('message.sdkMessages', { sessionId, ...page })));
-    evidence.warmConcurrentMs = performance.now() - warmAt;
-    assert.deepEqual(replies, JSON.parse(JSON.stringify(expected)));
-    evidence.missingSession = await hub.request('message.sdkMessages', { sessionId: 'missing-history' }).then(() => 'unexpected success', String);
-    assert.match(String(evidence.missingSession), /Session not found/);
-    evidence.conversationFallback = await hub.request('message.sdkMessages', { sessionId: 'conv:missing-history' });
-    assert.deepEqual(evidence.conversationFallback, { sdkMessages: [], hasMore: false, backgroundTaskMessages: [] });
-    rejectNextPage = true;
-    evidence.workerFailure = await hub.request('message.sdkMessages', { sessionId }).then(() => 'unexpected success', String);
-    assert.match(String(evidence.workerFailure), /synthetic transcript worker failure/);
-    evidence.healthAfterFailure = await hub.request('system.health', {});
-    assert.equal((evidence.healthAfterFailure as { status: string }).status, 'ok');
-    assert.deepEqual(await hub.request('message.sdkMessages', { sessionId, ...queries[0] }), JSON.parse(JSON.stringify(expected[0])));
-    assert.equal(app.sessionManager.getCachedSession(sessionId), null);
-    evidence.actorRemainedCold = true;
-    evidence.pageWorkerRequests = pageRequests;
-    evidence.replyHash = createHash('sha256').update(JSON.stringify(replies)).digest('hex');
-    assert.equal(mainSqlAttempts, 0);
+    let previous = performance.now();
+    let maxLagMs = 0;
+    const loopTimer = setInterval(() => {
+      const now = performance.now();
+      maxLagMs = Math.max(maxLagMs, now - previous - 5);
+      previous = now;
+    }, 5);
+    try {
+      const started = performance.now();
+      const cold = await hub.request('message.sdkMessages', { sessionId, ...queries[0] });
+      evidence.coldMs = performance.now() - started;
+      assert.deepEqual(cold, JSON.parse(JSON.stringify(expected[0])));
+      const warmAt = performance.now();
+      const healthAt = performance.now();
+      const concurrentHealth = hub.request('system.health', {}).then((health) => {
+        assert.equal((health as { status: string }).status, 'ok');
+        evidence.concurrentHealthMs = performance.now() - healthAt;
+      });
+      const replies = await Promise.all(queries.map((page) => hub.request('message.sdkMessages', { sessionId, ...page })));
+      evidence.warmConcurrentMs = performance.now() - warmAt;
+      await concurrentHealth;
+      assert.deepEqual(replies, JSON.parse(JSON.stringify(expected)));
+      evidence.missingSession = await hub.request('message.sdkMessages', { sessionId: 'missing-history' }).then(() => 'unexpected success', String);
+      assert.match(String(evidence.missingSession), /Session not found/);
+      evidence.conversationFallback = await hub.request('message.sdkMessages', { sessionId: 'conv:missing-history' });
+      assert.deepEqual(evidence.conversationFallback, { sdkMessages: [], hasMore: false, backgroundTaskMessages: [] });
+      rejectNextPage = true;
+      evidence.workerFailure = await hub.request('message.sdkMessages', { sessionId }).then(() => 'unexpected success', String);
+      assert.match(String(evidence.workerFailure), /synthetic transcript worker failure/);
+      evidence.healthAfterFailure = await hub.request('system.health', {});
+      assert.equal((evidence.healthAfterFailure as { status: string }).status, 'ok');
+      assert.deepEqual(await hub.request('message.sdkMessages', { sessionId, ...queries[0] }), JSON.parse(JSON.stringify(expected[0])));
+      assert.equal(app.sessionManager.getCachedSession(sessionId), null);
+      evidence.actorRemainedCold = true;
+      evidence.pageWorkerRequests = pageRequests;
+      evidence.replyHash = createHash('sha256').update(JSON.stringify(replies)).digest('hex');
+      assert.equal(mainSqlAttempts, 0);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      evidence.maxLoopLagMs = maxLagMs;
+      evidence.rpcLatencyUnder250ms = [evidence.coldMs, evidence.warmConcurrentMs, evidence.concurrentHealthMs].every((ms) => Number(ms) < 250);
+      assert.equal(evidence.rpcLatencyUnder250ms, true);
+      assert(maxLagMs < 1000);
+    } finally {
+      clearInterval(loopTimer);
+    }
   } finally {
     evidence.mainSqlAttempts = mainSqlAttempts;
     raw.prepare = prepare;
