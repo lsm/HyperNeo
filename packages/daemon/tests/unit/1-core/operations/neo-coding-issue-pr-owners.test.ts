@@ -124,6 +124,69 @@ function fixture() {
 }
 
 describe('issue todo PR owner delivery', () => {
+  test.each(['issue-first', 'pin-first'])(
+    '%s discovery cannot steal an explicit PR pin on another ask',
+    async (order) => {
+      const f = fixture();
+      try {
+        const issue = f.add('issue-todo', 'synthetic/MixedCase#7');
+        f.store.openAsk({
+          id: 'pin-ask',
+          projectId: null,
+          sessionId: 'neo',
+          originMessageId: null,
+          title: 'Pinned PR',
+          request: 'Track this PR',
+          createdAt: 1,
+        });
+        const added = f.store.addTodo(
+          'z-pinned',
+          'pin-ask',
+          {
+            title: 'Pinned PR',
+            doneWhen: 'PR merged',
+            check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+            instruction: null,
+            named: null,
+          },
+          1
+        );
+        const pinned = f.store.updateTodo(added, { state: 'doing', startedAt: 0 }, 1);
+        const pinOwner = { adapter: 'codex-desktop', id: 'synthetic-pin-worker' };
+        const sessions = new NeoTodoSessionRepository(f.db);
+        sessions.create(pinned.id, {
+          verb: 'start',
+          adapter: pinOwner.adapter,
+          place: { machine: 'synthetic', folder: '/synthetic' },
+        });
+        sessions.recordRef(pinned.id, pinOwner, 0);
+        let merged = false;
+        const pack = createCodingTodoPack(f.claims, async () => [
+          {
+            url,
+            state: merged ? 'MERGED' : 'OPEN',
+            checks: 'passing',
+            review: 'approved',
+            head: 'exact-head',
+          },
+        ]);
+        if (order === 'pin-first') await pack.readFacts!(pinned);
+        await f.cycle('Closes synthetic/MixedCase#7', 'PENDING', Date.now());
+        await pack.readFacts!(pinned);
+        await f.cycle('Closes synthetic/MixedCase#7', 'SUCCESS', Date.now());
+        expect(f.ledger.snapshot(null, Date.now())[0].ownerId).toBe(pinOwner.id);
+        expect(f.told).toEqual([expect.objectContaining({ ref: pinOwner })]);
+        f.store.updateTodo(issue, { state: 'done' }, Date.now());
+        merged = true;
+        expect(await pack.check(pinned)).toEqual({ done: true, evidence: '#20 merged' });
+        expect(f.claims.prs(pinned.id)).toEqual([
+          expect.objectContaining({ url, state: 'MERGED' }),
+        ]);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
   test('closing-issue discovery preserves reported PR owners and their duplicate refusal after settlement', async () => {
     const f = fixture();
     try {
