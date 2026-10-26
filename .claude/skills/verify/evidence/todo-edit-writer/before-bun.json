@@ -1,0 +1,14 @@
+{
+  "mode": "before",
+  "surface": "real neo.todo.edit RPC and neo.snapshot",
+  "refused": {
+    "error": "MessageHubResponseError: synthetic edit refusal",
+    "observed": {
+      "title": "Must roll back",
+      "question": "retired",
+      "visibleTitle": "Must roll back"
+    }
+  },
+  "baselineReproduced": true,
+  "mainSql": 11
+}

@@ -471,25 +471,56 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
+  const edit = (superpipe({})('neo.todo.edit') as PipelineAPI)
+    .input(['input', 'caller'])
     .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Edit>) =>
-        requireNeoDoneWhenEditable(todo, input, packs()),
+      (input: z.infer<typeof Edit>, caller: OperationCaller) =>
+        (input.artifacts ?? []).map((ref) => artifact(ref.artifactId, caller)),
+      ['input', 'caller'],
+      'registered'
+    )
+    .pipe(
+      async (input: z.infer<typeof Edit>, registered: readonly (ArtifactRef | null)[]) => {
+        const prepared = await todos.prepareMutation(
+          { kind: 'edit', ...input },
+          Date.now(),
+          registered
+        );
+        return prepared.ok ? { value: prepared } : { reason: prepared };
+      },
+      ['input', 'registered'],
+      'result:outcome'
+    )
+    .pipe(
+      (plan: TodoPlan, input: z.infer<typeof Edit>) => {
+        const editable = requireNeoDoneWhenEditable(plan.todo, input, packs());
+        return 'reason' in editable ? editable : { value: plan };
+      },
       ['outcome', 'input'],
       'result:outcome'
     )
-    .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
-    .pipe(
-      (plan: { patch: NeoTodoPatch }, caller: OperationCaller) =>
-        (plan.patch.artifacts ?? []).map((ref) => artifact(ref.artifactId, caller)),
-      ['outcome', 'caller'],
-      'registered'
-    )
-    .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
-    .pipe(withUrls, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
-    .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
-    .pipe(write, ['outcome', 'input'], 'outcome')
+    .pipe(
+      async (
+        plan: TodoPlan,
+        completion: Awaited<ReturnType<typeof readNeoTodoCompletion>>,
+        input: z.infer<typeof Edit>,
+        registered: readonly (ArtifactRef | null)[]
+      ) => {
+        const result = await todos.mutateTodo(
+          { kind: 'edit', ...input },
+          plan.patch.state === 'done' ? { check: plan.todo.check, result: completion } : undefined,
+          Date.now(),
+          registered
+        );
+        if (!result.ok) return result;
+        const { startNext, ...receipt } = result;
+        if (startNext) await controls.start(startNext);
+        return receipt;
+      },
+      ['outcome', 'completion', 'input', 'registered'],
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: z.infer<typeof Edit>,
     caller: OperationCaller

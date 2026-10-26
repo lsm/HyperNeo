@@ -1,0 +1,45 @@
+{
+  "mode": "verify",
+  "surface": "real neo.todo.edit RPC and neo.snapshot",
+  "refused": {
+    "error": "MessageHubResponseError: synthetic edit refusal",
+    "observed": {
+      "title": "first",
+      "question": "open",
+      "visibleTitle": "first"
+    }
+  },
+  "concurrent": [
+    {
+      "id": "first",
+      "urls": [
+        "https://github.com/synthetic/edit/pull/1",
+        "https://github.com/synthetic/edit/pull/2"
+      ],
+      "records": []
+    },
+    {
+      "id": "second",
+      "urls": [
+        "https://github.com/synthetic/edit/pull/2"
+      ],
+      "records": [
+        "pr_already_tracked: https://github.com/synthetic/edit/pull/2 is already tracked by todo first \"Committed title\". Use neo.todo.edit addUrls on that todo."
+      ]
+    }
+  ],
+  "fullReport": {
+    "bytes": 699999,
+    "sha256": "3ada594a01dd79b5302773df6b09a1c989ea51f683e163bc8e1573c1a87d7e3b",
+    "replyBytes": 1452003,
+    "state": "closed_unverified"
+  },
+  "contention": {
+    "writeMs": 1236.767875,
+    "healthMs": 0.6024589999999534,
+    "maxLagMs": 4.413833000000068,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true,
+  "mainSql": 0
+}

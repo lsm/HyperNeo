@@ -59,21 +59,33 @@ class NeoTodoMutationWriter {
     return {
       value: {
         todo: accepted.value,
-        patch: { ...plan.patch, check, doneWhen: accepted.value.doneWhen },
+        patch: {
+          ...plan.patch,
+          check,
+          doneWhen: accepted.value.doneWhen,
+          ...(plan.todo.state === 'done' &&
+          !input.done &&
+          !sameNeoTodoCheck(plan.todo, { ...plan.todo, check })
+            ? {
+                state: plan.todo.startedAt === null ? ('todo' as const) : ('doing' as const),
+                finishedAt: null,
+                reason: null,
+              }
+            : {}),
+        },
         ...(accepted.value.records ? { records: accepted.value.records } : {}),
       },
     };
   }
 
-  commit(
+  plan(
     input: Input,
-    checked: Checked | undefined,
     now: number,
     registered: readonly (ArtifactRef | null)[] = []
-  ): Outcome {
+  ): ({ ok: true } & Plan) | Extract<Outcome, { ok: false }> {
     const todos = this.todos;
-    const execute = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
-      .input(['input', 'checked', 'now', 'registered'])
+    const execute = (superpipe({})('neo.todo.prepare-mutation') as PipelineAPI)
+      .input(['input', 'now', 'registered'])
       .pipe((input: Input) => todos.getTodo(input.todoId), 'input', 'current')
       .pipe(
         (todo: NeoTodo | null) => requireNeoOpenTodo(todo, todo ? todos.getAsk(todo.askId) : null),
@@ -102,6 +114,32 @@ class NeoTodoMutationWriter {
       .pipe(
         (plan: Plan, input: Input) => this.withUrls(plan, input),
         ['outcome', 'input'],
+        'result:outcome'
+      )
+      .pipe((plan: Plan) => ({ ok: true as const, ...plan }), 'outcome', 'outcome')
+      .end('outcome') as (
+      input: Input,
+      now: number,
+      registered: readonly (ArtifactRef | null)[]
+    ) => ({ ok: true } & Plan) | Extract<Outcome, { ok: false }>;
+    return execute(input, now, registered);
+  }
+
+  commit(
+    input: Input,
+    checked: Checked | undefined,
+    now: number,
+    registered: readonly (ArtifactRef | null)[] = []
+  ): Outcome {
+    const todos = this.todos;
+    const execute = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
+      .input(['input', 'checked', 'now', 'registered'])
+      .pipe(
+        (input: Input, now: number, registered: readonly (ArtifactRef | null)[]) => {
+          const plan = this.plan(input, now, registered);
+          return plan.ok ? { value: plan } : { reason: plan };
+        },
+        ['input', 'now', 'registered'],
         'result:outcome'
       )
       .pipe(
@@ -168,4 +206,11 @@ export const neoTodoMutations = defineRepositoryOp(
   'write',
   NeoTodoMutationWriter,
   ['commit']
+);
+
+export const neoTodoMutationReads = defineRepositoryOp(
+  'neo.todoMutationReads',
+  'read',
+  NeoTodoMutationWriter,
+  ['plan']
 );
