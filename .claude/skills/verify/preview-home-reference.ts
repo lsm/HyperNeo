@@ -58,7 +58,6 @@ try {
   const denied = [
     ['~other/report.html', 'unavailable'],
     ['~', 'unavailable'],
-    ['~/outside.html', 'outside_roots'],
     ['~/HyperNeo/../outside.html', 'unsafe_path'],
     ['~/HyperNeo/引用配色/../引用配色/quote-colour-options.html', 'unsafe_path'],
     ['~/HyperNeo/%2e%2e/outside.html', 'unsafe_path'],
@@ -76,7 +75,7 @@ try {
       producerInput: origin,
       askOrigin: origin,
       shortText: `Read \`${reference}\``,
-      fullText: [absolute, ...denied.map(([path]) => path)]
+      fullText: [absolute, '~/outside.html', ...denied.map(([path]) => path)]
         .map((path) => `\`${path}\``)
         .join('\n\n'),
       links: [],
@@ -129,6 +128,7 @@ try {
       .sha256,
     metadata.sha256
   );
+  assert.equal((await tap('~/outside.html')).accepted, true);
   for (const [path, reason] of denied) {
     const before = count();
     assert.equal((await tap(path)).reason, reason, path);

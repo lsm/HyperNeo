@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { withArtifactDescriptor } from '../../../packages/daemon/src/lib/runtime-artifact-open.ts';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, symlink, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -25,6 +27,8 @@ try {
   const invoke = (name: string, input: unknown) => hub.request<Reply>('operation.invoke', { name, input });
   const input = { requestId: 'chosen-report', context: { kind: 'todo', id: 'worker-todo' }, path: join(root, 'outside.md'), title: 'Chosen report' };
   await writeFile(input.path, '# Outside workspace\n');
+  const filesystemRoot = await withArtifactDescriptor('/', input.path.split('/').filter(Boolean), (fd) => readFileSync(fd, 'utf8'));
+  assert(filesystemRoot.accepted && filesystemRoot.value === '# Outside workspace\n');
   const outside = await invoke('artifact.file.register', input);
   const unknownContext = await invoke('artifact.file.register', { ...input, context: { kind: 'todo', id: 'not-recorded' } });
   const revisionInput = { ...input, requestId: 'revision', path: join(root, 'workspace/report.md') };
@@ -53,6 +57,9 @@ try {
   const benign = join(root, 'home/.codex/reports/report.md');
   await writeFile(benign, '# Benign application folder\n');
   assert.equal((await invoke('artifact.file.register', { ...input, path: benign })).accepted, true);
+  await mkdir(join(root, 'home/.ssh'));
+  await writeFile(join(root, 'home/.codex/auth.json'), '{"synthetic":true}');
+  await writeFile(join(root, 'home/.ssh/report.md'), '# Synthetic sensitive-directory sentinel');
   const refusals: unknown[] = [];
   for (const path of ['.env', '.ssh/id_ed25519', '.codex/auth.json', '.codex/config.toml', 'credentials.json', 'private.key', 'secrets.txt']) {
     const reply = await invoke('artifact.file.register', { ...input, path: join(root, 'home', path) });

@@ -118,7 +118,7 @@ describe('native artifact workspace ownership', () => {
       value: { root: workspace, relativePath: 'report.md' },
     });
     expect(resolveArtifactSource(binding, join(root, 'wrong-project', 'report.md'), deps)).toEqual({
-      reason: { accepted: false, reason: 'outside_roots' },
+      value: { context, root: join(root, 'wrong-project'), relativePath: 'report.md' },
     });
     for (const caller of [
       { source: 'mcp' as const, role: 'neo' as const, sessionId: 'neo' },
@@ -154,7 +154,7 @@ describe('native artifact workspace ownership', () => {
     expect(load()).toBeNull();
   });
 
-  test('retains forbidden roots and rereads cwd instead of caching it', () => {
+  test('accepts nonsensitive roots and rereads cwd instead of caching it', () => {
     for (const folder of ['.codex', '.claude', '.config']) {
       const path = join(home, folder, 'worktree');
       native.prepare('UPDATE threads SET cwd = ?').run(path);
@@ -162,7 +162,7 @@ describe('native artifact workspace ownership', () => {
       expect(binding.workspacePath).toBe(path);
       expect(
         resolveArtifactSource(binding, 'report.md', { daemonId: 'daemon', home, loadBinding: load })
-      ).toEqual({ reason: { accepted: false, reason: 'outside_roots' } });
+      ).toEqual({ value: { context, root: path, relativePath: 'report.md' } });
     }
     native.prepare('UPDATE threads SET cwd = ?').run(workspace);
     expect(load()?.workspacePath).toBe(workspace);

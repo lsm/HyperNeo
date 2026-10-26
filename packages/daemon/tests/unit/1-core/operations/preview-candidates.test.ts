@@ -222,11 +222,24 @@ describe('stored preview reference planning', () => {
       expect(await run('github.com/lsm/other')).toEqual({ accepted: false, reason: 'unavailable' });
     }
   });
+  test('plans an explicitly referenced file outside the workspace', async () => {
+    const reference = '/outside/report.md';
+    expect(
+      await planStoredReference({ ...request, reference }, human, {
+        ...deps,
+        loadSource: async () => ({ ...source, text: `[Open](${reference})` }),
+      })
+    ).toMatchObject({
+      accepted: true,
+      kind: 'worktree',
+      root: '/outside',
+      relativePath: 'report.md',
+    });
+  });
   test('applies existing defense-in-depth policy without granting any byte read', async () => {
     for (const [reference, reason] of [
       ['../outside.md', 'unsafe_path'],
       ['.ssh/key.md', 'sensitive_path'],
-      ['/outside/report.md', 'outside_roots'],
     ]) {
       expect(
         await planStoredReference({ ...request, reference }, human, {

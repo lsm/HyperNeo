@@ -14,17 +14,18 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test LOG_LEVEL=error \
 The helper owns an ephemeral loopback daemon and synthetic Codex state. It registers
 markdown and PNG files through operation.invoke using the todo's recorded native
 thread cwd, reads exact snapshot bytes and native producer metadata, checks retries,
-denies foreign callers and outside-root files, and registers from Neo's own ask
+accepts explicit non-sensitive files outside roots, denies foreign snapshot readers, and registers from Neo's own ask
 workspace. It proves ownership again after the todo changes worker. It always
 closes the daemon and WebSocket and retains evidence/native-registration.json.
 
 It also holds an exclusive lock on a separate synthetic native state DB: snapshot
 get/ref and multi-chunk reads still work, while changing the todo worker revokes
-access immediately. A new capture refuses the locked source promptly; admission
-and finish still reread cwd with zero busy wait. No long-lived cwd cache is used.
+access immediately. A relative capture without cwd refuses promptly with ambiguous_context; an absolute
+capture still succeeds while native state is locked. Cwd reads have zero busy wait. No long-lived cwd cache is used.
 
 An optional third argument names a headless browser script receiving the owned
 port and run directory; use it to open the todo's existing ArtifactCards preview.
-No new project/evidence roots, remote refs, or sensitive root exemptions apply.
-Codex Desktop is the native adapter supported by this slice; other native adapters
-remain unavailable until their authoritative working-directory reader is wired.
+Explicit non-sensitive paths need no project/evidence root approval. No sensitive
+path exemptions apply; see attachment-paths.md for the current policy proof.
+Relative paths require the adapter's authoritative working-directory reader.
+Missing or unsupported adapter records do not veto explicit absolute files.

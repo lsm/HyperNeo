@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,14 +47,44 @@ describe('artifact registration', () => {
       expect(JSON.parse(output)).toMatchObject({
         durableReceipt: true,
         retryAfterRemoval: true,
-        changedHashRefused: true,
-        authorizationRechecked: true,
+        changedHashRevision: true,
+        contextDoesNotVeto: true,
         concurrentIdempotent: true,
         migratedTwice: true,
         registryExcluded: true,
       });
     } finally {
       process.chdir(previousWorkingDirectory);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('registers chosen files and revisions through the daemon RPC door', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'attachment-paths-')));
+    mkdirSync(join(root, 'home'));
+    try {
+      execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL('../../../../../../.claude/skills/verify/attachment-paths.ts', import.meta.url)
+          ),
+          root,
+        ],
+        {
+          env: {
+            PATH: process.env.PATH,
+            HOME: join(root, 'home'),
+            NODE_ENV: 'test',
+            HYPERNEO_DATA_DIR: join(root, 'data'),
+          },
+          timeout: 30000,
+          stdio: 'pipe',
+        }
+      );
+      expect(
+        JSON.parse(readFileSync(join(root, 'evidence/attachment-paths.json'), 'utf8'))
+      ).toMatchObject({ passed: true, oldAndNewBytesRead: true, noContextVeto: true });
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

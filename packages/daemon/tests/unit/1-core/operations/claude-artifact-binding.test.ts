@@ -87,7 +87,7 @@ describe('loadRegistrationBinding for Claude workers', () => {
       value: { context, root: worktree, relativePath: 'report.md' },
     });
     expect(resolveArtifactSource(binding, join(repo, 'report.md'), deps())).toEqual({
-      reason: { accepted: false, reason: 'outside_roots' },
+      value: { context, root: repo, relativePath: 'report.md' },
     });
     expect(
       authorizeArtifactCaller(binding, { source: 'mcp', role: 'neo', sessionId: 'neo' })
@@ -126,7 +126,7 @@ describe('loadRegistrationBinding for Claude workers', () => {
     expect(load()).toBeNull();
   });
 
-  test('accepts only a direct repo worktree under .claude, never home or deeper paths', () => {
+  test('accepts benign reports under application and worktree folders', () => {
     sessions.recordRef('todo', { adapter: 'claude-desktop', id: 'local_w' });
     for (const cwd of [
       join(home, '.claude', 'worktrees', 'w'),
@@ -137,7 +137,7 @@ describe('loadRegistrationBinding for Claude workers', () => {
     ]) {
       desktopRecord({ cwd });
       expect(resolveArtifactSource(load()!, 'report.md', deps())).toEqual({
-        reason: { accepted: false, reason: 'outside_roots' },
+        value: { context, root: cwd, relativePath: 'report.md' },
       });
     }
   });

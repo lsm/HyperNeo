@@ -96,47 +96,29 @@ function registrationService(db: Database, data: string, home: string) {
   type Plan = Extract<Awaited<ReturnType<typeof prepare>>, { value: unknown }>['value'];
   async function capture(plan: Plan, input: Input, caller: OperationCaller) {
     const binding = policy.loadBinding(input.context);
-    if (!binding) return refused('unavailable');
     const producer = JSON.stringify(
-      binding.workerRef ?? {
+      binding?.workerRef ?? {
         adapter: 'hyperneo',
-        id: binding.workerSessionId ?? binding.neoSessionId,
+        id: caller.sessionId ?? binding?.workerSessionId ?? binding?.neoSessionId ?? 'local',
       }
     );
     const fingerprint = createHash('sha256')
       .update(JSON.stringify([plan, producer, input.title]))
       .digest('hex');
-    async function finish(receipt: () => unknown) {
-      const current = await prepare(input, caller);
-      if ('reason' in current) return current.reason;
-      if (
-        JSON.stringify(current.value) !== JSON.stringify(plan) ||
-        JSON.stringify(policy.loadBinding(input.context)) !== JSON.stringify(binding)
-      )
-        return refused('unavailable');
-      return receipt();
-    }
     const previous = registry.receipt(input.context, input.requestId);
-    if (previous && previous.fingerprint !== fingerprint) return refused('source_changed');
     const owner = await artifactCaptureOwner(db, data);
-    if (previous) {
+    if (previous?.fingerprint === fingerprint) {
       const hash = await owner.hashSource(plan.root, plan.relativePath.split('/'));
-      if (hash.accepted)
-        return hash.sha256 === previous.sha256
-          ? finish(() => ({ accepted: true, artifact: JSON.parse(previous.receipt).artifact }))
-          : refused('source_changed');
-      if (hash.reason === 'unsafe_path') {
+      if (hash.accepted && hash.sha256 === previous.sha256)
+        return { accepted: true, artifact: JSON.parse(previous.receipt).artifact };
+      if (!hash.accepted && hash.reason === 'unsafe_path') {
         const absent = await fs.lstat(join(plan.root, plan.relativePath)).then(
           () => false,
           (error: NodeJS.ErrnoException) => error.code === 'ENOENT'
         );
-        if (absent)
-          return finish(() => ({
-            accepted: true,
-            artifact: JSON.parse(previous.receipt).artifact,
-          }));
+        if (absent) return { accepted: true, artifact: JSON.parse(previous.receipt).artifact };
       }
-      return hash;
+      if (!hash.accepted) return hash;
     }
     const snapshot = await owner.capture(plan.root, plan.relativePath.split('/'));
     if (!snapshot.accepted) return snapshot;
@@ -149,24 +131,23 @@ function registrationService(db: Database, data: string, home: string) {
       const limit = artifactBundleLimit(snapshot.byteLength, bound.value);
       if (limit) return limit;
     }
-    return finish(() =>
-      registry.save(
-        input.context,
-        input.requestId,
-        fingerprint,
-        snapshot.sha256,
-        {
-          daemonId: registry.daemonId,
-          artifactId: randomUUID(),
-          title: input.title,
-          kind: kind.value!,
-          byteLength: snapshot.byteLength,
-        },
-        producer,
-        plan.relativePath,
-        { kind: 'worktree' },
-        plan.bundle
-      )
+    return registry.save(
+      input.context,
+      previous ? randomUUID() : input.requestId,
+      fingerprint,
+      snapshot.sha256,
+      {
+        daemonId: registry.daemonId,
+        artifactId: randomUUID(),
+        title: input.title,
+        kind: kind.value!,
+        byteLength: snapshot.byteLength,
+      },
+      producer,
+      plan.relativePath,
+      { kind: 'worktree' },
+      plan.bundle,
+      input.requestId
     );
   }
   const register = (superpipe({})('artifact-file-register') as PipelineAPI)
@@ -197,7 +178,7 @@ export function createArtifactRegistration(
   return defineOperation({
     name: 'artifact.file.register',
     description:
-      'Snapshot a regular file in a persisted work/ask workspace. Supply a stable requestId, context, path and short title. Optional HTML bundle entries map relative names to already registered CSS/raster IDs in this same context (64 entries including HTML, 64 MiB total); never crawl or fetch assets. Publishes only an immutable reference; source and stored bytes are retained. No new filesystem roots or sharing rights.',
+      'Snapshot an explicitly chosen non-sensitive regular file anywhere on this daemon. Relative paths use the context workspace; use an absolute path when it is unavailable. Changed sources create new immutable revisions. Supply a stable requestId, context, path and short title. Optional HTML bundle entries map relative names to already registered CSS/raster IDs in this same context (64 entries including HTML, 64 MiB total); never crawl or fetch assets. Publishes only an immutable reference; source and stored bytes are retained. Credential/secret files, traversal and symlinks are blocked; snapshot sharing rights are unchanged.',
     inputSchema: RegisterArtifactInput,
     resultSchema: z.union([
       ArtifactRefusalSchema,

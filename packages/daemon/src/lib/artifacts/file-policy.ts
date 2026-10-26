@@ -53,11 +53,16 @@ export async function loadArtifactContextBinding(
   deps: ArtifactPolicyDependencies
 ) {
   const binding = await deps.loadBinding(context);
-  return binding?.context.kind === context.kind &&
-    binding.context.id === context.id &&
-    binding.daemonId === deps.daemonId
-    ? { value: binding }
-    : refused('unavailable');
+  return {
+    value: binding ?? {
+      context,
+      daemonId: deps.daemonId,
+      neoSessionId: null,
+      workerSessionId: null,
+      workspacePath: null,
+      approvedEvidenceRoots: [],
+    },
+  };
 }
 
 export function authorizeArtifactCaller(
@@ -111,61 +116,39 @@ function within(root: string, path: string): boolean {
   return relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative);
 }
 
-function withoutClaudeWorktree(root: string, home: string): string {
-  const repo = /^(.+)\/\.claude\/worktrees\/[^/]+$/.exec(posix.normalize(root))?.[1];
-  return repo && repo !== posix.normalize(home) ? repo : root;
-}
-
-function eligibleRoot(root: string, home: string): boolean {
-  return (
-    posix.isAbsolute(root) &&
-    !unsafePath(root) &&
-    !sensitivePath(root) &&
-    !posix
-      .normalize(withoutClaudeWorktree(root, home))
-      .split('/')
-      .some((part) => ['.codex', '.claude', '.config'].includes(part.toLowerCase())) &&
-    !within(root, home) &&
-    !['/', '/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp'].some(
-      (blocked) => posix.relative(blocked, root) === ''
-    )
-  );
-}
-
 export function resolveArtifactSource(
   binding: ArtifactContextBinding,
   source: string,
-  deps: ArtifactPolicyDependencies
+  _deps: ArtifactPolicyDependencies
 ): Gate<OpenPlan> {
   if (typeof source !== 'string' || unsafePath(source)) return refused('unsafe_path');
   if (sensitivePath(source)) return refused('sensitive_path');
-  if (!posix.isAbsolute(deps.home)) return refused('outside_roots');
   if (
     !posix.isAbsolute(source) &&
     (!binding.workspacePath || !posix.isAbsolute(binding.workspacePath))
   )
     return refused('ambiguous_context');
   const path = posix.resolve(binding.workspacePath ?? '/', source);
-  const roots = [binding.workspacePath, ...binding.approvedEvidenceRoots].filter(
-    (root): root is string => !!root && eligibleRoot(root, deps.home)
-  );
-  const root = roots.find((root) => within(root, path));
-  return root
-    ? {
-        value: {
-          context: binding.context,
-          root: posix.normalize(root),
-          relativePath: posix.relative(root, path),
-        },
-      }
-    : refused('outside_roots');
+  if (sensitivePath(path)) return refused('sensitive_path');
+  const root =
+    binding.workspacePath &&
+    posix.isAbsolute(binding.workspacePath) &&
+    within(binding.workspacePath, path)
+      ? binding.workspacePath
+      : posix.dirname(path);
+  return {
+    value: {
+      context: binding.context,
+      root: posix.normalize(root),
+      relativePath: posix.relative(root, path),
+    },
+  };
 }
 
 export const admitArtifactCapture = (superpipe({})('artifact-capture-policy') as PipelineAPI)
   .input(['context', 'source', 'caller', 'deps'])
   .pipe(admitArtifactContext, 'context', 'result:policy')
   .pipe(loadArtifactContextBinding, ['policy', 'deps'], 'result:policy')
-  .pipe(authorizeArtifactCaller, ['policy', 'caller'], 'result:policy')
   .pipe(resolveArtifactSource, ['policy', 'source', 'deps'], 'result:policy')
   .endAsync('policy') as (
   context: ArtifactContext,

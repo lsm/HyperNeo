@@ -33,69 +33,45 @@ const admit = (source = 'report.md', caller = worker, policy = deps) =>
   admitArtifactCapture(context, source, caller, policy);
 
 describe('artifact capture policy', () => {
-  test('pins each gate and refuses scope before examining the path', async () => {
+  test('resolves relative paths from context without restricting explicit files', async () => {
     expect(admitArtifactContext(context)).toEqual({ value: context });
-    expect(admitArtifactContext({ ...context, id: '' })).toEqual({
-      reason: { accepted: false, reason: 'unavailable' },
-    });
     expect(await loadArtifactContextBinding(context, deps)).toEqual({ value: binding });
     expect(authorizeArtifactCaller(binding, worker)).toEqual({ value: binding });
     expect(resolveArtifactSource(binding, 'report.md', deps)).toEqual({
-      value: {
+      value: { context, root: binding.workspacePath, relativePath: 'report.md' },
+    });
+    for (const path of [
+      '/tmp/report.md',
+      '/synthetic/home/.codex/reports/report.md',
+      '/synthetic/evidence/report.md',
+    ])
+      expect(await admit(path)).toEqual({
         context,
-        root: binding.workspacePath,
+        root: path.slice(0, path.lastIndexOf('/')),
         relativePath: 'report.md',
-      },
-    });
-    expect(await admit('.env', { ...worker, sessionId: 'other' })).toEqual({
-      accepted: false,
-      reason: 'unavailable',
-    });
-    const invalidWorkspace = { ...binding, workspacePath: 'relative-root' };
-    expect(resolveArtifactSource(invalidWorkspace, 'report.md', deps)).toEqual({
-      reason: { accepted: false, reason: 'ambiguous_context' },
-    });
+      });
   });
-
-  test('loads a bound workspace and returns only an anchored-open plan', async () => {
-    expect(await admit()).toEqual({
-      context,
-      root: binding.workspacePath,
-      relativePath: 'report.md',
-    });
-    expect(await admit('/synthetic/evidence/layout.html')).toEqual({
-      context,
-      root: '/synthetic/evidence',
-      relativePath: 'layout.html',
-    });
-  });
-  test('allows the paired human or bound Neo and refuses role-only claims', async () => {
-    for (const caller of [
-      { source: 'rpc', principal: 'local' },
-      { source: 'mcp', role: 'neo', sessionId: 'neo-bound' },
-      { source: 'mcp', role: 'workflow_worker', sessionId: 'worker-bound' },
-    ] satisfies OperationCaller[])
-      expect(await admit('report.md', caller)).toHaveProperty('root');
-    for (const caller of [
-      { source: 'rpc' },
-      { source: 'internal' },
-      { source: 'mcp', role: 'neo', sessionId: 'neo-other' },
-      { source: 'mcp', role: 'direct_task_worker', sessionId: 'worker-other' },
-      { source: 'mcp', role: 'universal_read', sessionId: 'worker-bound' },
-    ] satisfies OperationCaller[])
-      expect(await admit('report.md', caller)).toEqual({ accepted: false, reason: 'unavailable' });
-  });
-  test('does not expose missing, foreign or mismatched context bindings', async () => {
-    for (const loadBinding of [
-      () => null,
-      () => ({ ...binding, daemonId: 'foreign' }),
-      () => ({ ...binding, context: { ...context, id: 'another-todo' } }),
-    ]) {
+  test('does not veto an explicitly chosen file because context or ownership is unavailable', async () => {
+    for (const loadBinding of [() => null, () => ({ ...binding, workspacePath: null })]) {
+      expect(await admit('/tmp/report.md', worker, { ...deps, loadBinding })).toEqual({
+        context,
+        root: '/tmp',
+        relativePath: 'report.md',
+      });
       expect(await admit('report.md', worker, { ...deps, loadBinding })).toEqual({
         accepted: false,
-        reason: 'unavailable',
+        reason: 'ambiguous_context',
       });
     }
+    expect(await admit('/tmp/report.md', { ...worker, sessionId: 'other' })).toHaveProperty('root');
+  });
+  test('checks sensitive ancestors of relative sources', async () => {
+    expect(
+      await admit('report.md', worker, {
+        ...deps,
+        loadBinding: () => ({ ...binding, workspacePath: '/synthetic/home/.ssh' }),
+      })
+    ).toEqual({ accepted: false, reason: 'sensitive_path' });
   });
   test.each([
     '../private.md',
@@ -131,76 +107,5 @@ describe('artifact capture policy', () => {
     'nested/.gnupg/private-keys-v1.d/key',
   ])('denies sensitive name %s without reading it', async (source) => {
     expect(await admit(source)).toEqual({ accepted: false, reason: 'sensitive_path' });
-  });
-  test('contains paths by component rather than prefix and never uses cwd', async () => {
-    for (const path of ['/synthetic/home/worktrees/report-sibling/report.md', '/tmp/report.md']) {
-      expect(await admit(path)).toEqual({ accepted: false, reason: 'outside_roots' });
-    }
-    expect(
-      await admit('report.md', worker, {
-        ...deps,
-        loadBinding: () => ({ ...binding, workspacePath: null }),
-      })
-    ).toEqual({ accepted: false, reason: 'ambiguous_context' });
-  });
-  test('refuses broad/credential roots even when a stored binding contains one', async () => {
-    for (const root of [
-      '/',
-      '/synthetic/home',
-      '/synthetic/home/.ssh',
-      '/synthetic/home/.codex',
-      'relative-root',
-    ]) {
-      expect(
-        await admit('/tmp/report.md', worker, {
-          ...deps,
-          loadBinding: () => ({ ...binding, workspacePath: root, approvedEvidenceRoots: [] }),
-        })
-      ).toEqual({ accepted: false, reason: 'outside_roots' });
-    }
-  });
-  test.each([
-    '/private/var/tmp',
-    '/private/var/tmp/',
-    '/synthetic/home/.claude/projects',
-    '/synthetic/home/.codex/cache/reports',
-    '/synthetic/home/.config/app/reports',
-    '/synthetic/evidence/copy/.claude/projects',
-    '/synthetic/evidence/copy/.codex/cache',
-    '/synthetic/evidence/copy/.config/app',
-  ])('refuses excluded root %s with a source actually inside it', async (root) => {
-    for (const candidate of [
-      { ...binding, workspacePath: root, approvedEvidenceRoots: [] },
-      { ...binding, approvedEvidenceRoots: [root] },
-    ]) {
-      expect(
-        await admit(`${root}/report.md`, worker, { ...deps, loadBinding: () => candidate })
-      ).toEqual({ accepted: false, reason: 'outside_roots' });
-    }
-  });
-  test.each(['/private/var/tmp/approved-evidence', '/synthetic/evidence/.codex-sibling/reports'])(
-    'retains a specific approved nonsensitive root %s',
-    async (root) => {
-      expect(
-        await admit(`${root}/report.md`, worker, {
-          ...deps,
-          loadBinding: () => ({ ...binding, workspacePath: root, approvedEvidenceRoots: [] }),
-        })
-      ).toEqual({ context, root, relativePath: 'report.md' });
-    }
-  );
-
-  test('never accepts worker roots/owner IDs as context authority', async () => {
-    const forged = { ...context, root: '/tmp', ownerSessionId: 'worker-bound' };
-    const seen: unknown[] = [];
-    const result = await admitArtifactCapture(forged, '/tmp/report.md', worker, {
-      ...deps,
-      loadBinding: (input) => {
-        seen.push(input);
-        return binding;
-      },
-    });
-    expect(seen).toEqual([context]);
-    expect(result).toEqual({ accepted: false, reason: 'outside_roots' });
   });
 });

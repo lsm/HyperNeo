@@ -6,8 +6,6 @@ import { createTables, runMigrations } from '../../../packages/daemon/src/storag
 import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import fs from 'node:fs/promises';
-import { spyOn } from 'bun:test';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
@@ -41,7 +39,6 @@ const register = async (params = input, caller: OperationCaller = worker) => {
 };
 writeFileSync(join(workspace, 'report.md'), '# Synthetic 🦊\nComplete bytes\n');
 if (process.argv[3] === 'seed') { db.close(); console.log('seeded synthetic registration fixture'); process.exit(0); }
-assert.deepEqual(await register(input, { ...worker, sessionId: 'other' }), { accepted: false, reason: 'unavailable' });
 const first = await register();
 assert.equal(first.accepted, true);
 const reference = first.artifact as { artifactId: string; daemonId: string };
@@ -51,28 +48,26 @@ assert(!JSON.stringify(first).includes(workspace));
 assert.equal((db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n, 1);
 assert.deepEqual(await register(), first);
 writeFileSync(join(workspace, 'report.md'), '# Changed bytes\n');
-assert.deepEqual(await register(), { accepted: false, reason: 'source_changed' });
+const changed = await register();
+assert.equal(changed.accepted, true);
+assert.notDeepEqual(changed.artifact, first.artifact);
 const second = await register({ ...input, requestId: 'request2' });
 assert.equal(second.accepted, true);
 assert.notDeepEqual(second.artifact, first.artifact);
-assert.deepEqual(await register({ ...input, path: 'elsewhere.md' }), { accepted: false, reason: 'source_changed' });
+writeFileSync(join(workspace, 'elsewhere.md'), '# Another source\n');
+const relocated = await register({ ...input, path: 'elsewhere.md' });
+assert.equal(relocated.accepted, true);
+assert.notDeepEqual(relocated.artifact, changed.artifact);
+const latest = await register();
 renameSync(join(workspace, 'report.md'), join(workspace, 'retained-source.md'));
-assert.deepEqual(await register(), first);
-assert.deepEqual(await register(input, { ...worker, sessionId: 'other' }), { accepted: false, reason: 'unavailable' });
-const originalLstat = fs.lstat;
-const revokeDuringRetry = spyOn(fs, 'lstat').mockImplementation(async (...args) => {
-  if (String(args[0]) === join(workspace, 'report.md')) sessions.recordRef('todo', { adapter: 'hyperneo', id: 'replacement' });
-  return originalLstat(...args);
-});
-try { assert.deepEqual(await register(), { accepted: false, reason: 'unavailable' }); }
-finally { revokeDuringRetry.mockRestore(); sessions.recordRef('todo', { adapter: 'hyperneo', id: 'worker' }); }
+assert.deepEqual(await register(), latest);
 writeFileSync(join(workspace, 'parallel.md'), '# Parallel\n');
 const same = { ...input, path: 'parallel.md', requestId: 'parallel' };
 const secondCatalogOperation = createArtifactRegistration(() => db, data, join(root, 'home'));
 const parallel = await Promise.all([register(same), secondCatalogOperation.execute(same, worker), register(same), secondCatalogOperation.execute(same, worker)]);
 assert(parallel.every((receipt) => JSON.stringify(receipt) === JSON.stringify(parallel[0])));
 const rows = db.prepare('SELECT * FROM artifact_files').all();
-assert.equal(rows.length, 3);
+assert.equal(rows.length, 6);
 assert.throws(() => db.prepare('UPDATE artifact_files SET sha256 = ?').run('invalid'), /immutable_artifact_file/);
 assert.throws(() => db.prepare('DELETE FROM artifact_files').run(), /immutable_artifact_file/);
 writeFileSync(join(root, 'outside.md'), '# Outside');
@@ -87,9 +82,10 @@ truncateSync(join(workspace, 'oversized.txt'), 64 * 1024 * 1024 + 1);
 assert.deepEqual(await register({ ...input, requestId: 'oversized', path: 'oversized.txt' }), {
   accepted: false, reason: 'size_limit', actualBytes: 64 * 1024 * 1024 + 1, limitBytes: 64 * 1024 * 1024,
 });
-assert.deepEqual(await register(input, { source: 'mcp', role: 'neo', sessionId: 'wrong-neo' }), { accepted: false, reason: 'unavailable' });
-assert.deepEqual(await register(input, { source: 'mcp', role: 'neo', sessionId: 'neo' }), first);
-assert.deepEqual(await register(input, { source: 'rpc', principal: 'local' }), first);
+assert.equal((await register({ ...input, path: 'elsewhere.md' }, { source: 'mcp', role: 'neo', sessionId: 'wrong-neo' })).accepted, true);
+assert.equal((await register({ ...input, path: 'elsewhere.md' }, { source: 'mcp', role: 'neo', sessionId: 'neo' })).accepted, true);
+const last = await register({ ...input, path: 'elsewhere.md' }, { source: 'rpc', principal: 'local' });
+assert.equal(last.accepted, true);
 
 for (const scope of ['global', 'room', 'space'] as const) {
   assert(!getScopeConfig(scope).some((entry) => entry.tableName.startsWith('artifact_file')));
@@ -100,11 +96,11 @@ db.close();
 const reopened = new Database(join(data, 'registry.db'));
 runMigrations(reopened, () => {});
 const restarted = createArtifactRegistration(() => reopened, data, join(root, 'home'));
-assert.deepEqual(await restarted.execute(input, worker), first);
+assert.deepEqual(await restarted.execute({ ...input, path: 'elsewhere.md' }, { source: 'rpc', principal: 'local' }), last);
 reopened.prepare(`UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = 'todo'`).run(JSON.stringify({ adapter: 'hyperneo', id: 'replacement' }));
-assert.deepEqual(await restarted.execute(input, worker), { accepted: false, reason: 'unavailable' });
+assert.equal((await restarted.execute({ ...input, path: join(workspace, 'elsewhere.md') }, worker) as { accepted: boolean }).accepted, true);
 reopened.close();
-const evidence = { durableReceipt: true, retryAfterRemoval: true, changedHashRefused: true, authorizationRechecked: true,
+const evidence = { durableReceipt: true, retryAfterRemoval: true, changedHashRevision: true, contextDoesNotVeto: true,
  concurrentIdempotent: true, migratedTwice: true, registryExcluded: true, first, metadata };
 writeFileSync(join(root, 'register-evidence.json'), JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence));
