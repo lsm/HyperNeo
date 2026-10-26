@@ -1,9 +1,10 @@
+import { GITHUB_POLL } from '../../lib/job-queue-constants.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 
 class GitHubPollRefreshRepository extends JobQueueRepository {
   refresh(input: { enabled: boolean; reschedulePending: boolean; runAt: number }) {
-    const queue = 'github.poll';
+    const queue = GITHUB_POLL;
     if (!input.enabled || input.reschedulePending) {
       for (const job of this.listJobs({ queue, status: 'pending' })) this.deleteJob(job.id);
     }
