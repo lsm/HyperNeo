@@ -41,6 +41,12 @@ const NeoStartWorkTarget = z.object({
     .record(z.string(), z.json())
     .optional()
     .describe('Parameters for the linked ask pack preparation stage.'),
+  sandbox: z
+    .boolean()
+    .optional()
+    .describe(
+      'Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.'
+    ),
   ...workStartConfiguration.schema.shape,
 });
 

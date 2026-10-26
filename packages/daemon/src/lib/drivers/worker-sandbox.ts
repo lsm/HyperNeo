@@ -14,7 +14,10 @@ export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
   readWorkerSandbox = read;
 }
 
-export const workerSandboxOn = () => readWorkerSandbox() === 'always';
+export function workerSandboxOn(requested?: boolean) {
+  const mode = readWorkerSandbox();
+  return mode === 'always' || (mode === 'on-demand' && requested === true);
+}
 
 export function workerSandboxPaths(root: string) {
   const base = process.platform === 'darwin' ? '/tmp' : tmpdir();

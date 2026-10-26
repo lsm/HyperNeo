@@ -1,7 +1,10 @@
 # Workers run without the OS sandbox unless the human turns it on
 
-Settings > Workers > Worker sandbox has two modes, stored as `workerSandbox`:
-`off` (default) and `always`. Adapter tests in
+Settings > Workers > Worker sandbox has three modes, stored as `workerSandbox`:
+`off` (default), `always`, and `on-demand`. On demand sandboxes only starts whose
+`preparation.sandbox` is true: a Neo todo start target with `sandbox: true`, or a coding
+Review/Verify start for a PR from a fork (`gh pr view --json isCrossRepository`).
+`neo-todo-runner.test.ts` and `neo-coding-assign.test.ts` pin both producers. Adapter tests in
 `hyperneo-verbs.test.ts` and `codex-desktop-start.test.ts` pin both modes; `claude-desktop-start.test.ts` pins that an
 unsandboxed prepared start passes no `--settings` file.
 

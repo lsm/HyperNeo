@@ -152,6 +152,19 @@ describe('coding actor assignments', () => {
       parameters: { pullRequest: 7, head, role: 'verify' },
     });
   });
+  test.each([true, false])(
+    'a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts',
+    async (fork) => {
+      const f = fixture();
+      Object.assign(f.pr, { isCrossRepository: fork });
+      f.publish();
+      await f.assign();
+      await f.assign({ stage: 'verify', candidates: [author] });
+      expect(f.starts.map((start) => start.preparation?.sandbox)).toEqual(
+        fork ? [true, true] : [undefined, undefined]
+      );
+    }
+  );
   test('one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments', async () => {
     const f = fixture();
     const review = await f.assign();
