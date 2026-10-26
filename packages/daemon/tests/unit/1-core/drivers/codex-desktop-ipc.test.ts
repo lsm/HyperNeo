@@ -94,61 +94,57 @@ describe('withCodexDesktopIpc', () => {
   }
 
   describe('steerCodexDesktopTurn Desktop admission', () => {
-    test(
-      'a slow Desktop owner past the old handoff deadline still receives the send',
-      async () => {
-        const ownerAt = Date.now() + 9_000;
-        const f = await fixture((message, _socket, send) => {
-          if (message.method === 'thread-owner-discovery') {
-            if (Date.now() < ownerAt)
-              return send({
-                type: 'response',
-                requestId: message.requestId,
-                resultType: 'error',
-                error: 'no-client-found',
-              });
+    test('a slow Desktop owner past the old handoff deadline still receives the send', async () => {
+      const ownerAt = Date.now() + 9_000;
+      const f = await fixture((message, _socket, send) => {
+        if (message.method === 'thread-owner-discovery') {
+          if (Date.now() < ownerAt)
             return send({
               type: 'response',
               requestId: message.requestId,
-              resultType: 'success',
-              handledByClientId: 'slow-owner',
+              resultType: 'error',
+              error: 'no-client-found',
             });
-          }
-          if (message.method === 'thread-follower-steer-turn')
-            return send({
-              type: 'response',
-              requestId: message.requestId,
-              resultType: 'success',
-              result: { result: { turnId: 'turn-1' } },
-            });
-          send({ type: 'response', requestId: message.requestId, resultType: 'success' });
-        });
-        const result = await steerCodexDesktopTurn(
-          f.path,
-          (args) => {
-            if (args[0] !== 'open') throw new Error(`Unexpected spawn ${args[0]}`);
-            return {
-              stdout: null,
-              stderr: new Response('').body,
-              exited: Promise.resolve(0),
-              exitCode: 0,
-              kill: () => {},
-            };
-          },
-          'thread-1',
-          'now',
-          'input-1',
-          'auto',
-          async () => true
-        );
-        expect(result).toMatchObject({
-          reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'turn-1' } },
-        });
-        const methods = f.seen.map((message) => message.method);
-        expect(methods).toContain('thread-follower-steer-turn');
-      },
-      30_000
-    );
+          return send({
+            type: 'response',
+            requestId: message.requestId,
+            resultType: 'success',
+            handledByClientId: 'slow-owner',
+          });
+        }
+        if (message.method === 'thread-follower-steer-turn')
+          return send({
+            type: 'response',
+            requestId: message.requestId,
+            resultType: 'success',
+            result: { result: { turnId: 'turn-1' } },
+          });
+        send({ type: 'response', requestId: message.requestId, resultType: 'success' });
+      });
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        (args) => {
+          if (args[0] !== 'open') throw new Error(`Unexpected spawn ${args[0]}`);
+          return {
+            stdout: null,
+            stderr: new Response('').body,
+            exited: Promise.resolve(0),
+            exitCode: 0,
+            kill: () => {},
+          };
+        },
+        'thread-1',
+        'now',
+        'input-1',
+        'auto',
+        async () => true
+      );
+      expect(result).toMatchObject({
+        reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'turn-1' } },
+      });
+      const methods = f.seen.map((message) => message.method);
+      expect(methods).toContain('thread-follower-steer-turn');
+    }, 30_000);
 
     test.each([
       ['/Applications/ChatGPT.app/Contents/MacOS/ChatGPT', true],
@@ -245,7 +241,7 @@ describe('withCodexDesktopIpc', () => {
       expect(performance.now() - started).toBeLessThan(3_000);
     }, 10_000);
 
-    test('refuses within eight seconds when Desktop never acquires the thread', async () => {
+    test('refuses at the handoff deadline when Desktop never acquires the thread', async () => {
       const started = performance.now();
       const f = await fixture((message, _socket, send) =>
         send({
@@ -278,8 +274,8 @@ describe('withCodexDesktopIpc', () => {
         },
       });
       expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
-      expect(performance.now() - started).toBeLessThan(9_000);
-    }, 10_000);
+      expect(performance.now() - started).toBeLessThan(31_000);
+    }, 35_000);
 
     test('kills a stalled launcher and closes IPC at the existing-turn deadline', async () => {
       const f = await fixture((message, _socket, send) =>
@@ -312,9 +308,9 @@ describe('withCodexDesktopIpc', () => {
       await f.closed;
       expect(result).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
       expect(killed).toBe(true);
-      expect(performance.now() - started).toBeLessThan(9_000);
+      expect(performance.now() - started).toBeLessThan(31_000);
       expect(f.seen.some((message) => message.method?.startsWith('thread-follower-'))).toBe(false);
-    }, 10_000);
+    }, 35_000);
 
     test('opens an unloaded thread and waits for its Desktop owner before delivering', async () => {
       let opened = false;

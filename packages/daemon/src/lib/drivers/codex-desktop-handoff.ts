@@ -111,7 +111,7 @@ export async function steerCodexDesktopTurn(
   desktopRunning = () => codexDesktopRunning(spawn, probePlatform),
   probePlatform = process.platform
 ): Promise<CodexSendGate<'app-server'>> {
-  const deadline = Date.now() + 8_000;
+  const deadline = Date.now() + TIMEOUT_MS;
   try {
     if (!(await desktopRunning())) {
       log.warn('work.send route', {
