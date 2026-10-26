@@ -242,6 +242,7 @@ async function readCheckRollup(
   raw: Record<string, unknown>,
   spawnImpl: SpawnFn
 ): Promise<GhCheck[] | null> {
+  if (raw.state !== 'OPEN') return [];
   const meta = parsePrUrl(url);
   if (!meta || typeof raw.headRefOid !== 'string' || !raw.headRefOid) return null;
   const base = `repos/${meta.owner}/${meta.repo}/commits/${raw.headRefOid}`;

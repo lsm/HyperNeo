@@ -52,7 +52,7 @@ try {
   const deploy = () => readGithubDeploys([url], async () => [{ daemon: 'synthetic-laptop', commit: 'd'.repeat(40) }]);
   if (scenario === 'merged') {
     await reconcile(); const first = { detail: await detail(), list: await list(), branch: await branch(), deploy: await deploy(), ledger: ledger.snapshot([repo], Date.now()) };
-    assert.deepEqual(first.detail, { ok: true, kind: 'pr', url, state: 'MERGED', checks: 'passing', review: 'approved', blockers: [], title: 'Synthetic shared fact' });
+    assert.deepEqual(first.detail, { ok: true, kind: 'pr', url, state: 'MERGED', checks: 'none', review: 'approved', blockers: [], title: 'Synthetic shared fact' });
     assert.deepEqual(first.branch, [url]); assert.equal(first.ledger[0].state, 'merged');
     assert.equal(first.deploy.prs[0].mergeCommit, 'c'.repeat(40)); assert.deepEqual(first.deploy.daemons[0].contains, ['c'.repeat(40)]);
     assert.equal((first.list as { items: { url: string }[] }).items[0].url, url);
@@ -81,8 +81,8 @@ try {
   evidence.ledgerGraphqlCost = requests.filter(row => row.family === 'ledger-reconcile').reduce((sum, row) => sum + row.graphqlCost, 0);
   evidence.otherGraphqlCost = 'unknown: gh pr view/list do not return cost; do not equate request count with points';
   if (scenario === 'merged') {
-    assert.deepEqual(evidence.initialRequests, { 'ledger-discovery': 2, 'work-detail': 1, 'work-ci': 2, 'query-window': 1, 'branch-membership': 1, 'deploy-merge': 1, 'deploy-ancestry': 1 });
-    assert.deepEqual(evidence.repeatRequests, { 'work-detail': 1, 'work-ci': 2, 'query-window': 1 });
+    assert.deepEqual(evidence.initialRequests, { 'ledger-discovery': 2, 'work-detail': 1, 'query-window': 1, 'branch-membership': 1, 'deploy-merge': 1, 'deploy-ancestry': 1 });
+    assert.deepEqual(evidence.repeatRequests, { 'work-detail': 1, 'query-window': 1 });
   }
   evidence.verified = true;
   console.log(JSON.stringify({ scenario, verified: true, initialRequests: evidence.initialRequests, repeatRequests: evidence.repeatRequests, ledgerGraphqlCost: evidence.ledgerGraphqlCost }));

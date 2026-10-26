@@ -167,9 +167,7 @@ describe('readGithubPrs', () => {
             : [{ statuses: [] }]
           : null;
       return {
-        stdout: new Response(
-          ok ? JSON.stringify(ghPr()) : api ? JSON.stringify(api) : ''
-        ).body,
+        stdout: new Response(ok ? JSON.stringify(ghPr()) : api ? JSON.stringify(api) : '').body,
         stderr: new Response(ok ? '' : 'not found').body,
         exited: Promise.resolve(ok || api ? 0 : 1),
         exitCode: ok || api ? 0 : 1,
@@ -267,20 +265,17 @@ describe('readGithubPrs REST check rollup', () => {
     expect((await readGithubPrs([url], spawn as never))?.[0]?.checks).toBe('failing');
   });
 
-  test('reads the REST rollup for a settled pull request too', async () => {
+  test('skips the REST rollup for a settled pull request', async () => {
     const { spawn, asked } = rollupSpawn(
       ghPr({ state: 'MERGED', mergedAt: '2026-10-25T00:00:00Z' }),
-      (path) =>
-        path.includes('check-runs')
-          ? [{ check_runs: [{ status: 'completed', conclusion: 'success' }] }]
-          : [{ statuses: [] }]
+      () => [{ statuses: [] }]
     );
     const read = await readGithubPrs([url], spawn as never);
     expect(read?.[0]?.state).toBe('MERGED');
-    expect(read?.[0]?.checks).toBe('passing');
+    expect(read?.[0]?.checks).toBe('none');
     expect(
       asked.some((args) => args.some((arg) => typeof arg === 'string' && arg.includes('/commits/')))
-    ).toBe(true);
+    ).toBe(false);
   });
 
   test('fails the read when the REST rollup is unavailable, keeping the stored value', async () => {
