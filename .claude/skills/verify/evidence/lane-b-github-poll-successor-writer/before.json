@@ -1,0 +1,53 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 353,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "claimed": 1,
+  "first": {
+    "id": "9fbd9b00-647a-48e8-a1a9-32f6ff2f3b1f",
+    "queue": "github.poll",
+    "status": "pending",
+    "payload": {},
+    "result": null,
+    "error": "GitHub poll successor admission SQL reached main connection",
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 1,
+    "runAt": 1792985282468,
+    "createdAt": 1792985281462,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": "68a4780d-eeae-4578-942f-0daa90fe8e0d"
+  },
+  "successors": [],
+  "pollRequests": 1,
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 365,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 1
+}

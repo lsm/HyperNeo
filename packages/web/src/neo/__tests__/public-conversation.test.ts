@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { describe, expect, it } from 'vitest';
 import {
   admitNeoPublicSources,
   neoPublicationAnswerOrigins,
@@ -291,6 +291,7 @@ describe('session message rows', () => {
     toName: 'Neo',
     text,
     createdAt,
+    kind: 'session' as const,
   });
 
   it('places messages between sessions in time order beside the conversation, once loaded history reaches them', () => {
@@ -306,6 +307,25 @@ describe('session message rows', () => {
     expect(
       result.entries.map((entry) => (entry.kind === 'session' ? entry.message.text : entry.kind))
     ).toEqual(['ask', 'PR #9 is up\nCI green']);
+  });
+
+  it('never places system-forwarded worker batches in the human conversation', () => {
+    const result = projectNeoPublicConversation(
+      root,
+      { ...asks([ask()]), hasEarlier: true },
+      publications([]),
+      [],
+      [
+        {
+          ...message(1, '2026-09-30T20:05:00.000Z', 'System-forwarded worker messages'),
+          kind: 'worker-batch' as const,
+        },
+        message(2, '2026-09-30T20:06:00.000Z', 'PR #9 is up'),
+      ]
+    );
+    expect(
+      result.entries.map((entry) => (entry.kind === 'session' ? entry.message.text : entry.kind))
+    ).toEqual(['ask', 'PR #9 is up']);
   });
 });
 

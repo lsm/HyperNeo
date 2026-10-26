@@ -94,6 +94,7 @@ const rpc = (name: string, input: unknown) => new Promise<unknown>((done, fail) 
   ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
 });
 async function start(title: string, folder = main) {
+  await rpc('rpc:settings.global.update', { updates: { workerSandbox: 'always' } });
   const result = await rpc('work.start', { adapter: 'claude-desktop', place: { machine: hostname(), folder, name: 'Synthetic fixture' }, title, message: 'Synthetic task only', preparation: { pack: 'coding', parameters: { target: 'dev' } } }) as Result<WorkStarted>;
   assert(result.ok, JSON.stringify(result));
   const root = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');

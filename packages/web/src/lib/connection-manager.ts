@@ -417,7 +417,14 @@ export class ConnectionManager {
     if (this.stateValidationInterval) return;
 
     this.stateValidationInterval = setInterval(async () => {
-      if (this.isConnected() && !document.hidden) {
+      if (document.hidden) {
+        return;
+      }
+      if (this.transport?.isSuspended()) {
+        this.resumeSuspended();
+        return;
+      }
+      if (this.isConnected()) {
         await this.validateConnectionState();
       }
     }, this.stateValidationPeriod);

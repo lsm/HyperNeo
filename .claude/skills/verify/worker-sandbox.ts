@@ -88,6 +88,7 @@ try {
     title: 'Synthetic prepared clone', message: 'Synthetic task only',
     preparation: { pack: 'coding', parameters: { target: 'dev', prerequisiteCommits: [before] } },
   };
+  await rpc('rpc:settings.global.update', { updates: { workerSandbox: 'always' } });
   const started = await rpc('work.start', request) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
   const worker = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');

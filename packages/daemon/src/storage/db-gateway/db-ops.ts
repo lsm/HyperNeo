@@ -1,4 +1,9 @@
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
+import {
+  codingPollPageReads,
+  codingPollPageWrites,
+} from '../../lib/neo/packs/coding/poll-http-db.ts';
+import { readWorkInput } from '../work-input.ts';
 import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
   codingAncestryReads,
@@ -87,9 +92,27 @@ import { credentialStoreWrites } from '../repositories/credential-store-writes.t
 import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue-write.ts';
 import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
+import { jobStaleReclaimWrites } from '../repositories/job-stale-reclaim-write.ts';
+import {
+  mailboxExpiryReads,
+  mailboxExpiryWrites,
+} from '../repositories/mailbox-expiry-commands.ts';
+import { githubPollSuccessorWrites } from '../repositories/github-poll-successor-write.ts';
+import { nativeFeedEnqueueWrites } from '../repositories/native-feed-enqueue-write.ts';
+import { sessionTitleEnqueueWrites } from '../repositories/session-title-enqueue-write.ts';
+import { skillValidationEnqueueWrites } from '../repositories/skill-validation-enqueue-write.ts';
+import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-write.ts';
+import { sessionListReads } from '../repositories/session-list-read.ts';
+import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
+import { healthSessionCountReads } from '../repositories/health-session-count-read.ts';
+import { sessionProjectionReads } from '../repositories/session-projection-read.ts';
+import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    codingPollPageReads,
+    codingPollPageWrites,
+    readWorkInput,
     codingMergeReads,
     codingMergeWrites,
     codingAncestryReads,
@@ -161,5 +184,18 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     providerRpcWrites,
     credentialStoreWrites,
     enqueueSessionDelivery,
+    jobStaleReclaimWrites,
+    mailboxExpiryReads,
+    mailboxExpiryWrites,
+    githubPollSuccessorWrites,
+    nativeFeedEnqueueWrites,
+    sessionTitleEnqueueWrites,
+    skillValidationEnqueueWrites,
+    githubPollRefreshWrites,
+    sessionListReads,
+    readLiveSessionList,
+    healthSessionCountReads,
+    sessionProjectionReads,
+    singleMessageReads,
   ].map((op) => [op.name, op])
 );

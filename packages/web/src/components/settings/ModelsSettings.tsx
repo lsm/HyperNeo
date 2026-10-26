@@ -1,3 +1,4 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import {
   ModelChevronUpIcon as ChevronUpIcon,
   ModelChevronDownIcon as ChevronDownIcon,
@@ -773,10 +774,9 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
       }
 
       const [modelsResponse, authResponse] = await Promise.all([
-        hub.request(
-          'models.list',
-          forceRefresh ? { forceRefresh: true } : { useCache: true }
-        ) as Promise<{ models: RawModelEntry[] }>,
+        hub.request('models.list', forceRefresh ? { forceRefresh: true } : { useCache: true }, {
+          timeout: MODEL_LIST_REQUEST_TIMEOUT_MS,
+        }) as Promise<{ models: RawModelEntry[] }>,
         listProviderAuthStatus().catch(() => ({ providers: [] })),
       ]);
 

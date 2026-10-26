@@ -1,4 +1,5 @@
 import type { MessageFeedArgs } from '../../storage/sdk-message-feed-read.ts';
+import { readSessionListMetadata } from '../../storage/repositories/session-list-live-read.ts';
 import type { LiveQueryEvaluation } from '../../storage/live-query.ts';
 import { Logger } from '../logger.ts';
 import type {
@@ -12,7 +13,6 @@ import type {
 } from '@hyperneo/shared';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { SESSION_COUNTERS_SQL } from '../live-query/queries/sessions.ts';
 import { NAMED_QUERY_REGISTRY } from '../live-query/registry.ts';
 import {
   BACKGROUND_TASK_METADATA_SQL,
@@ -56,11 +56,10 @@ export function setupLiveQueryHandlers(
   messageHub: MessageHub,
   liveQueries: LiveQueryEngine,
   db: BunDatabase,
-  readMessageFeed?: (args: MessageFeedArgs) => Promise<LiveQueryEvaluation>
+  readMessageFeed?: (args: MessageFeedArgs) => Promise<LiveQueryEvaluation>,
+  readSessionList?: (includeArchived: number) => Promise<LiveQueryEvaluation>
 ): () => void {
   const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
-
-  const stmtSessionCounters = db.prepare(SESSION_COUNTERS_SQL);
 
   const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
   const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
@@ -96,15 +95,7 @@ export function setupLiveQueryHandlers(
 
   activeRegistry.set('sessions.list', {
     ...sessionsListBase,
-    mapResult: () => {
-      const row = stmtSessionCounters.get() as
-        | { total_count: number; archived_count: number }
-        | undefined;
-      return {
-        totalCount: row?.total_count ?? 0,
-        archivedCount: row?.archived_count ?? 0,
-      };
-    },
+    mapResult: () => readSessionListMetadata(db),
   });
 
   const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
@@ -128,6 +119,8 @@ export function setupLiveQueryHandlers(
 
     const namedQuery = activeRegistry.get(queryName);
     const asyncFeed = !!readMessageFeed && MESSAGE_FEED_QUERIES.has(queryName);
+    const asyncSessionList = !!readSessionList && queryName === 'sessions.list';
+    const asyncEvaluation = asyncFeed || asyncSessionList;
     if (!namedQuery) {
       throw new Error(`Unknown query name: "${queryName}"`);
     }
@@ -254,7 +247,7 @@ export function setupLiveQueryHandlers(
     }
 
     const { sql } = namedQuery;
-    const mapRow = asyncFeed ? undefined : namedQuery.mapRow;
+    const mapRow = asyncEvaluation ? undefined : namedQuery.mapRow;
     const applyMapRow = (row: Record<string, unknown>) => (mapRow ? mapRow(row) : row);
     const applyMapRows = (rows: Record<string, unknown>[]) => rows.map(applyMapRow);
 
@@ -384,14 +377,16 @@ export function setupLiveQueryHandlers(
       },
       {
         debounceMs: namedQuery.debounceMs,
-        evaluateAsync: asyncFeed
-          ? () =>
-              readMessageFeed!({
-                sessionId: params[0] as string,
-                limit: params[1] as number,
-                feed: queryName === 'messages.bySession.compact' ? 'compact' : 'full',
-              })
-          : undefined,
+        evaluateAsync: asyncSessionList
+          ? () => readSessionList!(params[0] as number)
+          : asyncFeed
+            ? () =>
+                readMessageFeed!({
+                  sessionId: params[0] as string,
+                  limit: params[1] as number,
+                  feed: queryName === 'messages.bySession.compact' ? 'compact' : 'full',
+                })
+            : undefined,
         onError: (error) => {
           release();
           router?.sendToClient(
@@ -408,7 +403,7 @@ export function setupLiveQueryHandlers(
             })
           );
         },
-        getMetadata: asyncFeed ? undefined : namedQuery.mapResult,
+        getMetadata: asyncEvaluation ? undefined : namedQuery.mapResult,
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
         metadataScopeFilter: namedQuery.metadataScopeFilter,
         rowFingerprint: namedQuery.rowFingerprint,

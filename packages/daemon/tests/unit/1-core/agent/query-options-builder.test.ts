@@ -10,7 +10,15 @@ import type { AppMcpServer, AppSkill, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir, tmpdir } from 'os';
-import { mkdtempSync, mkdirSync, rmSync, statSync, realpathSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  realpathSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   buildProviderSettings,
@@ -121,6 +129,26 @@ describe('QueryOptionsBuilder', () => {
   afterEach(() => {});
 
   describe('build', () => {
+    it('prepared SDK workers honor a persisted local binding opt-out', async () => {
+      const root = join(handoffDataDir, 'local-binding-opt-out');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
+      const path = join(root, '.claude/settings.local.json');
+      const settings = JSON.parse(readFileSync(path, 'utf8'));
+      settings.sandbox.network.allowLocalBinding = false;
+      writeFileSync(path, JSON.stringify(settings));
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.sandbox?.network?.allowLocalBinding).toBe(false);
+        expect(JSON.parse(readFileSync(path, 'utf8')).sandbox.network.allowLocalBinding).toBe(
+          false
+        );
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    });
+
     it('prepared workers retain sandbox enforcement and recreate purged temp roots', async () => {
       const root = join(handoffDataDir, 'prepared');
       mkdirSync(join(root, '.git/info'), { recursive: true });
@@ -165,8 +193,7 @@ describe('QueryOptionsBuilder', () => {
     it('should set allowDangerouslySkipPermissions when bypassPermissions', async () => {
       mockSession.config.permissionMode = 'bypassPermissions';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
@@ -2191,6 +2218,7 @@ describe('QueryOptionsBuilder', () => {
               'WebFetch',
               'Bash',
               'mcp__hyperneo-operations__invoke',
+              'Bash(sleep:*)',
             ]);
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.agent).toBeUndefined();
@@ -2482,6 +2510,23 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('permission mode', () => {
+    it('starts prepared SDK workers outside auto while retaining their bypass restriction', async () => {
+      const root = join(handoffDataDir, 'permission-worker');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'protected')]);
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.permissionMode).toBe('default');
+        expect(options.allowDangerouslySkipPermissions).toBe(false);
+        expect(options.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false });
+        mockSession.config.permissionMode = 'plan';
+        expect((await builder.build()).permissionMode).toBe('plan');
+      } finally {
+        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+      }
+    });
+
     it('should use session config permission mode first', async () => {
       mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
@@ -2501,22 +2546,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.permissionMode).toBe('prompt');
     });
 
-    it('should default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it('should default to bypassPermissions at spawn', async () => {
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
 
     it.each([
-      ['unset', undefined, undefined, 'bypassPermissions', true],
-      ['default', 'default', undefined, 'bypassPermissions', true],
-      ['bypassPermissions', 'bypassPermissions', undefined, 'bypassPermissions', true],
-      ['acceptEdits', 'acceptEdits', 'acceptEdits', undefined, false],
-      ['plan', 'plan', 'plan', undefined, false],
-      ['legacy delegate', 'delegate', 'delegate', undefined, false],
+      ['unset', undefined, 'bypassPermissions', true],
+      ['default', 'default', 'bypassPermissions', true],
+      ['bypassPermissions', 'bypassPermissions', 'bypassPermissions', true],
+      ['acceptEdits', 'acceptEdits', 'acceptEdits', false],
+      ['plan', 'plan', 'plan', false],
+      ['legacy delegate', 'delegate', 'delegate', false],
     ])(
       'a global %s permission mode keeps its SDK output',
-      async (_name, permissionMode, sent, deferred, skipsPermissions) => {
+      async (_name, permissionMode, sent, skipsPermissions) => {
         (mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue(
           permissionMode ? { permissionMode } : {}
         );
@@ -2526,16 +2570,14 @@ describe('QueryOptionsBuilder', () => {
         });
         const options = await built.build();
         expect(options.permissionMode).toBe(sent);
-        expect(built.getDeferredPermissionMode()).toBe(deferred);
         expect(options.allowDangerouslySkipPermissions ?? false).toBe(skipsPermissions);
       }
     );
 
-    it('should map default to bypassPermissions (withheld at intake, deferred)', async () => {
+    it('should map default to bypassPermissions at spawn', async () => {
       mockSession.config.permissionMode = 'default';
       const options = await builder.build();
-      expect(options.permissionMode).toBeUndefined();
-      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypassPermissions');
     });
   });
 
@@ -2613,6 +2655,76 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')).toBeUndefined();
+    });
+
+    it('keeps the Bash scope hook for a non-coordinator config mixing bare and scoped grants', async () => {
+      mockSession.config.allowedTools = ['Bash', 'Bash(sleep:*)'];
+      const options = await builder.build();
+
+      const bashHooks = options.hooks?.PreToolUse?.flatMap((entry) =>
+        entry.matcher === 'Bash' ? entry.hooks : []
+      );
+      expect(bashHooks).toHaveLength(1);
+      const run = (command: string) =>
+        bashHooks?.[0]?.({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command },
+        } as never);
+      const denied = (await run('ls -la')) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(await run('sleep 30')).toEqual({});
+    });
+
+    it('installs a bounded-sleep admission hook for the neo coordinator only', async () => {
+      const sqlite = new BunDatabase(':memory:');
+      const ordinaryId = mockSession.id;
+      try {
+        createNeoTables(sqlite);
+        mockSession.config.allowedTools = ['Bash', 'Bash(sleep:*)'];
+        mockSession.id = `neo:${generateUUID()}`;
+        sqlite
+          .prepare(
+            'INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,NULL,?)'
+          )
+          .run(mockSession.id, 'neo');
+        const neoContext = {
+          ...mockContext,
+          db: {
+            ...mockContext.db!,
+            getDatabase: () => sqlite,
+          },
+        };
+        const options = await new QueryOptionsBuilder(neoContext).build();
+        const bashHooks = options.hooks?.PreToolUse?.flatMap((entry) =>
+          entry.matcher === 'Bash' ? entry.hooks : []
+        );
+        expect(bashHooks).toHaveLength(1);
+        const run = (command: string) =>
+          bashHooks?.[0]?.({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Bash',
+            tool_input: { command },
+          } as never);
+        const allowed = (await run('sleep 30')) as {
+          hookSpecificOutput: { permissionDecision: string };
+        };
+        expect(allowed.hookSpecificOutput.permissionDecision).toBe('allow');
+        const denied = (await run('sleep 999')) as {
+          hookSpecificOutput: { permissionDecision: string };
+        };
+        expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+        expect(await run('ls -la')).toEqual({});
+
+        mockSession.id = ordinaryId;
+        const ordinary = await builder.build();
+        const ordinaryHook = ordinary.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash');
+        expect(ordinaryHook?.hooks).toHaveLength(1);
+      } finally {
+        sqlite.close();
+      }
     });
 
     it('getCurrentPermissionMode re-resolves the live mode for the deferred-switch staleness guard', async () => {

@@ -161,7 +161,7 @@ export function createNeoWorkerQuestionWriter(
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type QuestionReceipt = { ok: true; question: NeoQuestion };
+type QuestionReceipt = { ok: true; question: NeoQuestion; records?: string[] };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
@@ -321,10 +321,16 @@ const QuestionResult = z.union([
   z.object({
     ok: z.literal(true),
     question: NeoQuestionSchema,
+    records: z.array(z.string()).optional(),
   }),
 ]);
 
-type QuestionPlan = { ask: NeoAsk; draft: NeoQuestionDraft; reworded: NeoQuestion | null };
+type QuestionPlan = {
+  ask: NeoAsk;
+  draft: NeoQuestionDraft;
+  reworded: NeoQuestion | null;
+  records?: string[];
+};
 
 export function planNeoQuestion(
   ask: NeoAsk,
@@ -335,15 +341,22 @@ export function planNeoQuestion(
 ): Gate<QuestionPlan> {
   if (input.focused && !sourceSession)
     return fail('source_session_unavailable: focused discussion needs one readable session.');
-  const todoId = 'todoId' in input ? input.todoId : undefined;
-  if (
-    todoId &&
-    (!todo ||
-      todo.id !== todoId ||
-      todo.askId !== ask.id ||
-      ['done', 'removed'].includes(todo.state))
-  )
-    return fail('todo_closed: choose a current todo on this ask.');
+  const requestedTodoId = 'todoId' in input ? input.todoId : undefined;
+  const todoId =
+    requestedTodoId &&
+    todo?.id === requestedTodoId &&
+    todo.askId === ask.id &&
+    !['done', 'closed_unverified', 'removed'].includes(todo.state)
+      ? requestedTodoId
+      : undefined;
+  const records =
+    requestedTodoId && !todoId
+      ? {
+          records: [
+            'todo_closed: the todo reference is not current; this question is recorded on the ask without linking that todo.',
+          ],
+        }
+      : {};
   const confirm = input.confirm ?? null;
   if (confirm) {
     if (input.kind !== 'yesno')
@@ -367,10 +380,17 @@ export function planNeoQuestion(
     startTodos: null,
     confirm,
   };
-  if (input.kind !== 'start') return { value: { ask, draft, reworded: null } };
+  if (input.kind !== 'start') return { value: { ask, draft, reworded: null, ...records } };
   const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
   return open
-    ? { value: { ask, draft: { ...draft, startTodos: open.startTodos }, reworded: open } }
+    ? {
+        value: {
+          ask,
+          draft: { ...draft, startTodos: open.startTodos },
+          reworded: open,
+          ...records,
+        },
+      }
     : fail(
         'no_start_question: no todo on this ask is waiting to start; add todos with an instruction and the daemon asks.'
       );
@@ -389,17 +409,7 @@ export function requireNeoQuestionReplaceable(
   if (replaced.askId !== ask.id)
     return fail(`other_ask: question ${replaces} belongs to another ask; replace only this ask's.`);
   if (replaced.kind === 'start') return fail(START_QUESTION);
-  return replaced.state === 'open'
-    ? { value: replaced }
-    : fail(`question_closed: question ${replaces} is ${replaced.state}.`);
-}
-
-export function requireNeoOpenQuestion(question: NeoQuestion | null): Gate<NeoQuestion> {
-  if (!question) return fail('not_found: no such question.');
-  if (question.kind === 'start') return fail(START_QUESTION);
-  return question.state === 'open'
-    ? { value: question }
-    : fail(`question_closed: this question is ${question.state}.`);
+  return { value: replaced.state === 'open' ? replaced : null };
 }
 
 export function planNeoQuestionAnswer(
@@ -472,12 +482,12 @@ export function createNeoQuestionOperations(
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
-        (input.replyTo ?? []).every((id) => receivedHumanInput(caller, id))
-          ? { value: input }
-          : fail('invalid_reply_to: cite only received human messages in this conversation.'),
+      (input: z.infer<typeof Ask>, caller: OperationCaller) => ({
+        ...input,
+        replyTo: input.replyTo?.filter((id) => receivedHumanInput(caller, id)),
+      }),
       ['input', 'caller'],
-      'result:outcome'
+      'input'
     )
     .pipe(
       (input: z.infer<typeof Ask>, caller: OperationCaller) => {
@@ -609,7 +619,9 @@ export function createNeoQuestionOperations(
             : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
         });
         if (question && reply.context) publicationChanged(reply.context.conversationId);
-        return question ? { ok: true, question } : { ok: false, reason };
+        return question
+          ? { ok: true, question, ...(plan.records ? { records: plan.records } : {}) }
+          : { ok: false, reason };
       },
       ['outcome', 'reply'],
       'outcome'
@@ -631,13 +643,18 @@ export function createNeoQuestionOperations(
   const retire = (superpipe({})('neo.question.retire') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Retire>) =>
-        requireNeoOpenQuestion(store.getQuestion(input.questionId)),
+      (input: z.infer<typeof Retire>): Gate<NeoQuestion> => {
+        const question = store.getQuestion(input.questionId);
+        if (!question) return fail('not_found: no such question.');
+        if (question.kind === 'start') return fail(START_QUESTION);
+        return { value: question };
+      },
       'input',
       'result:outcome'
     )
     .pipe(
-      (question: NeoQuestion): Gate<NeoQuestion> => {
+      (question: NeoQuestion): Gate<NeoQuestion> | { reason: QuestionReceipt } => {
+        if (question.state !== 'open') return { reason: { ok: true, question } };
         const open = requireNeoOpenAsk(store.getAsk(question.askId));
         return 'reason' in open ? open : { value: question };
       },
@@ -709,7 +726,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
+        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, return a todo_closed record and open the question on the ask without linking that todo. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -718,7 +735,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.retire',
       description:
-        'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed.',
+        'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed. An already closed question comes back unchanged.',
       inputSchema: Retire,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

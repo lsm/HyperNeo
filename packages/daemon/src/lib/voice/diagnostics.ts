@@ -26,6 +26,12 @@ export function voiceSocketReason(code: number): string {
   );
 }
 
+export function voicePeerReasonBytes(reason: unknown): number {
+  if (typeof reason === 'string') return Buffer.byteLength(reason);
+  if (reason instanceof Uint8Array) return reason.byteLength;
+  return 0;
+}
+
 export function voiceSocketErrorCode(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'string' &&

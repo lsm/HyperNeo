@@ -1,3 +1,4 @@
+import { attachNativeFeedWriter } from '../../../helpers/native-feed-enqueue-writer';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import {
   mkdirSync,
@@ -79,7 +80,9 @@ test.each(['codex', 'claude'])('timed %s listing yields during slow metadata I/O
   delay.path = root;
   delay.operation = 'list';
   const run = kind === 'codex' ? runCodexFeed : runClaudeFeed;
-  const queue = { enqueueUniquePending: vi.fn() } as unknown as JobQueueRepository;
+  const queue = attachNativeFeedWriter({
+    enqueueUniquePending: vi.fn(),
+  }) as unknown as JobQueueRepository;
   expect(await responsive(() => run(queue, db, root, Date.now()))).toEqual({ files: 1, turns: 0 });
   expect([...readWorkFeedOffsets(db)]).toEqual([
     [

@@ -28,14 +28,13 @@ assert.deepEqual(await rpc(input), receipt);
 if (phase === 'capture') {
   assert.deepEqual(await rpc({ ...input, path: '../outside.md' }), { accepted: false, reason: 'unsafe_path' });
   assert.deepEqual(await rpc({ ...input, path: '.env' }), { accepted: false, reason: 'sensitive_path' });
-  assert.deepEqual(await rpc({ ...input, context: { kind: 'todo', id: 'foreign' } }), { accepted: false, reason: 'unavailable' });
+  assert.deepEqual(await rpc({ ...input, path: join(workspace, 'report.md'), context: { kind: 'todo', id: 'foreign' } }), { accepted: false, reason: 'unavailable' });
   writeFileSync(join(workspace, 'report.md'), '# Changed synthetic bytes\n');
-  assert.deepEqual(await rpc(input), { accepted: false, reason: 'source_changed' });
-  const version2 = await rpc({ ...input, requestId: 'request-v2' });
+  const version2 = await rpc(input);
   assert.equal(version2.accepted, true);
   assert.notEqual(version2.artifact.artifactId, receipt.artifact.artifactId);
   renameSync(join(workspace, 'report.md'), join(workspace, 'retained-source.md'));
-  assert.deepEqual(await rpc(input), receipt);
+  assert.deepEqual(await rpc(input), version2);
   const db = new Database(join(root, 'data', 'daemon.db'), { readonly: true });
   const metadata = db.prepare('SELECT sha256, byte_length FROM artifact_files WHERE artifact_id = ?').get(receipt.artifact.artifactId) as { sha256: string; byte_length: number };
   db.close();
@@ -46,7 +45,7 @@ if (phase === 'capture') {
   writeFileSync(evidence, JSON.stringify({ receipt, version2, metadata, sourceRetained: true }, null, 2));
 } else {
   assert.equal(phase, 'restart');
-  assert.deepEqual(receipt, JSON.parse(readFileSync(evidence, 'utf8')).receipt);
+  assert.deepEqual(receipt, JSON.parse(readFileSync(evidence, 'utf8')).version2);
   writeFileSync(join(root, 'evidence', 'register-rpc-restart.json'), JSON.stringify({ sameReceipt: true, receipt }));
 }
 console.log(`PASS: registration ${phase} through isolated daemon operation.invoke`);

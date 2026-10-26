@@ -29,7 +29,7 @@ Check desktop 1280 and mobile 390 widths; inspect `marked-done.png` and
 `card-error-*.png`. `browser.json` records the visible errors and retries;
 `observed.json` records persisted ask states and cleanup. Component contracts
 also cover transport rejection/non-Error failures and clearing errors on retry.
-Agent completion still requires finished todos. Native iOS is outside this slice.
+Agent settlement records unfinished todos and closes them unverified; those rows never count as done. The ask-bookkeeping-actions journey proves the MCP and public-reader payloads. Native iOS is outside this slice.
 
 After merge/close remove the worktree and read the deployed commit via owner RPC;
 never restart or modify the live daemon.

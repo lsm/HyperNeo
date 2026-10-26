@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   bashScopeDenyReason,
   createBashScopeHook,
+  createSleepBoundHook,
   extractBashScopePrefixes,
   isBashCommandAllowed,
   parseScopedBashPrefix,
+  sleepCommandVerdict,
 } from '../../../../src/lib/agent/bash-scope';
 import { PRESET_AGENT_TOOLS } from '../../../../src/lib/agents/seed-agents';
 
@@ -391,5 +393,142 @@ describe('bashScopeDenyReason', () => {
     expect(reason).toContain('gh pr view, jq');
     expect(reason).toContain('do not route around it');
     expect(reason).toContain('no sh -c / bash -c');
+  });
+});
+
+describe('scoped entries beside an unrestricted Bash grant', () => {
+  test('prefixes still extract; the coordinator-keyed bypass lives at hook install', () => {
+    expect(extractBashScopePrefixes(['Read', 'Bash', 'Bash(sleep:*)'])).toEqual(['sleep']);
+  });
+});
+
+describe('sleepCommandVerdict / createSleepBoundHook', () => {
+  test('bounded sleeps are admitted', () => {
+    expect(sleepCommandVerdict('sleep 30')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 300')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 0.5')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 1m')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 10 && sleep 20')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 5; echo done')).toBe('allowed');
+  });
+
+  test('over-limit, unit-shifted, and computed waits stay vetoed', () => {
+    expect(sleepCommandVerdict('sleep 301')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 10 && sleep 291')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 300 && sleep 300')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 6m')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 1h')).toBe('denied');
+    expect(sleepCommandVerdict('sleep $(cat s)')).toBe('denied');
+    expect(sleepCommandVerdict('sleep $N')).toBe('denied');
+    expect(sleepCommandVerdict('sleep')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 1d')).toBe('denied');
+  });
+
+  test('hostile and path-qualified sleeps cannot bypass the bound', () => {
+    expect(sleepCommandVerdict('/usr/bin/sleep 301')).toBe('denied');
+    expect(sleepCommandVerdict('BASH_ENV=x sleep 9999')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 1 && BASH_ENV=x sleep 9999')).toBe('denied');
+    expect(sleepCommandVerdict('(sleep 999)')).toBe('denied');
+    expect(sleepCommandVerdict('BASH_ENV=x ls')).toBe('none');
+    expect(sleepCommandVerdict('FOO=bar /usr/bin/sleep 30')).toBe('allowed');
+    expect(sleepCommandVerdict('X=1 sleep 30 && sleep 40')).toBe('allowed');
+  });
+
+  test('sleeps hidden behind wrapper commands are vetoed', () => {
+    expect(sleepCommandVerdict("bash -c 'sleep 999'")).toBe('denied');
+    expect(sleepCommandVerdict('sh -c "sleep 30"')).toBe('denied');
+    expect(sleepCommandVerdict('busybox sleep 999')).toBe('denied');
+    expect(sleepCommandVerdict('timeout 900 sleep 900')).toBe('denied');
+    expect(sleepCommandVerdict('echo 999 | xargs sleep')).toBe('denied');
+    expect(sleepCommandVerdict('nohup sleep 30')).toBe('denied');
+    expect(sleepCommandVerdict('env FOO=1 sleep 30')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 30 && bash -c "sleep 999"')).toBe('denied');
+    expect(sleepCommandVerdict('xargs echo')).toBe('none');
+    expect(sleepCommandVerdict('bash -c ls')).toBe('none');
+    expect(sleepCommandVerdict('timeout 10 ./run')).toBe('none');
+    expect(sleepCommandVerdict('backup-sleep 5')).toBe('none');
+  });
+
+  test('obfuscated and unaccounted sleep tokens are denied, not neutral', () => {
+    expect(sleepCommandVerdict("'sleep' 999")).toBe('denied');
+    expect(sleepCommandVerdict('"sleep" 999')).toBe('denied');
+    expect(sleepCommandVerdict("sl'eep' 301")).toBe('denied');
+    expect(sleepCommandVerdict('slee"p" 999')).toBe('denied');
+    expect(sleepCommandVerdict('while :; do sleep 1; done')).toBe('denied');
+    expect(sleepCommandVerdict("bash <<'EOF'\nsleep 999\nEOF")).toBe('denied');
+    expect(sleepCommandVerdict('echo "sleep 999"')).toBe('denied');
+    expect(sleepCommandVerdict("s'leep' 5")).toBe('allowed');
+    expect(sleepCommandVerdict("slee'ep' 999")).toBe('none');
+  });
+
+  test('ANSI-C quoting and indirect sleeps are vetoed', () => {
+    expect(sleepCommandVerdict("sle$'ep' 999")).toBe('denied');
+    expect(sleepCommandVerdict("sleep$'' 999")).toBe('denied');
+    expect(sleepCommandVerdict('x=sleep; $x 9999')).toBe('denied');
+    expect(sleepCommandVerdict('x=sleep')).toBe('denied');
+    expect(sleepCommandVerdict('x=$(sleep 5)')).toBe('allowed');
+    expect(sleepCommandVerdict('x=$(sleep 999)')).toBe('denied');
+  });
+
+  test('escape-decoded and redirect-glued sleep words are vetoed', () => {
+    expect(sleepCommandVerdict("$'\\x73leep' 9999")).toBe('denied');
+    expect(sleepCommandVerdict("$'\\163leep' 9999")).toBe('denied');
+    expect(sleepCommandVerdict("$'sl\\x65\\x65p' 999")).toBe('denied');
+    expect(sleepCommandVerdict("$'\\x73leep' 30")).toBe('allowed');
+    expect(sleepCommandVerdict('sleep>x 999')).toBe('denied');
+    expect(sleepCommandVerdict('sleep>x 30')).toBe('denied');
+    expect(sleepCommandVerdict('sleep <x 999')).toBe('denied');
+    expect(sleepCommandVerdict('sleep>x$(cat c) 999')).toBe('denied');
+  });
+
+  test('heads carrying expansion metachars are unclassifiable and vetoed', () => {
+    expect(sleepCommandVerdict('x=; s${x}leep 301')).toBe('denied');
+    expect(sleepCommandVerdict('s${x}leep 301')).toBe('denied');
+    expect(sleepCommandVerdict('sl{,}eep 999')).toBe('denied');
+    expect(sleepCommandVerdict('slee* 999')).toBe('denied');
+    expect(sleepCommandVerdict('slee[p] 999')).toBe('denied');
+    expect(sleepCommandVerdict('s?eep 999')).toBe('denied');
+    expect(sleepCommandVerdict('a=sl; b=eep; $a$b 999')).toBe('denied');
+    expect(sleepCommandVerdict('`sleep 999`')).toBe('denied');
+    expect(sleepCommandVerdict('$(echo sleep) 999')).toBe('denied');
+    expect(sleepCommandVerdict('[ -f x ] && echo ok')).toBe('none');
+    expect(sleepCommandVerdict('[[ -f x ]] && echo ok')).toBe('none');
+  });
+
+  test('sleeps inside repeatable function definitions are vetoed', () => {
+    expect(sleepCommandVerdict('f(){ sleep 200; [ "$1" -gt 0 ] && f 0; }; f 1')).toBe('denied');
+    expect(sleepCommandVerdict('f() (sleep 100)')).toBe('denied');
+    expect(sleepCommandVerdict('function f { sleep 30; }')).toBe('denied');
+    expect(sleepCommandVerdict('function f() { sleep 30; }')).toBe('denied');
+    expect(sleepCommandVerdict('f()\n{\n  sleep 1\n}')).toBe('denied');
+    expect(sleepCommandVerdict('f(){ g(){ sleep 1; }; }; f')).toBe('denied');
+    expect(sleepCommandVerdict('f(){ sleep 5; }; f; f; f')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 5; f(){ echo hi; }')).toBe('allowed');
+    expect(sleepCommandVerdict('f(){ echo hi; }; sleep 5')).toBe('allowed');
+    expect(sleepCommandVerdict('f(){ echo hi; }')).toBe('none');
+  });
+
+  test('commands without sleeps are neutral', () => {
+    expect(sleepCommandVerdict('echo done')).toBe('none');
+    expect(sleepCommandVerdict('asleep 5')).toBe('none');
+  });
+
+  test('the hook allows bounded sleeps and denies unbounded ones', async () => {
+    const hook = createSleepBoundHook();
+    const run = (command: string) =>
+      hook({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: { command },
+      });
+    const allowed = (await run('sleep 30')) as {
+      hookSpecificOutput: { permissionDecision: string };
+    };
+    expect(allowed.hookSpecificOutput.permissionDecision).toBe('allow');
+    const denied = (await run('sleep 999')) as {
+      hookSpecificOutput: { permissionDecision: string };
+    };
+    expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(await run('ls -la')).toEqual({});
   });
 });

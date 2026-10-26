@@ -979,6 +979,25 @@ describe('JobQueueRepository', () => {
   });
 
   describe('reschedulePending', () => {
+    it('refuses old reclaim jitter after a newer claim returns to pending', () => {
+      const job = repository.enqueue({ queue: 'test', payload: {} });
+      const [oldClaim] = repository.dequeue('test');
+      repository.reclaimStale(Date.now() + 1_000);
+      const [newClaim] = repository.dequeue('test');
+      repository.reclaimStale(Date.now() + 1_000);
+      const due = repository.getJob(job.id)!.runAt;
+      const fenced = repository.reschedulePending as (
+        jobId: string,
+        runAt: number,
+        claimToken: string | null
+      ) => boolean;
+
+      expect(newClaim.claimToken).not.toBe(oldClaim.claimToken);
+      expect(fenced.call(repository, job.id, due + 60_000, oldClaim.claimToken)).toBe(false);
+      expect(repository.getJob(job.id)!.runAt).toBe(due);
+      expect(fenced.call(repository, job.id, due + 2_000, newClaim.claimToken)).toBe(true);
+    });
+
     it("moves a pending job's run_at (the stale-reclaim jitter seam)", () => {
       const job = repository.enqueue({ queue: 'test', payload: {} });
       const later = Date.now() + 5_000;

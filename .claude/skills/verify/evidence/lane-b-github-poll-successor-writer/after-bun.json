@@ -1,0 +1,97 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 376,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "claimed": 1,
+  "first": {
+    "id": "4e6c6755-e0f7-4fc9-9a7f-f25fc5dad6b3",
+    "queue": "github.poll",
+    "status": "completed",
+    "payload": {},
+    "result": {
+      "polled": true,
+      "nextRunAt": 1792987553756
+    },
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792987493752,
+    "createdAt": 1792987493752,
+    "startedAt": 1792987493754,
+    "heartbeatAt": null,
+    "completedAt": 1792987493756,
+    "claimToken": "0a092aaf-d5a9-436b-9fc4-a513a4da99c2"
+  },
+  "successors": [
+    {
+      "id": "2cb6a3b4-4733-48d8-a887-09c862bd93e0",
+      "queue": "github.poll",
+      "status": "pending",
+      "payload": {},
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1792987553756,
+      "createdAt": 1792987493756,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "pollRequests": 1,
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 389,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "afterDuplicate": [
+    {
+      "id": "2cb6a3b4-4733-48d8-a887-09c862bd93e0",
+      "queue": "github.poll",
+      "status": "pending",
+      "payload": {},
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1792987553756,
+      "createdAt": 1792987493756,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "disabled": {
+    "polled": false,
+    "nextRunAt": 0
+  },
+  "mainSqlAttempts": 0
+}

@@ -91,6 +91,30 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
+  it('loads question text and todo bodies only after opening the summary', async () => {
+    locale.value = 'en';
+    const summary = entry({
+      summary: { todoCount: 1, questionCount: 1, openQuestionCount: 1 },
+      todos: [todo('one', { instruction: null })],
+      questions: [],
+    });
+    const answer = vi.fn();
+    const load = vi.fn().mockResolvedValue({
+      ...summary,
+      summary: undefined,
+      questions: [question('choice', { kind: 'choice', options: ['Ship', 'Wait'] })],
+      todos: [todo('one', { instruction: 'Full task instructions', report: 'Full worker report' })],
+    });
+    const app = render(<NeoAskTodos entry={summary} onAnswer={answer} onLoadDetails={load} />);
+    expect(load).not.toHaveBeenCalled();
+    expect(app.queryByRole('button', { name: 'Ship' })).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: /Show details.*Todo one/i }));
+    await waitFor(() => expect(app.getByText('Full worker report')).toBeTruthy());
+    expect(app.getByText('Full task instructions')).toBeTruthy();
+    expect(load).toHaveBeenCalledWith('ask');
+    fireEvent.click(app.getByRole('button', { name: 'Ship' }));
+    expect(answer).toHaveBeenCalledWith('choice', ['Ship']);
+  });
   it('copies a quote after expanding and reopening a collapsed card', async () => {
     locale.value = 'en';
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
@@ -481,7 +505,13 @@ describe('NeoAskTodos', () => {
     locale.value = 'en';
     const app = render(
       <NeoAskTodos
-        entry={entry({ todos: [todo('a', { report: 'More here' }), todo('b'), todo('c')] })}
+        entry={entry({
+          todos: [
+            todo('a', { report: 'More here' }),
+            todo('b', { instruction: null }),
+            todo('c', { instruction: null }),
+          ],
+        })}
         onAnswer={vi.fn()}
       />
     );
@@ -989,15 +1019,15 @@ describe('neoAskEntryGroup', () => {
     expect(neoAskEntryGroup({ state: 'dropped', todos: [] })).toBe('outcomes');
   });
 
-  it('moves a card holding a blocked todo to the very top', () => {
+  it('keeps waiting cards above blocked work', () => {
     const blocked = entry({ state: 'doing', todos: [todo('b', { state: 'blocked' })] });
     const waiting = entry({ state: 'waiting' });
     expect(neoAskEntryGroup(blocked)).toBe('attention');
     expect(neoAskEntryGroup({ ...blocked, state: 'done' })).toBe('outcomes');
     expect(neoAskEntryGroup({ ...blocked, state: 'dropped' })).toBe('outcomes');
     expect(neoAskEntriesInOrder([waiting, blocked, entry({ state: 'doing' })])).toEqual([
-      blocked,
       waiting,
+      blocked,
       expect.objectContaining({ state: 'doing' }),
     ]);
   });

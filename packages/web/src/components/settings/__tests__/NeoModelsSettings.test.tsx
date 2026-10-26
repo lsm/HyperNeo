@@ -1,4 +1,5 @@
 import { signal } from '@preact/signals';
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { GlobalSettings } from '@hyperneo/shared';
@@ -349,7 +350,8 @@ test('refresh reloads the model list and never saves a Neo default', async () =>
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith(
       'models.list',
-      expect.objectContaining({ forceRefresh: true })
+      expect.objectContaining({ forceRefresh: true }),
+      { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
     )
   );
   expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());

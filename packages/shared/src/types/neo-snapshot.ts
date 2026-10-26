@@ -172,6 +172,12 @@ export interface NeoPackSetting {
   setAt: number;
 }
 
+export interface NeoAskHistoryPage {
+  ok: true;
+  entries: NeoAskEntry[];
+  nextCursor: { updatedAt: number; id: string } | null;
+}
+
 export interface NeoSnapshot {
   session?: WorkerIdentity | null;
   packPreferences?: NeoPackSetting[];
@@ -191,6 +197,7 @@ export interface NeoSnapshot {
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];
+  historyCursor?: { updatedAt: number; id: string } | null;
   packRows?: NeoPackRows[];
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   trimmed?: string;

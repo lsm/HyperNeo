@@ -354,16 +354,16 @@ describe('withCodexDesktopIpc', () => {
 
   describe('existing-thread work.send without a Desktop owner', () => {
     test.each(
-      (['steer', 'resume', 'queue'] as const).flatMap((route) =>
+      (['active', 'completed'] as const).flatMap((state) =>
         (['refused', 'hung'] as const).flatMap((launcher) =>
           (['missing', 'stale'] as const).map(
-            (connection) => [route, launcher, connection] as const
+            (connection) => [state, launcher, connection] as const
           )
         )
       )
     )(
-      'delivers through %s without Desktop, even if open would be %s and socket is %s',
-      async (route, launcher, connection) => {
+      'queues %s input even if Desktop open would be %s and socket is %s',
+      async (state, launcher, connection) => {
         const f = await fixture((message, _socket, send) =>
           send({
             type: 'response',
@@ -382,7 +382,13 @@ describe('withCodexDesktopIpc', () => {
         }
         const statePath = join(directory, 'state.sqlite');
         const rollout = join(directory, 'rollout.jsonl');
-        writeFileSync(rollout, '');
+        writeFileSync(
+          rollout,
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: state === 'active' ? 'task_started' : 'task_complete' },
+          }) + '\n'
+        );
         const db = new Database(statePath);
         db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
         CREATE TABLE projects (id TEXT, name TEXT);
@@ -418,19 +424,7 @@ describe('withCodexDesktopIpc', () => {
           appServer: async () => ({
             call: async (method, params) => {
               calls.push(method);
-              if (method === 'thread/turns/list')
-                return {
-                  data: [
-                    { id: 'existing-turn', status: route === 'steer' ? 'inProgress' : 'completed' },
-                  ],
-                };
-              if (method === 'turn/steer') return { turnId: 'existing-turn' };
-              if (method === 'thread/resume') {
-                if (route === 'queue')
-                  throw new Error('thread thread-1 already has an active writer');
-                return {};
-              }
-              if (method === 'turn/start') return { turn: { id: 'resumed-turn' } };
+              if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
               if (method === 'thread/queue/add') {
                 const text = (params.input as { text: string }[])[0].text;
                 appendFileSync(
@@ -441,7 +435,7 @@ describe('withCodexDesktopIpc', () => {
                     payload: {
                       type: 'message',
                       role: 'user',
-                      id: 'queued-input',
+                      id: params.clientUserMessageId,
                       content: [{ type: 'input_text', text }],
                     },
                   }) + '\n'
@@ -501,29 +495,234 @@ describe('withCodexDesktopIpc', () => {
               ok: true,
               value: {
                 delivered: true,
-                ...(route === 'steer'
-                  ? { steeredIntoTurnId: 'existing-turn' }
-                  : route === 'resume'
-                    ? { startedTurnId: 'resumed-turn' }
-                    : {
-                        queuedSubmissionId: 'existing-queue',
-                        receipt: { executionId: 'thread-1', inputId: 'queued-input' },
-                      }),
+                queuedSubmissionId: 'existing-queue',
+                receipt: { executionId: 'thread-1', inputId: 'existing-input' },
               },
             },
           });
-          expect(calls).toContain(
-            route === 'steer'
-              ? 'turn/steer'
-              : route === 'resume'
-                ? 'turn/start'
-                : 'thread/queue/add'
-          );
-          if (route !== 'resume') expect(calls).not.toContain('turn/start');
+          expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
+          expect(f.seen).toEqual([]);
           expect(launches).toEqual([]);
         } finally {
           clearTimeout(timer);
           releaseOpen(1);
+        }
+      }
+    );
+  });
+
+  describe('existing-thread work.send through the Desktop owner', () => {
+    test.each(['steer', 'start'] as const)(
+      'delivers by follower %s to the owner client and never touches the app-server',
+      async (delivery) => {
+        const f = await fixture((message, _socket, send) => {
+          if (message.method === 'thread-owner-discovery')
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              handledByClientId: 'desktop-owner',
+            });
+          if (message.method === 'thread-follower-steer-turn') {
+            if (delivery === 'start')
+              return send({
+                type: 'response',
+                requestId: message.requestId,
+                resultType: 'error',
+                error: 'active turn already ended',
+              });
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              result: { result: { turnId: 'turn-1' } },
+            });
+          }
+          if (message.method === 'thread-follower-start-turn')
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              result: { result: { turn: { id: 'turn-2' } } },
+            });
+          send({ type: 'response', requestId: message.requestId, resultType: 'success' });
+        });
+        const statePath = join(directory, 'owner-state.sqlite');
+        const db = new Database(statePath);
+        db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+        CREATE TABLE projects (id TEXT, name TEXT);
+        CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+        db.prepare(
+          `INSERT INTO threads VALUES ('thread-1', 'Held worker', '', '', '/tmp/verify', 'desktop', 0, 1, ?)`
+        ).run(join(directory, 'owner-rollout.jsonl'));
+        db.close();
+        const driver = createCodexDesktopAdapter({
+          statePath,
+          desktopSocketPath: f.path,
+          desktopRunning: async () => true,
+          worktreesDir: directory,
+          machine: 'test',
+          now: Date.now,
+          spawn: () => {
+            throw new Error('Owner delivery must not spawn processes');
+          },
+          appServer: async () => {
+            throw new Error('Owner delivery must not contact the app-server');
+          },
+          bootstrapServer: async () => {
+            throw new Error('Held work must not bootstrap');
+          },
+          prepareDesktopProject: async () => {
+            throw new Error('Held work must not create a project');
+          },
+          startDesktopTurn: async () => {
+            throw new Error('Held work must not use new-thread handoff');
+          },
+          folderExists: () => true,
+          makeFolder: () => {},
+          homeDir: directory,
+          gitCheckout: async () => null,
+          newId: () => 'owner-input',
+        });
+        const registry = createOperationRegistry(
+          createWorkVerbOperations({
+            adapters: () => [driver],
+            daemonName: 'test',
+            isOpenTodo: () => true,
+            remote: { list: () => [], invoke: async () => ({}) },
+          })
+        );
+        const result = await invokeOperation(
+          registry,
+          'work.send',
+          {
+            ref: { adapter: driver.id, id: 'thread-1' },
+            message: 'Held worker input',
+            todoId: 'open-todo',
+          },
+          { source: 'mcp', role: 'neo', sessionId: 'neo' }
+        );
+        expect(result).toMatchObject({
+          kind: 'completed',
+          value: {
+            ok: true,
+            value: {
+              delivered: true,
+              ...(delivery === 'steer'
+                ? { steeredIntoTurnId: 'turn-1' }
+                : { startedTurnId: 'turn-2' }),
+            },
+          },
+        });
+        const methods = f.seen.map((message) => message.method);
+        expect(methods).toContain('thread-owner-discovery');
+        expect(methods).toContain(
+          delivery === 'steer' ? 'thread-follower-steer-turn' : 'thread-follower-start-turn'
+        );
+      }
+    );
+
+    test.each([true, false])(
+      'explicit queue refuses only on confirmed Desktop ownership (owned: %s)',
+      async (owned) => {
+        const f = await fixture((message, _socket, send) => {
+          if (message.method === 'thread-owner-discovery')
+            return send(
+              owned
+                ? {
+                    type: 'response',
+                    requestId: message.requestId,
+                    resultType: 'success',
+                    handledByClientId: 'desktop-owner',
+                  }
+                : {
+                    type: 'response',
+                    requestId: message.requestId,
+                    resultType: 'error',
+                    error: 'no-client-found',
+                  }
+            );
+          send({ type: 'response', requestId: message.requestId, resultType: 'success' });
+        });
+        const statePath = join(directory, 'queue-state.sqlite');
+        const db = new Database(statePath);
+        db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+        CREATE TABLE projects (id TEXT, name TEXT);
+        CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+        db.prepare(
+          `INSERT INTO threads VALUES ('thread-1', 'Queued worker', '', '', '/tmp/verify', 'desktop', 0, 1, ?)`
+        ).run(join(directory, 'queue-rollout.jsonl'));
+        db.close();
+        const calls: string[] = [];
+        const driver = createCodexDesktopAdapter({
+          statePath,
+          desktopSocketPath: f.path,
+          desktopRunning: async () => true,
+          worktreesDir: directory,
+          machine: 'test',
+          now: Date.now,
+          spawn: () => {
+            throw new Error('Queue routing must not spawn processes');
+          },
+          appServer: async () => ({
+            call: async (method) => {
+              calls.push(method);
+              if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
+              if (method === 'thread/queue/add')
+                return { queuedSubmission: { id: 'native-queue' } };
+              throw new Error(`Unexpected app-server call ${method}`);
+            },
+            close: () => {},
+          }),
+          bootstrapServer: async () => {
+            throw new Error('Queued work must not bootstrap');
+          },
+          prepareDesktopProject: async () => {
+            throw new Error('Queued work must not create a project');
+          },
+          startDesktopTurn: async () => {
+            throw new Error('Queued work must not use new-thread handoff');
+          },
+          folderExists: () => true,
+          makeFolder: () => {},
+          homeDir: directory,
+          gitCheckout: async () => null,
+          newId: () => 'queue-input',
+        });
+        const registry = createOperationRegistry(
+          createWorkVerbOperations({
+            adapters: () => [driver],
+            daemonName: 'test',
+            isOpenTodo: () => true,
+            remote: { list: () => [], invoke: async () => ({}) },
+          })
+        );
+        const result = await invokeOperation(
+          registry,
+          'work.send',
+          {
+            ref: { adapter: driver.id, id: 'thread-1' },
+            message: 'Next queued task',
+            mode: 'queue',
+            todoId: 'open-todo',
+          },
+          { source: 'mcp', role: 'neo', sessionId: 'neo' }
+        );
+        const methods = f.seen.map((message) => message.method);
+        expect(methods).not.toContain('thread-follower-steer-turn');
+        expect(methods).not.toContain('thread-follower-start-turn');
+        if (owned) {
+          expect(result).toMatchObject({
+            kind: 'completed',
+            value: { ok: false, reason: 'busy', notSent: true },
+          });
+          expect(calls).toEqual([]);
+        } else {
+          expect(result).toMatchObject({
+            kind: 'completed',
+            value: { ok: true, value: { delivered: false, queuedSubmissionId: 'native-queue' } },
+          });
+          expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
         }
       }
     );
@@ -694,7 +893,7 @@ describe('withCodexDesktopIpc', () => {
       });
     });
 
-    test('work.send returns the Desktop steer receipt through the operation result schema', async () => {
+    test('explicit work.send steer returns the Desktop receipt through the operation result schema', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -755,6 +954,7 @@ describe('withCodexDesktopIpc', () => {
           {
             ref: { adapter: driver.id, id: 'thread-1' },
             message: 'use the parser',
+            mode: 'steer',
             todoId: 'open-todo',
           },
           { source: 'mcp', role: 'neo', sessionId: 'neo' }

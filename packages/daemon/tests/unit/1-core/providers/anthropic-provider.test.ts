@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn, jest } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
 import {
   classifyProviderFailure,
@@ -785,5 +785,46 @@ describe('AnthropicProvider', () => {
     it('claims the fable SDK alias as Anthropic', () => {
       expect(provider.ownsModel('fable')).toBe(true);
     });
+  });
+});
+
+const coldProbeSetTimeout = setTimeout;
+
+describe('Anthropic cold model discovery', () => {
+  it('accepts the 15-second first SDK handshake observed under Rosetta', async () => {
+    let started = false;
+    let answer: (
+      models: Array<{ value: string; displayName: string; description: string }>
+    ) => void = () => {};
+    jest.useFakeTimers();
+    mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+      query: () => ({
+        interrupt: async () => {},
+        supportedModels: () => {
+          started = true;
+          return new Promise((resolve) => {
+            answer = resolve;
+          });
+        },
+      }),
+    }));
+    try {
+      const provider = new AnthropicProvider({});
+      provider.setCredentials({ type: 'api_key', apiKey: 'synthetic-unit-key' });
+      const response = provider.getModels().then(
+        (models) => ({ models }),
+        (error) => ({ error })
+      );
+      for (let i = 0; i < 100 && !started; i++)
+        await new Promise((resolve) => coldProbeSetTimeout(resolve, 0));
+      expect(started).toBe(true);
+      await jest.advanceTimersByTimeAsync(15000);
+      answer([{ value: 'haiku', displayName: 'Haiku', description: 'Cold SDK' }]);
+      const result = await response;
+      expect(result).not.toHaveProperty('error');
+      expect('models' in result && result.models.map((model) => model.id)).toEqual(['haiku']);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

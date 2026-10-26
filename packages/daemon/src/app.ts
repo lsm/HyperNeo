@@ -12,6 +12,7 @@ import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
+import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
@@ -412,6 +413,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
+  let failedStartupCleanup: (() => Promise<void>) | null = null;
+  let startupAborted = false;
   let eventLoopLagLogStopped = false;
   let stopEventLoopLagLog = (): void => {
     eventLoopLagLogStopped = true;
@@ -1057,12 +1060,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let lastGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
     internalEventBus.subscribe(
       'settings.updated',
-      (event) => {
+      async (event) => {
         if (event.namespaceId !== 'global') return;
         const nextGitHubPollingIntervalSeconds = getGitHubPollingIntervalSeconds();
         if (nextGitHubPollingIntervalSeconds === lastGitHubPollingIntervalSeconds) return;
-        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
-        gitHubService?.refreshPolling({ reschedulePending: true });
         void (async () => {
           await syncGitHubPollingCapability(
             extensionConfigStore,
@@ -1070,6 +1071,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           );
           await githubEventExtension?.refreshPollingInterval();
         })();
+        await gitHubService?.refreshPolling({ reschedulePending: true });
+        lastGitHubPollingIntervalSeconds = nextGitHubPollingIntervalSeconds;
       },
       { subscriberName: 'github-polling-settings' }
     );
@@ -1107,7 +1110,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     startupTimer.start('rpc handlers + space runtime provision');
-    const rpcHandlers = setupRPCHandlers({
+    const rpcHandlers = await setupRPCHandlers({
       purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
       deviceOf: (clientId) => transport.deviceOf(clientId),
       watchSessionRepo: async (owner, repo) =>
@@ -1193,7 +1196,60 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
     });
 
-    const server = await createHttpWsServer({
+    let server: ServerHandle | undefined;
+    let removeRuntimeDescriptorFile = () => {};
+    let sessionDoor: Awaited<ReturnType<typeof startSessionDoor>> | null = null;
+    let reaperTimer: ReturnType<typeof setInterval> | null = null;
+    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+    let inactivityScan: Promise<void> | null = null;
+    let inactivityShutdownStarted = false;
+    failedStartupCleanup = async () => {
+      startupAborted = true;
+      inactivityShutdownStarted = true;
+      await releaseFailedStartup([
+        () => server?.stop(true),
+        () => removeRuntimeDescriptorFile(),
+        () => sessionDoor?.close(),
+        () => {
+          for (const timer of cooldownResumeTimers) clearTimeout(timer);
+          if (reaperTimer !== null) clearInterval(reaperTimer);
+          if (inactivityWatchdogTimer !== null) clearInterval(inactivityWatchdogTimer);
+        },
+        () => cancelInactivityWatchdog(),
+        () => db.stopSdkMessageColumnsBackfill(),
+        () => clientEventBridge.stop(),
+        () => processWatchdog.stop(),
+        () => jobProcessor.stopPolling(),
+        () => mailboxExpireProcessor.stopPolling(),
+        () => messageDeliveryProcessor.stopPolling(),
+        () => unsubscribeProviderFailureChanges?.(),
+        () => oauthRefreshScheduler.stop(),
+        () => jobProcessor.stop(),
+        () => mailboxExpireProcessor.stop(),
+        () => taskAgentManager?.cleanupAll(),
+        () => sessionManager?.cleanup(),
+        () => messageDeliveryProcessor.stop(),
+        () => messageHub.cleanup(),
+        () => rpcHandlerCleanup(),
+        () => spaceRuntimeService.stop(),
+        () => inactivityScan,
+        () => liveQueries.dispose(),
+        () => gitHubService?.stop(),
+        ...extensionManager
+          .getAll()
+          .map((extension) => () => extensionManager.stopExtension(extension.sourceId)),
+        () =>
+          Promise.allSettled(providerRegistry.getAll().map((provider) => provider.shutdown?.())),
+        () => fileIndex.dispose(),
+        () => {
+          const release = startupLogCaptureCleanup;
+          startupLogCaptureCleanup = null;
+          release?.();
+        },
+      ]);
+      await releaseFailedStartup([() => db.close()]);
+    };
+    server = await createHttpWsServer({
       hostname: config.host,
       port: config.port,
 
@@ -1290,9 +1346,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     void db.startSdkMessageColumnsBackfill(() => {
       void stateManager.broadcastSystemChange();
     });
-    const removeRuntimeDescriptorFile =
+    removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     const openMessageSearchMergeGate = (): void => {
+      if (startupAborted) return;
       db.startMessageSearchMerges();
       void db.startSdkMessageColumnsBackfill().then((complete) => {
         if (complete) db.startSdkMessageBodyCopy();
@@ -1303,7 +1360,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo('[Daemon] Space runtime startup provisioning complete');
     });
     if (gitHubService && shouldEnableGitHub) {
-      gitHubService.start();
+      await gitHubService.start();
       logInfo('[Daemon] GitHub service started');
     }
 
@@ -1554,7 +1611,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
-    const sessionDoor =
+    sessionDoor =
       process.env.NODE_ENV === 'test' && !process.env.HYPERNEO_DATA_DIR
         ? null
         : await startSessionDoor(() => sessionManager.getOperationRegistry()).catch(
@@ -1568,7 +1625,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo('[Daemon] Process watchdog started');
     }
 
-    let reaperTimer: ReturnType<typeof setInterval> | null = null;
     if (process.env.NODE_ENV !== 'test') {
       const worktreeStartupCleanup = async () => {
         try {
@@ -1599,9 +1655,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       reaperTimer.unref();
     }
 
-    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
-    let inactivityScan: Promise<void> | null = null;
-    let inactivityShutdownStarted = false;
     if (process.env.NODE_ENV !== 'test') {
       const scanInactivityWatchdog = (): Promise<void> => {
         if (inactivityScan !== null) return inactivityScan;
@@ -1836,6 +1889,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupTimer.finish();
+    await failedStartupCleanup?.();
     stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();

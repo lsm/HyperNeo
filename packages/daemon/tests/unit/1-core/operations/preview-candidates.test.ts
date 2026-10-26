@@ -86,16 +86,27 @@ describe('stored preview reference planning', () => {
       'docs/other.md',
       'docs/a report.md',
       'docs/reference.md',
+      'cat docs/command.md',
     ]);
     expect(previewReferenceCandidates('docs/a report.md').map((item) => item.reference)).toEqual([
       'report.md',
     ]);
-    expect(previewReferenceCandidates('`docs/a report.md`')).toEqual([]);
+    expect(previewReferenceCandidates('`docs/a report.md`')).toEqual([
+      { kind: 'local', reference: 'docs/a report.md', path: 'docs/a report.md' },
+    ]);
     expect(previewReferenceCandidates('`$(pwd)/report.md`')).toEqual([]);
     expect(previewReferenceCandidates('report.md')).toEqual([
       { kind: 'local', reference: 'report.md', path: 'report.md' },
     ]);
   });
+  test.each(['My notes.md', 'My docs/review notes.md', '资料/审阅 记录.md'])(
+    'recognizes the entire inline literal %s without splitting its path',
+    (path) => {
+      expect(previewReferenceCandidates(`Read \`${path}\`.`)).toEqual([
+        { kind: 'local', reference: path, path },
+      ]);
+    }
+  );
   test('recognizes file URLs and immutable GitHub references without fetching them', () => {
     const refs = previewReferenceCandidates(
       [
@@ -222,11 +233,24 @@ describe('stored preview reference planning', () => {
       expect(await run('github.com/lsm/other')).toEqual({ accepted: false, reason: 'unavailable' });
     }
   });
+  test('plans an explicitly referenced file outside the workspace', async () => {
+    const reference = '/outside/report.md';
+    expect(
+      await planStoredReference({ ...request, reference }, human, {
+        ...deps,
+        loadSource: async () => ({ ...source, text: `[Open](${reference})` }),
+      })
+    ).toMatchObject({
+      accepted: true,
+      kind: 'worktree',
+      root: '/outside',
+      relativePath: 'report.md',
+    });
+  });
   test('applies existing defense-in-depth policy without granting any byte read', async () => {
     for (const [reference, reason] of [
       ['../outside.md', 'unsafe_path'],
       ['.ssh/key.md', 'sensitive_path'],
-      ['/outside/report.md', 'outside_roots'],
     ]) {
       expect(
         await planStoredReference({ ...request, reference }, human, {

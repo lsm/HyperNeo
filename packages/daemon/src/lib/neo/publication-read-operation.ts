@@ -1,8 +1,10 @@
+import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoPublicationSchema } from './publication.ts';
 
@@ -33,8 +35,25 @@ type Result =
   | Failure
   | { ok: true; conversationId: string; items: NeoPublication[]; nextAfter: number };
 
-export function requirePublicationReader(page: Page, caller: OperationCaller): Gate {
-  return caller.source === 'rpc' && caller.principal === 'local'
+export function isNeoConversationSession(
+  caller: OperationCaller,
+  binding: NeoBinding | null
+): boolean {
+  return (
+    caller.source === 'mcp' &&
+    caller.role === 'neo' &&
+    !!binding &&
+    binding.sessionId === caller.sessionId &&
+    binding.kind === 'neo'
+  );
+}
+
+export function requirePublicationReader(
+  page: Page,
+  caller: OperationCaller,
+  binding: NeoBinding | null
+): Gate {
+  return isLocalUser(caller) || isNeoConversationSession(caller, binding)
     ? { value: page }
     : { reason: { ok: false, reason: 'human_only' } };
 }
@@ -70,7 +89,15 @@ export function readNeoConversationPage<T extends { sequence: number }>(
 
 const read = (superpipe({})('neo-publication-read') as PipelineAPI)
   .input(['page', 'caller', 'repo', 'ledger'])
-  .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
+  .pipe(
+    (caller: OperationCaller, repo: NeoRepository) =>
+      caller.source === 'mcp' && caller.sessionId
+        ? repo.getBindingBySession(caller.sessionId)
+        : null,
+    ['caller', 'repo'],
+    'binding'
+  )
+  .pipe(requirePublicationReader, ['page', 'caller', 'binding'], 'result:page')
   .pipe((repo: NeoRepository) => repo.conversationId(), 'repo', 'conversation')
   .pipe(requirePublicationConversation, ['page', 'conversation'], 'result:page')
   .pipe(
@@ -94,7 +121,7 @@ export function createNeoPublicationReadOperation(
     name: 'neo.publication.read',
     description:
       'Read one bounded ascending page of authored Neo replies and full details for the current public conversation. Use nextAfter for the next page or later updates, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence; this never reads SDK transcripts or starts a query.',
-    policy: { safetyClass: 'human_only' },
+    policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationPageInput,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.enum(['human_only', 'conversation_not_found']) }),

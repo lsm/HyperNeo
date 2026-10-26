@@ -206,6 +206,30 @@ describe('one completion rule for Neo todos', () => {
 });
 
 describe('coding todo PR ownership through add and edit', () => {
+  test('an unknown PR is recorded without certifying completion', async () => {
+    const { db, store, call, runner } = setup();
+    try {
+      const added = await call('neo.todo.add', {
+        askId: 'ask',
+        title: 'PR not yet known',
+        doneWhen: 'Merged',
+        check: { pack: 'coding', kind: 'pr_merged', params: {} },
+      });
+      expect(added).toMatchObject({
+        ok: true,
+        records: [expect.stringContaining('pr_merged_needs_urls:')],
+      });
+      if (!added.ok) throw new Error(added.reason);
+      await runner.checkNow([added.todo.id], () => {});
+      expect(store.getTodo(added.todo.id)?.state).not.toBe('done');
+      expect(
+        await call('neo.todo.close', { todoId: added.todo.id, reason: 'PR remains unidentified' })
+      ).toMatchObject({ ok: true, todo: { state: 'closed_unverified' } });
+    } finally {
+      db.close();
+    }
+  });
+
   const draft = (urls: string[] = []) => ({
     title: 'Original fix',
     doneWhen: 'Merged',
@@ -214,7 +238,7 @@ describe('coding todo PR ownership through add and edit', () => {
     named: null,
   });
   test.each(['named', 'ledger'])(
-    'refuses a duplicate of a live %s PR claim on the same ask',
+    'records a duplicate of a live %s PR claim on the same ask',
     async (claim) => {
       const { db, store, call, coding } = setup();
       try {
@@ -236,10 +260,10 @@ describe('coding todo PR ownership through add and edit', () => {
           },
         });
         expect(result).toMatchObject({
-          ok: false,
-          reason: expect.stringMatching(/todo original "Original fix"/),
+          ok: true,
+          records: [expect.stringMatching(/pr_already_tracked:.*todo original "Original fix"/)],
         });
-        expect(store.listTodos('ask')).toHaveLength(1);
+        expect(store.listTodos('ask')).toHaveLength(2);
       } finally {
         db.close();
       }
@@ -269,7 +293,7 @@ describe('coding todo PR ownership through add and edit', () => {
     }
   });
   test.each(['named', 'ledger'])(
-    'edit refuses URLs claimed by another live todo through %s',
+    'edit records URLs claimed by another live todo through %s',
     async (claim) => {
       const { db, store, call, coding } = setup();
       try {
@@ -282,9 +306,12 @@ describe('coding todo PR ownership through add and edit', () => {
         if (claim === 'ledger') await coding.todos.openedPrs!(owner, [url(2)]);
         const target = store.addTodo('target', 'ask', draft([url(1)]), 2);
         expect(await call('neo.todo.edit', { todoId: target.id, addUrls: [url(2)] })).toMatchObject(
-          { ok: false, reason: expect.stringContaining('owner') }
+          { ok: true, records: [expect.stringContaining('owner')] }
         );
-        expect(store.getTodo(target.id)?.check?.params.urls).toEqual([url(1)]);
+        expect(store.getTodo(target.id)?.check?.params.urls).toEqual([
+          url(1).toLowerCase(),
+          url(2).toLowerCase(),
+        ]);
       } finally {
         db.close();
       }
@@ -308,7 +335,7 @@ describe('coding todo PR ownership through add and edit', () => {
       }
     }
   );
-  test('concurrent edits cannot both claim the same PR', async () => {
+  test('concurrent edits both record the same PR', async () => {
     const { db, store, call } = setup();
     try {
       store.addTodo('one', 'ask', draft(), 1);
@@ -316,7 +343,7 @@ describe('coding todo PR ownership through add and edit', () => {
       const results = await Promise.all(
         ['one', 'two'].map((todoId) => call('neo.todo.edit', { todoId, addUrls: [url(2)] }))
       );
-      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      expect(results.filter((result) => result.ok)).toHaveLength(2);
     } finally {
       db.close();
     }

@@ -69,7 +69,11 @@ import { stripRejectedSessionConfig } from '../session/create-session-config.ts'
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import {
+  createBashScopeHook,
+  createSleepBoundHook,
+  extractBashScopePrefixes,
+} from './bash-scope.ts';
 import { createSendMessageRedirectHook } from '../messaging/session-reply.ts';
 import {
   builtinSkillPluginPath,
@@ -333,7 +337,6 @@ export function liveThinkingUpdate(
 export class QueryOptionsBuilder {
   private operationServer?: SdkMcpServerConfig;
   private askUserQuestionHook?: HookCallback;
-  private deferredPermissionMode?: PermissionMode;
   private effectiveFallbackCaptured = false;
   private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
@@ -344,10 +347,6 @@ export class QueryOptionsBuilder {
 
   setAskUserQuestionHook(hook: HookCallback): void {
     this.askUserQuestionHook = hook;
-  }
-
-  getDeferredPermissionMode(): PermissionMode | undefined {
-    return this.deferredPermissionMode;
   }
 
   getCurrentPermissionMode(): PermissionMode {
@@ -511,7 +510,12 @@ export class QueryOptionsBuilder {
     if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
     if (handoffDirectory) workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
-    const permissionMode = this.getPermissionMode();
+    const requestedPermissionMode = this.getPermissionMode();
+    const permissionMode =
+      requestedPermissionMode === 'bypassPermissions' &&
+      workerSandbox?.permissions.disableBypassPermissionsMode === 'disable'
+        ? 'default'
+        : requestedPermissionMode;
     const pluginsFromSkills = [
       ...this.buildPluginsFromSkills(toolInputs),
       ...this.buildPluginsFromBuiltinSkills(toolInputs),
@@ -676,11 +680,7 @@ export class QueryOptionsBuilder {
     );
 
     if (permissionMode === 'bypassPermissions') {
-      delete queryOptions.permissionMode;
       delete queryOptions.allowedTools;
-      this.deferredPermissionMode = 'bypassPermissions';
-    } else {
-      this.deferredPermissionMode = undefined;
     }
 
     const cleanedOptions = Object.fromEntries(
@@ -1139,11 +1139,21 @@ export class QueryOptionsBuilder {
       hooks: [createSendMessageRedirectHook((id) => !!this.ctx.db?.getSession?.(id))],
     });
 
-    const bashScopePrefixes = extractBashScopePrefixes(this.ctx.session.config.allowedTools ?? []);
-    if (bashScopePrefixes.length > 0) {
+    const allowedToolEntries = this.ctx.session.config.allowedTools ?? [];
+    const isNeoCoordinator = !!neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
+    const bashScopePrefixes = extractBashScopePrefixes(allowedToolEntries);
+    const bareBashSkipsScope = isNeoCoordinator && allowedToolEntries.includes('Bash');
+    if (bashScopePrefixes.length > 0 && !bareBashSkipsScope) {
       preToolUse.push({
         matcher: 'Bash',
         hooks: [createBashScopeHook(bashScopePrefixes)],
+      });
+    }
+
+    if (isNeoCoordinator) {
+      preToolUse.push({
+        matcher: 'Bash',
+        hooks: [createSleepBoundHook()],
       });
     }
 

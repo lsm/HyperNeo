@@ -1,6 +1,7 @@
 import { locale } from '../../lib/i18n/index.ts';
 import type { NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
 import type { NeoPublicEntry } from '../public-conversation.ts';
 vi.mock('../NeoGoals.tsx', () => ({ NeoGoals: () => null }));
@@ -15,7 +16,7 @@ import {
   openArtifactPreview,
 } from '../../lib/artifact-preview-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
-import { testAskEntry } from './neo-test-views.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -32,11 +33,13 @@ vi.mock('../NeoConversation.tsx', () => ({
   NeoConversation: (props: {
     publicConversation?: Parameters<typeof NeoPublicConversation>[0]['conversation'];
     onOpenWork?: Parameters<typeof NeoPublicConversation>[0]['onOpenWork'];
+    replyLabels?: Parameters<typeof NeoPublicConversation>[0]['replyLabels'];
   }) =>
     props.publicConversation ? (
       <NeoPublicConversation
         conversation={props.publicConversation}
         onOpenWork={props.onOpenWork}
+        replyLabels={props.replyLabels}
       />
     ) : (
       <p>Durable fictional answer</p>
@@ -63,6 +66,7 @@ afterEach(() => {
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 function mount(publicMode = true, empty = false) {
   const snapshot = {
+    historyCursor: undefined as NeoSnapshot['historyCursor'],
     sessionId: root,
     projects: ['a', 'b'].map((id) => ({
       id,
@@ -120,6 +124,48 @@ function mount(publicMode = true, empty = false) {
 }
 
 describe('Neo public work scenes', () => {
+  it('loads older outcomes only on request and allows retry without dropping current work', async () => {
+    const old = testAskEntry('older', 'Older completed work', { state: 'done' });
+    old.ask.status = 'done';
+    const history = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('History unavailable'))
+      .mockResolvedValue({ ok: true, entries: [old], nextCursor: null });
+    const request = vi.fn((_method: string, input: { name: string }) =>
+      input.name === 'neo.ask.history' ? history() : Promise.resolve({ schedules: [] })
+    );
+    const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      const { model, container } = mount();
+      const current = model.value.snapshot.todoAsks;
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            historyCursor: { updatedAt: 100, id: 'last-recent' },
+          },
+        };
+      });
+      expect(history).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Show older outcomes' }));
+      await waitFor(() => expect(model.value.setError).toHaveBeenCalledWith('History unavailable'));
+      fireEvent.click(screen.getByRole('button', { name: 'Show older outcomes' }));
+      await waitFor(() => expect(container.querySelector('[data-ask="older"]')).toBeTruthy());
+      expect(container.querySelector(`[data-ask="${current[0].ask.id}"]`)).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Show older outcomes' })).toBeNull();
+      expect(history).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledWith(
+        'operation.invoke',
+        expect.objectContaining({
+          name: 'neo.ask.history',
+          input: { before: { updatedAt: 100, id: 'last-recent' } },
+        })
+      );
+    } finally {
+      hub.mockRestore();
+    }
+  });
   it.each([true, false])('keeps an empty Work surface accessible on desktop=%s', (desktop) => {
     vi.stubGlobal('matchMedia', () => ({ matches: desktop }));
     const { container } = mount(true, true);
@@ -133,6 +179,61 @@ describe('Neo public work scenes', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Your work' }));
       expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
     }
+  });
+
+  it('keeps every waiting card first, newest first, across unrelated snapshot updates', () => {
+    const { container, model } = mount(true, true);
+    const card = (id: string, state: 'waiting' | 'doing' | 'todo' | 'done', createdAt: number) => {
+      const entry = testAskEntry(id, id, { state });
+      entry.ask.createdAt = createdAt;
+      return entry;
+    };
+    const blocked = card('blocked', 'doing', 50);
+    blocked.todos = [testTodo('blocked-step', { state: 'blocked' })];
+    const old = card('waiting-old', 'waiting', 10);
+    old.todos = [testTodo('waiting-step', { state: 'blocked' })];
+    const a = card('waiting-a', 'waiting', 20);
+    const b = card('waiting-b', 'waiting', 20);
+    const running = card('running', 'doing', 60);
+    const queued = card('queued', 'todo', 70);
+    const done = card('done', 'done', 80);
+    const setCards = (todoAsks: typeof model.value.snapshot.todoAsks) =>
+      act(() => {
+        model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks } };
+      });
+    const order = () =>
+      [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'));
+    const expected = [
+      'waiting-a',
+      'waiting-b',
+      'waiting-old',
+      'blocked',
+      'running',
+      'queued',
+      'done',
+    ];
+    setCards([blocked, old, b, running, a, queued, done]);
+    expect(order()).toEqual(expected);
+    setCards([
+      { ...old, ask: { ...old.ask, updatedAt: 999 } },
+      a,
+      blocked,
+      b,
+      running,
+      queued,
+      done,
+    ]);
+    expect(order()).toEqual(expected);
+    setCards([blocked, running, { ...b, state: 'doing' }, a, old, queued, done]);
+    expect(order()).toEqual([
+      'waiting-a',
+      'waiting-old',
+      'blocked',
+      'running',
+      'waiting-b',
+      'queued',
+      'done',
+    ]);
   });
 
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
@@ -234,6 +335,159 @@ function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = fals
 }
 
 describe('card reply notice navigation', () => {
+  it.each(['pending', 'failed'])(
+    'keeps a %s card read stable while editing the draft',
+    async (state) => {
+      let resolve!: (value: unknown) => void;
+      let reject!: (cause: Error) => void;
+      const pending = new Promise((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      const read = vi.fn(() => pending);
+      const request = vi.fn((_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+      );
+      const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+      try {
+        const { model, container } = mountCard('open');
+        const full = model.value.snapshot.todoAsks[0];
+        act(() => {
+          model.value = {
+            ...model.value,
+            snapshot: {
+              ...model.value.snapshot,
+              todoAsks: [
+                {
+                  ...full,
+                  questions: [],
+                  summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+                },
+              ],
+            },
+          };
+        });
+        fireEvent.click(container.querySelector('[data-ask="waiting"] [data-ask-details-toggle]')!);
+        await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        if (state === 'failed') {
+          await act(async () => reject(new Error('Full card unavailable')));
+          expect(await screen.findByText('Full card unavailable')).toBeTruthy();
+        }
+        await act(async () => {
+          fireEvent.input(screen.getByRole('textbox', { name: 'Draft' }), {
+            target: { value: 'Unsent draft' },
+          });
+        });
+        expect(read).toHaveBeenCalledTimes(1);
+        if (state === 'pending') {
+          await act(async () => resolve({ ok: true, entry: full }));
+          expect(await screen.findByRole('button', { name: /Approve/ })).toBeTruthy();
+        } else expect(screen.getByText('Full card unavailable')).toBeTruthy();
+      } finally {
+        hub.mockRestore();
+      }
+    }
+  );
+  it('keeps question reply quotes readable when their card is summarized', async () => {
+    const { model } = mountCard('open');
+    const full = model.value.snapshot.todoAsks[0];
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...full,
+              questions: [],
+              summary: {
+                todoCount: 0,
+                questionCount: 1,
+                openQuestionCount: 1,
+                questionRefs: [{ id: 'q1', replacedBy: null }],
+              },
+            },
+          ],
+        },
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'question-reply',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: 'reply',
+                askOrigin: { sessionId: root, messageId: 'reply' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+                content: 'My sign-off reply',
+                replyTo: { kind: 'question', id: 'q1' },
+              },
+            },
+          ],
+        },
+      };
+    });
+    expect(await screen.findByRole('button', { name: 'Neo Sign-off card' })).toBeTruthy();
+    expect(screen.queryByText('Original message unavailable')).toBeNull();
+  });
+
+  it('opens full question details from a wake link into a summarized card', async () => {
+    const { model } = mountCard('open');
+    const full = model.value.snapshot.todoAsks[0];
+    const hub = vi
+      .spyOn(connectionManager, 'getHub')
+      .mockResolvedValue({ request: vi.fn(async () => ({ ok: true, entry: full })) } as never);
+    try {
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            todoAsks: [
+              {
+                ...full,
+                questions: [],
+                summary: {
+                  todoCount: 0,
+                  questionCount: 1,
+                  openQuestionCount: 1,
+                  questionRefs: [{ id: 'q1', replacedBy: null }],
+                },
+              },
+            ],
+          },
+          viewPublicConversation: {
+            ...model.value.viewPublicConversation!,
+            entries: [
+              {
+                kind: 'wake',
+                key: 'question-wake',
+                wake: {
+                  scheduleId: 'schedule',
+                  sourceKind: 'session',
+                  sourceId: root,
+                  title: 'Review sign-off',
+                  firedAt: 1,
+                  settledAt: 2,
+                  summary: 'Question added',
+                  additions: [{ kind: 'question', id: 'q1', label: 'Open sign-off question' }],
+                },
+              },
+            ],
+          },
+        };
+      });
+      fireEvent.click(screen.getByText('Open sign-off question'));
+      await waitFor(() =>
+        expect(document.querySelector('[data-card-reply-focus]')?.id).toBe('neo-ref-question-q1')
+      );
+      expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
+    } finally {
+      hub.mockRestore();
+    }
+  });
   it.each([
     [900, false],
     [900, true],

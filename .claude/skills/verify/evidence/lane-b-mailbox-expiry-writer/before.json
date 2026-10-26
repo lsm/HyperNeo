@@ -1,0 +1,170 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 385,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "claimed": 1,
+  "publicStatuses": [
+    {
+      "status": "queued"
+    },
+    {
+      "status": "queued"
+    }
+  ],
+  "freshPublicStatus": {
+    "status": "queued"
+  },
+  "sweep": {
+    "id": "c8468f6b-1394-45b2-974b-adb4beeff161",
+    "queue": "mailbox.expire",
+    "status": "pending",
+    "payload": {},
+    "result": null,
+    "error": "mailbox expiry SQL reached main connection",
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 1,
+    "runAt": 1792984283265,
+    "createdAt": 1792984282203,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": "c57618ef-c4f6-42b5-a537-2f6df90829e3"
+  },
+  "expired": [
+    {
+      "id": "a9608ea4-158c-4f46-a405-8b26fa5d509c",
+      "queue": "mailbox",
+      "status": "processing",
+      "payload": {
+        "id": "01M5V2Y7YJEYW9AQ5VF7X4FDYD",
+        "to": {
+          "kind": "session",
+          "sessionId": "synthetic-expiry-session"
+        },
+        "origin": "chat",
+        "messageUuid": "expired-pending",
+        "message": {
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "expired-pending"
+          },
+          "parent_tool_use_id": null
+        },
+        "status": "enqueued",
+        "deliveryMode": "immediate",
+        "policy": {
+          "ttlMs": 60000,
+          "maxAttempts": 5,
+          "priority": 0
+        }
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 4,
+      "retryCount": 0,
+      "runAt": 1792984282258,
+      "createdAt": 1792984282258,
+      "startedAt": 1792984282258,
+      "heartbeatAt": 1792984282258,
+      "completedAt": null,
+      "claimToken": "690a26fd-0a7a-4821-a364-9c2f928e0ba7"
+    },
+    {
+      "id": "9fb65fb9-6c48-41d3-bb34-08c17c81a3ca",
+      "queue": "mailbox",
+      "status": "pending",
+      "payload": {
+        "id": "01M5V2Y7YKAPW1B46JY12MV6SN",
+        "to": {
+          "kind": "session",
+          "sessionId": "synthetic-expiry-session"
+        },
+        "origin": "chat",
+        "messageUuid": "expired-second",
+        "message": {
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "expired-second"
+          },
+          "parent_tool_use_id": null
+        },
+        "status": "enqueued",
+        "deliveryMode": "immediate",
+        "policy": {
+          "ttlMs": 60000,
+          "maxAttempts": 5,
+          "priority": 0
+        }
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 4,
+      "retryCount": 0,
+      "runAt": 1792984282259,
+      "createdAt": 1792984282259,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "retained": [
+    "pending",
+    "pending",
+    "pending",
+    "completed"
+  ],
+  "followups": [
+    {
+      "id": "c8468f6b-1394-45b2-974b-adb4beeff161",
+      "queue": "mailbox.expire",
+      "status": "pending",
+      "payload": {},
+      "result": null,
+      "error": "mailbox expiry SQL reached main connection",
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 1,
+      "runAt": 1792984283265,
+      "createdAt": 1792984282203,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": "c57618ef-c4f6-42b5-a537-2f6df90829e3"
+    }
+  ],
+  "oldLeaseHeartbeat": true,
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 401,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 1
+}

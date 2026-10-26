@@ -29,7 +29,11 @@ function policy(root: string, roots: string[], siblings: string[]) {
           join(root, '.git/hyperneo-worker-sandbox'),
         ],
       },
-      network: { allowedDomains: ['*'], allowUnixSockets: [], allowAllUnixSockets: false },
+      network: {
+        allowedDomains: ['*'],
+        allowAllUnixSockets: true,
+        allowLocalBinding: true,
+      },
     },
     permissions: {
       allow: [editRule(root, true)],
@@ -112,5 +116,12 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
     await writePolicy(directory, { ...computed, ...existing });
   }
-  return computed;
+  if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
+    existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
+    await writePolicy(directory, { ...computed, ...existing });
+  }
+  const updated = { ...computed, ...existing } as typeof computed;
+  updated.sandbox.network.allowAllUnixSockets = true;
+  await writePolicy(directory, updated);
+  return updated;
 }

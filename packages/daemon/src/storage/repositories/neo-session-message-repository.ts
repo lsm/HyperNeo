@@ -5,7 +5,7 @@ import type { Database } from '../sqlite-compat.ts';
 
 const SELECT = `SELECT message_id AS messageId, conversation_id AS conversationId, sequence,
   from_session AS fromSession, from_name AS fromName, to_session AS toSession, to_name AS toName,
-  text, created_at AS createdAt FROM neo_session_messages`;
+  text, created_at AS createdAt, kind FROM neo_session_messages`;
 
 export const SENT_BY_NEO = "from_session GLOB 'neo:*'";
 export const WORKER_BATCH_SENDER = 'system:worker-batch';
@@ -19,7 +19,7 @@ export const recordNeoSessionMessage = defineDbOp({
   run: (db: Database, message: NeoSessionMessageDraft, changes): void => {
     db.prepare(
       `INSERT OR IGNORE INTO neo_session_messages (conversation_id, message_id, from_session,
-         from_name, to_session, to_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         from_name, to_session, to_name, text, created_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       message.conversationId,
       message.messageId,
@@ -28,7 +28,8 @@ export const recordNeoSessionMessage = defineDbOp({
       message.toSession,
       message.toName,
       message.text,
-      message.createdAt
+      message.createdAt,
+      message.kind
     );
     changes.notifyChange('neo_session_messages');
   },
@@ -69,7 +70,7 @@ export class NeoSessionMessageRepository {
   latest(conversationId: string, limit: number): NeoSessionMessage[] {
     return (
       this.select(
-        `WHERE conversation_id = ? AND ${VISIBLE_IN_NEO}
+        `WHERE conversation_id = ? AND ${SENT_BY_NEO}
            ORDER BY created_at DESC, sequence DESC LIMIT ?`
       ).all(conversationId, limit) as NeoSessionMessage[]
     ).reverse();

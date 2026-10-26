@@ -1,4 +1,6 @@
 import { resolveNeoCardReply } from './public-conversation.ts';
+import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
@@ -51,6 +53,15 @@ import {
 import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
 import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
+
+async function loadNeoAskDetails(askId: string): Promise<NeoAskEntry> {
+  const hub = await connectionManager.getHub();
+  const result = await invokeOperation<
+    { ok: true; entry: NeoAskEntry } | { ok: false; reason: string }
+  >(hub, 'neo.ask.read', { askId });
+  if (!result.ok) throw new Error(result.reason);
+  return result.entry;
+}
 
 export function NeoLive() {
   const neo = useNeo();
@@ -122,7 +133,22 @@ export function NeoLive() {
       ? neo.viewPublicConversation
       : undefined;
   const sceneScope = neo.sessionId;
+  const [history, setHistory] = useState<(NeoAskHistoryPage & { scope: string | null }) | null>(
+    null
+  );
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const older = history?.scope === sceneScope ? history : null;
+  const historyCursor = older ? older.nextCursor : view?.historyCursor;
+  const currentEntries = view?.todoAsks ?? [];
+  const workEntries = [
+    ...currentEntries,
+    ...(older?.entries ?? []).filter(
+      (entry) => !currentEntries.some((current) => current.ask.id === entry.ask.id)
+    ),
+  ];
   useEffect(() => {
+    setHistory(null);
+    setLoadingHistory(false);
     setChat(null);
     setCardTarget(null);
     setCardUnavailable(false);
@@ -130,9 +156,38 @@ export function NeoLive() {
   }, [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
+  async function loadOlder() {
+    if (!historyCursor || loadingHistory) return;
+    setLoadingHistory(true);
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<NeoAskHistoryPage>>(hub, 'neo.ask.history', {
+        before: historyCursor,
+      });
+      if (currentScope.current !== sceneScope) return;
+      if (!result.ok) throw new Error(result.reason);
+      setHistory({
+        ...result,
+        scope: sceneScope,
+        entries: [...(older?.entries ?? []), ...result.entries],
+      });
+    } catch (cause) {
+      if (currentScope.current === sceneScope)
+        neo.setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (currentScope.current === sceneScope) setLoadingHistory(false);
+    }
+  }
   const replyLabels = new Map(
-    (view?.todoAsks ?? []).flatMap((entry) => [
+    workEntries.flatMap((entry) => [
       [`ask:${entry.ask.id}`, { label: entry.ask.title, askId: entry.ask.id }] as const,
+      ...(entry.summary?.questionRefs ?? []).map(
+        (question) =>
+          [
+            `question:${question.id}`,
+            { label: entry.ask.title.slice(0, 120), askId: entry.ask.id },
+          ] as const
+      ),
       ...entry.questions.map(
         (question) =>
           [
@@ -146,13 +201,13 @@ export function NeoLive() {
     ])
   );
   useEffect(() => {
-    if (!cardTarget || !view?.todoAsks) return;
-    const target = resolveNeoCardReply(cardTarget, view.todoAsks);
+    if (!cardTarget) return;
+    const target = resolveNeoCardReply(cardTarget, workEntries);
     if (target === 'unavailable') {
       setCardTarget(null);
       setCardUnavailable(true);
     } else if (target.questionId !== cardTarget.questionId) setCardTarget(target);
-  }, [view?.todoAsks, cardTarget]);
+  }, [view?.todoAsks, history, cardTarget]);
   const sceneGroups = [
     { key: 'attention', label: t('live.group.attention') },
     { key: 'running', label: t('live.group.running') },
@@ -162,9 +217,7 @@ export function NeoLive() {
     return {
       ...group,
       key,
-      entries: neoAskEntriesInOrder(
-        (view?.todoAsks ?? []).filter((entry) => neoAskEntryGroup(entry) === key)
-      ),
+      entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
@@ -635,7 +688,7 @@ export function NeoLive() {
                           : null,
                     };
                   nearBottom.current = false;
-                  const target = resolveNeoCardReply(cardReply, view?.todoAsks ?? []);
+                  const target = resolveNeoCardReply(cardReply, workEntries);
                   setCardTarget(target === 'unavailable' ? null : target);
                   setCardUnavailable(target === 'unavailable');
                   setChat(null);
@@ -645,14 +698,22 @@ export function NeoLive() {
                 setChat(null);
                 setScenesOpen(true);
                 requestAnimationFrame(() => {
-                  const owner = (view?.todoAsks ?? []).find(
-                    ({ ask, todos, questions }) =>
+                  const owner = workEntries.find(
+                    ({ ask, todos, questions, summary }) =>
                       anchor === `neo-ref-ask-${ask.id}` ||
                       todos.some((todo) => anchor === `neo-ref-todo-${todo.id}`) ||
-                      questions.some((question) => anchor === `neo-ref-question-${question.id}`)
+                      [...questions, ...(summary?.questionRefs ?? [])].some(
+                        (question) => anchor === `neo-ref-question-${question.id}`
+                      )
                   );
                   const card = owner && document.getElementById(`neo-ref-ask-${owner.ask.id}`);
-                  if (!document.getElementById(anchor))
+                  const question =
+                    owner &&
+                    [...owner.questions, ...(owner.summary?.questionRefs ?? [])].find(
+                      (question) => anchor === `neo-ref-question-${question.id}`
+                    );
+                  if (question) setCardTarget({ askId: owner!.ask.id, questionId: question.id });
+                  else if (!document.getElementById(anchor))
                     card?.querySelector<HTMLButtonElement>('[data-ask-details-toggle]')?.click();
                   requestAnimationFrame(() =>
                     (document.getElementById(anchor) ?? card)?.scrollIntoView({ block: 'center' })
@@ -874,6 +935,7 @@ export function NeoLive() {
                         })
                       )
                     }
+                    onLoadDetails={loadNeoAskDetails}
                     onOpen={(link) =>
                       link.startsWith('/session/')
                         ? setChat({ sessionId: link.slice('/session/'.length) })
@@ -883,6 +945,15 @@ export function NeoLive() {
                 ))}
               </section>
             )
+          )}
+          {historyCursor && (
+            <Button
+              variant="ghost"
+              disabled={!connected || loadingHistory}
+              onClick={() => void loadOlder()}
+            >
+              {t(loadingHistory ? 'live.loadingOlder' : 'live.showOlder')}
+            </Button>
           )}
         </div>
         {chat && (

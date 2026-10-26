@@ -70,7 +70,11 @@ describe('Neo startup configuration', () => {
       expect(restored.config.systemPrompt).toBe(neoPrompt(service.packBriefs()));
       expect(restored.config.systemPrompt).toContain('the human sees none of your assistant text');
       expect(restored.config.sdkToolsPreset).toEqual(tools);
-      expect(restored.config.allowedTools).toEqual([...tools, 'mcp__hyperneo-operations__invoke']);
+      expect(restored.config.allowedTools).toEqual([
+        ...tools,
+        'mcp__hyperneo-operations__invoke',
+        'Bash(sleep:*)',
+      ]);
       expect(restored).toMatchObject({
         sdkSessionId: session.sdkSessionId,
         sdkOriginPath: session.sdkOriginPath,
@@ -110,7 +114,7 @@ describe('Neo startup configuration', () => {
     expect(db.getSession(id)?.config).toMatchObject({
       systemPrompt: neoPrompt(service.packBriefs()),
       sdkToolsPreset: tools,
-      allowedTools: [...tools, 'mcp__hyperneo-operations__invoke'],
+      allowedTools: [...tools, 'mcp__hyperneo-operations__invoke', 'Bash(sleep:*)'],
     });
   });
 
@@ -145,6 +149,7 @@ describe('Neo startup configuration', () => {
       'WebFetch',
       'Bash',
       'mcp__hyperneo-operations__invoke',
+      'Bash(sleep:*)',
     ]);
     expect(config.permissionMode).toBe('dontAsk');
     expect(config.coordinatorMode).toBe(false);

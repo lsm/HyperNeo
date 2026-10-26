@@ -18,7 +18,8 @@ amplification of slow reads. On regression commit `6040b602e6`, `reproduce`
 records four builds and 1,324 child/link reads, max lag above 1 s and a health
 reply above 1 s. Fixed `verify` requires one build, three child/link queries,
 max lag below 1 s and health below 250 ms. Each of the four replies must retain
-50 asks, 231 todos, 66 questions and the exact selected session link.
+50 asks, 231 todos and the exact selected session link. Summary RPC cards omit
+the 66 answered questions; they remain available through neo.ask.read.
 
 `observed.json` records query/build counts, max main-loop lag, independent health
 latency, burst duration and reply byte sizes. Other snapshot/pack reads remain

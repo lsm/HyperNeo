@@ -40,7 +40,11 @@ cd packages/web && bun run build && cd ../..
 - If the host denies `taskpolicy` or `nice` priority changes, set
   `VERIFY_NORMAL_PRIORITY=1`; isolation is unchanged. `VERIFY_REPO` selects
   the source checkout for shared upgrade tooling only.
-- `$RUN` is a fresh directory (default: a new `mktemp -d`). It holds `data/`
+- `$RUN` is a fresh `hyperneo-verify.*` directory. Create it by wrapping the
+  journey in `with-run.sh`, which removes it on success, failure and interrupt
+  (`VERIFY_KEEP_RUN=1` keeps it and prints the path), or by hand with
+  `mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX"` plus
+  `trap 'rm -rf "$RUN"' EXIT` in the owning shell. It holds `data/`
   (DB), `home/`, `bin/gh`, the logs, the pid files and `evidence/`.
 - Ready signal: `ready: http://127.0.0.1:<port>  run dir: <run>`. The daemon log
   shows `HyperNeo Test Server` and `Database: <run>/data/daemon.db`.
@@ -57,6 +61,18 @@ do not change browser permissions or system settings to work around it.
 An installed browser that aborts with `SIGABRT` or `EPERM` is blocked too. Keep
 its launch log and use component evidence as a fallback, explicitly leaving
 screenshots and visual layout unverified.
+If browser origin approval is denied, retain that refusal and leave visual proof
+unverified. Do not retry through another browser or transport to bypass it;
+release the helper and preserve its daemon evidence before cleanup.
+Trust the wrapper exit status, not a helper's PASS line. A closed-database error
+from background Neo recovery during shutdown makes the daemon proof fail, even
+if its reader assertions passed. Retain the log; ask-bookkeeping-actions provides
+a listener-free MCP/public-reader/audit proof, without claiming daemon startup
+or shutdown verification.
+
+The shared proof-run.sh wrapper forwards only these explicitly selected browser
+dependency paths, alongside VERIFY_CLAUDE. Other parent environment values stay
+scrubbed; set the browser paths on the wrapper invocation when using --web.
 
 Give it a model, once per run (stored in the run's DB only):
 
@@ -80,11 +96,27 @@ or use a shell with `set -e`. For example:
 bash .claude/skills/verify/resource-check.sh && bun run check
 ```
 
+In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
+target because the repository excludes `**/tmp`. If `format:check` reports zero
+files, run the same check chain with that one command replaced by
+`bunx biome format packages scripts .github *.json *.md`. Keep the failure log
+and report the explicit-directory equivalent separately; do not change the
+repository's ignore rules to accommodate a temporary checkout.
+
+If bare macOS `mktemp` still chooses a restricted system temp directory, run
+the shell-based guards under Bash with `mktemp() { /usr/bin/mktemp -p "$TMPDIR"
+"$@"; }; export -f mktemp`, where `TMPDIR` is the writable directory already
+selected above. Explicit-template calls and proof isolation remain unchanged.
+
 For a metadata-only Bun helper taking `[arguments] <run>`, use:
 
 ```bash
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory "$PROOF" verify
 ```
+
+For a dual-runtime native-filesystem helper, repeat with `VERIFY_PROOF_RUNTIME=deno`
+and the pinned Deno on PATH. The wrapper uses `deno run -A` and keeps its cache
+inside the disposable run; the default remains Bun.
 
 The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
 the helper's evidence JSON and log outside that run, then immediately removes
@@ -95,6 +127,10 @@ The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
 wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
+Export a writable TMPDIR for web tests, build tooling and git commands too;
+their temporary files can otherwise fail before verification starts.
+The wrapper forwards NODE_PATH and VERIFY_BROWSER for browser helpers; its
+child environment remains otherwise scrubbed.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
 For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
@@ -104,6 +140,17 @@ the Deno/Node adapter seam; Node remains unsupported as a daemon runtime.
 The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
 `journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
 competing writer when fixtures overlap the booted daemon.
+
+If a metadata helper cannot bind its own listener (for example EPERM or an
+ephemeral port 0 reported as EADDRINUSE), preserve its log and mark daemon proof
+blocked. Use a journey's listener-free proof only for the narrower surface it
+explicitly covers; unit results do not establish a successful daemon run.
+Helpers requiring /private/tmp also need TMPDIR=/private/tmp. Never weaken host
+protections to make a proof run.
+
+
+The wrapper forwards an explicitly selected VERIFY_CLAUDE path for native SDK
+proofs. It does not forward provider credentials or the human's configuration.
 
 Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
@@ -163,7 +210,13 @@ this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
 Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
 They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
-App-server-only fixtures are insufficient for the current desktop send route.
+Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
+sends route by Desktop ownership: while the stubbed probe reports Desktop running
+they deliver through owner discovery plus follower steer or turn start, and their
+proofs must show no app-server `thread/resume` or native queue call; while it
+reports Desktop not running they use the native app-server queue, checking the
+loaded list and resuming saved unloaded threads before settings or enqueue, with
+already loaded threads never resumed.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

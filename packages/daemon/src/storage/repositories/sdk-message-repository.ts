@@ -1,4 +1,5 @@
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { SessionRepository } from './session-repository.ts';
 import type { RunDbOp } from '../db-gateway/db-op.ts';
 import { sdkMessageWrites } from './sdk-message-writes.ts';
 import type { SdkMessageWriteMethod } from './sdk-message-writes.ts';
@@ -627,6 +628,10 @@ export class SDKMessageRepository {
     private reactiveDb?: SdkMessageChanges
   ) {}
 
+  sessionExists(sessionId: string): boolean {
+    return new SessionRepository(this.db).getSession(sessionId) !== null;
+  }
+
   readonly runWrite: RunDbOp = (op, args) => gatewayFor(this.db).run(op, args);
   write<K extends SdkMessageWriteMethod>(
     method: K,
@@ -1118,7 +1123,7 @@ export class SDKMessageRepository {
               AND newer.parent_tool_use_id IS NULL
               AND (
                 newer.timestamp > sdk_messages.timestamp
-                OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+                OR (newer.timestamp = sdk_messages.timestamp AND newer.rowid > sdk_messages.rowid)
               )
               AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
           )

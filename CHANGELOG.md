@@ -4,6 +4,46 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-26
+
+### Added
+
+- **Session tools**: Save tool choices and apply them consistently to current and new SDK sessions (#8881, #8819).
+- **Phone setup**: Guide device pairing from Settings (#8640).
+- **Kimi models**: Add K3.1 Pro and Highspeed with region-aware availability (#8635).
+- **Coding settings**: Configure repository policy and explicitly add or remove watched repositories from Settings (#8588, #8610).
+- **Work feed**: Limit an instance's feed to sessions it started (#8604).
+- **Neo settings**: List muted sessions and unmute them individually (#8590).
+- **Document previews**: Show file tabs and retain preview workspace navigation state (#8583, #8586, #8595).
+- **Coding verification**: Admit recorded manual merges through the existing completion gates (#8484).
+
+### Changed
+
+- **Database writes**: Route live SDK message writers through the database gateway (#8570).
+
+### Fixed
+
+- **Model discovery**: Keep cold SDK startup within bounded parallel discovery, return healthy providers when another stalls, and let browser model lists wait for discovery (#8930).
+- **Neo chat**: Keep the scrolled-up view stable and hide system-forwarded worker messages from the human conversation (#8927, #8922).
+- **SDK startup**: Start sessions without inheriting auto mode, and allow workers to run isolated local test servers (#8923, #8925).
+- **Desktop delivery**: Queue Codex work even when Desktop ownership is temporarily unavailable (#8879).
+- **New-user sessions**: Resolve model targets with thinking effort, keep non-coding work in one visible folder, and isolate automatic project discovery (#8617, #8621, #8620).
+- **Tools panel**: Show the tools observed in the current SDK query (#8636, #8641).
+- **Neo work**: Deliver worker milestones and card answers reliably; keep Waiting on you cards first with stable ordering (#8843, #8834, #8911).
+- **File previews**: Preserve preview and draft context and allow explicit non-sensitive attachment paths (#8801, #8811, #8883).
+- **Responsiveness**: Move queued work, native feed, GitHub poll, mailbox and settings writes to the database writer, reclaim stale jobs, and keep slow WebSocket clients connected (#8898, #8868, #8905, #8871, #8931, #8921, #8917, #8882).
+- **Coding ledger**: Reduce review-query overhead, scan fairly across quota failures, and diagnose stale approved PR observations (#8861, #8893, #8906).
+- **Worker isolation**: Enforce the prepared worker OS write sandbox (#8632).
+- **Device pairing**: Restore `hyperneo pair` and `hyperneo devices` in compiled binaries and list both commands in help (#8615).
+- **First start**: Download the Claude Code SDK without blocking the event loop, load embeddings in compiled binaries, and preserve explicit test mode in compiled entrypoints (#8599, #8601, #8612).
+- **Browser security**: Refuse cross-site WebSocket upgrades and mutating HTTP requests (#8594).
+- **Neo cards**: Link reply notices to their question cards and preserve the human turn context (#8584, #8603).
+- **Neo model menu**: Restore model and thinking choices on the Neo page (#8587).
+- **Desktop delivery**: Match direct and retried messages to the receiver's current permission mode (#8577, #8592).
+- **Coding events**: Keep PR events across restarts and log skipped unowned events (#8598).
+- **Repository watches**: Start with no watched repositories and require explicit enrolment (#8608).
+- **Prepared Claude workers**: Persist native Edit/Write denies for the main checkout and sibling clones while allowing the worker's own clone; unlisted outside directories still require the next OS-sandbox slice (#8606).
+
 ## [0.48.0] - 2026-10-24
 
 This release includes the features and fixes since v0.46.0, including the unpublished v0.47.0, v0.47.1 and v0.47.2 changes below. Those earlier tags remain unchanged.

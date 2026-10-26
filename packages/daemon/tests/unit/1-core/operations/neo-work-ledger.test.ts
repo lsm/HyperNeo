@@ -7,6 +7,10 @@ import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/p
 import { spyOn } from 'bun:test';
 import { describe, expect, test } from 'bun:test';
 import { createCodingWorkPrReader } from '../../../../src/lib/neo/packs/coding/work-reader.ts';
+import {
+  NEO_SETTLED_PR_READ_MS,
+  NEO_WORK_PR_READ_MS,
+} from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { afterEach } from 'bun:test';
@@ -41,21 +45,43 @@ function fixture(onDisk = false) {
   let data: unknown = raw();
   let code = 0;
   let gate = Promise.resolve(0);
-  const spawn: SpawnFn = () => {
+  let clock = Date.now();
+  const tick = (ms: number) => {
+    clock += ms;
+    return clock;
+  };
+  const spawn: SpawnFn = (args) => {
     calls++;
+    const path = String(
+      args.find((arg) => typeof arg === 'string' && arg.startsWith('repos/')) ?? ''
+    );
+    const rest = args[1] === 'api';
+    const body = rest
+      ? path.includes('check-runs')
+        ? { check_runs: [] }
+        : path.includes('/status')
+          ? { statuses: [] }
+          : []
+      : data;
     return {
-      stdout: new Response(JSON.stringify(data)).body,
-      stderr: new Response(code ? 'HTTP 404: synthetic unavailable' : '').body,
-      exited: gate.then(() => code),
+      stdout: new Response(rest || code === 0 ? JSON.stringify(body) : '').body,
+      stderr: new Response(code && !rest ? 'HTTP 404: synthetic unavailable' : '').body,
+      exited: gate.then(() => (rest ? 0 : code)),
       exitCode: null,
       kill: () => {},
     };
   };
   return {
-    read: createCodingWorkPrReader(() => db, spawn),
+    read: createCodingWorkPrReader(
+      () => db,
+      spawn,
+      () => clock
+    ),
     db,
     path,
     spawn,
+    tick,
+    now: () => clock,
     calls: () => calls,
     data: (value: unknown, exit = 0) => {
       data = value;
@@ -86,14 +112,44 @@ describe('ledger work PR acquisition', () => {
     });
     expect(f.calls()).toBe(1);
   });
-  test('each settled human read makes a fresh attempt so old approval and failures cannot be masked', async () => {
+  test('each settled human read makes a fresh attempt once the settled TTL passes', async () => {
     const f = fixture();
     expect((await f.read([url]))?.[0].review).toBe('approved');
+    f.tick(NEO_SETTLED_PR_READ_MS + 1_000);
     f.data(raw('b'));
     expect((await f.read([url]))?.[0]).toMatchObject({ head: 'b'.repeat(40), review: 'none' });
     f.data({}, 1);
+    f.tick(NEO_SETTLED_PR_READ_MS + 1_000);
     expect(await f.read([url])).toBe(null);
     expect(f.calls()).toBe(3);
+  });
+
+  test('a settled PR is not re-read while its terminal observation is fresh', async () => {
+    const f = fixture();
+    expect(await f.read([url])).toBeTruthy();
+    f.data(raw('b'));
+    f.tick(NEO_WORK_PR_READ_MS + 1_000);
+    expect((await f.read([url]))?.[0]).toMatchObject({ head: 'a'.repeat(40) });
+    expect(f.calls()).toBe(1);
+  });
+
+  test('an open PR is re-read once the short TTL passes, not per caller', async () => {
+    const f = fixture();
+    f.data({ ...raw(), state: 'OPEN' });
+    expect(await f.read([url])).toBeTruthy();
+    expect(await f.read([url])).toBeTruthy();
+    expect(f.calls()).toBe(3);
+    f.tick(NEO_WORK_PR_READ_MS + 1_000);
+    expect(await f.read([url])).toBeTruthy();
+    expect(f.calls()).toBe(6);
+  });
+
+  test('duplicate urls in one demand produce one read', async () => {
+    const f = fixture();
+    expect(
+      await f.read([url, url.toUpperCase(), 'https://github.com/synthetic/ledger/PULL/7'])
+    ).toBeTruthy();
+    expect(f.calls()).toBe(1);
   });
 });
 
@@ -188,7 +244,12 @@ describe('work-view coverage', () => {
       value: { head: 'a'.repeat(40) },
     });
     f.data(raw('b'));
-    expect((await createCodingWorkPrReader(() => db, f.spawn)([url]))?.[0]).toMatchObject({
+    expect((await createCodingWorkPrReader(() => db, f.spawn, f.now)([url]))?.[0]).toMatchObject({
+      head: 'a'.repeat(40),
+    });
+    expect(f.calls()).toBe(1);
+    f.tick(NEO_SETTLED_PR_READ_MS + 1_000);
+    expect((await createCodingWorkPrReader(() => db, f.spawn, f.now)([url]))?.[0]).toMatchObject({
       head: 'b'.repeat(40),
       review: 'none',
     });

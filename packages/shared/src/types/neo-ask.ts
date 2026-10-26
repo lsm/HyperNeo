@@ -167,6 +167,12 @@ export interface NeoQuestionEntry extends NeoQuestion {
 }
 
 export interface NeoAskEntry {
+  summary?: {
+    todoCount: number;
+    questionCount: number;
+    openQuestionCount: number;
+    questionRefs?: { id: string; replacedBy: string | null }[];
+  };
   ask: NeoAsk;
   state: NeoAskEntryState;
   todos: NeoTodoEntry[];
