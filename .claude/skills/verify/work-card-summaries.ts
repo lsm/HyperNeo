@@ -42,7 +42,7 @@ try {
   const todo = rows.flatMap(entry => entry.todos).find(item => item.id === 'todo-230')!;
   const observed = { mode, asks: rows.length, todos: rows.flatMap(entry => entry.todos).length, questions: rows.flatMap(entry => entry.questions).length, snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)), cardBytes: Buffer.byteLength(JSON.stringify(rows)) };
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
-  assert.equal(rows.length, 50);
+  assert.equal(rows.length, mode === 'reproduce' ? 50 : 60);
   assert.equal(todo.instruction, mode === 'reproduce' ? 'x'.repeat(1155) : null);
   if (mode !== 'reproduce') {
     assert.equal(todo.report, null);

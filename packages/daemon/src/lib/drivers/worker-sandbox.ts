@@ -5,8 +5,16 @@ import { existsSync } from 'node:fs';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { workerWorkLocations } from '../work-locations.ts';
+import type { WorkerSandboxMode } from '@hyperneo/shared';
 
 let readWorkerSockets = (): string[] => [];
+let readWorkerSandbox = (): WorkerSandboxMode => 'off';
+
+export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
+  readWorkerSandbox = read;
+}
+
+export const workerSandboxOn = () => readWorkerSandbox() === 'always';
 
 export function configureWorkerSockets(read: () => string[]) {
   readWorkerSockets = read;
@@ -96,7 +104,7 @@ export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) 
           enabled: true,
           domains: { '*': 'allow' },
           unix_sockets: Object.fromEntries(sockets.map((path) => [path, 'allow'])),
-          dangerously_allow_all_unix_sockets: false,
+          dangerously_allow_all_unix_sockets: true,
           allow_local_binding: true,
         },
       },

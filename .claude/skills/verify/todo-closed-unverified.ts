@@ -62,7 +62,7 @@ try {
           check: closed.todo.check,
         });
         assert.equal(followup.todo.state, 'todo');
-        const terminal = await invoke('neo.ask.open', { title: 'Terminal unverified work', request: 'Preserve the unverified label when settling', todos: [{ title: 'Unverified terminal step', doneWhen: 'Result checked' }] });
+        const terminal = await invoke('neo.ask.open', { title: 'Terminal unverified work', request: 'Preserve the unverified label when settling', todos: [{ title: 'Unverified terminal step', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } }] });
         await invoke('neo.todo.close', { todoId: terminal.todos[0].id, reason: 'Verification outstanding' });
         await invoke('neo.ask.settle', { askId: terminal.ask.id, status: 'done', outcome: 'Closed with verification outstanding' });
         const settled = await invoke('neo.ask.read', { askId: terminal.ask.id });

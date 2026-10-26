@@ -1,4 +1,4 @@
-import { releaseWorkerSandbox } from './worker-sandbox.ts';
+import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
 import { installClaudeNativeWrites, readClaudeWorkerSandbox } from './claude-native-writes.ts';
@@ -1574,7 +1574,8 @@ export async function startClaudeSession(
       })
     : null;
   if (prepared && !prepared.ok) return prepared;
-  if (prepared) {
+  const sandboxed = !!prepared && workerSandboxOn();
+  if (prepared && sandboxed) {
     try {
       const checkout = await deps.gitCheckout(folder);
       await installClaudeNativeWrites(prepared.value.directory, [folder, checkout?.repo ?? folder]);
@@ -1615,7 +1616,7 @@ export async function startClaudeSession(
       '--mcp-config',
       '{"mcpServers":{}}',
       ...(worktree ? ['--worktree', worktree] : []),
-      ...(prepared ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
+      ...(sandboxed ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],
