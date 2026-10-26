@@ -18,6 +18,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { runMigration396 } from '../../../../src/storage/schema/m396-neo-todo-pr-merged-check.ts';
+import { runMigration458 } from '../../../../src/storage/schema/m458-neo-todo-closed-unverified.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo', role: 'neo' };
@@ -89,6 +90,26 @@ function setup(stop: () => Promise<string | null> = async () => null) {
 }
 
 describe('one completion rule for Neo todos', () => {
+  test('upgrading preserves existing todos, dependent rows and indexes', () => {
+    const db = new Database(':memory:');
+    db.exec(`PRAGMA foreign_keys = ON;
+      CREATE TABLE neo_todos (id TEXT PRIMARY KEY, state TEXT CHECK (state IN ('todo', 'doing', 'blocked', 'done', 'failed', 'removed')));
+      CREATE TABLE links (todo_id TEXT REFERENCES neo_todos(id));
+      CREATE INDEX todo_state ON neo_todos(state);
+      INSERT INTO neo_todos VALUES ('existing', 'doing');
+      INSERT INTO links VALUES ('existing');`);
+    runMigration458(db);
+    runMigration458(db);
+    expect(db.prepare('SELECT * FROM neo_todos').get()).toEqual({ id: 'existing', state: 'doing' });
+    db.exec("UPDATE neo_todos SET state = 'closed_unverified'");
+    expect(db.prepare('SELECT todo_id FROM links').get()).toEqual({ todo_id: 'existing' });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'todo_state'").get()).toEqual({
+      name: 'todo_state',
+    });
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    db.close();
+  });
+
   test('a todo with two required PRs stays not done until both merge, on every path', async () => {
     const { db, store, states, runner, call, told } = setup();
     db.prepare(
@@ -100,26 +121,27 @@ describe('one completion rule for Neo todos', () => {
     runMigration396(db);
     expect(store.getTodo('t')?.check?.kind).toBe('pr_merged');
 
-    const unmet = {
-      ok: false,
-      reason:
-        'check_unmet: coding.pr_merged is not met yet; the todo finishes on its own when it passes.',
-    } as const;
     expect(
       await call('neo.todo.edit', { todoId: 't', done: 'met', evidence: 'Both opened' })
-    ).toEqual(unmet);
-    expect(await call('neo.todo.close', { todoId: 't', reason: 'Looks done' })).toEqual(unmet);
+    ).toMatchObject({ ok: true, todo: { state: 'closed_unverified' } });
+    expect(await call('neo.todo.close', { todoId: 't', reason: 'Looks done' })).toMatchObject({
+      ok: true,
+      todo: { state: 'closed_unverified' },
+    });
     await runner.checkNow(['t'], () => {});
-    expect(store.getTodo('t')?.state).toBe('doing');
+    expect(store.getTodo('t')?.state).toBe('closed_unverified');
     expect(await call('neo.todo.edit', { todoId: 't', title: 'Land both PRs' })).toMatchObject({
       ok: true,
-      todo: { state: 'doing', title: 'Land both PRs' },
+      todo: { state: 'closed_unverified', title: 'Land both PRs' },
     });
 
     states.set(2, 'MERGED');
-    await runner.checkNow(['t'], () => {});
-    expect(store.getTodo('t')).toMatchObject({ state: 'done', evidence: '#1 #2 merged' });
-    expect(told).toEqual(['Todo "Land both PRs" is done: #1 #2 merged']);
+    expect(await call('neo.todo.close', { todoId: 't', reason: 'Both merged' })).toMatchObject({
+      ok: true,
+      todo: { state: 'done' },
+    });
+    expect(store.getTodo('t')).toMatchObject({ state: 'done', evidence: 'Both merged' });
+    expect(told).toEqual([]);
     db.close();
   });
 
@@ -140,17 +162,16 @@ describe('one completion rule for Neo todos', () => {
     states.set(2, 'CLOSED');
     const reason = 'check_failed: #2 closed without merging and no pull request replaced it';
     expect(await call('neo.todo.close', { todoId: todo.id, reason: 'done' })).toEqual({
-      ok: false,
-      reason,
+      ok: true,
+      todo: expect.objectContaining({ state: 'closed_unverified', reason }),
+      todos: expect.any(Array),
     });
     await runner.checkNow([todo.id], () => {});
     expect(store.getTodo(todo.id)).toMatchObject({
-      state: 'failed',
-      reason: '#2 closed without merging and no pull request replaced it',
+      state: 'closed_unverified',
+      reason,
     });
-    expect(told).toEqual([
-      'Todo "Land both" failed: #2 closed without merging and no pull request replaced it',
-    ]);
+    expect(told).toEqual([]);
     db.close();
   });
 
@@ -166,7 +187,7 @@ describe('one completion rule for Neo todos', () => {
     expect(requireNeoTodoMayFinish({ todo }, null)).toEqual({ value: { todo } });
     expect(await call('neo.todo.close', { todoId: todo.id, reason: 'Running' })).toMatchObject({
       ok: true,
-      todo: { state: 'done', evidence: 'Running' },
+      todo: { state: 'closed_unverified', evidence: 'Running' },
     });
     db.close();
   });

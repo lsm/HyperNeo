@@ -6,6 +6,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { SettingsRepository } from '../../../packages/daemon/src/storage/repositories/settings-repository.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -31,22 +32,32 @@ try {
         const result = JSON.parse(reply.content[0].text);
         evidence.push({ phase, name, input, result });
         assert.equal(reply.isError ?? false, false, JSON.stringify(result));
-        assert.equal(result.ok, true, JSON.stringify(result));
+        if (name !== 'neo.snapshot') assert.equal(result.ok, true, JSON.stringify(result));
         return result;
       };
       if (phase === 'initial') {
         db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic close proof', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(sender);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
+        new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
         const opened = await invoke('neo.ask.open', { title: 'Synthetic close proof', request: 'Close without claiming verified delivery', todos: [{ title: 'Unverified delivery', doneWhen: 'Result checked', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/proof/pull/1'] } } }] });
         id = opened.todos[0].id;
         const closed = await invoke('neo.todo.close', { todoId: id, reason: 'Stopping before delivery is verified' });
         assert.equal(closed.todo.state, 'closed_unverified');
       }
       assert.equal(store.getTodo(id)?.state, 'closed_unverified');
-      const snapshot = await invoke('neo.ask.list', {});
+      const snapshot = await invoke('neo.ask.read', { askId: store.getTodo(id)!.askId });
       const text = JSON.stringify(snapshot);
       assert(text.includes('Closed unverified'), text);
       assert(!text.includes('"doneCount":1'), text);
+      const full = JSON.stringify(await invoke('neo.snapshot', {}));
+      assert(full.includes('Closed unverified'), full);
+      assert(!full.includes('"doneCount":1'), full);
+      if (phase === 'restart' && process.argv.includes('--web')) {
+        writeFileSync(join(run, 'evidence/ready.json'), JSON.stringify({ port: app.server.port, run }));
+        console.log(`WEB_READY http://127.0.0.1:${app.server.port}/neo ${run}`);
+        const until = Date.now() + 300000;
+        while (!existsSync(join(run, 'release')) && Date.now() < until) await Bun.sleep(500);
+      }
     } finally { await app.cleanup(); }
   }
   console.log('PASS: real daemon MCP closes without claiming Done; reads show Closed unverified across restart.');

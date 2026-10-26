@@ -104,6 +104,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.awaitingNeo': '这轮做完了，等 Neo 核对',
   'todo.reportedDone': '会话说做完了',
   'todo.done': '做完了',
+  'todo.closedUnverified': '已关闭，未验证',
   'todo.pr.merged': '{pr} 已合并',
   'todo.pr.closed': '{pr} 已关闭',
   'todo.pr.ciFailing': '{pr} CI 没过',

@@ -211,7 +211,7 @@ export const NeoTodoSchema = z.object({
   instruction: z.string().nullable(),
   named: z.record(z.string(), z.unknown()).nullable(),
   repo: z.string().nullable(),
-  state: z.enum(['todo', 'doing', 'blocked', 'done', 'failed', 'removed']),
+  state: z.enum(['todo', 'doing', 'blocked', 'done', 'closed_unverified', 'failed', 'removed']),
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
@@ -286,7 +286,7 @@ export function requireNeoTodoCardsAnswered<T extends { todo: NeoTodo; patch: Ne
   questions: readonly NeoQuestion[]
 ): Gate<T> {
   const card =
-    plan.patch.state === 'done' &&
+    ['done', 'closed_unverified'].includes(plan.patch.state ?? '') &&
     questions.find((question) => question.state === 'open' && question.todoId === plan.todo.id);
   return card
     ? fail(`card_unanswered: card ${card.id} is still waiting for the human.`)
@@ -379,7 +379,7 @@ export function createNeoTodoOperations(
       if ('reason' in rebased) return rebased.reason;
       plan = rebased.value;
     }
-    if (plan.patch.state === 'done') {
+    if (['done', 'closed_unverified'].includes(plan.patch.state ?? '')) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
       if (!sameNeoTodoCheck(checked, input?.addUrls ? plan.todo : latest.value))
@@ -571,7 +571,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.close',
       description:
-        'Mark a todo done with the reason you judged it done; its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
+        'Close a todo with your reason. It is done only when its outcome check passes; otherwise it is visibly closed unverified, with the unmet check recorded. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

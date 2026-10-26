@@ -66,6 +66,7 @@ const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   doing: 'queued',
   blocked: 'queued',
   done: 'reported',
+  closed_unverified: 'cancelled',
   failed: 'failed',
   removed: 'cancelled',
 };

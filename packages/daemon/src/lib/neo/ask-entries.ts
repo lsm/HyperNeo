@@ -35,6 +35,7 @@ const NEO_TODO_STATUS_EN = {
   'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
   'todo.done': 'Done',
+  'todo.closedUnverified': 'Closed unverified',
 } as const;
 
 const coded = (code: keyof typeof NEO_TODO_STATUS_EN, params: Record<string, string> = {}) =>
@@ -45,6 +46,7 @@ export function neoTodoStatusLine(
   todos: readonly NeoTodo[],
   packLine: NeoStatusLine | null
 ): NeoStatusLine {
+  if (todo.state === 'closed_unverified') return coded('todo.closedUnverified');
   if (todo.state === 'removed') {
     const title = todos.find((other) => other.id === todo.replacedBy)?.title;
     if (title)
@@ -85,6 +87,7 @@ const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
   doing: 2,
   todo: 3,
   done: 4,
+  closed_unverified: 4,
   removed: 5,
 };
 

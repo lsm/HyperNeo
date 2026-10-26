@@ -134,7 +134,7 @@ describe('neo.todo operations', () => {
     });
     expect(met.ok && met.todo).toMatchObject({
       title: 'Fix login',
-      state: 'done',
+      state: 'closed_unverified',
       finishedAt: expect.any(Number),
       evidence: '#12 merged',
       report: null,
@@ -145,7 +145,7 @@ describe('neo.todo operations', () => {
       evidence: 'The session says it is fixed',
     });
     expect(reported.ok && reported.todo).toMatchObject({
-      state: 'done',
+      state: 'closed_unverified',
       report: 'The session says it is fixed',
     });
   });
@@ -187,7 +187,7 @@ describe('neo.todo operations', () => {
       reason: 'Verified on device',
     });
     expect(closed.ok && closed.todo).toMatchObject({
-      state: 'done',
+      state: 'closed_unverified',
       evidence: 'Verified on device',
       finishedAt: expect.any(Number),
     });
@@ -282,7 +282,10 @@ describe('neo.todo operations', () => {
     );
     repo.answerQuestion(card, 'yes', 'button', Date.now());
     const closed = await call('neo.todo.close', { todoId: added.todo.id, reason: 'Approved' });
-    expect(closed.ok && closed.todo).toMatchObject({ state: 'done', evidence: 'Approved' });
+    expect(closed.ok && closed.todo).toMatchObject({
+      state: 'closed_unverified',
+      evidence: 'Approved',
+    });
     expect(repo.getQuestion(card.id)).toMatchObject({ state: 'answered', answer: 'yes' });
   });
 

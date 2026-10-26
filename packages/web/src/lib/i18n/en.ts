@@ -102,6 +102,7 @@ export const en = {
   'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
   'todo.done': 'Done',
+  'todo.closedUnverified': 'Closed unverified',
   'todo.pr.merged': '{pr} merged',
   'todo.pr.closed': '{pr} closed',
   'todo.pr.ciFailing': '{pr} CI failing',

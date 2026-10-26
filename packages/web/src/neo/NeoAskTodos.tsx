@@ -40,6 +40,7 @@ const marks = {
   doing: ['●', 'text-accent'],
   blocked: ['!', 'text-warning'],
   done: ['✓', 'text-success'],
+  closed_unverified: ['?', 'text-warning'],
   failed: ['✕', 'text-danger'],
   removed: ['', 'text-fg-faint'],
 } as const;

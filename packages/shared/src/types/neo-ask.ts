@@ -27,7 +27,14 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
-export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'removed';
+export type NeoTodoState =
+  | 'todo'
+  | 'doing'
+  | 'blocked'
+  | 'done'
+  | 'closed_unverified'
+  | 'failed'
+  | 'removed';
 
 export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question' | 'needs-human';
 
