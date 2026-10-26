@@ -4,6 +4,7 @@ import { useEffect } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
+import { SessionToolChoices } from './SessionToolChoices.tsx';
 import type {
   Session,
   ToolsConfig,
@@ -549,11 +550,22 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                 </div>
               )}
             </div>
-            <div class="border-t border-line-strong" />
+            <div hidden={!advancedOpen.value} class="border-t border-line-strong" />
           </>
         )}
 
-        <div>
+        {isOpen && (
+          <SessionToolChoices
+            key={session.id}
+            session={session}
+            skills={allSkills.value}
+            servers={sessionMcpEntries.value}
+            inventory={inventory.value}
+            onApplied={() => refreshInventory.value++}
+          />
+        )}
+
+        <div hidden={!advancedOpen.value}>
           {allSkills.value.length > 0 ? (
             <>
               <GroupHeader
@@ -673,9 +685,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           )}
         </div>
 
-        <div class="border-t border-line-strong" />
+        <div hidden={!advancedOpen.value} class="border-t border-line-strong" />
 
-        <div>
+        <div hidden={!advancedOpen.value}>
           {sessionMcpEntries.value.length > 0 ? (
             <>
               <GroupHeader
@@ -805,7 +817,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           )}
         </div>
 
-        <div class="border-t border-line-strong" />
+        <div hidden={!advancedOpen.value} class="border-t border-line-strong" />
 
         <div>
           <button
@@ -822,7 +834,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
               viewBox="0 0 24 24"
               stroke="currentColor"
             />
-            <span class="text-sm font-medium text-fg-faint">Advanced</span>
+            <span class="text-sm font-medium text-fg-faint">Advanced settings</span>
           </button>
 
           {advancedOpen.value && (
@@ -908,7 +920,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
             onClick={handleCancel}
             class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg transition-colors"
           >
-            Cancel
+            {advancedOpen.value ? 'Cancel' : 'Close'}
           </button>
           <button
             type="button"

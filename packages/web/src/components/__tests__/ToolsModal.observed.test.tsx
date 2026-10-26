@@ -153,11 +153,12 @@ describe('ToolsModal observed running inventory', () => {
     });
     const view = render(<ToolsModal isOpen onClose={() => {}} session={current} />);
     fireEvent.click(await view.findByRole('button', { name: 'Use here: Synthetic Browser' }));
+    expect(view.queryAllByRole('checkbox')).toHaveLength(0);
     await waitFor(() =>
       expect(view.getByRole('button', { name: 'Stop using here: Synthetic Browser' })).toBeTruthy()
     );
     expect(view.getByText('Saved · applied to the running session')).toBeTruthy();
-    expect(view.getAllByText('Attached · 1 tool').length).toBeGreaterThan(0);
+    await waitFor(() => expect(view.getAllByText('Attached · 1 tool').length).toBeGreaterThan(0));
     expect(
       backend.request.mock.calls.some(([name]) =>
         ['tools.save', 'mcp.enablement.setOverride', 'session.interrupt'].includes(name)
