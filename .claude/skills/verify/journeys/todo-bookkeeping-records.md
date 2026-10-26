@@ -22,11 +22,3 @@ as recorded without blocking, before and after restart.
 This proves agent receipts and durable audit records, not visual web layout.
 Malformed PR URLs still fail validation, and existing unanswered-card and
 cancelled-turn mutation protections stay enforced.
-
-For the row 5a policy extraction, run this helper before and after the move in
-separate fresh evidence directories. Both runs must retain the same accepted
-bookkeeping records across restart. The focused policy contracts cover the
-runtime pack and standalone synchronous factory, including current claim reads,
-URL normalization, self ownership and `closed_unverified` peers. This extraction
-does not move the runtime admission or write callers onto the DB worker; those
-remain later slices of #8712.
