@@ -179,6 +179,16 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
+let workerDataDir: string;
+beforeEach(() => {
+  workerDataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = workerDataDir;
+});
+afterEach(() => {
+  rmSync(workerDataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
 describe('SessionLifecycle', () => {
   let lifecycle: SessionLifecycle;
   let mockDb: Database;

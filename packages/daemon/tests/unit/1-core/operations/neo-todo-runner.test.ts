@@ -199,6 +199,46 @@ describe('neo todo runner', () => {
     }
   });
 
+  test.each([true, undefined])(
+    'a start target asking for the sandbox (%s) carries the request into its preparation',
+    async (sandbox) => {
+      const h = setup();
+      try {
+        h.packs[0] = {
+          ...h.packs[0],
+          prepareExecution: async () => ({ ok: false, reason: 'unused' }),
+        };
+        const todo = h.store.addTodo(
+          crypto.randomUUID(),
+          'ask',
+          {
+            title: 'Rows',
+            doneWhen: 'PR merged',
+            check: { pack: 'coding', kind: 'pr', params: {} },
+            instruction: 'Build the rows.',
+            named: null,
+          },
+          1
+        );
+        h.sessions.create(todo.id, {
+          verb: 'start',
+          adapter: 'hyperneo',
+          place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+          ...(sandbox ? { sandbox } : {}),
+        });
+        await h.runner.start(todo.id);
+        const start = h.calls.find((call) => call.name === 'work.start')!.input;
+        expect(start.preparation).toEqual({
+          pack: 'coding',
+          parameters: {},
+          ...(sandbox ? { sandbox: true } : {}),
+        });
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
     const h = setup();
     try {

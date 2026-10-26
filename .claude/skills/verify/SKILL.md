@@ -183,7 +183,10 @@ The worker-question-answer-routes helper does this in finally, including failure
 
 Await session creation through the daemon DB facade before inserting dependent
 synthetic SDK or task records. Session writes use the asynchronous DB writer;
-an unawaited creation can race a foreign-key insert.
+an unawaited creation can race a foreign-key insert. When a metadata helper mixes
+WebSocket writes with synchronous in-process operation transactions, await a
+DB-facade session write before invoking the next transaction, so earlier writer
+work has committed. `neo-rule-answers.ts` uses this barrier.
 
 When a journey specifies an ephemeral model mock, omit the 8000/8001 preflight.
 That helper must bind its model listener to port 0 and redirect both session and
@@ -208,9 +211,12 @@ Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
 They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
 Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
-sends use the native app-server queue; their proofs must show no Desktop ownership
-probe, open or turn/start. Check the loaded list and resume saved unloaded threads
-before settings or enqueue; already loaded threads must not be resumed.
+sends route by Desktop ownership: while the stubbed probe reports Desktop running
+they deliver through owner discovery plus follower steer or turn start, and their
+proofs must show no app-server `thread/resume` or native queue call; while it
+reports Desktop not running they use the native app-server queue, checking the
+loaded list and resuming saved unloaded threads before settings or enqueue, with
+already loaded threads never resumed.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

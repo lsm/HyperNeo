@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import {
   chmodSync,
@@ -19,6 +19,16 @@ import {
   releaseWorkerSandbox,
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { workerRuntimeCleanupCommand } from '../../../../src/lib/drivers/worker-runtime-cleanup';
+
+let dataDir: string;
+beforeEach(() => {
+  dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = dataDir;
+});
+afterEach(() => {
+  rmSync(dataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
 
 const { beforeLaunch } = vi.hoisted(() => ({ beforeLaunch: vi.fn((_args: string[]) => {}) }));
 vi.mock('../../../../src/lib/runtime-spawn/index.ts', async (original) => {
@@ -43,7 +53,7 @@ test.skipIf(process.platform === 'win32').each(['runtime', 'child'])(
     chmodSync(retained, 0o000);
     beforeLaunch.mockImplementation(() => {
       if (scope === 'runtime') chmodSync(retained, 0o700);
-      rmSync(scope === 'runtime' ? join(env.TMPDIR, '..') : env.TMPDIR, {
+      rmSync(scope === 'runtime' ? env.TMPDIR : join(env.TMPDIR, 'locked'), {
         recursive: true,
         force: true,
       });
@@ -68,7 +78,7 @@ test.skipIf(process.platform === 'win32')(
     const root = join(fixture, 'clone');
     mkdirSync(join(root, '.git'), { recursive: true });
     const env = await prepareWorkerSandbox(root);
-    const runtime = join(env.TMPDIR, '..');
+    const runtime = env.TMPDIR;
     mkdirSync(join(env.TMPDIR, 'swap'));
     const outside = join(fixture, 'outside');
     const child = join(outside, 'child');
@@ -78,12 +88,12 @@ test.skipIf(process.platform === 'win32')(
     try {
       const args = await workerRuntimeCleanupCommand(runtime);
       args[args.indexOf('/bin/sh') + 2] = `
-[ -d "$1/tmp/swap" ] || exit 1
-/bin/mv "$1/tmp/swap" "$1/cache/moved" || exit 1
-/bin/ln -s "$3" "$1/tmp/swap" || exit 1
-/bin/chmod 700 "$1/tmp/swap" >/dev/null 2>&1
+[ -d "$1/swap" ] || exit 1
+/bin/mv "$1/swap" "$1/cache/moved" || exit 1
+/bin/ln -s "$3" "$1/swap" || exit 1
+/bin/chmod 700 "$1/swap" >/dev/null 2>&1
 outer=$?
-/bin/chmod 700 "$1/tmp/swap/child" >/dev/null 2>&1
+/bin/chmod 700 "$1/swap/child" >/dev/null 2>&1
 inner=$?
 printf inside > "$1/inside"
 [ "$outer" -ne 0 ] && [ "$inner" -ne 0 ]
@@ -132,7 +142,7 @@ test.skipIf(process.platform === 'win32').each(['file', 'symlink'])(
     const root = join(fixture, 'clone');
     mkdirSync(join(root, '.git'), { recursive: true });
     const env = await prepareWorkerSandbox(root);
-    const runtime = join(env.TMPDIR, '..');
+    const runtime = env.TMPDIR;
     const outside = join(fixture, 'outside');
     mkdirSync(outside, { mode: 0o755 });
     writeFileSync(join(outside, 'retained'), 'human bytes');

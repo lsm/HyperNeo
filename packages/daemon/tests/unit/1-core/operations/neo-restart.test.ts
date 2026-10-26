@@ -74,4 +74,33 @@ describe('neo.restart operation', () => {
       db.close();
     }
   });
+
+  test('the bound Neo session may open itself', async () => {
+    const db = await createTestDb();
+    await db.createSession(createTestSession('neo:root'));
+    const updateSession = mock(async () => {});
+    const events = new InternalEventBus();
+    const service = createNeoService(
+      db,
+      {
+        updateSession,
+      } as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      events
+    );
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+    try {
+      expect(
+        await invokeOperation(
+          createOperationRegistry(createNeoOperations(service)),
+          'neo.open',
+          {},
+          { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+        )
+      ).toMatchObject({ value: { sessionId: 'neo:root' } });
+    } finally {
+      await service.dispose();
+      db.close();
+    }
+  });
 });

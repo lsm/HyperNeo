@@ -31,6 +31,9 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
+    expect(NEO_ROOT_TURN_END).toContain(
+      'When you are waiting on something, end the turn; the event wakes you'
+    );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(300);
     expect(NEO_ROOT_PROMPT).toContain('neo.publication.publish');
     expect(NEO_ROOT_PROMPT).not.toContain('triggerId');
@@ -106,6 +109,7 @@ describe('root Neo system prompt', () => {
     const coding = neoPrompt(neoSettingsPackBriefs());
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
     expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('never sleep or poll gh');
     expect(coding.trim().split('\n').at(-1)).toBe(NEO_ROOT_TURN_END.trim());
     expect(neoPrompt([])).not.toContain('Domain packs');
     expect(coding.replace(NEO_FOCUSED_DISCUSSION, '')).not.toMatch(

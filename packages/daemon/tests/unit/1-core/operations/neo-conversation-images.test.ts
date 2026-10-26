@@ -230,6 +230,9 @@ describe('conversation photos as references', () => {
     expect(await read('9:1')).toMatchObject({ value: { ok: false, reason: 'image_not_found' } });
     expect(
       await read('1:1', { source: 'mcp', role: 'neo', sessionId: root.sessionId })
+    ).toMatchObject({ value: { ok: true, imageId: '1:1' } });
+    expect(
+      await read('1:1', { source: 'mcp', role: 'neo', sessionId: 'neo:unbound' })
     ).toMatchObject({ value: { ok: false, reason: 'human_only' } });
   });
 });

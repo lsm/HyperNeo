@@ -128,13 +128,13 @@ describe('Neo publication quote preview', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Reply to Neo’s message' }));
       }
       const preview = screen.getByRole('region', { name: /^Replying to Neo/ });
-      expect(within(preview).getByText(publication.shortText)).toBeTruthy();
+      expect(within(preview).getByText(publication.shortText ?? '')).toBeTruthy();
       expect(preview.textContent).not.toContain('**The app:**');
       expect(document.activeElement?.tagName).toBe('TEXTAREA');
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
       await waitFor(() => expect(container.querySelector('.neo-message-user')).toBeTruthy());
       const sent = container.querySelector<HTMLElement>('.neo-message-user')!;
-      expect(within(sent).getByText(publication.shortText)).toBeTruthy();
+      expect(within(sent).getByText(publication.shortText ?? '')).toBeTruthy();
       expect(sent.textContent).not.toContain('Detailed implementation notes');
       expect(screen.queryByRole('region', { name: /^Replying to Neo/ })).toBeNull();
     }

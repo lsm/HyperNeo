@@ -1,4 +1,3 @@
-import { withCodingWorkGoal as withWorkGoal } from '../../../../src/lib/neo/packs/coding/work-goal.ts';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { hostname } from 'node:os';
 import { NEO_WORK_BLOCKER, NEO_WORK_GOAL, NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
@@ -13,10 +12,10 @@ import {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import {
+  driverWorkCall as buildDriverWorkCall,
   type DriverSent,
   decideCardLiveStatus,
   driverExchangeReport,
-  driverWorkCall as buildDriverWorkCall,
   driverWorkCaller,
   NEO_CARD_CONFIRM_MS,
   type NeoDriverTarget,
@@ -30,6 +29,7 @@ import {
 } from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
+import { withCodingWorkGoal as withWorkGoal } from '../../../../src/lib/neo/packs/coding/work-goal.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -38,8 +38,8 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
@@ -133,6 +133,7 @@ describe('withWorkGoal', () => {
       workId: 'w1',
       goal: 'g'.repeat(1000),
       doneWhen: `merged ${'d'.repeat(1993)}`,
+      checkKind: 'pr_merged',
     });
     expect(merging.length).toBeLessThanOrEqual(20000);
     expect(merging).toContain('mergeStateStatus,mergeable');
@@ -143,19 +144,29 @@ describe('withWorkGoal', () => {
   });
 
   test('tells a session whose done means merging to run the merge on its own', () => {
-    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    const merged = {
+      workId: 'w1',
+      goal: 'Fix it',
+      doneWhen: '- squash-merged to dev',
+      checkKind: 'pr_merged',
+    };
     expect(withWorkGoal('Fix it.', merged)).toContain(
       'Run `gh pr merge <number> --squash --match-head-commit <head_sha>` as a command of its own'
     );
     expect(
-      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator', checkKind: null })
     ).not.toContain('gh pr merge');
   });
 
   test.each([true, false])(
     'keeps the review gate in the card brief when eventsDelivered is %s',
     (eventsDelivered) => {
-      const goal = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+      const goal = {
+        workId: 'w1',
+        goal: 'Fix it',
+        doneWhen: '- squash-merged to dev',
+        checkKind: 'pr_merged',
+      };
       const brief = withWorkGoal('Fix it.', goal, eventsDelivered);
       expect(brief).toContain("Follow the repository's review requirements");
       expect(brief).toContain('Never enable GitHub auto-merge');
@@ -167,33 +178,52 @@ describe('withWorkGoal', () => {
       expect(brief).toContain('review and check requirements above to be met on the latest head');
       expect(brief).toContain('then try the merge again if you own it');
       expect(
-        withWorkGoal('Fix it.', { ...goal, doneWhen: '- runs in the simulator' }, eventsDelivered)
+        withWorkGoal(
+          'Fix it.',
+          { ...goal, doneWhen: '- runs in the simulator', checkKind: null },
+          eventsDelivered
+        )
       ).not.toContain('auto-merge');
     }
   );
 
   test('tells a session whose done means merging to resolve the threads it addresses', () => {
-    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    const merged = {
+      workId: 'w1',
+      goal: 'Fix it',
+      doneWhen: '- squash-merged to dev',
+      checkKind: 'pr_merged',
+    };
     expect(withWorkGoal('Fix it.', merged)).toContain('resolveReviewThread');
     expect(
-      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator', checkKind: null })
     ).not.toContain('resolveReviewThread');
   });
 
   test('tells a session whose done means merging to find and fix why a merge was refused', () => {
-    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    const merged = {
+      workId: 'w1',
+      goal: 'Fix it',
+      doneWhen: '- squash-merged to dev',
+      checkKind: 'pr_merged',
+    };
     expect(withWorkGoal('Fix it.', merged)).toContain('mergeStateStatus,mergeable');
     expect(
-      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator', checkKind: null })
     ).not.toContain('mergeStateStatus');
   });
 
   test("tells a session whose done means merging that its pull request's events reach it", () => {
-    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    const merged = {
+      workId: 'w1',
+      goal: 'Fix it',
+      doneWhen: '- squash-merged to dev',
+      checkKind: 'pr_merged',
+    };
     expect(withWorkGoal('Fix it.', merged)).toContain('with no subscription needed');
     expect(withWorkGoal('Fix it.', merged)).not.toContain('event.external.subscribe');
     expect(
-      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator', checkKind: null })
     ).not.toContain('with no subscription needed');
     expect(withWorkGoal('Fix it.', merged, false)).toContain('event.external.subscribe');
     expect(withWorkGoal('Fix it.', merged, false)).not.toContain('with no subscription needed');
