@@ -3,6 +3,7 @@ import {
   codingPollPageReads,
   codingPollPageWrites,
 } from '../../lib/neo/packs/coding/poll-http-db.ts';
+import { readWorkInput } from '../work-input.ts';
 import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
   codingAncestryReads,
@@ -97,6 +98,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
     codingPollPageReads,
     codingPollPageWrites,
+    readWorkInput,
     codingMergeReads,
     codingMergeWrites,
     codingAncestryReads,

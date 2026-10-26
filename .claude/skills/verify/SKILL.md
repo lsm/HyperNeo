@@ -80,6 +80,18 @@ or use a shell with `set -e`. For example:
 bash .claude/skills/verify/resource-check.sh && bun run check
 ```
 
+In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
+target because the repository excludes `**/tmp`. If `format:check` reports zero
+files, run the same check chain with that one command replaced by
+`bunx biome format packages scripts .github *.json *.md`. Keep the failure log
+and report the explicit-directory equivalent separately; do not change the
+repository's ignore rules to accommodate a temporary checkout.
+
+If bare macOS `mktemp` still chooses a restricted system temp directory, run
+the shell-based guards under Bash with `mktemp() { /usr/bin/mktemp -p "$TMPDIR"
+"$@"; }; export -f mktemp`, where `TMPDIR` is the writable directory already
+selected above. Explicit-template calls and proof isolation remain unchanged.
+
 For a metadata-only Bun helper taking `[arguments] <run>`, use:
 
 ```bash
