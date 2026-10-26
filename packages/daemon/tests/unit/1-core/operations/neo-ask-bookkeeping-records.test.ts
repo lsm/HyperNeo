@@ -10,7 +10,11 @@ import {
   createNeoWorkerQuestionWriter,
   createNeoQuestionOperations,
 } from '../../../../src/lib/neo/question-operations.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import {
+  createOperationRegistry,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry.ts';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 
 function setup() {
@@ -52,7 +56,8 @@ function setup() {
     tell: async () => {},
     changed: () => {},
   });
-  const registry = createOperationRegistry([
+  const registry: OperationRegistry = createOperationRegistry([
+    ...createDiscoveryOperations(() => registry),
     ...createNeoTodoOperations(
       store,
       sessions,
@@ -94,6 +99,53 @@ function setup() {
 }
 
 describe('todo and ask bookkeeping records through MCP', () => {
+  test('the agent-visible question description explains stale todo references', async () => {
+    const h = setup();
+    try {
+      const described = await h.call('operations.describe', { name: 'neo.question.ask' });
+      expect(described).toMatchObject({ found: true });
+      expect(described.description).toContain(
+        'If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed'
+      );
+      expect(described.description).toContain(
+        'return a todo_closed record and open the question on the ask without linking that todo'
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+  test('a settled-ask retry records the different-title remedy without adding work', async () => {
+    const h = setup();
+    try {
+      h.store.openAsk({
+        id: 'child',
+        parentId: h.ask.id,
+        repo: 'github.com/synthetic/child',
+        projectId: null,
+        sessionId: h.ask.sessionId,
+        originMessageId: null,
+        title: 'Child card',
+        request: 'Filed work',
+        createdAt: 1,
+      });
+      h.store.settleAsk(h.ask, 'done', 'Finished request', 2);
+      const before = h.store.listTodos(h.ask.id);
+      const result = await h.call('neo.ask.open', {
+        title: h.ask.title,
+        request: 'Follow-up',
+        todos: [{ title: 'New task', doneWhen: 'Observed' }],
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        ask: { id: h.ask.id, status: 'done' },
+        records: [expect.stringContaining('Open a new ask for it with a different title')],
+      });
+      expect(h.store.listTodos(h.ask.id)).toEqual(before);
+      expect(h.calls).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
   test('settling unfinished todos records them and preserves their visible unverified status', async () => {
     const h = setup();
     try {

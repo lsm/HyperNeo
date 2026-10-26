@@ -10,7 +10,8 @@ import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-g
 import { createNeoAskRecordOperations } from '../../../packages/daemon/src/lib/neo/ask-record-operations.ts';
 import { createNeoWorkerQuestionWriter, createNeoQuestionOperations } from '../../../packages/daemon/src/lib/neo/question-operations.ts';
 import { createNeoAskReadOperation, createNeoDoneTodosOperation } from '../../../packages/daemon/src/lib/neo/ask-entries.ts';
-import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { createOperationRegistry, type OperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { createDiscoveryOperations } from '../../../packages/daemon/src/lib/operations/discovery.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -28,7 +29,8 @@ for (const phase of ['initial', 'reopen']) {
     const unexpected = async (): Promise<never> => { throw new Error('No worker dispatch or answer is permitted'); };
     const admit = (caller: Parameters<typeof createNeoAskReadOperation>[2] extends (arg: infer T) => unknown ? T : never) => ({ value: caller });
     const project = async <T,>(items: readonly T[]) => [...items];
-    const registry = createOperationRegistry([
+    const registry: OperationRegistry = createOperationRegistry([
+      ...createDiscoveryOperations(() => registry),
       ...createNeoAskRecordOperations(store, sessions, { start: unexpected, proceed: unexpected, retry: unexpected, stop: async () => null, recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()) }, () => null, () => true, () => []),
       ...createNeoQuestionOperations(store, unexpected, unexpected),
       createNeoAskReadOperation(store, () => [], admit, project),
@@ -37,8 +39,12 @@ for (const phase of ['initial', 'reopen']) {
     const handler = createOperationMcpHandler(registry, () => ({ sessionId: 'neo', role: 'neo' }), (refusal) => gatewayFor(db).run(recordOperationRefusal, { refusal, sessionId: 'neo', at: Date.now() }));
     const call = async (name: string, input: unknown) => {
       const reply = await handler({ name, input }), result = JSON.parse(reply.content[0].text);
-      evidence.push({ phase, name, reply }); assert.equal(reply.isError ?? false, false); assert.equal(result.ok, true, JSON.stringify(result)); return result;
+      evidence.push({ phase, name, reply }); assert.equal(reply.isError ?? false, false); assert(result.ok === true || result.found === true, JSON.stringify(result)); return result;
     };
+    const described = await call('operations.describe', { name: 'neo.question.ask' });
+    assert.equal(described.found, true);
+    assert(described.description.includes('If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed'));
+    assert(described.description.includes('return a todo_closed record and open the question on the ask without linking that todo'));
     if (phase === 'initial') {
       const ask = store.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: null, title: 'Synthetic ask', request: 'Close unverified work visibly', createdAt: 1 });
       const unfinished = store.addTodo('unfinished', ask.id, { title: 'Unverified delivery', doneWhen: 'Build served and observed', instruction: null, check: null, named: null }, 1);
@@ -56,6 +62,11 @@ for (const phase of ['initial', 'reopen']) {
       const settled = await call('neo.ask.settle', { askId: ask.id, status: 'done', outcome: 'Closing without verified outcomes' });
       assert(settled.records[0].startsWith('todos_unfinished:'));
       assert(settled.todos.every((todo: { state: string }) => todo.state === 'closed_unverified'));
+      store.openAsk({ id: 'child', parentId: ask.id, repo: 'github.com/synthetic/child', projectId: null, sessionId: ask.sessionId, originMessageId: null, title: 'Child card', request: 'Filed work', createdAt: 1 });
+      const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ title: 'New follow-up', doneWhen: 'Observed result' }] });
+      assert.equal(retry.ask.id, ask.id); assert.equal(retry.todos.length, 2);
+      assert(retry.records[0].includes('Open a new ask for it with a different title'));
+
     }
     const read = await call('neo.ask.read', { askId: 'ask' });
     assert(read.entry.todos.every((todo: { state: string }) => todo.state === 'closed_unverified'));
@@ -63,8 +74,8 @@ for (const phase of ['initial', 'reopen']) {
     assert((await call('neo.ask.doneTodos', { askId: 'ask' })).todos.length === 0);
     assert(store.listQuestions('ask').every((question) => question.state === 'retired' && question.answer === null && question.answeredBy === null));
     const audits = db.prepare('SELECT operation,reason,accepted FROM operation_refusals ORDER BY id').all();
-    assert.equal(audits.length, 2); assert(audits.every((audit) => (audit as { accepted: number }).accepted === 1));
+    assert.equal(audits.length, 3); assert(audits.every((audit) => (audit as { accepted: number }).accepted === 1));
     evidence.push({ phase, audits, todos: store.listTodos('ask') });
   } finally { await gatewayFor(db).close(); db.close(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('PASS: MCP settlement closes unfinished work unverified, done reader excludes it, questions remain unanswered, accepted audit records survive DB reopen.');
+console.log('PASS: MCP catalog and settled-ask guidance match record behavior; unverified rows, unanswered questions and accepted audit records survive DB reopen.');
