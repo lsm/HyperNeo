@@ -94,6 +94,62 @@ describe('withCodexDesktopIpc', () => {
   }
 
   describe('steerCodexDesktopTurn Desktop admission', () => {
+    test(
+      'a slow Desktop owner past the old handoff deadline still receives the send',
+      async () => {
+        const ownerAt = Date.now() + 9_000;
+        const f = await fixture((message, _socket, send) => {
+          if (message.method === 'thread-owner-discovery') {
+            if (Date.now() < ownerAt)
+              return send({
+                type: 'response',
+                requestId: message.requestId,
+                resultType: 'error',
+                error: 'no-client-found',
+              });
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              handledByClientId: 'slow-owner',
+            });
+          }
+          if (message.method === 'thread-follower-steer-turn')
+            return send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              result: { result: { turnId: 'turn-1' } },
+            });
+          send({ type: 'response', requestId: message.requestId, resultType: 'success' });
+        });
+        const result = await steerCodexDesktopTurn(
+          f.path,
+          (args) => {
+            if (args[0] !== 'open') throw new Error(`Unexpected spawn ${args[0]}`);
+            return {
+              stdout: null,
+              stderr: new Response('').body,
+              exited: Promise.resolve(0),
+              exitCode: 0,
+              kill: () => {},
+            };
+          },
+          'thread-1',
+          'now',
+          'input-1',
+          'auto',
+          async () => true
+        );
+        expect(result).toMatchObject({
+          reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'turn-1' } },
+        });
+        const methods = f.seen.map((message) => message.method);
+        expect(methods).toContain('thread-follower-steer-turn');
+      },
+      30_000
+    );
+
     test.each([
       ['/Applications/ChatGPT.app/Contents/MacOS/ChatGPT', true],
       ['/Users/test/Applications/Codex.app/Contents/MacOS/Codex', true],
