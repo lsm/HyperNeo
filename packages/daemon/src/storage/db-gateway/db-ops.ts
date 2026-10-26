@@ -102,6 +102,7 @@ import { nativeFeedEnqueueWrites } from '../repositories/native-feed-enqueue-wri
 import { sessionTitleEnqueueWrites } from '../repositories/session-title-enqueue-write.ts';
 import { skillValidationEnqueueWrites } from '../repositories/skill-validation-enqueue-write.ts';
 import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-write.ts';
+import { sessionListReads } from '../repositories/session-list-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -187,5 +188,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sessionTitleEnqueueWrites,
     skillValidationEnqueueWrites,
     githubPollRefreshWrites,
+    sessionListReads,
   ].map((op) => [op.name, op])
 );

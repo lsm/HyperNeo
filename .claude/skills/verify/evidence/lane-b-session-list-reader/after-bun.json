@@ -1,0 +1,38 @@
+{
+  "coldMs": 2.860875000000078,
+  "concurrentHealthMs": 0.3861249999999927,
+  "warmConcurrentMs": 0.7712500000000091,
+  "fullRowCounts": [
+    4,
+    4,
+    1,
+    5,
+    1,
+    0,
+    5
+  ],
+  "replyHash": "2e9d8c0f19276b362917e055bf32701147f55f3b3041100187020f093362ccc7",
+  "concurrentWalWriter": true,
+  "workerFailure": "MessageHubResponseError: synthetic session list worker failure",
+  "healthAfterFailure": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 353,
+    "sessions": {
+      "active": 0,
+      "total": 5
+    }
+  },
+  "actorCacheStayedEmpty": true,
+  "readLaneRequests": 10,
+  "maxLoopLagMs": 1.2759170000000495,
+  "rpcLatencyUnder250ms": true,
+  "mainSqlAttempts": 0,
+  "storedRowsUnchanged": true
+}
