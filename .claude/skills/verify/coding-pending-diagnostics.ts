@@ -61,6 +61,8 @@ try {
   phase = 'rate'; await coding.sweep!(stale);
   proof.beforeRestart = { snapshot: await rpc('neo.snapshot', {}), health: new CodingPrLedgerRepository(sql()).health.read(repo), jobs: jobs() };
   const pending = new CodingPrLedgerRepository(sql()).snapshot(null, stale)[0];
+  const publicSnapshot = (proof.beforeRestart as { snapshot: { packRows: Array<{ pack: string; rows: unknown[] }> } }).snapshot;
+  assert.deepEqual(publicSnapshot.packRows.find(pack => pack.pack === 'coding')?.rows, [pending]);
   assert.equal(pending.lastError, 'rate_limited', 'pending rows must expose acquisition diagnostics');
   assert.equal(pending.readAt, start); assert.equal(pending.completeAt, start); assert.equal(pending.nextRetryAt, reset);
   assert(!JSON.stringify(proof.beforeRestart).includes('synthetic-private-diagnostic'));

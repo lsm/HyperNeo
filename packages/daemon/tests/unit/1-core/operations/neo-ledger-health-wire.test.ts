@@ -86,6 +86,17 @@ describe('ledger reconciliation health', () => {
       });
       const notices = ledger.health.read(repos[0])?.notices ?? [];
       expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({
+        pending: {
+          number: 1,
+          head: 'approved-head',
+          readAt: start,
+          completeAt: start,
+          nextRetryAt: reset,
+          lastError: 'rate_limited',
+          lastErrorAt: stale,
+        },
+      });
       expect(notices[0].text).toContain('approved_pending');
       expect(notices[0].text).toContain('readAt=');
       expect(JSON.stringify(ledger.health.read(repos[0]))).not.toContain(
@@ -107,6 +118,15 @@ describe('ledger reconciliation health', () => {
         lastError: 'rate_limited',
         lastErrorAt: stale,
       });
+      ledger.acceptHealthNotice(repos[0], notices[0].key, stale + 2);
+      await reconcileCodingPrLedger(ledger, repos, async (repo) => response(repo), reset);
+      expect(ledger.health.read(repos[0])).toMatchObject({
+        completeAt: reset,
+        nextRetryAt: null,
+        lastError: 'rate_limited',
+        lastErrorAt: stale,
+      });
+      expect(ledger.health.read(repos[0])?.notices?.[0].pending).toEqual(notices[0].pending);
     }));
   test('unreached misses survive reopening and duplicate cycles without changing fetch order', () =>
     using(async (db, ledger) => {
