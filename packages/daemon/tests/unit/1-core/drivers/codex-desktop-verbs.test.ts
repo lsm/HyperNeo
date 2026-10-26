@@ -852,6 +852,81 @@ describe('codex-desktop adapter status and send', () => {
     });
   });
 
+  test.each([false, true])(
+    'prepared queue refreshes future-turn sandbox defaults (refused=%s)',
+    async (refused) => {
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      await prepareWorkerSandbox(root);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+      db.close();
+      const calls: string[] = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push(method);
+          if (method === 'thread/settings/update') {
+            expect(params).toMatchObject({
+              threadId: 'idle',
+              sandboxPolicy: {
+                type: 'workspaceWrite',
+                networkAccess: true,
+                writableRoots: expect.arrayContaining([root, join(root, '.git')]),
+                excludeSlashTmp: true,
+                excludeTmpdirEnvVar: true,
+              },
+            });
+            if (refused) throw new Error('sandbox settings refused');
+            return {};
+          }
+          expect(method).toBe('thread/queue/add');
+          return { queuedSubmission: { id: 'sandboxed-queue' } };
+        },
+        close: () => {},
+      }));
+      try {
+        const result = await driver.send!(ref('idle'), 'run local tests', user);
+        expect(result).toMatchObject(
+          refused
+            ? { ok: false, reason: 'not_delivered', detail: 'sandbox settings refused' }
+            : { ok: true, value: { queuedSubmissionId: 'sandboxed-queue' } }
+        );
+        expect(calls).toEqual(
+          refused ? ['thread/settings/update'] : ['thread/settings/update', 'thread/queue/add']
+        );
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    }
+  );
+
+  test('prepared workers do not bypass a required policy refresh through offline CLI queueing', async () => {
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    await prepareWorkerSandbox(root);
+    const db = new Database(statePath);
+    db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+    db.close();
+    const driver = adapter(
+      0,
+      '',
+      async () => {
+        throw new Error('offline');
+      },
+      undefined,
+      'offline-queue'
+    );
+    try {
+      expect(await driver.send!(ref('idle'), 'run local tests', user)).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+      });
+      expect(spawned).toEqual([]);
+    } finally {
+      await releaseWorkerSandbox(root);
+    }
+  });
+
   test.each(['native', 'cli'] as const)(
     'automatic queue restores purged prepared-worker runtime before dispatch: %s',
     async (route) => {
@@ -872,6 +947,7 @@ describe('codex-desktop adapter status and send', () => {
           '',
           async () => ({
             call: async (method) => {
+              if (method === 'thread/settings/update') return {};
               expect(method).toBe('thread/queue/add');
               observe();
               if (route === 'cli') throw new Error('method not found (-32601)');

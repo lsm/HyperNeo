@@ -808,13 +808,18 @@ export async function queueCodexMessage(
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
-  await resumeWorkerSandbox(detail.thread.folder);
+  const sandbox = await resumeWorkerSandbox(detail.thread.folder);
   sendLog.warn('work.send route', {
     threadId: detail.thread.id,
     path: 'queue',
     reason: 'native_queue',
   });
   const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
+    if (sandbox)
+      await server.call('thread/settings/update', {
+        threadId: detail.thread.id,
+        sandboxPolicy: sandbox.sandboxPolicy,
+      });
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
     );
@@ -867,7 +872,7 @@ export async function queueCodexMessage(
     };
   });
   sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: queued });
-  return !queued.ok && queued.reason === 'unreachable'
+  return !sandbox && !queued.ok && queued.reason === 'unreachable'
     ? queueCodexCliMessage(detail, message, deps)
     : queued;
 }
