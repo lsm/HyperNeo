@@ -1,9 +1,10 @@
-import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { homedir } from 'node:os';
 import { secretNamePatterns } from '../neo/secret-read-rules.ts';
 import {
+  excludeWorkerConfig,
   prepareWorkerSandbox,
   workerSandboxPaths,
   workerSecretPaths,
@@ -92,7 +93,7 @@ async function install(root: string, roots: string[]) {
     flag: 'wx',
     mode: 0o600,
   });
-  await appendFile(join(root, '.git/info/exclude'), '\n/.claude/settings.local.json\n');
+  await excludeWorkerConfig(root, '/.claude/settings.local.json');
   await writeFile(markerPath(root), JSON.stringify({ roots }), { flag: 'wx', mode: 0o600 });
   for (const worker of workers) {
     if (!(await lstat(join(worker.root, '.claude'))).isDirectory())

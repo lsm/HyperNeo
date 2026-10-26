@@ -201,10 +201,21 @@ export async function persistCodexWorkerProfile(root: string) {
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   await writeFile(temporary, text, { flag: 'wx', mode: 0o600 });
   await rename(temporary, path);
-  const exclude = join(root, '.git/info/exclude');
-  await mkdir(join(root, '.git/info'), { recursive: true });
-  if (!(await readFile(exclude, 'utf8').catch(() => '')).includes('/.codex/config.toml'))
-    await appendFile(exclude, '\n/.codex/config.toml\n');
+  await excludeWorkerConfig(root, '/.codex/config.toml');
+}
+
+export async function excludeWorkerConfig(root: string, pattern: string) {
+  const directory = join(root, '.git/info');
+  await mkdir(directory, { recursive: true });
+  if (!(await lstat(directory)).isDirectory()) throw new Error('Git info must be in-clone');
+  const path = join(directory, 'exclude');
+  const entry = await lstat(path).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (entry && !entry.isFile()) throw new Error('Git exclude must be a regular file');
+  const previous = entry ? await readFile(path, 'utf8') : '';
+  if (!previous.split('\n').includes(pattern)) await appendFile(path, `\n${pattern}\n`);
 }
 
 export async function resumeWorkerSandbox(root: string) {
