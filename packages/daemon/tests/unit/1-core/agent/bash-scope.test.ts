@@ -470,6 +470,17 @@ describe('sleepCommandVerdict / createSleepBoundHook', () => {
     expect(sleepCommandVerdict('x=$(sleep 999)')).toBe('denied');
   });
 
+  test('escape-decoded and redirect-glued sleep words are vetoed', () => {
+    expect(sleepCommandVerdict("$'\\x73leep' 9999")).toBe('denied');
+    expect(sleepCommandVerdict("$'\\163leep' 9999")).toBe('denied');
+    expect(sleepCommandVerdict("$'sl\\x65\\x65p' 999")).toBe('denied');
+    expect(sleepCommandVerdict("$'\\x73leep' 30")).toBe('allowed');
+    expect(sleepCommandVerdict('sleep>x 999')).toBe('denied');
+    expect(sleepCommandVerdict('sleep>x 30')).toBe('denied');
+    expect(sleepCommandVerdict('sleep <x 999')).toBe('denied');
+    expect(sleepCommandVerdict('sleep>x$(cat c) 999')).toBe('denied');
+  });
+
   test('heads carrying expansion metachars are unclassifiable and vetoed', () => {
     expect(sleepCommandVerdict('x=; s${x}leep 301')).toBe('denied');
     expect(sleepCommandVerdict('s${x}leep 301')).toBe('denied');

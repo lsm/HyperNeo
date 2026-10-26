@@ -461,10 +461,28 @@ export const NEO_SLEEP_MAX_SECONDS = 300;
 type SleepVerdict = 'none' | 'allowed' | 'denied';
 
 const SLEEP_DURATION = /^(\d+(?:\.\d+)?)([smhd]?)$/;
-const SLEEP_BOUNDARY = new Set([' ', '\t', '\n', '\r', '(', ')', '{', '}', ';', '|', '&']);
+const SLEEP_BOUNDARY = new Set([
+  ' ',
+  '\t',
+  '\n',
+  '\r',
+  '(',
+  ')',
+  '{',
+  '}',
+  ';',
+  '|',
+  '&',
+  '<',
+  '>',
+]);
 
 function normalizeSleepText(text: string): string {
   return text
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(Number.parseInt(h, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)))
+    .replace(/\\U([0-9a-fA-F]{8})/g, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)))
+    .replace(/\\([0-7]{1,3})/g, (_, o) => String.fromCharCode(Number.parseInt(o, 8)))
     .replace(/\\(.)/g, '$1')
     .replace(/\$(?=['"])/g, '')
     .replace(/['"]/g, '');
