@@ -27,10 +27,14 @@ NODE_PATH=<directory containing playwright> VERIFY_BROWSER=<Chromium executable>
   node .claude/skills/verify/question-source-session-web.mjs 9482 "$RUN"
 ```
 
-At 1440px and 390px, the source question shows its name and provider at top-right,
-and the start question keeps its working opener after the todo join. Open session enters the existing HyperNeo session pane. Back retains the
+`VERIFY_PLAYWRIGHT` optionally selects an existing Playwright package path.
+
+At 1440px and 390px, the source question shows only a short "Open" button at top-right,
+without visible source title, provider or icon. Its accessible name still identifies
+the destination as "Open session: Review worker",
+and the start question keeps its working opener after the todo join. Open enters the existing HyperNeo session pane. Back retains the
 answer buttons. The general question has no session opener. A synthetic persisted source with
-`link:null` still shows its name/provider without an opener; this checks rendering
+`link:null` has no source header or opener; this checks rendering
 of an adapter with no navigable destination, not a real Claude native session. The mobile check
 answers yes and reads back both the answer and unchanged source ref. Screenshots
 and receipts stay in `$RUN/evidence/`. No native app is opened: the Codex opener
