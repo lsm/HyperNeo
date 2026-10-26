@@ -555,9 +555,8 @@ describe('durable public conversation presentation', () => {
       render(
         <NeoPublicConversation conversation={{ ...conversation(), status, hasEarlier: true }} />
       );
-      expect(screen.getByRole('status').textContent).toContain(
-        status === 'loading' ? 'Loading saved' : 'unavailable'
-      );
+      if (status === 'loading') expect(screen.queryByRole('status')).toBeNull();
+      else expect(screen.getByRole('status').textContent).toContain('unavailable');
       expect(screen.getByText('Showing part of your saved conversation.')).toBeTruthy();
       expect(await screen.findByText('Fictional detail')).toBeTruthy();
       if (status === 'unavailable')
