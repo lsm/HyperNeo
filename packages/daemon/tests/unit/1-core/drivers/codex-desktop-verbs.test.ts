@@ -66,10 +66,10 @@ describe('codexQueueDelivery', () => {
       receipt: { executionId: 't1', inputId: 'msg_new' },
     });
     expect(codexQueueDelivery(before, 'next step', 't1', codexUserInputIds(before))).toEqual({
-      delivered: true,
+      delivered: false,
     });
     expect(codexQueueDelivery([heard('next step')], 'next step', 't1', new Set())).toEqual({
-      delivered: true,
+      delivered: false,
     });
   });
 });
@@ -598,7 +598,7 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test('work.send steers a running Codex turn instead of queuing it', async () => {
+  test('work.send queues automatic input behind the running turn', async () => {
     const calls: string[] = [];
     const driver = adapter(0, '', async () => ({
       call: async (method) => {
@@ -627,9 +627,9 @@ describe('codex-desktop adapter status and send', () => {
       )
     ).toEqual({
       kind: 'completed',
-      value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'live-turn' } },
+      value: { ok: true, value: { delivered: false, queuedSubmissionId: 'queued' } },
     });
-    expect(calls).toEqual(['thread/turns/list', 'turn/steer']);
+    expect(calls).toEqual(['thread/queue/add']);
   });
 
   test('stop interrupts the running turn through the shared app-server', async () => {
@@ -871,7 +871,7 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   test.each(['NoActiveTurn', 'turn/steer: method not found (-32601)'])(
-    'work.send starts after NoActiveTurn and refuses an unsupported steer: %s',
+    'explicit steer refuses a turn that ended or cannot steer: %s',
     async (error) => {
       const driver = adapter(0, '', async () => ({
         call: async (method) => {
@@ -888,15 +888,11 @@ describe('codex-desktop adapter status and send', () => {
         reason: 'not_delivered',
         detail: expect.stringContaining(error),
       });
-      expect(await driver.send!(ref('busy'), 'later', user)).toMatchObject(
-        error === 'NoActiveTurn'
-          ? { ok: true, value: { delivered: true, startedTurnId: 'new-turn' } }
-          : { ok: false, reason: 'not_delivered' }
-      );
+
     }
   );
 
-  test('work.send never duplicates a server steer whose outcome is unknown; work.queue remains next-turn input', async () => {
+  test('explicit steer never duplicates a server steer whose outcome is unknown; work.queue remains next-turn input', async () => {
     let queued = 0;
     const driver = adapter(0, '', async () => ({
       call: async (method) => {
@@ -907,7 +903,7 @@ describe('codex-desktop adapter status and send', () => {
       },
       close: () => {},
     }));
-    expect(await driver.send!(ref('busy'), 'now', user)).toMatchObject({
+    expect(await driver.steer!(ref('busy'), 'now', user)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
     });
@@ -1010,7 +1006,7 @@ describe('codex-desktop adapter status and send', () => {
       reason: 'not_delivered',
       detail: expect.stringContaining('active turn is t2'),
     });
-    expect(calls).toEqual(['thread/turns/list', 'turn/steer']);
+    expect(calls).toEqual(['thread/queue/add']);
     expect(closed).toBe(true);
     expect(spawned).toEqual([]);
   });
@@ -1332,25 +1328,22 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each([
-    ['thread/resume', 'thread other already has an active writer'],
-    ['turn/start', 'thread idle already has an active writer'],
-  ])('does not queue for a different thread or a start failure: %s', async (phase, error) => {
+  test('automatic agent input keeps its attribution when queued', async () => {
+    let text = '';
     const driver = adapter(0, '', async () => ({
-      call: async (method) => {
-        if (method === 'thread/turns/list') return { data: [] };
-        if (method === phase) throw new Error(error);
-        if (method === 'thread/resume') return {};
-        throw new Error('Must not queue');
+      call: async (method, params) => {
+        expect(method).toBe('thread/queue/add');
+        text = (params.input as { text: string }[])[0].text;
+        return { queuedSubmission: { id: 'agent-queue' } };
       },
       close: () => {},
     }));
-    expect(await driver.send!(ref('idle'), 'continue', user)).toEqual({
-      ok: false,
-      reason: 'not_delivered',
-      detail: error,
-      ...(phase === 'thread/resume' ? { notSent: true } : {}),
+    const agent = { from: 'session:neo', caller: { source: 'internal' as const, role: 'neo' as const } };
+    expect(await driver.send!(ref('idle'), 'new request', agent)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'agent-queue' },
     });
+    expect(text).toBe('new request\n[HyperNeo agent input]');
     expect(spawned).toEqual([]);
   });
 
@@ -1369,7 +1362,7 @@ describe('codex-desktop adapter status and send', () => {
         socket.on('message', (bytes) => {
           const request = JSON.parse(String(bytes));
           if (request.id === undefined) return;
-          if (request.method === 'turn/start') {
+          if (request.method === 'thread/queue/add') {
             if (refused)
               socket.send(
                 JSON.stringify({
@@ -1413,23 +1406,22 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each(['thread/turns/list', 'thread/resume', 'turn/start'])(
+  test.each(['thread/turns/list', 'turn/steer'])(
     'distinguishes a pre-send refusal from a lost acknowledgement at %s',
     async (phase) => {
       const accepted: string[] = [];
       const driver = adapter(0, '', async () => ({
         call: async (method, params) => {
-          if (method === 'turn/start') accepted.push(JSON.stringify(params.input));
+          if (method === 'turn/steer') accepted.push(JSON.stringify(params.input));
           if (method === phase) throw new Error('Synthetic connection lost');
-          if (method === 'thread/turns/list') return { data: [] };
-          if (method === 'thread/resume') return {};
+          if (method === 'thread/turns/list') return { data: [{ id: 'active', status: 'inProgress' }] };
           throw new Error(`Unexpected ${method}`);
         },
         close: () => {},
       }));
-      const reply = await driver.send!(ref('idle'), 'answer the worker', user);
+      const reply = await driver.steer!(ref('idle'), 'answer the worker', user);
       expect(reply).toMatchObject({ ok: false, reason: 'not_delivered' });
-      if (phase === 'turn/start') {
+      if (phase === 'turn/steer') {
         expect(reply).not.toHaveProperty('notSent');
         expect(accepted).toHaveLength(1);
       } else {
@@ -1439,96 +1431,12 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each([false, true])(
-    'resumes saved idle work before sending, or reports resume failure: %s',
-    async (resumeFails) => {
-      const calls: Array<[string, Record<string, unknown>]> = [];
-      let loaded = false;
-      const driver = adapter(0, '', async () => ({
-        call: async (method, params) => {
-          calls.push([method, params]);
-          if (method === 'thread/turns/list')
-            return { data: [{ id: 'finished', status: 'completed' }] };
-          if (method === 'thread/resume') {
-            if (resumeFails) throw new Error('thread/resume: rollout unavailable');
-            loaded = true;
-            return { thread: { id: 'idle', status: { type: 'idle' }, turns: [] } };
-          }
-          if (method === 'turn/start') {
-            if (!loaded)
-              throw new Error('turn/start: {"code":-32600,"message":"thread not found: idle"}');
-            return { turn: { id: 'resumed-turn', status: 'inProgress', items: [] } };
-          }
-          throw new Error('Must not queue');
-        },
-        close: () => {},
-      }));
-      const result = await driver.send!(ref('idle'), 'continue saved work', user);
-      expect(result).toEqual(
-        resumeFails
-          ? {
-              ok: false,
-              reason: 'not_delivered',
-              detail: 'thread/resume: rollout unavailable',
-              notSent: true,
-            }
-          : { ok: true, value: { delivered: true, startedTurnId: 'resumed-turn' } }
-      );
-      expect(calls.map(([method]) => method)).toEqual([
-        'thread/turns/list',
-        'thread/resume',
-        ...(!resumeFails ? ['turn/start'] : []),
-      ]);
-      expect(calls[1]).toEqual(['thread/resume', { threadId: 'idle', excludeTurns: true }]);
-      expect(spawned).toEqual([]);
-    }
-  );
-
-  test.each([{ turns: [] }, { turns: [{ id: 'finished', status: 'completed' }] }])(
-    'idle send starts its marked input rather than accepting a stored queue receipt: %j',
-    async ({ turns }) => {
-      const calls: Array<[string, Record<string, unknown>]> = [];
-      const driver = adapter(0, '', async () => ({
-        call: async (method, params) => {
-          calls.push([method, params]);
-          if (method === 'thread/turns/list') return { data: turns };
-          if (method === 'thread/resume') return { thread: { id: 'idle', turns: [] } };
-          if (method === 'turn/start') return { turn: { id: 'started' } };
-          throw new Error('Must not queue');
-        },
-        close: () => {},
-      }));
-      const agent = {
-        from: 'session:neo',
-        caller: { source: 'internal' as const, role: 'neo' as const },
-      };
-      expect(await driver.send!(ref('idle'), 'new request', agent)).toEqual({
-        ok: true,
-        value: { delivered: true, startedTurnId: 'started' },
-      });
-      expect(calls).toEqual([
-        ['thread/turns/list', { threadId: 'idle', limit: 1 }],
-        ['thread/resume', { threadId: 'idle', excludeTurns: true }],
-        [
-          'turn/start',
-          {
-            threadId: 'idle',
-            input: [
-              { type: 'text', text: 'new request\n[HyperNeo agent input]', text_elements: [] },
-            ],
-          },
-        ],
-      ]);
-      expect(spawned).toEqual([]);
-    }
-  );
-
   test('send refuses archived threads and unavailable turn delivery', async () => {
     expect(await adapter().send?.(ref('old'), 'hi', user)).toMatchObject({
       ok: false,
       reason: 'not_open',
     });
-    expect(await adapter(1, 'no such thread\n').send?.(ref('idle'), 'hi', user)).toMatchObject({
+    expect(await adapter(1, 'no such thread\n', async () => ({ call: async () => { throw new Error('no such thread'); }, close: () => {} })).send?.(ref('idle'), 'hi', user)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
     });
