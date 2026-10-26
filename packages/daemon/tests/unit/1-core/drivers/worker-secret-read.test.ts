@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
+import { execFileSync } from 'node:child_process';
 import { secretHomePaths } from '../../../../src/lib/neo/secret-read-rules.ts';
 import {
   codexWorkerSandbox,
@@ -80,10 +81,30 @@ test('workers deny every established home credential path in both engines', asyn
     string
   >;
   await installClaudeNativeWrites(root, [join(fixture, 'source')]);
-  for (const path of secretHomePaths(home)) {
+  for (const path of secretHomePaths(home).filter((path) => path !== join(home, 'Library'))) {
     expect(fs[path], path).toBe('deny');
     expect(settings().sandbox.filesystem.denyRead, path).toContain(path);
   }
+});
+
+test('toolchain Library stays readable while Keychains stays denied', async () => {
+  const fs = codexWorkerSandbox(root).config.permissions['hyperneo-worker'].filesystem as Record<
+    string,
+    string
+  >;
+  expect(fs[join(fixture, 'home/Library')]).toBeUndefined();
+  expect(fs[join(fixture, 'home/Library/Keychains')]).toBe('deny');
+});
+
+test('a tracked project config is refused without changing repository bytes', async () => {
+  execFileSync('git', ['init', '-q', root]);
+  mkdirSync(join(root, '.codex'));
+  const path = join(root, '.codex/config.toml');
+  const original = 'model = "synthetic"\n';
+  writeFileSync(path, original);
+  execFileSync('git', ['-C', root, 'add', '.codex/config.toml']);
+  await expect(persistCodexWorkerProfile(root)).rejects.toThrow('tracked');
+  expect(readFileSync(path, 'utf8')).toBe(original);
 });
 
 test('Desktop reload can resolve the protected profile without bootstrap overrides', async () => {
