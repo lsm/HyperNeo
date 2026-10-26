@@ -74,8 +74,11 @@ try {
   const reopened = pack(), count = reads;
   await reopened.sweep!(stale + 1); assert.equal(reads, count); assert.equal(jobs().length, 1);
   phase = 'green'; await reopened.sweep!(reset); await reopened.sweep!(reset + 1);
-  const accepted = jobs(); assert.equal(accepted.length, 2);
-  assert.equal(accepted[1].to.sessionId, owner); assert.equal(accepted[1].messageUuid, `neo-pr-event:${repo}#1:approved-head:approved_green`);
+  const accepted = jobs();
+  proof.afterRestart = { snapshot: await rpc('neo.snapshot', {}), jobs: accepted, reads };
+  assert.equal(accepted.length, 2);
+  const ready = accepted.filter(job => job.messageUuid === `neo-pr-event:${repo}#1:approved-head:approved_green`);
+  assert.equal(ready.length, 1); assert.equal(ready[0].to.sessionId, owner);
   assert(sql().prepare('SELECT told_at FROM pack_coding_pr_ledger').get().told_at);
   const health = new CodingPrLedgerRepository(sql()).health.read(repo)!;
   assert.equal(health.nextRetryAt, null); assert.equal(health.lastError, 'rate_limited'); assert.equal(health.lastErrorAt, stale);
