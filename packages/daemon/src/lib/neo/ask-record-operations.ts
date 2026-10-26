@@ -187,7 +187,9 @@ export function createNeoAskRecordOperations(
             ok: true,
             ask,
             todos: family(),
-            records: [`ask_settled: ${ask.title} is settled; nothing was added.`],
+            records: [
+              `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it with a different title, since this title in this turn reaches the settled request.`,
+            ],
           };
         const refused = input.todos
           .filter((todo) => !recordedRow(todo))

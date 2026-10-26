@@ -6,6 +6,13 @@ Use the shared isolated metadata-only setup and cleanup from SKILL.md:
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/ask-bookkeeping-actions.ts
 ```
 
+The agent-visible operations.describe response for neo.question.ask must explain
+that supplied unknown, foreign and terminal todo references produce a record and
+an ask-level question. Check this before and after reopening the database. A
+retry adding unfiled work under a completed parent ask with child cards must
+return an ask_settled record with the remedy to open a new ask with a different
+title, without adding work.
+
 A question naming a closed todo must open at ask level with a todo_closed
 record, without a stale todo link. Settling an ask done with unfinished todos
 must return a todos_unfinished record and close those rows as closed_unverified.
@@ -14,11 +21,13 @@ before settlement, then remain closed_unverified afterward, rather than becoming
 removed. Its question is retired without an answer or answerer.
 The production neo.ask.read payload retains that state, doneCount is zero and
 neo.ask.doneTodos returns none. Retired questions retain null answers and no
-answerer. Both accepted audit records and the unverified rows survive DB reopen.
+answerer. All three accepted audit records and the unverified rows survive DB reopen.
 On the original baseline the first closed-todo question is refused. On the
 reviewed head 4e48b4aa, settlement instead fails the unverified-state assertion:
 the human-blocked row becomes removed. Retain observed.json
 and proof.log; the shared wrapper removes all synthetic data after saving them.
+On reviewed head 734269ad, the two guidance assertions fail: the catalog omits
+stale todo behavior and the settled-ask record omits the different-title remedy.
 
 This uses the real MCP handler, operation registry, ask/question operations,
 public card reader and migrated SQLite/audit repositories. No listener,
