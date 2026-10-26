@@ -13,7 +13,6 @@ import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
-import { NeoActivity } from './NeoActivity.tsx';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
@@ -30,7 +29,6 @@ import {
 import { invokeOperation } from '../lib/operations.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
-import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
 import { useNeoPreviewCandidate } from './useNeoPreviewCandidate.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
@@ -124,10 +122,6 @@ export function NeoLive() {
       ? neo.viewPublicConversation
       : undefined;
   const sceneScope = neo.sessionId;
-  const loadedScope = useRef<string | null>(null);
-  if (publicConversation?.status === 'ready') loadedScope.current = sceneScope;
-  const conversationLoaded =
-    loadedScope.current === sceneScope && publicConversation?.status !== 'unavailable';
   useEffect(() => {
     setChat(null);
     setCardTarget(null);
@@ -666,20 +660,6 @@ export function NeoLive() {
                 });
               }}
               onRetryPublic={retryPublicConversation}
-              busy={neoBusyWords(
-                neo.snapshot?.working ?? [],
-                !!(
-                  connected &&
-                  publicConversation &&
-                  conversationLoaded &&
-                  neo.store.agentState.value.status !== 'waiting_for_input' &&
-                  !neo.store.error.value &&
-                  !view?.todoAsks?.some((entry) =>
-                    entry.questions.some((question) => question.state === 'open')
-                  ) &&
-                  neoAwaitingReply(publicConversation.entries)
-                )
-              )}
               pendingAsks={neo.pendingAsks}
               onRetryAsk={(requestId) =>
                 void neo
@@ -930,13 +910,6 @@ export function NeoLive() {
           )}
           {ready && neo.sessionId && (
             <NeoComposer
-              activity={
-                <NeoActivity
-                  key={sceneScope}
-                  snapshot={view ?? null}
-                  enabled={connected && conversationReady}
-                />
-              }
               quote={quote}
               previewContext={previewContext}
               previewCandidate={previewCandidate}

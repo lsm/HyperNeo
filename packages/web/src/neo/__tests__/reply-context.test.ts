@@ -1,6 +1,5 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { conversationText } from '../NeoConversation.tsx';
 import {
   matchNeoReplyInput,
   neoMessageAnchor,
@@ -30,6 +29,10 @@ function reply(origin: unknown = { sessionId: 'neo', messageId: 'A' }, extra = {
     ...extra,
   } as unknown as ChatMessage;
 }
+const conversationText = (message: ChatMessage) =>
+  message.type === 'user' && typeof message.message.content === 'string'
+    ? message.message.content
+    : '';
 const origin = { sessionId: 'neo', messageId: 'A', replyId: 'reply-A' };
 
 describe('selectNeoReplyOrigin', () => {
