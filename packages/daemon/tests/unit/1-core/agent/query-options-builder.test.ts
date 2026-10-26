@@ -10,7 +10,15 @@ import type { AppMcpServer, AppSkill, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir, tmpdir } from 'os';
-import { mkdtempSync, mkdirSync, rmSync, statSync, realpathSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  realpathSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   buildProviderSettings,
@@ -121,6 +129,26 @@ describe('QueryOptionsBuilder', () => {
   afterEach(() => {});
 
   describe('build', () => {
+    it('prepared SDK workers honor a persisted local binding opt-out', async () => {
+      const root = join(handoffDataDir, 'local-binding-opt-out');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
+      const path = join(root, '.claude/settings.local.json');
+      const settings = JSON.parse(readFileSync(path, 'utf8'));
+      settings.sandbox.network.allowLocalBinding = false;
+      writeFileSync(path, JSON.stringify(settings));
+      mockSession.workspacePath = root;
+      try {
+        const options = await builder.build();
+        expect(options.sandbox?.network?.allowLocalBinding).toBe(false);
+        expect(JSON.parse(readFileSync(path, 'utf8')).sandbox.network.allowLocalBinding).toBe(
+          false
+        );
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    });
+
     it('prepared workers retain sandbox enforcement and recreate purged temp roots', async () => {
       const root = join(handoffDataDir, 'prepared');
       mkdirSync(join(root, '.git/info'), { recursive: true });

@@ -41,6 +41,18 @@ test('resuming an older worker persists local listening without replacing its ne
   expect(settings().permissions).toEqual(old.permissions);
 });
 
+test.each([false, true])(
+  'resuming returns the persisted local binding choice %s',
+  async (allowed) => {
+    await installClaudeNativeWrites(root, [join(root, 'source')]);
+    const persisted = settings();
+    persisted.sandbox.network.allowLocalBinding = allowed;
+    writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify(persisted));
+    expect(await readClaudeWorkerSandbox(root)).toEqual(persisted);
+    expect(settings()).toEqual(persisted);
+  }
+);
+
 test('both Codex policy shapes enable network access for local servers', () => {
   const policy = codexWorkerSandbox(root);
   expect(policy.config.sandbox_workspace_write.network_access).toBe(true);
