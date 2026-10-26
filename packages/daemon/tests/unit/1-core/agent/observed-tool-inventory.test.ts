@@ -52,6 +52,19 @@ describe('ObservedToolInventory', () => {
     expect(JSON.stringify(inventory.snapshot())).not.toMatch(/secret|private|description|config/);
   });
 
+  it('refreshes MCP tool names after live replacement while preserving native tools', () => {
+    const inventory = new ObservedToolInventory();
+    const token = new QueryAttemptRegistry().allocate();
+    inventory.begin(token, 'sdk');
+    inventory.captureInit(token, init);
+    inventory.captureStatus(token, [
+      { name: 'selected', status: 'connected', tools: [{ name: 'search' }] },
+    ]);
+    expect(inventory.snapshot().tools).toEqual(['Read', 'mcp__selected__search']);
+    inventory.captureStatus(token, []);
+    expect(inventory.snapshot().tools).toEqual(['Read']);
+  });
+
   it('drops historical attachment immediately when the owning attempt is reaped', () => {
     const registry = new QueryAttemptRegistry();
     const inventory = new ObservedToolInventory();

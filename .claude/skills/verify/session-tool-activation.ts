@@ -40,7 +40,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({ ...sdk, query: ({ prompt,
   return {
     async *[Symbol.asyncIterator]() {
       const feed = prompt[Symbol.asyncIterator](); await feed.next(); void feed.next().catch(() => {});
-      yield { type: 'system', subtype: 'init', uuid: crypto.randomUUID(), session_id: crypto.randomUUID(), cwd: join(run, 'workspace'), model: 'claude-haiku-4-5-20251001', permissionMode: 'default', apiKeySource: 'user', claude_code_version: 'scripted', tools: aliases.map(name => `mcp__${name}__navigate`), skills: [], plugins: (options.plugins ?? []).map(plugin => ({ name: basename(plugin.path), path: plugin.path })), mcp_servers: aliases.map(name => ({ name, status: 'connected' })), slash_commands: [], output_style: 'default' };
+      yield { type: 'system', subtype: 'init', uuid: crypto.randomUUID(), session_id: crypto.randomUUID(), cwd: join(run, 'workspace'), model: 'claude-haiku-4-5-20251001', permissionMode: 'default', apiKeySource: 'user', claude_code_version: 'scripted', tools: ['Read', ...aliases.map(name => `mcp__${name}__navigate`)], skills: [], plugins: (options.plugins ?? []).map(plugin => ({ name: basename(plugin.path), path: plugin.path })), mcp_servers: aliases.map(name => ({ name, status: 'connected' })), slash_commands: [], output_style: 'default' };
       await ended;
     },
     close: finish, interrupt: async () => { interrupts++; finish(); }, supportedModels: async () => [], supportedCommands: async () => [], setPermissionMode: async () => {},
@@ -86,24 +86,28 @@ try {
     assert(Date.now() < deadline, 'query init missing'); await new Promise(done => setTimeout(done, 25));
   }
   assert.equal(queries.length, 1); assert.deepEqual(queries[0].aliases, []);
+  const initialPlugins = [...queries[0].plugins];
   const choose = async (id: string, key: string, selected: boolean) => {
     const result = await hub.request<{ ok: boolean; application: string; reason?: string }>('operation.invoke', { name: 'session.tools.setChoice', input: { sessionId: id, key, selected } });
     assert(result.ok, 'authorized tool activation must persist a choice'); return result;
   };
   const enabled = await choose(sessionId, `mcp:${server.id}`, true);
   assert.equal(enabled.application, 'live'); assert.deepEqual(queries[0].aliases, aliases);
-  const observed = await hub.request<{ mcpServers: Array<{ name: string; tools: string[] }>; plugins: string[] }>('session.getToolInventory', { sessionId });
+  const observed = await hub.request<{ mcpServers: Array<{ name: string; tools: string[] }>; plugins: string[]; tools: string[] }>('session.getToolInventory', { sessionId });
   assert.deepEqual(observed.mcpServers.map(server => server.name), aliases);
   assert.deepEqual(observed.mcpServers[0].tools, ['navigate']);
+  assert.deepEqual(observed.tools, ['Read', ...aliases.map(name => `mcp__${name}__navigate`)]);
   const disabled = await choose(sessionId, `mcp:${server.id}`, false);
   assert.equal(disabled.application, 'live'); assert.deepEqual(queries[0].aliases, []);
+  assert.deepEqual((await hub.request<{ tools: string[] }>('session.getToolInventory', { sessionId })).tools, ['Read']);
   const instructions = await choose(sessionId, `skill:${guide.id}`, true);
   assert.equal(instructions.application, 'restart_required');
-  assert.deepEqual(queries[0].plugins, []);
+  assert.deepEqual(queries[0].plugins, initialPlugins);
+  assert(!queries[0].plugins.includes('fixture-guide'));
   const { sessionId: coldId } = await hub.request<{ sessionId: string }>('session.create', { title: 'Synthetic tools', workspacePath: join(run, 'workspace'), config: { model: 'haiku', provider: 'anthropic' } });
   const cold = await choose(coldId, `mcp:${server.id}`, true);
   assert.equal(cold.application, 'next_query'); assert.equal(queries.length, 1); assert.equal(interrupts, 0);
-  evidence.results = { enabled, disabled, instructions, cold, observed, applications, interrupts, queryCount: queries.length };
+  evidence.results = { initialPlugins, enabled, disabled, instructions, cold, observed, applications, interrupts, queryCount: queries.length };
   evidence.pass = true; console.log('PASS: public tool activation applies live MCP choices and verifies observed tools; instructions disclose restart, cold choices wait, no automatic interrupt');
 } finally {
   for (const query of queries) query.finish();
