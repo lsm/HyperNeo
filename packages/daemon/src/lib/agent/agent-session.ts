@@ -343,7 +343,8 @@ export class AgentSession
         ...this.operationCallerIdentity(),
         consumedInputId: inputOrigin?.()?.messageId,
       }),
-      this.recordOperationRefusal
+      this.recordOperationRefusal,
+      this.operationCallerIdentity().role
     );
     if (!inputOrigin) this.operationMcpServer = server;
     return server;

@@ -32,7 +32,10 @@ const registry = createOperationRegistry([
   ...createWorkVerbOperations({ adapters: () => [], remote, daemonName: 'synthetic' }),
   createFindWorkOperation({ adapters: () => [], remote }),
 ]);
-const server = createOperationMcpServer(() => registry, () => ({ role: 'neo', sessionId: 'synthetic' }));
+const server = createOperationMcpServer(() => registry, () => ({ role: 'neo', sessionId: 'synthetic' }), undefined, 'neo');
+const plainServer = createOperationMcpServer(() => registry, () => ({ sessionId: 'plain' }));
+const plainClient = new Client({ name: 'plain-shapes-proof', version: '1' });
+const [plainA, plainB] = InMemoryTransport.createLinkedPair();
 const client = new Client({ name: 'invoke-shapes-proof', version: '1' });
 const [a, b] = InMemoryTransport.createLinkedPair();
 try {
@@ -60,8 +63,17 @@ try {
   assert(description.includes('"bind"'));
   assert(description.includes('questionId'));
   assert(description.includes('shortText'));
+  await plainServer.instance.connect(plainB);
+  await plainClient.connect(plainA);
+  const plainListed = await plainClient.listTools();
+  writeFileSync(join(run, 'evidence/plain-tools.json'), JSON.stringify(plainListed, null, 2));
+  assert.deepEqual(plainListed.tools.map(tool => tool.name), ['invoke']);
+  assert.equal(plainListed.tools[0].description, description.split('\n\nCore input shapes:')[0]);
+  console.log('PASS: plain session MCP tools/list retains the unaugmented description.');
   console.log(`PASS: one invoke tool advertises live core shapes through MCP tools/list (${description.length} characters).`);
 } finally {
+  await plainClient.close();
+  await plainServer.instance.close();
   await client.close();
   await server.instance.close();
   await db.close();
