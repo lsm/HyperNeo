@@ -245,18 +245,17 @@ export async function runGhJson(
           retryAfterMs: retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
         };
       }
-      const resetEpoch =
-        remaining !== null
-          ? remaining === 0
-            ? reset
-            : null
-          : await fetchRateLimitResetEpoch(
-              cwd,
-              spawnImpl,
-              Math.min(timeoutMs, 5_000),
-              options?.hostHint,
-              options?.resourceHint
-            );
+      const resetEpoch = response
+        ? remaining === 0
+          ? reset
+          : null
+        : await fetchRateLimitResetEpoch(
+            cwd,
+            spawnImpl,
+            Math.min(timeoutMs, 5_000),
+            options?.hostHint,
+            options?.resourceHint
+          );
       return {
         ok: false,
         error: errorText,

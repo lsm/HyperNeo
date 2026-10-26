@@ -26,7 +26,7 @@ describe('credential quota acquisition', () => {
     );
     expect(output).toBe('quota module loads\n');
   });
-  for (const remaining of [0, 1200])
+  for (const remaining of [null, 0, 1200])
     test(`uses the failing response headers with remaining ${remaining}, not the quota overview`, async () => {
       const now = Date.now(),
         reset = Math.floor((now + 120000) / 1000),
@@ -39,7 +39,7 @@ describe('credential quota acquisition', () => {
           ? JSON.stringify({
               resources: { graphql: { remaining: remaining ? 0 : 4000, reset: reset + 3500 } },
             })
-          : `HTTP/2.0 403 Forbidden\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-remaining: ${remaining}\r\nx-ratelimit-reset: ${reset}\r\n\r\n{}`;
+          : `HTTP/2.0 403 Forbidden\r\nx-ratelimit-resource: graphql\r\n${remaining === null ? '' : `x-ratelimit-remaining: ${remaining}\r\n`}x-ratelimit-reset: ${reset}\r\n\r\n{}`;
         return {
           stdout: new Response(stdout).body!,
           stderr: new Response('API rate limit exceeded').body!,
@@ -55,8 +55,8 @@ describe('credential quota acquisition', () => {
       if (result.ok) throw new Error('Expected refusal');
       expect(calls).toHaveLength(1);
       expect(result.retryAfterMs).toBeGreaterThan(0);
-      expect(result.retryAfterMs!).toBeLessThanOrEqual(remaining ? 60000 : 120000);
-      if (!remaining) expect(result.retryAfterMs!).toBeGreaterThan(110000);
+      expect(result.retryAfterMs!).toBeLessThanOrEqual(remaining === 0 ? 120000 : 60000);
+      if (remaining === 0) expect(result.retryAfterMs!).toBeGreaterThan(110000);
     });
   function setup(actor: number | null = 1) {
     const calls: string[] = [];
