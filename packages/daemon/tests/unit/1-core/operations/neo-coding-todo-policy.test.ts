@@ -7,7 +7,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
-type Policy = Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse'>>;
+type Policy = Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record'>>;
 const url = (number: number) => `https://github.com/example/repo/pull/${number}`;
 const factories = [
   {
@@ -84,9 +84,10 @@ for (const factory of factories)
       );
     });
 
-    test('URL-less work needs an instruction and issue checks keep exact labels', () => {
+    test('URL-less work is recorded without an admission veto and issue checks keep exact labels', () => {
       const current = todo('target');
-      expect(policy.refuse({ ...current, instruction: null })).toBe(
+      expect(policy.refuse({ ...current, instruction: null })).toBeNull();
+      expect(policy.record({ ...current, instruction: null })).toBe(
         'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
       );
       expect(policy.refuse(current)).toBeNull();
@@ -106,7 +107,8 @@ for (const factory of factories)
       const peer = todos.updateTodo(todo('owner', [url(2)]), { state }, 2);
       const target = todo('target', [url(1)]);
       const check = policy.addUrls(target, [url(2)]);
-      expect(policy.refuse({ ...target, check }, [peer, target])).toBe(
+      expect(policy.refuse({ ...target, check }, [peer, target])).toBeNull();
+      expect(policy.record({ ...target, check }, [peer, target])).toBe(
         `pr_already_tracked: ${url(2)} is already tracked by todo owner "Title owner". Use neo.todo.edit addUrls on that todo.`
       );
     });
@@ -114,9 +116,9 @@ for (const factory of factories)
     test('a newly committed recorded claim is checked on every admission', () => {
       const peer = todo('owner');
       const target = todo('target', [url(2)]);
-      expect(policy.refuse(target, [peer, target])).toBeNull();
+      expect(policy.record(target, [peer, target])).toBeNull();
       prs.claim(peer.id, [{ url: url(2), claim: 'branch' }], 2);
-      expect(policy.refuse(target, [peer, target])).toContain('already tracked by todo owner');
+      expect(policy.record(target, [peer, target])).toContain('already tracked by todo owner');
     });
 
     test.each(['done', 'closed_unverified', 'failed', 'removed'] as const)(
@@ -126,14 +128,14 @@ for (const factory of factories)
         prs.claim(peer.id, [{ url: url(2), claim: 'branch' }], 2);
         const settled = todos.updateTodo(peer, { state }, 3);
         expect(settled.state).toBe(state);
-        expect(policy.refuse(todo('target', [url(2)]), [settled])).toBeNull();
+        expect(policy.record(todo('target', [url(2)]), [settled])).toBeNull();
       }
     );
 
     test('editing the current owner never conflicts with its own recorded claim', () => {
       const current = todo('owner', [url(2)]);
       prs.claim(current.id, [{ url: url(2), claim: 'named' }], 2);
-      expect(policy.refuse(current, [current])).toBeNull();
+      expect(policy.record(current, [current])).toBeNull();
     });
 
     test('an issue-tracking owner points duplicate PR edits back to the original todo', () => {
@@ -143,7 +145,7 @@ for (const factory of factories)
         check: { pack: 'coding', kind: 'issue_closed', params: { issue: 'example/repo#9' } },
       };
       prs.claim(peer.id, [{ url: url(2), claim: 'branch' }], 2);
-      expect(policy.refuse(todo('target', [url(2)]), [peer])).toBe(
+      expect(policy.record(todo('target', [url(2)]), [peer])).toBe(
         `pr_already_tracked: ${url(2)} is already tracked by todo owner "Title owner". Continue that todo instead.`
       );
     });
