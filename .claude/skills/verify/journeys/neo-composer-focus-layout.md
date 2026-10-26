@@ -20,8 +20,10 @@ have no Send button, a height about 48px, centered at about 83% of the column wi
 ends, + and placeholder on the left
 and mic on the right with usable 44px targets. Focus expands the composer and
 reveals preferences; a blurred multiline draft stays expanded and unchanged.
-Clearing and blurring restores the capsule. Recording keeps mic/stop and send
-controls at least 16px apart. Screenshots and composer-layout.json are retained.
+Clearing and blurring restores the capsule. First-click attachment and mic
+actions must work without focus expansion moving the target before activation. Recording keeps mic/stop and send
+controls 16px apart, measured together after the parent enters recording state.
+With voice disabled, the capsule has + and placeholder with no mic or Send. Screenshots and composer-layout.json are retained.
 
 Inspect screenshots for readable text, a heavier mic glyph, capsule proportions
 and no overflow. Native iOS parity needs separate inspection of its implementation.

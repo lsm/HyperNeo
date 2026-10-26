@@ -84,6 +84,7 @@ export function NeoComposer({
   const currentPreview = useRef(boundPreview);
   currentPreview.current = boundPreview;
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
+  const collapsed = !focused && !draft && !needsDraft && !voiceBusy;
   const draftContext = t(
     boundPreview
       ? 'composer.previewContext'
@@ -113,9 +114,12 @@ export function NeoComposer({
       const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 26;
       el.style.height = 'auto';
       const full = el.scrollHeight;
-      const height = Math.min(Math.max(full, line * (focused ? 2 : 1)), line * (focused ? 8 : 1));
+      const height = Math.min(
+        Math.max(full, line * (collapsed ? 1 : 2)),
+        line * (collapsed ? 1 : 8)
+      );
       el.style.height = `${height}px`;
-      el.style.overflowY = focused && full > line * 8 ? 'auto' : 'hidden';
+      el.style.overflowY = !collapsed && full > line * 8 ? 'auto' : 'hidden';
       idleHeight.current = height;
       if (wasVoiceBusy.current && !coarsePointer) {
         el.focus();
@@ -123,7 +127,7 @@ export function NeoComposer({
       }
     }
     wasVoiceBusy.current = voiceBusy;
-  }, [voiceBusy, coarsePointer, draft, focused]);
+  }, [voiceBusy, coarsePointer, draft, collapsed]);
   const finishVoice = useRef<((intent: 'draft' | 'send') => void) | null>(null);
   const registerFinishVoice = useCallback((finish: ((intent: 'draft' | 'send') => void) | null) => {
     finishVoice.current = finish;
@@ -245,10 +249,14 @@ export function NeoComposer({
         event.preventDefault();
         void send();
       }}
+      onPointerDown={(event) => {
+        if (collapsed && (event.target as Element).closest('button')) event.preventDefault();
+      }}
+      onFocusIn={() => setFocused(true)}
       onFocusOut={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
       }}
-      class={`neo-composer-input ${focused ? 'is-focused' : 'is-collapsed'} ${voiceBusy ? 'is-recording' : ''} pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60`}
+      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
       {boundPreview && (
         <div class="mb-2 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
@@ -376,9 +384,17 @@ export function NeoComposer({
             }
           }}
           onFocus={() => setFocused(true)}
-          rows={focused ? 2 : 1}
+          rows={collapsed ? 1 : 2}
           maxLength={16000}
-          placeholder={t(coarsePointer ? 'composer.placeholderTouch' : 'composer.placeholderKeys')}
+          placeholder={t(
+            collapsed
+              ? forSession
+                ? 'session.message'
+                : 'composer.message'
+              : coarsePointer
+                ? 'composer.placeholderTouch'
+                : 'composer.placeholderKeys'
+          )}
           class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
         />
       )}
@@ -444,7 +460,7 @@ export function NeoComposer({
             onError={onError}
             onPhase={setVoicePhase}
           />
-          {onStop && store.isWorking.value && !voiceBusy && (
+          {!collapsed && onStop && store.isWorking.value && !voiceBusy && (
             <button
               type="button"
               aria-label={t('composer.stop')}
@@ -455,27 +471,29 @@ export function NeoComposer({
               <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
             </button>
           )}
-          <Button
-            type="submit"
-            size="sm"
-            class="h-11 min-w-11 shrink-0"
-            aria-label={t(
-              recordingVoice && needsDraft
-                ? 'composer.stopDraft'
-                : recordingVoice
-                  ? 'composer.stopSend'
-                  : 'composer.send'
-            )}
-            title={
-              recordingVoice && needsDraft
-                ? t('composer.stopDraftTitle', { context: draftContext })
-                : recordingVoice
-                  ? t('composer.stopSendTitle')
-                  : undefined
-            }
-          >
-            <NeoIcon name="up" />
-          </Button>
+          {!collapsed && (
+            <Button
+              type="submit"
+              size="sm"
+              class="h-11 min-w-11 shrink-0"
+              aria-label={t(
+                recordingVoice && needsDraft
+                  ? 'composer.stopDraft'
+                  : recordingVoice
+                    ? 'composer.stopSend'
+                    : 'composer.send'
+              )}
+              title={
+                recordingVoice && needsDraft
+                  ? t('composer.stopDraftTitle', { context: draftContext })
+                  : recordingVoice
+                    ? t('composer.stopSendTitle')
+                    : undefined
+              }
+            >
+              <NeoIcon name="up" />
+            </Button>
+          )}
         </div>
       </div>
     </form>
