@@ -112,12 +112,12 @@ async function state() {
 }
 async function race(mode: string) {
   const action = mode.startsWith('remote')
-    ? `printf 'Remote racing edit\\n' > '${peer}/racing.md'; /usr/bin/git -C '${peer}' add .; /usr/bin/git -C '${peer}' commit -m human-race >/dev/null; /usr/bin/git -C '${peer}' push origin main >/dev/null 2>&1`
+    ? `printf 'Remote racing edit\\n' > '${peer}/racing.md'; /usr/bin/git -C '${peer}' add .; /usr/bin/git -c user.name=Human -c user.email=race@example.invalid -C '${peer}' commit -m human-race >/dev/null; /usr/bin/git -C '${peer}' push origin main >/dev/null 2>&1`
     : mode === 'local-network'
       ? `printf 'Human edit during network check\\n' > '${root}/human.md'`
       : mode === 'local-edit'
         ? `printf 'Uncommitted human edit\\n' > '${root}/notes.md'`
-        : `printf 'Local racing commit\\n' > '${root}/racing.md'; /usr/bin/git -C '${root}' add .; /usr/bin/git -C '${root}' commit -m human-race >/dev/null`;
+        : `printf 'Local racing commit\\n' > '${root}/racing.md'; /usr/bin/git -C '${root}' add .; /usr/bin/git -c user.name=Human -c user.email=race@example.invalid -C '${root}' commit -m human-race >/dev/null`;
   const trigger =
     mode === 'local-network'
       ? 'ls-remote'
