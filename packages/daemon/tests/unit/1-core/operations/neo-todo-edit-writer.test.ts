@@ -111,6 +111,62 @@ describe('Neo todo edit commits through its writer', () => {
     >;
   };
 
+  test.each(['before preparation', 'during completion'])(
+    '%s: a settled ask records without changing its todos or cards',
+    async (when) => {
+      add('first', [url(1)]);
+      store.askQuestion(
+        'question',
+        'ask',
+        {
+          text: 'Keep this card?',
+          kind: 'start',
+          options: null,
+          multiple: false,
+          yesLabel: null,
+          noLabel: null,
+          startTodos: ['first'],
+        },
+        2
+      );
+      let unchanged: unknown;
+      const settle = () => {
+        store.settleAsk(store.getAsk('ask')!, 'dropped', 'Human stopped the ask', 3);
+        unchanged = {
+          todos: store.listTodos('ask'),
+          questions: store.listQuestions('ask'),
+          ask: store.getAsk('ask'),
+        };
+      };
+      let checks = 0;
+      check = async () => {
+        checks++;
+        settle();
+        return { done: true, evidence: 'PR merged' };
+      };
+      if (when === 'before preparation') settle();
+      expect(
+        await edit({
+          todoId: 'first',
+          title: 'Must not change',
+          done: 'met',
+          evidence: 'PR merged',
+        })
+      ).toMatchObject({
+        ok: true,
+        todo: { title: 'first' },
+        records: [expect.stringContaining('ask_settled:')],
+      });
+      expect({
+        todos: store.listTodos('ask'),
+        questions: store.listQuestions('ask'),
+        ask: store.getAsk('ask'),
+      }).toEqual(unchanged);
+      expect(checks).toBe(when === 'before preparation' ? 0 : 1);
+      expect(started).toEqual([]);
+    }
+  );
+
   test('a failed ask stamp leaves both the title and human card unchanged', async () => {
     const todo = add('first');
     store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);

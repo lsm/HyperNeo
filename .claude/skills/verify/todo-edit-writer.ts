@@ -105,6 +105,14 @@ try {
     assert(healthMs < 250 && maxLagMs < 250);
     assert.equal((await visible('first')).title, 'Held lock committed');
     assert.equal(mainSql, 0);
+    todos.settleAsk(todos.getAsk('ask')!, 'dropped', 'Synthetic human stopped the ask', Date.now());
+    const settledBefore = { ask: todos.getAsk('ask'), todos: todos.listTodos('ask'), questions: todos.listQuestions('ask') };
+    const settledReply = await edit({ todoId: 'first', title: 'Must stay unchanged', done: 'met', evidence: 'PR merged' });
+    assert(settledReply.ok);
+    assert(settledReply.records?.some(record => record.startsWith('ask_settled:')));
+    assert.deepEqual({ ask: todos.getAsk('ask'), todos: todos.listTodos('ask'), questions: todos.listQuestions('ask') }, settledBefore);
+    assert.equal((await visible('first')).title, 'Held lock committed');
+    report.settledAsk = { receipt: settledReply, unchanged: true };
     report.verified = true;
   }
 } finally {
