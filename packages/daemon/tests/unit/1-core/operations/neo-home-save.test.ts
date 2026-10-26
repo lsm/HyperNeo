@@ -71,6 +71,19 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test('leaves an existing ignore symlink and its outside target untouched', async () => {
+    await writeFile(join(root, '.gitignore'), '# Legacy home\n');
+    await git('commit', '-am', 'Legacy ignores');
+    const outside = join(fixture, 'human-ignore');
+    await writeFile(outside, 'Human-owned bytes.\n');
+    await rm(join(root, '.gitignore'));
+    await symlink(outside, join(root, '.gitignore'));
+    expect(await save({ path: 'digest.md', content: 'Curated progress.\n' })).toMatchObject({
+      ok: true,
+    });
+    expect(await readFile(outside, 'utf8')).toBe('Human-owned bytes.\n');
+    expect(await git('show', 'HEAD:.gitignore')).toBe('# Legacy home');
+  });
   test.each([false, true])(
     'does not adopt human ignore edits during repair (staged: %s)',
     async (staged) => {
@@ -82,7 +95,7 @@ describe('Neo home save', () => {
       const saved = await save({ path: 'digest.md', content: 'Curated progress.\n' });
       expect(saved.ok).toBe(true);
       expect(await git('show', 'HEAD:.gitignore')).toBe('# Legacy home');
-      expect(await readFile(join(root, '.gitignore'), 'utf8')).toContain(pending);
+      expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe(pending);
       expect(await git('diff', '--cached', '--name-only')).toBe(staged ? '.gitignore' : '');
       if (staged) expect(await git('show', ':.gitignore')).toBe(pending.trim());
       const head = await git('rev-parse', 'HEAD');
@@ -146,9 +159,14 @@ describe('Neo home save', () => {
           `Synthetic ${dir} bytes.`
         );
         expect(await git('ls-files', '--', dir)).toBe('');
-        expect(await git('show', 'HEAD:.gitignore')).toContain(`${dir}/`);
+        if (state === 'first save')
+          expect(await git('show', 'HEAD:.gitignore')).toContain(`${dir}/`);
       }
-      expect(await git('status', '--porcelain')).toBe('');
+      if (state === 'first save') expect(await git('status', '--porcelain')).toBe('');
+      else {
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('.coordinators/\n');
+        expect(await git('diff', '--name-only', 'HEAD^', 'HEAD')).toBe('digest.md');
+      }
     } finally {
       if (prior === undefined) delete process.env.GIT_CONFIG_GLOBAL;
       else process.env.GIT_CONFIG_GLOBAL = prior;
