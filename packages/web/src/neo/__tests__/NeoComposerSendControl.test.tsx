@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
@@ -55,13 +55,24 @@ afterEach(() => {
 });
 
 describe('Neo composer send slot', () => {
+  it('offers no send button until the empty composer is focused', () => {
+    mount(false, '');
+    expect(send()).toBeNull();
+    fireEvent.focusIn(screen.getByRole('button', { name: 'Attach photos or files' }));
+    expect(send()).toBeTruthy();
+    fireEvent.focusOut(screen.getByRole('textbox', { name: 'Message Neo' }), {
+      relatedTarget: document.body,
+    });
+    expect(send()).toBeNull();
+  });
+
   it.each([
     [false, ''],
     [true, ''],
     [true, '   '],
   ])('never offers Stop Neo (working=%s, draft %j)', (working, draft) => {
     mount(working, draft);
-    expect(send()).toBeTruthy();
+    expect(Boolean(send())).toBe(draft.length > 0);
     expect(stop()).toBeNull();
   });
 
@@ -77,6 +88,7 @@ describe('Neo composer send slot', () => {
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     cleanup();
     mount(true, '', onStop);
+    fireEvent.focusIn(screen.getByRole('textbox', { name: 'Message Neo' }));
     screen.getByRole('button', { name: 'Stop' }).click();
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(send()).toBeTruthy();

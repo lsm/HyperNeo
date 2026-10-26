@@ -1,23 +1,29 @@
-# Neo composer collapses when unfocused
+# Neo composer uses a compact empty capsule
 
-Use shared isolation and launch setup in SKILL.md, including the resource
-preflight. Build the web and launch an isolated daemon. Configure the synthetic
-voice endpoint using journey 2 before running the browser helper, so the mic is
-available. Use fake browser media only; no real microphone or speech service.
+Use shared isolation and resource preflight in SKILL.md. Build the web, then run
+this wrapper from the repository root with a fresh absolute evidence directory:
 
 ```bash
-VERIFY_BROWSER=<installed-chromium> node .claude/skills/verify/composer-layout.mjs "$PORT" "$RUN"
+bun run --cwd packages/web build
+VERIFY_BROWSER=<installed-chromium> VERIFY_PLAYWRIGHT=<playwright-package-path> \
+  bash .claude/skills/verify/composer-layout.sh /absolute/fresh/evidence-directory
 ```
 
-`VERIFY_PLAYWRIGHT` optionally selects an existing Playwright package path.
-The helper drives real `/neo` at 390px and 1280px. It checks that +, mic and send
-share a row; both voice/send targets are at least 44px; their gap is at least
-16px; focus expands the composer and reveals preferences; blur preserves a
-multiline draft and collapses it; recording keeps the one-row height and 16px
-gap. It saves three screenshots per width and `composer-layout.json`.
+The wrapper owns a synthetic HOME/DB, an isolated metadata-only daemon and a
+loopback ASR fixture. It uses fake browser media, no real microphone, credentials,
+provider/model or speech service. Optional second argument selects a free daemon
+port (default 9374); its ASR uses the next port. Neither can be 8399. It stops and
+waits for its children, retains evidence and logs, and deletes its temporary data.
 
-Inspect the screenshots for a 24px heavier mic glyph, readable text, spacing,
-and no overflow. Native iOS parity must be checked separately against the iOS
-implementation. A browser launch failure is not a layout pass: retain its error,
-mark screenshots unverified, and leave browser proof pending. Do not bypass
-host browser restrictions.
+The helper drives real /neo at 390px and 1280px. An empty, unfocused composer must
+have no Send button, a height about 48px, centered at about 83% of the column width, fully semicircular
+ends, + and placeholder on the left
+and mic on the right with usable 44px targets. Focus expands the composer and
+reveals preferences; a blurred multiline draft stays expanded and unchanged.
+Clearing and blurring restores the capsule. Recording keeps mic/stop and send
+controls at least 16px apart. Screenshots and composer-layout.json are retained.
+
+Inspect screenshots for readable text, a heavier mic glyph, capsule proportions
+and no overflow. Native iOS parity needs separate inspection of its implementation.
+A browser launch failure is not a layout pass: retain its error, say screenshots
+are unverified and leave browser proof pending. Do not bypass host restrictions.
