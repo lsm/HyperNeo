@@ -18,12 +18,12 @@ CSS is an inert text artifact. Register the HTML with an optional `bundle` array
 
 The aliases are relative resource names, never filesystem permissions. Every ID
 must already name an immutable CSS/raster snapshot in this exact authorized
-context. Source registration still uses persisted roots, the anchored no-follow
+context. Source registration accepts explicitly chosen non-sensitive paths and uses the anchored no-follow
 file descriptor opener, and complete content hashing. No directory crawl, raw
 asset path reader, network fetch, script, new endpoint, migration or sharing grant.
 The immutable receipt stores the explicit manifest internally; get/read/result
 record shapes remain unchanged for older clients. Reordered entries are the same
-request; a changed manifest with the same request ID refuses source_changed.
+request; a changed manifest with the same request ID creates a new immutable revision.
 
 At most 64 entries including HTML and 64 MiB total. HTML preview admits at most
 2 MiB combined input and bounds repeated resource expansion before serialization,
@@ -42,7 +42,7 @@ iframe sandbox, disabled scripts, CSP and navigation policies.
 From packages/daemon, run Vitest preview-bundle, preview-html, preview-register,
 preview-reads plus the existing artifact contracts/policy/capture/descriptor suites.
 The new native proof retains synthetic fixtures, checks immutable bytes after
-moving originals and reopening SQLite, manifest conflicts, same-context binding,
+moving originals and reopening SQLite, manifest revisions, same-context binding,
 foreign/unknown/wrong-kind refusals, preview limits, and revocation. Its initial
 red run rejected CSS/bundle input and lost relative layout. A separate committed
 red regression reproduced repeated-asset expansion before the inlining bound.

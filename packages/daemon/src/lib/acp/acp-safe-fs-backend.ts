@@ -465,7 +465,7 @@ async function withRegularArtifactDescriptor<Value>(
   try {
     validateSegments(segments);
     if (!root.startsWith('/') || root.includes('\0')) throw new Error('invalid_root');
-    validateSegments(root.split('/').filter(Boolean));
+    if (root !== '/') validateSegments(root.split('/').filter(Boolean));
   } catch {
     return { accepted: false, reason: 'unsafe_path' };
   }

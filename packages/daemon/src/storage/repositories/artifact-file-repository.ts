@@ -14,12 +14,15 @@ export class ArtifactFileRepository {
   }
   receipt(context: ArtifactContext, requestId: string) {
     return this.db
-      .prepare(`SELECT fingerprint, sha256, receipt FROM artifact_files
-      WHERE context_kind = ? AND context_id = ? AND request_id = ?`)
-      .get(context.kind, context.id, requestId) as {
+      .prepare(`SELECT fingerprint, sha256, receipt, producer_ref FROM artifact_files
+      WHERE context_kind = ? AND context_id = ?
+      AND (request_id = ? OR json_extract(receipt, '$.requestId') = ?)
+      ORDER BY rowid DESC LIMIT 1`)
+      .get(context.kind, context.id, requestId, requestId) as {
       fingerprint: string;
       sha256: string;
       receipt: string;
+      producer_ref: string;
     } | null;
   }
   save(
@@ -31,7 +34,8 @@ export class ArtifactFileRepository {
     producer: string,
     sourcePath: string,
     revision?: ArtifactFileMetadata['revision'],
-    bundle?: readonly ArtifactBundleEntry[]
+    bundle?: readonly ArtifactBundleEntry[],
+    logicalRequestId?: string
   ) {
     this.db.prepare(`INSERT INTO artifact_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       artifact.artifactId,
@@ -43,6 +47,7 @@ export class ArtifactFileRepository {
       artifact.byteLength,
       JSON.stringify({
         accepted: true,
+        ...(logicalRequestId ? { requestId: logicalRequestId } : {}),
         artifact,
         ...(revision ? { revision } : {}),
         ...(bundle ? { bundle } : {}),
