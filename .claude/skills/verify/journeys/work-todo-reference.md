@@ -13,7 +13,7 @@ Eight work.send/work.queue calls with missing, unknown, closed-ask or foreign
 references must return ok true and a todo_required record. A valid owned todo
 returns no bookkeeping record. All nine accepted messages must reach the real
 mailbox repository, retain their sender and target, and survive reopening the
-migrated database. Four explicit queues retain deferred delivery semantics.
+migrated database. Four explicit queues retain deferred delivery semantics. All eight accepted bookkeeping audit records also survive database reopen.
 Run the same helper on the regression commit: it fails at the first missing
 reference with ok false/todo_required. Keep observed.json and proof.log; the
 shared wrapper saves evidence and deletes disposable data.

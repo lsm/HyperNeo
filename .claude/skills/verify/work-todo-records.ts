@@ -8,6 +8,8 @@ import { createHyperneoAdapter } from '../../../packages/daemon/src/lib/drivers/
 import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
 import { handoffPromptToMailbox } from '../../../packages/daemon/src/lib/mailbox/handoff.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { recordOperationRefusal } from '../../../packages/daemon/src/storage/repositories/operation-refusal-repository.ts';
+import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 
 const run = resolve(process.argv[2]);
@@ -52,7 +54,7 @@ try {
       return !!ask && ask.status === 'open' && ask.sessionId === sessionId;
     },
   }));
-  const handler = createOperationMcpHandler(registry, () => ({ sessionId: root, role: 'neo' }));
+  const handler = createOperationMcpHandler(registry, () => ({ sessionId: root, role: 'neo' }), (refusal) => gatewayFor(db).run(recordOperationRefusal, { refusal, sessionId: root, at: Date.now() }));
   const call = async (name: string, todoId?: string) => {
     const reply = await handler({ name, input: { ref: { adapter: 'hyperneo', id: worker }, message: `Synthetic ${name} ${todoId ?? 'untracked'}`, ...(todoId ? { todoId } : {}) } });
     const value = JSON.parse(reply.content[0].text);
@@ -80,6 +82,9 @@ try {
   database = new DatabaseCore(join(run, 'data/daemon.db'));
   await database.initialize();
   assert.equal(database.getDb().prepare("SELECT count(*) AS count FROM job_queue WHERE queue='mailbox'").get()?.count, 9);
+  const audits = database.getDb().prepare('SELECT operation,reason,accepted FROM operation_refusals').all();
+  assert.equal(audits.length, 8); assert(audits.every((audit) => (audit as { accepted: number }).accepted === 1));
+  evidence.audits = audits;
   evidence.passed = true;
   evidence.scope = 'Production MCP receipt, HyperNeo adapter and durable mailbox acceptance across DB reopen; no provider execution or full daemon listener.';
   console.log('PASS: eight untracked work calls accepted with visible records; all nine mailbox deliveries survive database reopen.');
