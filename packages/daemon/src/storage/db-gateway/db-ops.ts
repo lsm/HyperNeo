@@ -21,7 +21,7 @@ import {
   neoTodoSessionWrites,
 } from '../repositories/neo-todo-session-repository.ts';
 import { codingTodoPrReads } from '../../lib/neo/packs/coding/todo-prs.ts';
-import { neoTodoReads } from '../repositories/neo-ask-todo-repository.ts';
+import { neoTodoReads, neoTodoWrites } from '../repositories/neo-ask-todo-repository.ts';
 import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
 import { neoWakeQueueWrite } from '../repositories/neo-wake-queue-repository.ts';
 import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
@@ -80,6 +80,7 @@ import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write
 import { cancelRateLimitDelivery } from '../repositories/rate-limit-cancel-write.ts';
 import { claimOwnedInputWithdrawal } from '../repositories/owned-input-withdrawal-write.ts';
 import type { DbOp } from './db-op.ts';
+import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites, recordProviderAuth } from '../repositories/provider-rpc-writes.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
@@ -103,6 +104,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoSessionWrites,
     codingTodoPrReads,
     neoTodoReads,
+    neoTodoWrites,
     sdkMessageWrites,
     neoWakeQueueWrite,
     ...SDK_MESSAGE_TRANSACTIONS,
@@ -149,6 +151,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     cancelRateLimitDelivery,
     claimOwnedInputWithdrawal,
     globalSettingsWrites,
+    releaseRateLimitDeliveries,
     providerRpcWrites,
     recordProviderAuth,
   ].map((op) => [op.name, op])

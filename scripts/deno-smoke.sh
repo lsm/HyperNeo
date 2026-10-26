@@ -390,6 +390,31 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
       if (await gateway.call(codingTodoPrReads, "isWaiting", id) !== (state === "OPEN")) Deno.exit(1);
     }
     console.log("[deno-smoke] cached PR waiting reader preserves missing, open, closed and merged decisions");
+    const { neoTodoWrites } = await import(src + "/storage/repositories/neo-ask-todo-repository.ts");
+    const stateId = "deno-state-first", nextId = "deno-state-next", body = "Complete report 🦊".repeat(1000);
+    db.prepare("INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES(?,?,?,?,1,1)").run("deno-state-ask", "deno-root", "Atomic state", "Complete both");
+    for (const [position, todoId] of [stateId, nextId].entries()) db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,started_at,report,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,1)").run(todoId, "deno-state-ask", position, todoId, "Observed", position ? "todo" : "doing", position ? null : 1, body);
+    db.prepare("INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES(?,?,?,?,?,1)").run("deno-state-question", "deno-state-ask", "Start first?", "start", JSON.stringify([stateId]));
+    const stateRead = () => db.prepare("SELECT state FROM neo_todos WHERE id=?").get(stateId).state;
+    const questionRead = () => db.prepare("SELECT state FROM neo_questions WHERE id=?").get("deno-state-question").state;
+    db.exec("CREATE TRIGGER refuse_state_ask BEFORE UPDATE OF updated_at ON neo_asks BEGIN SELECT RAISE(ABORT, \u0027synthetic state refusal\u0027); END");
+    refused = false;
+    try { await gateway.call(neoTodoWrites, "commitState", stateId, {}, 10, {state:"done",evidence:"Complete"}); }
+    catch (error) { refused = String(error).includes("synthetic state refusal"); }
+    db.exec("DROP TRIGGER refuse_state_ask");
+    if (!refused || stateRead() !== "doing" || questionRead() !== "open") Deno.exit(1);
+    const committed = await gateway.call(neoTodoWrites, "commitState", stateId, {}, 11, {state:"done",evidence:"Complete"});
+    if (committed.todo.state !== "done" || committed.startNext !== nextId || committed.todo.report !== body || questionRead() !== "retired" || db.prepare("SELECT state FROM neo_todos WHERE id=?").get(nextId).state !== "todo") Deno.exit(1);
+    console.log("[deno-smoke] todo state, pruning and ask stamps commit together; next work is returned without dispatch");
+    for (const missingId of ["deno-unknown-state", "deno-deleted-state"]) {
+      if (missingId === "deno-deleted-state") {
+        db.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,created_at,updated_at) VALUES(?,?,2,?,?,1,1)").run(missingId, "deno-state-ask", "Deleted step", "Observed");
+        db.prepare("DELETE FROM neo_todos WHERE id=?").run(missingId);
+      }
+      const missing = await gateway.call(neoTodoWrites, "commitState", missingId, {}, 20, {state:"done",evidence:"Late completion"});
+      if (missing.todo !== null || missing.startNext !== null || stateRead() !== "done" || questionRead() !== "retired") Deno.exit(1);
+    }
+    console.log("[deno-smoke] missing and deleted todo state commands return empty results without changing siblings");
   } finally { db.close(); await gateway.close(); }
 '; then
   dump_log
@@ -481,6 +506,12 @@ mkdir -p "$OWNED_WITHDRAWAL_RUN/home"
 env -i HOME="$OWNED_WITHDRAWAL_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$OWNED_WITHDRAWAL_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-owned-input-withdrawal.ts" "$OWNED_WITHDRAWAL_RUN"
+
+RATE_LIMIT_RETRY_RUN="$WORK_DIR/rate-limit-retry"
+mkdir -p "$RATE_LIMIT_RETRY_RUN/home"
+env -i HOME="$RATE_LIMIT_RETRY_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$RATE_LIMIT_RETRY_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-rate-limit-retry.ts" "$RATE_LIMIT_RETRY_RUN"
 
 PROVIDER_RPC_WRITES_RUN="$WORK_DIR/provider-rpc-writes"
 mkdir -p "$PROVIDER_RPC_WRITES_RUN/home"
