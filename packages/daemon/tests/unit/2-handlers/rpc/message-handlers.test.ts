@@ -110,6 +110,7 @@ function createMockSessionManager(): {
       getSDKMessagePageAsync: async (
         _sessionId: string,
         page: {
+          requireSession?: boolean;
           limit?: number;
           before?: number;
           since?: number;
@@ -117,6 +118,8 @@ function createMockSessionManager(): {
           sinceRowid?: number;
         }
       ) => {
+        if (page.requireSession && !mocks.getSessionFromDB(_sessionId))
+          throw new Error('Session not found');
         const result = agentSessionData.mocks.getSDKMessages(
           page.limit,
           page.before,
@@ -747,6 +750,7 @@ describe('Message RPC Handlers', () => {
         )
       ).toEqual(page);
       expect(read).toHaveBeenCalledWith('session-123', {
+        requireSession: true,
         limit: 2,
         before: 100,
         since: 50,
@@ -788,6 +792,7 @@ describe('Message RPC Handlers', () => {
         )
       ).toEqual(page);
       expect(read).toHaveBeenCalledWith('conv:synthetic', {
+        requireSession: false,
         limit: undefined,
         before: undefined,
         since: undefined,
@@ -896,7 +901,7 @@ describe('Message RPC Handlers', () => {
       const handler = messageHubData.handlers.get('message.sdkMessages');
       expect(handler).toBeDefined();
 
-      sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+      sessionManagerData.mocks.getSessionFromDB.mockReturnValueOnce(null);
 
       await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
         'Session not found'
