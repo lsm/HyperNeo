@@ -513,6 +513,63 @@ const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
   repo: CodingTodoPrRepository
 ) => Promise<CodingTodoFacts>;
 
+export function createCodingTodoPolicy(
+  repo: Pick<CodingTodoPrRepository, 'urls'>
+): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record'>> {
+  return {
+    doneWhen: codingTodoDoneWhen,
+    addUrls: (todo, urls) =>
+      todo.check?.kind === 'pr_merged'
+        ? {
+            ...todo.check,
+            params: {
+              ...todo.check.params,
+              urls: [
+                ...new Set(
+                  [
+                    ...(Array.isArray(todo.check.params.urls) ? todo.check.params.urls : []),
+                    ...urls,
+                  ].map((url) => (typeof url === 'string' ? (codingPrKey(url) ?? url) : url))
+                ),
+              ],
+            },
+          }
+        : null,
+    refuse: (draft) => {
+      const refused = codingTodoCheckRefusal(draft);
+      return refused?.startsWith('pr_merged_needs_urls:') ? null : refused;
+    },
+    record: (draft, peers = []) => {
+      const refused = codingTodoCheckRefusal(draft);
+      if (refused || draft.check?.kind !== 'pr_merged') return refused;
+      const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];
+      const keys = new Set(urls.flatMap((url) => codingPrKey(url) ?? []));
+      for (const peer of peers) {
+        if (
+          peer.id === draft.id ||
+          ['done', 'closed_unverified', 'removed', 'failed'].includes(peer.state)
+        )
+          continue;
+        const named =
+          peer.check?.pack === 'coding' && Array.isArray(peer.check.params.urls)
+            ? peer.check.params.urls
+            : [];
+        const duplicate = [...named, ...repo.urls(peer.id)].find(
+          (url) => typeof url === 'string' && keys.has(codingPrKey(url) ?? '')
+        );
+        if (duplicate) {
+          const next =
+            peer.check?.kind === 'pr_merged'
+              ? 'Use neo.todo.edit addUrls on that todo.'
+              : 'Continue that todo instead.';
+          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}". ${next}`;
+        }
+      }
+      return null;
+    },
+  };
+}
+
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
@@ -586,56 +643,7 @@ export function createCodingTodoPack(
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.readWaiting(todo.id),
-    doneWhen: codingTodoDoneWhen,
-    addUrls: (todo, urls) =>
-      todo.check?.kind === 'pr_merged'
-        ? {
-            ...todo.check,
-            params: {
-              ...todo.check.params,
-              urls: [
-                ...new Set(
-                  [
-                    ...(Array.isArray(todo.check.params.urls) ? todo.check.params.urls : []),
-                    ...urls,
-                  ].map((url) => (typeof url === 'string' ? (codingPrKey(url) ?? url) : url))
-                ),
-              ],
-            },
-          }
-        : null,
-    refuse: (draft) => {
-      const refused = codingTodoCheckRefusal(draft);
-      return refused?.startsWith('pr_merged_needs_urls:') ? null : refused;
-    },
-    record: (draft, peers = []) => {
-      const refused = codingTodoCheckRefusal(draft);
-      if (refused || draft.check?.kind !== 'pr_merged') return refused;
-      const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];
-      const keys = new Set(urls.flatMap((url) => codingPrKey(url) ?? []));
-      for (const peer of peers) {
-        if (
-          peer.id === draft.id ||
-          ['done', 'closed_unverified', 'removed', 'failed'].includes(peer.state)
-        )
-          continue;
-        const named =
-          peer.check?.pack === 'coding' && Array.isArray(peer.check.params.urls)
-            ? peer.check.params.urls
-            : [];
-        const duplicate = [...named, ...repo.urls(peer.id)].find(
-          (url) => typeof url === 'string' && keys.has(codingPrKey(url) ?? '')
-        );
-        if (duplicate) {
-          const next =
-            peer.check?.kind === 'pr_merged'
-              ? 'Use neo.todo.edit addUrls on that todo.'
-              : 'Continue that todo instead.';
-          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}". ${next}`;
-        }
-      }
-      return null;
-    },
+    ...createCodingTodoPolicy(repo),
   };
 }
 
