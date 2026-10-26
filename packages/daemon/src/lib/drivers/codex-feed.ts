@@ -2,6 +2,8 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { nativeFeedEnqueueWrites } from '../../storage/repositories/native-feed-enqueue-write.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { readWorkFeedOffsets, type WorkFeedTurn } from '../../storage/work-feed.ts';
@@ -98,8 +100,8 @@ export function codexRolloutTurns(lines: readonly string[], threadId: string): W
   });
 }
 
-export function scheduleCodexFeed(queue: JobQueueRepository): void {
-  queue.enqueueUniquePending({
+export async function scheduleCodexFeed(queue: JobQueueRepository): Promise<void> {
+  await gatewayFor(queue.db).call(nativeFeedEnqueueWrites, 'enqueueUniquePending', {
     queue: WORK_FEED_CODEX,
     payload: { scope: 'codex' },
     matchPayload: { scope: 'codex' },

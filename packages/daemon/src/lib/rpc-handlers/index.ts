@@ -404,7 +404,9 @@ export interface RPCHandlerSetupResult {
   wakePollingConcern: (key: string, text: string) => Promise<boolean>;
 }
 
-export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
+export async function setupRPCHandlers(
+  deps: RPCHandlerDependencies
+): Promise<RPCHandlerSetupResult> {
   let taskAgentManager: TaskAgentManager;
   const persistToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
     createSessionToolPreferenceWriter(deps.db, async () => {
@@ -1868,8 +1870,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
   if (process.env.NODE_ENV !== 'test') {
     scheduleTurnEmbedding(deps.jobQueue);
-    scheduleCodexFeed(deps.jobQueue);
-    scheduleClaudeFeed(deps.jobQueue);
+    await scheduleCodexFeed(deps.jobQueue);
+    await scheduleClaudeFeed(deps.jobQueue);
   }
 
   return {
