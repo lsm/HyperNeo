@@ -436,6 +436,47 @@ describe('readGithubPrs REST check rollup', () => {
     expect(read?.[0]?.checks).toBe('passing');
   });
 
+  test('skips expected synthesis, but keeps the read, when the rules endpoint is absent', async () => {
+    const spawn = (args: string[]) => {
+      const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
+      let body: unknown = { statuses: [] };
+      if (args[2] === 'view')
+        body = ghPr({ url: 'https://github.com/lsm/RequiredH/pull/9', baseRefName: 'dev' });
+      else if (path.includes('check-runs')) body = { check_runs: [] };
+      const absent = path.includes('/rules/branches/');
+      return {
+        stdout: new Response(absent ? '' : JSON.stringify(body)).body,
+        stderr: new Response(absent ? 'gh: HTTP 404: Not Found' : '').body,
+        exited: Promise.resolve(absent ? 1 : 0),
+        exitCode: absent ? 1 : 0,
+        kill: () => {},
+      };
+    };
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredH/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('none');
+  });
+
+  test('an unstarted required check does not mask failing CI as pending', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredI/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? { check_runs: [{ name: 'red', status: 'completed', conclusion: 'failure' }] }
+          : path.includes('/rules/branches/')
+            ? [
+                {
+                  type: 'required_status_checks',
+                  parameters: {
+                    required_status_checks: [{ context: 'red' }, { context: 'late' }],
+                  },
+                },
+              ]
+            : { statuses: [] }
+    );
+    const read = await readGithubPrs(['https://github.com/lsm/RequiredI/pull/9'], spawn as never);
+    expect(read?.[0]?.checks).toBe('failing');
+  });
+
   test('follows check-runs pagination to a failure past the first page', async () => {
     const fullPage = Array.from({ length: 100 }, () => ({
       status: 'completed',

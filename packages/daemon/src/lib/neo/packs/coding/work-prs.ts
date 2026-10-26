@@ -356,14 +356,16 @@ async function readCheckRollup(
       spawnImpl
     );
     if (rules === null) return null;
-    for (const check of requiredChecks(rules)) {
-      const providers = covered.get(check.context.toUpperCase());
-      const satisfied =
-        check.integrationId === null
-          ? providers !== undefined
-          : (providers?.has(check.integrationId) ?? false);
-      if (!satisfied) rollup.push({ state: 'EXPECTED' });
-    }
+    const alreadyFailing = rollup.some((check) => checkResult(check) === 'failing');
+    if (!alreadyFailing)
+      for (const check of requiredChecks(rules)) {
+        const providers = covered.get(check.context.toUpperCase());
+        const satisfied =
+          check.integrationId === null
+            ? providers !== undefined
+            : (providers?.has(check.integrationId) ?? false);
+        if (!satisfied) rollup.push({ state: 'EXPECTED' });
+      }
   }
   return rollup;
 }
@@ -383,6 +385,10 @@ async function fetchBranchRules(
     spawnImpl,
     'core'
   );
+  if (!outcome.ok && /HTTP 404/.test(outcome.error ?? '')) {
+    rulesCache.set(key, { at: Date.now(), rules: [] });
+    return [];
+  }
   const parsed = outcome.ok ? RulesSchema.safeParse(outcome.data) : null;
   const rules = parsed?.success ? parsed.data : null;
   rulesCache.set(key, { at: Date.now(), rules });
