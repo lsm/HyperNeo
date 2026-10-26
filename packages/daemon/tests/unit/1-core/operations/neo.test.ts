@@ -329,7 +329,6 @@ describe('Neo MVP', () => {
       'neo.draft.recover',
       'neo.rule.ask',
       'neo.rule.applyAnswer',
-      'neo.workerSocket.ask',
       'pack.preferences.ask',
       'pack.preferences.applyAnswer',
       'neo.preferences.set',

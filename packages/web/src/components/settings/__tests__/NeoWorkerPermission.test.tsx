@@ -94,22 +94,9 @@ test('picking a mode saves it without dropping the rest of the Neo settings', ()
   });
 });
 
-test('settings shows allowed worker sockets and removes only the selected entry', () => {
-  settle();
-  (globalSettings as { value: GlobalSettings | null }).value = {
-    ...globalSettings.value!,
-    workerUnixSockets: ['/synthetic/agent.sock', '/synthetic/db.sock'],
-  };
-  render(<NeoModelSettings />);
-  expect(screen.getByText('/synthetic/agent.sock')).toBeTruthy();
-  expect(screen.getByText('/synthetic/db.sock')).toBeTruthy();
-  fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]);
-  expect(updateGlobalSettings).toHaveBeenCalledWith({ workerUnixSockets: ['/synthetic/db.sock'] });
-});
-
-test('empty socket settings grant no access', () => {
+test('worker settings no longer list allowed Unix sockets', () => {
   settle();
   render(<NeoModelSettings />);
-  expect(screen.getByText('No sockets allowed')).toBeTruthy();
+  expect(screen.queryByText('Worker Unix sockets')).toBeNull();
   expect(updateGlobalSettings).not.toHaveBeenCalled();
 });

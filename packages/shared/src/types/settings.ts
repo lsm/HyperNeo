@@ -153,7 +153,6 @@ export type ChatDisplayMode = 'full' | 'compact' | 'minimal';
 export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
 
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
-  workerUnixSockets?: string[];
   toolSelectionDefaults?: SessionToolSelection;
 
   settingSources: SettingSource[];
@@ -199,7 +198,6 @@ export interface SessionSettings extends GlobalSettings {
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
-  workerUnixSockets: [],
   settingSources: ['user', 'project', 'local'],
   permissionMode: 'default',
   model: 'sonnet',
