@@ -8,7 +8,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 506,
+    "uptime": 539,
     "sessions": {
       "active": 0,
       "total": 0
@@ -16,19 +16,19 @@
   },
   "initial": [
     {
-      "id": "7b8f8b2e-7af5-4076-8e66-e064b87c4f56",
+      "id": "dc343589-a47b-44fc-875b-712f8edcd4ed",
       "queue": "skill.validate",
       "status": "pending",
       "payload": {
-        "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+        "skillId": "b80a0354-8554-43e4-80d2-612b6888a048"
       },
       "result": null,
       "error": null,
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792997499225,
-      "createdAt": 1792997499225,
+      "runAt": 1792999646263,
+      "createdAt": 1792999646263,
       "startedAt": null,
       "heartbeatAt": null,
       "completedAt": null,
@@ -36,81 +36,81 @@
     }
   ],
   "firstCompleted": {
-    "id": "7b8f8b2e-7af5-4076-8e66-e064b87c4f56",
+    "id": "dc343589-a47b-44fc-875b-712f8edcd4ed",
     "queue": "skill.validate",
     "status": "completed",
     "payload": {
-      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+      "skillId": "b80a0354-8554-43e4-80d2-612b6888a048"
     },
     "result": {
       "valid": true,
-      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+      "skillId": "b80a0354-8554-43e4-80d2-612b6888a048"
     },
     "error": null,
     "priority": 0,
     "maxRetries": 3,
     "retryCount": 0,
-    "runAt": 1792997499225,
-    "createdAt": 1792997499225,
-    "startedAt": 1792997499226,
+    "runAt": 1792999646263,
+    "createdAt": 1792999646263,
+    "startedAt": 1792999646265,
     "heartbeatAt": null,
-    "completedAt": 1792997499227,
-    "claimToken": "b9650c6f-bb8c-4020-bb0a-cffc08969b81"
+    "completedAt": 1792999646266,
+    "claimToken": "979bfa91-6ec0-4eb2-b505-ca50a0110dd7"
   },
   "firstObserved": {
     "skill": {
-      "id": "05bdce95-a3b1-4afb-bf85-ae119582df99",
+      "id": "b80a0354-8554-43e4-80d2-612b6888a048",
       "name": "synthetic-validation-skill",
       "displayName": "Synthetic validation",
       "description": "Observed synthetic validation",
       "sourceType": "plugin",
       "config": {
         "type": "plugin",
-        "pluginPath": "/private/tmp/hyperneo-skill-validation-deno-3dh4hb2m/workspace"
+        "pluginPath": "/private/tmp/hyperneo-skill-rebase-wioi0y24/workspace"
       },
       "enabled": false,
       "builtIn": false,
       "validationStatus": "valid",
-      "createdAt": 1792997499224
+      "createdAt": 1792999646262
     }
   },
   "secondCompleted": {
-    "id": "182bc56f-a816-47e4-9a59-1c980ab1ef1b",
+    "id": "627e4b5f-7591-4f2a-b3e8-a67ebd978851",
     "queue": "skill.validate",
     "status": "completed",
     "payload": {
-      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+      "skillId": "b80a0354-8554-43e4-80d2-612b6888a048"
     },
     "result": {
       "valid": true,
-      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+      "skillId": "b80a0354-8554-43e4-80d2-612b6888a048"
     },
     "error": null,
     "priority": 0,
     "maxRetries": 3,
     "retryCount": 0,
-    "runAt": 1792997499229,
-    "createdAt": 1792997499229,
-    "startedAt": 1792997499230,
+    "runAt": 1792999646269,
+    "createdAt": 1792999646269,
+    "startedAt": 1792999646270,
     "heartbeatAt": null,
-    "completedAt": 1792997499230,
-    "claimToken": "4b5e54a0-f4d5-438b-afca-d87bb53af5a1"
+    "completedAt": 1792999646271,
+    "claimToken": "4f4d331e-c658-4c00-a8fc-42c3fd45be95"
   },
   "secondObserved": {
     "skill": {
-      "id": "05bdce95-a3b1-4afb-bf85-ae119582df99",
+      "id": "b80a0354-8554-43e4-80d2-612b6888a048",
       "name": "synthetic-validation-skill",
       "displayName": "Synthetic validation",
       "description": "Observed synthetic validation",
       "sourceType": "plugin",
       "config": {
         "type": "plugin",
-        "pluginPath": "/private/tmp/hyperneo-skill-validation-deno-3dh4hb2m/workspace"
+        "pluginPath": "/private/tmp/hyperneo-skill-rebase-wioi0y24/workspace"
       },
       "enabled": false,
       "builtIn": false,
       "validationStatus": "valid",
-      "createdAt": 1792997499224
+      "createdAt": 1792999646262
     }
   },
   "rejectedUpdate": "MessageHubResponseError: synthetic validation rejection",
@@ -123,7 +123,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 518,
+    "uptime": 556,
     "sessions": {
       "active": 0,
       "total": 0
