@@ -372,53 +372,42 @@ describe('human-approved standing rules', () => {
     });
     expect(saved()).toEqual(before);
   });
-  test.each(['missing-removal'])(
-    'a chat yes to a %s stale proposal remains accepted and notifies Neo',
-    async (kind) => {
-      if (kind === 'cap')
-        db.updateGlobalSettings({
-          neo: { standingRules: Array.from({ length: 19 }, (_, i) => `Rule ${i}.`) },
-        });
-      const change = kind === 'cap' ? { add: ['First extra rule.'], remove: [] } : edit;
-      const first = await propose('first', change);
-      const second = await propose(
-        'second',
-        kind === 'cap' ? { add: ['Second extra rule.'], remove: [] } : edit
-      );
-      await invoke('neo.question.answer', { questionId: first, answer: 'yes' }, human);
-      const before = saved();
-      const notified: string[] = [];
-      const operation = createNeoIntakeOperation(db, service.repo, (sessionId) =>
-        notified.push(sessionId)
-      );
-      const requestId = crypto.randomUUID();
-      const input = {
-        sessionId: 'neo:10000000-0000-4000-8000-000000000002',
-        requestId,
-        content: 'yes',
-        replyTo: { kind: 'question', id: second },
-      };
-      const send = () =>
-        invokeOperation(createOperationRegistry([operation]), 'neo.message.send', input, human);
-      expect(await send()).toMatchObject({ value: { ok: true, created: true } });
-      expect(notified).toEqual(['neo:10000000-0000-4000-8000-000000000002']);
-      expect(
-        db
-          .getSDKMessageRepo()
-          .getStoredPromptsByUuid('neo:10000000-0000-4000-8000-000000000002', requestId)
-      ).toHaveLength(1);
-      expect(service.todos.getQuestion(second)).toMatchObject({
-        state: 'answered',
-        answer: 'yes',
-        answeredBy: 'chat',
-      });
-      expect(await invoke('neo.rule.applyAnswer', { questionId: second })).toMatchObject({
-        value: { ok: false },
-      });
-      expect(saved()).toEqual(before);
-      expect(await send()).toMatchObject({ value: { ok: true, created: false } });
-    }
-  );
+  test('a chat yes to a missing-removal stale proposal remains accepted and notifies Neo', async () => {
+    const first = await propose('first', edit);
+    const second = await propose('second', edit);
+    await invoke('neo.question.answer', { questionId: first, answer: 'yes' }, human);
+    const before = saved();
+    const notified: string[] = [];
+    const operation = createNeoIntakeOperation(db, service.repo, (sessionId) =>
+      notified.push(sessionId)
+    );
+    const requestId = crypto.randomUUID();
+    const input = {
+      sessionId: 'neo:10000000-0000-4000-8000-000000000002',
+      requestId,
+      content: 'yes',
+      replyTo: { kind: 'question', id: second },
+    };
+    const send = () =>
+      invokeOperation(createOperationRegistry([operation]), 'neo.message.send', input, human);
+    expect(await send()).toMatchObject({ value: { ok: true, created: true } });
+    expect(notified).toEqual(['neo:10000000-0000-4000-8000-000000000002']);
+    expect(
+      db
+        .getSDKMessageRepo()
+        .getStoredPromptsByUuid('neo:10000000-0000-4000-8000-000000000002', requestId)
+    ).toHaveLength(1);
+    expect(service.todos.getQuestion(second)).toMatchObject({
+      state: 'answered',
+      answer: 'yes',
+      answeredBy: 'chat',
+    });
+    expect(await invoke('neo.rule.applyAnswer', { questionId: second })).toMatchObject({
+      value: { ok: false },
+    });
+    expect(saved()).toEqual(before);
+    expect(await send()).toMatchObject({ value: { ok: true, created: false } });
+  });
   test('application failure rolls back consent and all rule edits', async () => {
     const before = saved();
     const id = await propose();
