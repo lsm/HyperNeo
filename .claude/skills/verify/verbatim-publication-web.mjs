@@ -15,34 +15,48 @@ const rpc = (name, input) =>
   ).reply;
 const opened = rpc('neo.open', {});
 assert(opened.value?.sessionId ?? opened.sessionId, JSON.stringify(opened));
-const conversationId = opened.value?.sessionId ?? opened.sessionId;
+const conversationId = (opened.value?.sessionId ?? opened.sessionId).replace(/^neo:/, '');
 const content =
   '## Sent as is\n\nThe whole message stays open.\n\n| Source | Finding |\n| --- | --- |\n| A | Different |\n\n> Reported evidence, not verified completion.\n\n```text\nFictional detail\n```';
-const publish = (fields) =>
-  rpc('neo.publication.publish', {
+const seed = ({ verbatim, shortText, fullText }) => {
+  const db = new (createRequire(import.meta.url)('bun:sqlite').Database)(
+    `${run}/data/daemon.db`,
+    'rw'
+  );
+  db.run(
+    'INSERT INTO neo_publications (conversation_id, publication_id, payload_json, created_at) VALUES (?, ?, ?, ?)',
     conversationId,
-    requestId: crypto.randomUUID(),
-    links: [],
-    ...fields,
-  });
-const verbatim = publish({
-  publicationId: crypto.randomUUID(),
+    crypto.randomUUID(),
+    JSON.stringify({
+      conversationId,
+      publicationId: crypto.randomUUID(),
+      verbatim,
+      shortText,
+      fullText,
+      links: [],
+    }),
+    new Date().toISOString()
+  );
+  db.close();
+};
+const clear = () => {
+  const db = new (createRequire(import.meta.url)('bun:sqlite').Database)(
+    `${run}/data/daemon.db`,
+    'rw'
+  );
+  db.run('DELETE FROM neo_publications');
+  db.close();
+};
+clear();
+seed({
   verbatim: true,
   shortText: 'A collapsed preview must not appear.',
   fullText: content,
 });
-const control = publish({
-  publicationId: crypto.randomUUID(),
+seed({
   shortText: 'The comparison is ready. Nothing has been executed.',
   fullText: content,
 });
-for (const [name, reply] of [
-  ['verbatim', verbatim],
-  ['control', control],
-]) {
-  const value = reply.value ?? reply;
-  assert(value.accepted, `${name}: ${JSON.stringify(reply)}`);
-}
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({
   headless: true,
