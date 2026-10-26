@@ -345,6 +345,7 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
 }
 
 export function createNeoOperations(service: NeoService) {
+  const mutationGateway = gatewayFor(service.db.getDatabase());
   const messageStatuses: NeoMessageStatusPresenter = (items) =>
     readNeoMessageStatuses((refs) => service.db.getNeoMessageStatusFactsAsync(refs), items);
   const snapshots = new Map<string, ReturnType<typeof buildSnapshot>>();
@@ -751,8 +752,8 @@ export function createNeoOperations(service: NeoService) {
         (todos) => service.todoWorkers(todos)
       ),
       {
-        gateway: gatewayFor(service.db.getDatabase()),
-        write: service.db.gateway.run.bind(service.db.gateway),
+        gateway: mutationGateway,
+        write: mutationGateway.run.bind(mutationGateway),
         packs: () => service.installedPacks(),
         artifact: createArtifactRefReader(() => service.db.getDatabase()),
         stop: (todo) => service.todoRunner.stop(todo),
