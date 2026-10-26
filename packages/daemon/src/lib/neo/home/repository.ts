@@ -6,8 +6,8 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   readlink,
   rm,
   rmdir,
@@ -22,9 +22,9 @@ import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
-import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
-import { requireHomePath, requireHomeSave, publicationLog } from './save.ts';
+import { type HomeReadInput, type HomeReadResult, homeRemoteUrl } from './read.ts';
 import type { HomeSavePlan, HomeSaveResult } from './save.ts';
+import { publicationLog, requireHomePath, requireHomeSave } from './save.ts';
 
 export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
@@ -34,6 +34,9 @@ type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
 const HOME_RUNTIME_DIRS = ['.coordinators', '.claude', 'worktrees'];
 
+const CREDENTIAL_SUBCOMMANDS = new Set(['fetch', 'push', 'clone']);
+const COMMITTING_SUBCOMMANDS = new Set(['commit', 'merge', 'rebase', 'cherry-pick', 'revert']);
+
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
   constructor(
@@ -42,27 +45,25 @@ export class NeoHomeRepository {
     private readonly networkTimeoutMs = 30_000
   ) {}
 
-  private async git(args: string[], allowFailure = false, network = false, cwd = this.root) {
-    return this.command(
-      ['git', '-c', 'core.hooksPath=/dev/null', ...args],
-      allowFailure,
-      network,
-      cwd
-    );
-  }
-
-  private async isolatedGit(args: string[], allowFailure = false, cwd = this.root) {
+  private async gitIdentity(): Promise<string[]> {
     const identity: string[] = [];
     for (const key of ['user.name', 'user.email']) {
-      const value = (await this.git(['config', '--get', key], true)).text;
+      const value = (
+        await this.command(['git', '-c', 'core.hooksPath=/dev/null', 'config', '--get', key], true)
+      ).text;
       if (value) identity.push('-c', `${key}=${value}`);
     }
+    return identity;
+  }
+
+  private async git(args: string[], allowFailure = false, network = false, cwd = this.root) {
+    const identity = COMMITTING_SUBCOMMANDS.has(args[0]) ? await this.gitIdentity() : [];
     return this.command(
       ['git', ...identity, '-c', 'core.hooksPath=/dev/null', ...args],
       allowFailure,
-      false,
+      network,
       cwd,
-      true
+      !CREDENTIAL_SUBCOMMANDS.has(args[0])
     );
   }
 
@@ -483,6 +484,21 @@ export class NeoHomeRepository {
     };
   }
 
+  private async replaceWithinHomeNoFollow(path: string, bytes: Buffer | null): Promise<void> {
+    const target = join(this.root, path);
+    if (bytes === null) {
+      await rm(target, { force: true });
+      return;
+    }
+    if (await this.hasSymbolicLink(path))
+      throw Object.assign(new Error('invalid_path: symbolic link.'), { code: 'ELOOP' });
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, bytes, {
+      flag:
+        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0),
+    });
+  }
+
   private async write(input: HomeSavePlan): Promise<HomeSaveResult> {
     const paths = [input.path];
     if (input.confirmation) paths.push(join(dirname(input.path), 'decisions.md'));
@@ -552,17 +568,15 @@ export class NeoHomeRepository {
       const replace = (path: string, bytes: Buffer | null) =>
         isSafeFsSupported()
           ? replaceFileWithinWorkspace(this.root, path.split('/'), bytes)
-          : bytes === null
-            ? rm(join(this.root, path), { force: true })
-            : writeFile(join(this.root, path), bytes);
+          : this.replaceWithinHomeNoFollow(path, bytes);
       try {
         for (const [path, bytes] of writes) {
           if (!isSafeFsSupported())
             await mkdir(dirname(join(this.root, path)), { recursive: true });
           await replace(path, bytes);
         }
-        await this.isolatedGit(['add', '--', ...paths]);
-        await this.isolatedGit(['commit', '--only', '-m', message, '--', ...paths]);
+        await this.git(['add', '--', ...paths]);
+        await this.git(['commit', '--only', '-m', message, '--', ...paths]);
       } catch (error) {
         await this.git(['reset', '--', ...paths]).catch(() => {});
         for (const [path, before] of originals) await replace(path, before).catch(() => {});
@@ -621,15 +635,9 @@ export class NeoHomeRepository {
         }
       }
       try {
-        if (created.length) await this.isolatedGit(['add', '--', ...created]);
+        if (created.length) await this.git(['add', '--', ...created]);
         if (created.length || !hasHead)
-          await this.isolatedGit([
-            'commit',
-            '--allow-empty',
-            '-om',
-            'Initialize Neo home',
-            ...created,
-          ]);
+          await this.git(['commit', '--allow-empty', '-om', 'Initialize Neo home', ...created]);
       } catch (error) {
         if (created.length) await this.git(['reset', '--', ...created]).catch(() => {});
         for (const path of created)
