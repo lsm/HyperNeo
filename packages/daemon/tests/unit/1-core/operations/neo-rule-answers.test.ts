@@ -79,6 +79,7 @@ describe('human-approved standing rules', () => {
       },
       human
     );
+    expect(db.getGlobalSettings().neo?.standingRuleSources?.[edit.add[0]]).toEqual({ sessionId: agent.sessionId, messageId });
     const input = { add: edit.add, messageId };
     expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
     const repo = db.getSDKMessageRepo();
