@@ -461,12 +461,29 @@ export const NEO_SLEEP_MAX_SECONDS = 300;
 
 type SleepVerdict = 'none' | 'allowed' | 'denied';
 
-const SLEEP_WORD = /(?:^|[\s'"`(;|&])(?:\S*\/)*sleep(?:[\s]|$)/;
-const SLEEP_HEAD = /^(?:\S*\/)*sleep$/;
 const SLEEP_DURATION = /^(\d+(?:\.\d+)?)([smhd]?)$/;
+const SLEEP_BOUNDARY = new Set([' ', '\t', '\n', '\r', '(', ')', '{', '}', ';', '|', '&']);
 
 function normalizeSleepText(text: string): string {
-  return text.replace(/\\(.)/g, '$1').replace(/['"]/g, ' ');
+  return text.replace(/\\(.)/g, '$1').replace(/['"]/g, '');
+}
+
+function isSleepToken(token: string): boolean {
+  return token === 'sleep' || token.endsWith('/sleep');
+}
+
+function containsSleepWord(text: string): boolean {
+  let boundaryEnd = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.startsWith('sleep', i)) {
+      const after = text[i + 5];
+      const wordEnd = after === undefined || SLEEP_BOUNDARY.has(after);
+      const before = text.slice(boundaryEnd, i);
+      if (wordEnd && (i === boundaryEnd || /^[^\s'"`;|&(){}]*\/$/.test(before))) return true;
+    }
+    if (SLEEP_BOUNDARY.has(text[i])) boundaryEnd = i + 1;
+  }
+  return false;
 }
 
 function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
@@ -479,9 +496,9 @@ function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
   if (!s) return 'none';
   const stripped = stripLeadingAssignments(s);
   if (stripped === null || !stripped)
-    return stripped === null && SLEEP_WORD.test(s) ? 'invalid' : 'none';
+    return stripped === null && containsSleepWord(s) ? 'invalid' : 'none';
   const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
-  if (!head || !SLEEP_HEAD.test(head)) return SLEEP_WORD.test(stripped) ? 'invalid' : 'none';
+  if (!head || !isSleepToken(head)) return containsSleepWord(stripped) ? 'invalid' : 'none';
   if (args.length === 0) return 'invalid';
   let total = 0;
   for (const arg of args) {
@@ -517,7 +534,7 @@ export function sleepCommandVerdict(
     else total += seconds;
   }
   if (seen) return clean && total <= maxSeconds ? 'allowed' : 'denied';
-  return SLEEP_WORD.test(normalizeSleepText(command)) ? 'denied' : 'none';
+  return containsSleepWord(normalizeSleepText(command)) ? 'denied' : 'none';
 }
 
 export function createSleepBoundHook(maxSeconds: number = NEO_SLEEP_MAX_SECONDS): HookCallback {

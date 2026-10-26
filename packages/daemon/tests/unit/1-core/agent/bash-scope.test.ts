@@ -452,9 +452,13 @@ describe('sleepCommandVerdict / createSleepBoundHook', () => {
   test('obfuscated and unaccounted sleep tokens are denied, not neutral', () => {
     expect(sleepCommandVerdict("'sleep' 999")).toBe('denied');
     expect(sleepCommandVerdict('"sleep" 999')).toBe('denied');
+    expect(sleepCommandVerdict("sl'eep' 301")).toBe('denied');
+    expect(sleepCommandVerdict('slee"p" 999')).toBe('denied');
     expect(sleepCommandVerdict('while :; do sleep 1; done')).toBe('denied');
     expect(sleepCommandVerdict("bash <<'EOF'\nsleep 999\nEOF")).toBe('denied');
     expect(sleepCommandVerdict('echo "sleep 999"')).toBe('denied');
+    expect(sleepCommandVerdict("s'leep' 5")).toBe('allowed');
+    expect(sleepCommandVerdict("slee'ep' 999")).toBe('none');
   });
 
   test('commands without sleeps are neutral', () => {
