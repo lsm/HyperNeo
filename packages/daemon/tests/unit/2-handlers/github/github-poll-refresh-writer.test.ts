@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
+import { vi } from 'vitest';
 import { GitHubService } from '../../../../src/lib/github/github-service';
 import { Logger } from '../../../../src/lib/logger';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
@@ -213,6 +214,38 @@ describe('GitHubService refresh writer', () => {
     await expect(service.refreshPolling()).rejects.toThrow('writer unavailable');
     expect(pending()).toEqual(original);
     expect(service.isPolling()).toBe(true);
+  });
+
+  test('startup resolves degraded after writer rejection and the next poll tick persists admission', async () => {
+    vi.useFakeTimers();
+    const error = new Error('startup admission rejected');
+    let attempts = 0;
+    bindGateway(fixture.db, {
+      call: async (...args) => {
+        attempts++;
+        if (attempts === 1) throw error;
+        return Reflect.apply(inline.call, inline, args);
+      },
+    } as DbGateway);
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const status = service as GitHubService & { pollRefreshDegraded: boolean };
+    try {
+      await expect(service.start()).resolves.toBeUndefined();
+      expect(status.pollRefreshDegraded).toBe(true);
+      expect(warn).toHaveBeenCalledWith('GitHub polling refresh persistence failed', error);
+      expect(attempts).toBe(1);
+      expect(pending()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(attempts).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toBe(2);
+      expect(pending()).toHaveLength(1);
+      expect(status.pollRefreshDegraded).toBe(false);
+    } finally {
+      service.stop();
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   test('logs admission failure once and rethrows without automatically replaying', async () => {
