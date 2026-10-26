@@ -111,7 +111,10 @@ export function createNeoQuestionAnswerDelivery(
           if (sent.success && !sent.data.value.unconfirmed) receipt = key;
           else if (NotSent.safeParse(value).success) store.questionAnswers.retry(route.id, key);
         } else {
-          const status = await invoke(caller, 'work.status', { ref });
+          const status = await invoke(caller, 'work.status', {
+            ref,
+            since: Math.max(0, (route.attemptedAt ?? route.answeredAt ?? 0) - 1),
+          });
           if (
             readDriverLanded(status, { opening: `[worker-answer:${key}]`, inputBefore: 0 }) !== null
           )

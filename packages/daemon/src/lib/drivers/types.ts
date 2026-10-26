@@ -118,7 +118,7 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
         .literal(true)
         .optional()
         .describe(
-          'This attempt made no input-dispatch request. When absent, a failed send may have been accepted; reconcile before resending.'
+          'Proves no input was accepted: no dispatch or an explicit precondition refusal. Otherwise reconcile before retrying.'
         ),
     }),
   ]);

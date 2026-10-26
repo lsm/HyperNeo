@@ -22,7 +22,7 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import type { CodexAppServer } from './codex-app-server.ts';
+import { CodexRequestError, type CodexAppServer } from './codex-app-server.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
@@ -939,13 +939,28 @@ async function tryServerCodexSend(
       }
       throw error;
     }
+    const beforeStart = attempted;
     attempted = true;
-    const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(
-      await server.call('turn/start', {
+    let reply: unknown;
+    try {
+      reply = await server.call('turn/start', {
         threadId: detail.thread.id,
         input: [{ type: 'text', text: message, text_elements: [] }],
-      })
-    );
+      });
+    } catch (error) {
+      if (
+        error instanceof CodexRequestError &&
+        z
+          .object({
+            code: z.literal(-32600),
+            message: z.literal(`thread ${detail.thread.id} already has an active writer`),
+          })
+          .safeParse(error.rejection).success
+      )
+        attempted = beforeStart;
+      throw error;
+    }
+    const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(reply);
     return { ok: true, value: { delivered: true, startedTurnId: started.turn.id } };
   });
   sendLog.warn('work.send app-server result', { threadId: detail.thread.id, mode, result });

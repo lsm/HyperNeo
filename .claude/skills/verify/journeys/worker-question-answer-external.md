@@ -25,9 +25,19 @@ For another card with an 80-character title, let the peer accept the input but
 close its connection before acknowledging it. Withhold the input's rollout entry temporarily. The adapter's
 not_delivered result must lack notSent. Restart only this daemon and run its
 real refresh handler: the card must stay pending with no new peer input. Publish
-that accepted input into the synthetic rollout, then refresh again. work.status
-must reconcile the exact worker-answer marker, accept delivery and return doing,
+that accepted input into the synthetic rollout, append 60 newer unrelated inputs,
+then refresh again. work.status must reconcile the exact worker-answer marker, accept delivery and return doing,
 without resending. An extra refresh must leave the peer input count at three.
+Before the uncertain attempt, the helper also forces a definite refusal and
+records 60 inputs while the answer waits. A new claim persists its dispatch time
+in the existing route JSON; definite refusals clear that time along with the claim.
+Reconciliation requests since that durable attempt time, so the first input after
+the attempt remains readable beyond the default eight-input window and before
+the 50-input result limit. Restart must preserve the claim's bound. The default
+work.status view intentionally omits the marker; reconciliation.json also keeps
+the bounded since view that contains it. Missing retained peer history remains
+uncertain; elapsed time never authorizes a resend or hold release.
+
 The complete marker must survive the adapter's actual 160-character recentInputs
 projection. External answer markers go first; HyperNeo's existing message payload
 stays stable for durable idempotency receipts. Keep reconciliation.json with the
