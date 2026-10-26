@@ -396,6 +396,28 @@ describe('Ignored human files during conflict application', () => {
 });
 
 describe('Conflict choice application', () => {
+  test('returns a typed refusal when the selected recorded revision was pruned', async () => {
+    const { question } = await conflict();
+    await approve(question.id);
+    await git(root, 'reset', '--hard', 'HEAD^');
+    await version(root, 'notes.md', 'Replacement local version\n');
+    await git(peer, 'reset', '--hard', 'HEAD^');
+    await version(peer, 'notes.md', 'Replacement remote version\n');
+    await git(remote, 'config', 'receive.denyNonFastForwards', 'false');
+    await git(peer, 'push', '--force', 'origin', 'main');
+    await git(root, 'fetch', 'origin');
+    await git(root, 'reflog', 'expire', '--expire=now', '--all');
+    await git(root, 'gc', '--prune=now');
+    const before = await state();
+    const result = await call('neo.home.save', {
+      path: 'notes.md',
+      content: remoteText,
+      message: 'Apply pruned version',
+      conflictQuestionId: question.id,
+    });
+    expect(result.ok).toBe(false);
+    expect(await state()).toEqual(before);
+  });
   test.each(['Keep local', 'Use remote'])(
     'applies the recorded %s bytes after both conflicting versions change',
     async (answer) => {
