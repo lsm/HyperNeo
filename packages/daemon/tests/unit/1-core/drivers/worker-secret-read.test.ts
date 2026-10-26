@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, matchesGlob } from 'node:path';
-import { parse } from 'smol-toml';
+import { parse, stringify } from 'smol-toml';
 import { execFileSync } from 'node:child_process';
 import { secretHomePaths } from '../../../../src/lib/neo/secret-read-rules.ts';
 import {
@@ -199,9 +199,15 @@ test('nested private clones can read repository environment examples and key fix
 });
 
 test('Desktop reload can resolve the protected profile without bootstrap overrides', async () => {
-  mkdirSync(join(root, '.codex'));
+  await persistCodexWorkerProfile(root);
   const path = join(root, '.codex/config.toml');
-  writeFileSync(path, 'model = "synthetic"\n[permissions.other.filesystem]\n":root" = "read"\n');
+  const original = parse(readFileSync(path, 'utf8'));
+  original.model = 'synthetic';
+  original.permissions = {
+    ...(original.permissions as object),
+    other: { filesystem: { ':root': 'read' } },
+  };
+  writeFileSync(path, stringify(original));
   await persistCodexWorkerProfile(root);
   await persistCodexWorkerProfile(root);
   const reloaded = parse(readFileSync(path, 'utf8'));

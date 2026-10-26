@@ -115,9 +115,11 @@ uses the engine's OS enforcement instead of a second daemon Seatbelt wrapper or
 removing host paths. Unknown/unsupported profiles fail closed. Pre-profile Codex
 threads may need recreation rather than a workspaceWrite fallback.
 The daemon also installs the profile in the clone's protected `.codex/config.toml`
-so Desktop can resolve it after the bootstrap process exits. Existing project
-settings and other profiles survive; generated config is locally Git-excluded.
-Clones tracking that config path are refused without modification. Codex's
+so Desktop can resolve it after the bootstrap process exits. Other settings in
+that managed file survive refresh; generated config is locally Git-excluded.
+A pre-existing config without this clone's generated profile is refused without
+modification. Policy refresh does not invoke Git on worker-controlled metadata.
+Unconfirmed profile starts release their clone/runtime without an opening turn. Codex's
 existing workspace protections for `.agents` and `.aws` stay read-only; `.codex`
 also protects the generated profile. This retains slice 3's Git/tooling limits.
 The shared home credential list supplies Azure/GCloud/GnuPG and histories, but

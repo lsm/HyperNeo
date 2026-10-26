@@ -1207,8 +1207,8 @@ export async function startCodexThread(
         ...(sandbox || configuration.value.effort ? { config } : {}),
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
       });
-      threadId = startedThreadId(started);
-      if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
+      const createdThreadId = startedThreadId(started);
+      if (!createdThreadId) return reject('not_delivered', 'thread/start returned no thread id.');
       if (
         sandbox &&
         (started as { activePermissionProfile?: { id?: string } })?.activePermissionProfile?.id !==
@@ -1218,6 +1218,7 @@ export async function startCodexThread(
           'not_delivered',
           'Codex did not confirm the prepared worker permission profile.'
         );
+      threadId = createdThreadId;
       const model = startedThreadModel(started);
       const reportedEffort = (started as { reasoningEffort?: unknown } | null)?.reasoningEffort;
       const effort =

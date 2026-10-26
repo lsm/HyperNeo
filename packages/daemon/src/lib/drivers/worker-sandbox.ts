@@ -2,7 +2,6 @@ import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { getDataDir } from '../data-dir.ts';
 import { secretHomePaths, secretNamePatterns } from '../neo/secret-read-rules.ts';
 import { parse, stringify } from 'smol-toml';
-import { simpleGit } from 'simple-git';
 import type { CodexAppServer } from './codex-app-server.ts';
 import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
@@ -161,11 +160,6 @@ export function workerSecretPaths() {
 }
 
 export async function persistCodexWorkerProfile(root: string) {
-  if (
-    existsSync(join(root, '.git/index')) &&
-    (await simpleGit(root).raw(['ls-files', '--', '.codex/config.toml'])).trim()
-  )
-    throw new Error('Prepared worker profile cannot replace a tracked .codex/config.toml');
   const directory = join(root, '.codex');
   await mkdir(directory, { recursive: true });
   if (!(await lstat(directory)).isDirectory()) throw new Error('Worker config must be in-clone');
@@ -180,6 +174,11 @@ export async function persistCodexWorkerProfile(root: string) {
     throw error;
   });
   const existing = parse(previous);
+  const profiles = existing.permissions as
+    | Record<string, { filesystem?: Record<string, unknown> }>
+    | undefined;
+  if (entry && profiles?.['hyperneo-worker']?.filesystem?.[root] !== 'write')
+    throw new Error('Prepared worker cannot replace unmanaged or tracked .codex/config.toml');
   const config = codexWorkerSandbox(root).config;
   const profile = config.permissions['hyperneo-worker'];
   const text = stringify({
