@@ -388,6 +388,25 @@ describe('a pack owns its check', () => {
   const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
   const check = { pack: 'gauge', kind: 'level', params: { target: 5 } };
 
+  test("rewords a check-derived done-when like any other wording", async () => {
+    const { call } = setup([gauge]);
+    const added = await call('neo.todo.add', {
+      askId: 'ask',
+      title: 'Fill it',
+      doneWhen: 'Full enough',
+      check,
+      instruction: 'Fill the tank.',
+      target,
+    });
+    if (!added.ok) throw new Error(added.reason);
+    const edited = await call('neo.todo.edit', {
+      todoId: added.todo.id,
+      doneWhen: 'gauge level reads 6',
+    });
+    expect(edited.ok && edited.todo.doneWhen).toBe('gauge level reads 6');
+    expect(edited.ok && edited.todo.check).toEqual(check);
+  });
+
   test("writes the todo's done-when, and Neo cannot edit it", async () => {
     const { call } = setup([gauge]);
     const added = await call('neo.todo.add', {
