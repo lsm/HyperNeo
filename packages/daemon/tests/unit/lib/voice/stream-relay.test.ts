@@ -342,9 +342,14 @@ describe('VoiceStream against a stub Deepgram server', () => {
     });
   });
 
-  test('without a streaming endpoint auto mode goes to batch', async () => {
-    const { via } = await start({ streamEndpoint: undefined });
-    expect(via).toBe('batch');
+  test('auto mode derives the live listen URL from the one batch link', async () => {
+    const { via, stream } = await start({
+      endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
+      streamEndpoint: undefined,
+    });
+    expect(via).toBe('streaming');
+    expect(connections[0].pathname).toBe('/v1/listen');
+    await stream.stop();
   });
 
   test('auto falls back to batch with the whole buffered audio when the ASR is unreachable', async () => {
