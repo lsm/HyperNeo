@@ -62,3 +62,10 @@ const retried = await rpc(next);
 Object.assign(evidence, { pushFailed, retainedCommit, retainedCount, retried, finalCount: await git(root, 'rev-list', '--count', 'HEAD'), finalRemoteHead: await git(remote, 'rev-parse', 'main'), finalStatus: await git(root, 'status', '--porcelain') }); await saveEvidence();
 if (pushFailed.ok || !pushFailed.reason?.includes('push_failed') || !pushFailed.reason.includes(retainedCommit) || !retried.ok || retried.commit !== retainedCommit || retainedCount !== evidence.finalCount || retainedCommit !== evidence.finalRemoteHead || evidence.finalStatus) throw new Error('Failed push lost the commit or retry added another');
 console.log('PASS: real RPC fetches peer changes, pushes exact committed content, refuses conflicts without changing the original home, and retries a retained failed-push commit without duplication.');
+
+await commit(root, 'fixture.bin', '\0TOKEN=' + 'synthetic'.repeat(4));
+const binaryPublication = await rpc({ ...input, path: 'binary-check.md' });
+const remoteAfterBinary = await git(remote, 'rev-parse', 'main');
+Object.assign(evidence, { binaryPublication, remoteAfterBinary }); await saveEvidence();
+if (binaryPublication.ok || !binaryPublication.reason?.includes('content_refused') || remoteAfterBinary !== retainedCommit) throw new Error('Credential-like binary history was published');
+console.log('PASS: real RPC keeps credential-like binary history local.');

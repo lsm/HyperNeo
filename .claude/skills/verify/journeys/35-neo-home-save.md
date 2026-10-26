@@ -26,14 +26,14 @@ and compared as UTF-8 bytes; existing files are never decoded for rollback.
 Repeat journey 35 in another fresh run with final argument `ignore-repair`.
 The helper removes its fixture ignore in a local commit, then calls save with
 untracked coordinator transcripts present. Save must repair the ignore and commit
-the curated document while preserving and never tracking the transcripts.
+the curated document while preserving and never tracking the transcripts. An unrelated pending direction draft must remain on disk, outside both the ignore-repair and document commits.
 Staged transcripts and unrelated drafts remain untouched while the document save succeeds.
 
 Repeat with final argument `runtime` to seed `.claude/` and `worktrees/` before
-the first save, alongside `.coordinators/`. There is no explicit init RPC. Save
+the first save, alongside `.coordinators/`. The helper does not call the init RPC explicitly. Save
 must bootstrap, commit only curated bytes and ignore all three runtime folders;
 the helper checks their unchanged bytes and empty tracked-file lists. The same
-run retains credential/confirmation refusals and untracked-draft/rollback
+run retains malformed-Unicode/confirmation refusals and untracked-draft/rollback
 checks. Before the first-use fix this mode records a dirty refusal before HEAD
 exists. Unit contracts also exercise repair from a committed coordinator-only
-ignore and retain refusal for staged runtime files.
+ignore, preserving staged runtime files without adding them to the save commit.

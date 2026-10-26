@@ -21,7 +21,7 @@ remain intact and be named in the refusal. Removing that fixture setting and
 retrying must push the same commit without another commit. Evidence:
 `evidence/neo-home-sync-after.json`. Use `before` on the test-only commit in a
 separate fresh run: it records a local save that neither pulled nor pushed.
-Stop with `stop.sh` afterwards. Focused contracts additionally cover local-only
+The helper then commits synthetic credential-like bytes in a binary file locally: the next save must refuse remote publication while leaving the remote head unchanged. Publication scans include first-parent merge diffs and treat binary blobs as text. Focused contracts also cover secrets introduced only in a merge resolution. Stop with `stop.sh` afterwards. Focused contracts additionally cover local-only
 homes, failed pulls, dirty input, a paused human rebase, links introduced by a
 pull, and confirmed document/decision-log pushes. No GUI or model is exercised.
 

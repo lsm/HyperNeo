@@ -29,7 +29,7 @@ channel stores scalar text, unlike the question button's array. Both forms must
 apply identically, and the protected-file choice still requires its separate yes.
 The retained `before ... chat` mode records the original scalar-answer refusal.
 
-Unrelated local or remote commits no longer invalidate a recorded version choice.
+A choice receipt must identify a generated home conflict question through its recorded full-version snapshots. It is not checked against current revisions; unrelated local or remote commits do not invalidate it.
 Git still reports real merge failures; publication retains its remote revision lease.
 
 Ignored mode creates an ignored human file before the conflict question while
@@ -43,8 +43,8 @@ Evidence: `$RUN/evidence/neo-home-apply-choice.json` contains actual RPC replies
 commit IDs, both human answer paths and preservation assertions. All retained modes
 must print PASS and the launcher must report its owned daemon stopped. The
 initial tests-first commit records before-mode RPC refusing even an answered
-choice. The initial implementation plus the retained race/ignored fixtures
-records the two failing publication decisions before the fixes.
+choice. The initial implementation plus the retained ignored-file fixture
+records the ignored-file publication failure before its fix.
 
 Focused contracts also inject local commits during staging and at Git publication,
 remote commits during push, incorrect/unanswered choices and

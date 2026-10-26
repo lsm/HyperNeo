@@ -25,6 +25,7 @@ import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.t
 import {
   requireHomePath,
   requireHomeSave,
+  publicationLog,
   type HomeSavePlan,
   type HomeSaveResult,
 } from './save.ts';
@@ -341,9 +342,7 @@ export class NeoHomeRepository {
       const publication = requireHomeSave({
         path: 'home',
         message: 'Publish home',
-        content: (
-          await this.git(['log', '--format=', '--patch', '--no-ext-diff', '--no-textconv', 'HEAD'])
-        ).text,
+        content: (await this.git([...publicationLog, 'HEAD'])).text,
       });
       if (publication.reason) return publication.reason;
       if (!reserve())
@@ -548,11 +547,7 @@ export class NeoHomeRepository {
         ...input,
         content: (
           await this.git([
-            'log',
-            '--format=',
-            '--patch',
-            '--no-ext-diff',
-            '--no-textconv',
+            ...publicationLog,
             `${synced.value.replace('refs/heads/', 'refs/remotes/origin/')}..HEAD`,
           ])
         ).text,
@@ -573,7 +568,6 @@ export class NeoHomeRepository {
     await this.git(['init', '--quiet']);
     const hasHead = !(await this.git(['rev-parse', '--verify', 'HEAD'], true)).code;
     const ignores = (await this.git(['show', 'HEAD:.gitignore'], true)).text.split('\n');
-    const paths = ['README.md', '.gitignore', 'direction.md'];
     if (!hasHead || !HOME_RUNTIME_DIRS.every((dir) => ignores.includes(`${dir}/`))) {
       const documents = new Map([
         [
@@ -597,6 +591,7 @@ export class NeoHomeRepository {
           return null;
         }
       );
+      const paths = ['.gitignore', ...created];
       const ignore = originalIgnore ?? '';
       const missing = HOME_RUNTIME_DIRS.filter((dir) => !ignore.split('\n').includes(`${dir}/`));
       if (missing.length)
@@ -609,14 +604,12 @@ export class NeoHomeRepository {
         await this.git(['commit', '--only', '-m', 'Initialize Neo home', '--', ...paths]);
       } catch (error) {
         await this.git(['reset', '--', ...paths]).catch(() => {});
-        if (hasHead) {
-          for (const path of created)
-            await rm(join(this.root, path), { force: true }).catch(() => {});
-          await (originalIgnore === null
-            ? rm(join(this.root, '.gitignore'), { force: true })
-            : writeFile(join(this.root, '.gitignore'), originalIgnore)
-          ).catch(() => {});
-        }
+        for (const path of created)
+          await rm(join(this.root, path), { force: true }).catch(() => {});
+        await (originalIgnore === null
+          ? rm(join(this.root, '.gitignore'), { force: true })
+          : writeFile(join(this.root, '.gitignore'), originalIgnore)
+        ).catch(() => {});
         throw error;
       }
     }

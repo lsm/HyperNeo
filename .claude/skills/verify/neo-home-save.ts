@@ -52,11 +52,12 @@ if (mode === 'ignore-repair') {
   await rm(`${root}/.gitignore`);
   await git('commit', '-am', 'Existing home without coordinator ignore');
   const before = await git('rev-parse', 'HEAD');
+  await writeFile(`${root}/direction.md`, 'Pending direction draft.');
   const saved = await rpc({ ...input, content: 'Progress after ignore repair.' });
-  const evidence = { mode, saved, before, after: await git('rev-parse', 'HEAD'), content: await readFile(`${root}/${input.path}`, 'utf8'), transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), tracked: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
+  const evidence = { mode, saved, committedDirection: await git('show', 'HEAD:direction.md'), directionDraft: await readFile(`${root}/direction.md`, 'utf8'), before, after: await git('rev-parse', 'HEAD'), content: await readFile(`${root}/${input.path}`, 'utf8'), transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), tracked: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
   await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
-  if (!saved.ok || evidence.after === before || evidence.content !== 'Progress after ignore repair.' || evidence.transcript !== 'Synthetic private transcript.' || evidence.tracked || evidence.status) throw new Error('Save with ignore repair failed');
-  console.log('PASS: real save RPC repairs the coordinator ignore, preserves private transcripts and commits only curated content.');
+  if (!saved.ok || evidence.after === before || evidence.content !== 'Progress after ignore repair.' || evidence.transcript !== 'Synthetic private transcript.' || evidence.tracked || evidence.committedDirection !== '' || evidence.directionDraft !== 'Pending direction draft.' || evidence.status !== 'M direction.md') throw new Error('Save with ignore repair failed');
+  console.log('PASS: real save RPC repairs the coordinator ignore, preserves private transcripts, leaves the direction draft uncommitted and saves curated content.');
   process.exit(0);
 }
 if (mode === 'unicode') {

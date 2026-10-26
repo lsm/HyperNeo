@@ -194,15 +194,17 @@ describe('Neo home setup', () => {
       expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
     }
   );
-  test('recovers the staged bootstrap after service interruption', async () => {
+  test('initializes without adopting pre-existing staged bootstrap documents', async () => {
     await writeFile(join(root, 'README.md'), 'Preserved home introduction.');
-    await writeFile(join(root, 'direction.md'), '');
+    await writeFile(join(root, 'direction.md'), 'Pending direction draft.');
     await writeFile(join(root, '.gitignore'), '.coordinators/\n');
     await git('add', '--', 'README.md', '.gitignore', 'direction.md');
     home = new NeoHomeRepository(root, repo);
     expect(await init()).toMatchObject({ ok: true });
     expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
-    expect(await git('status', '--porcelain')).toBe('');
+    expect(await git('diff', '--cached', '--name-only')).toBe('README.md\ndirection.md');
+    expect(await git('ls-tree', '--name-only', 'HEAD')).toBe('.gitignore');
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Pending direction draft.');
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
   });
   test('bootstraps without committing pre-existing staged changes', async () => {

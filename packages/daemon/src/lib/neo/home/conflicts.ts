@@ -53,7 +53,8 @@ export function reportHomeConflict<T extends { ok: boolean }>(
 export function requireHomeChoice(
   input: HomeSavePlan,
   store: NeoAskTodoRepository,
-  sessionId: string | undefined
+  sessionId: string | undefined,
+  root: string
 ): { value: HomeSavePlan } | { reason: HomeFailure } {
   if (!input.conflictQuestionId) return { value: input };
   const question = store.getQuestion(input.conflictQuestionId);
@@ -76,6 +77,22 @@ export function requireHomeChoice(
         ok: false,
         reason:
           'human_choice_required: record the root-Neo question’s human Keep local or Use remote answer first; Review together needs further review.',
+      },
+    };
+  const revisions = [
+    ...(question.document ?? '').matchAll(/^(?:Local|Remote) \(([a-f0-9]{40,64})\)$/gm),
+  ].map((match) => match[1]);
+  const id = (local: string, remote: string) => neoDerivedId(JSON.stringify([root, local, remote]));
+  const bound = revisions.some((local) =>
+    revisions.some(
+      (remote) => neoDerivedId(`home-conflict-question:${id(local, remote)}`) === question.id
+    )
+  );
+  if (!bound)
+    return {
+      reason: {
+        ok: false,
+        reason: 'human_choice_required: question does not bind this home conflict.',
       },
     };
   return {

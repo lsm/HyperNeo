@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { requireHomeSave, type HomeSavePlan, type HomeSaveResult } from './save.ts';
+import { publicationLog, requireHomeSave, type HomeSavePlan, type HomeSaveResult } from './save.ts';
 
 type Git = (
   args: string[],
@@ -96,16 +96,7 @@ export async function applyHomeChoice(
     const commit = (await inStage(['rev-parse', 'HEAD'])).text;
     const publication = requireHomeSave({
       ...input,
-      content: (
-        await inStage([
-          'log',
-          '--format=',
-          '--patch',
-          '--no-ext-diff',
-          '--no-textconv',
-          `${remote}..HEAD`,
-        ])
-      ).text,
+      content: (await inStage([...publicationLog, `${remote}..HEAD`])).text,
     });
     if (publication.reason) return publication.reason;
     const installed = await git(

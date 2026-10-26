@@ -50,7 +50,7 @@ export function createNeoHomeOperations(
       'result:outcome'
     )
     .pipe(
-      (input) => requireHomeChoice(input, service.todos, service.defaultSessionId()),
+      (input) => requireHomeChoice(input, service.todos, service.defaultSessionId(), home.root),
       'outcome',
       'result:outcome'
     )
