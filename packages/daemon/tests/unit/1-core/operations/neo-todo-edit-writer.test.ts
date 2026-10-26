@@ -190,10 +190,23 @@ describe('Neo todo edit commits through its writer', () => {
     const result = await edit({ todoId: 'first', addUrls: [url(2)] });
     expect(result).toMatchObject({
       ok: true,
-      todo: { state: 'closed_unverified', check: { params: { urls: [url(1), url(2)] } } },
+      todo: { state: 'todo', finishedAt: null, check: { params: { urls: [url(1), url(2)] } } },
     });
-    expect(store.getTodo('first')?.state).toBe('closed_unverified');
+    expect(store.getTodo('first')?.state).toBe('todo');
   });
+
+  test.each(['done', 'closed_unverified'] as const)(
+    'URL bookkeeping preserves %s unless a done check gains a new requirement',
+    async (state) => {
+      const first = add('first', [url(1)]);
+      store.updateTodo(first, { state, finishedAt: 2 }, 2);
+      const added = state === 'done' ? url(1) : url(2);
+      expect(await edit({ todoId: 'first', addUrls: [added] })).toMatchObject({
+        ok: true,
+        todo: { state, finishedAt: 2 },
+      });
+    }
+  );
 
   test('completion observes an unanswered card added while checking', async () => {
     add('first', [url(1)]);

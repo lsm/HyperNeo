@@ -565,4 +565,10 @@ env -i HOME="$GITHUB_POLL_SUCCESSOR_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_
 	HYPERNEO_DATA_DIR="$GITHUB_POLL_SUCCESSOR_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-github-poll-successor-writer.ts" "$GITHUB_POLL_SUCCESSOR_RUN"
 
+TODO_EDIT_WRITER_RUN="$WORK_DIR/todo-edit-writer"
+mkdir -p "$TODO_EDIT_WRITER_RUN/home" "$TODO_EDIT_WRITER_RUN/tmp"
+env -i HOME="$TODO_EDIT_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_EDIT_WRITER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_EDIT_WRITER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-edit-writer.ts" verify "$TODO_EDIT_WRITER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

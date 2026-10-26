@@ -1,3 +1,4 @@
+import type { neoTodoMutations } from './neo-todo-mutation-writes.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -205,6 +206,20 @@ export class NeoAskTodoRepository {
     return gatewayFor(this.db).call(neoTodoWrites, method, ...(args as never)) as Promise<
       ReturnType<NeoAskTodoRepository[K]>
     >;
+  }
+
+  async prepareMutation(
+    ...args: Parameters<InstanceType<typeof neoTodoMutations.Repository>['plan']>
+  ) {
+    const { neoTodoMutationReads } = await import('./neo-todo-mutation-writes.ts');
+    return gatewayFor(this.db).call(neoTodoMutationReads, 'plan', ...args);
+  }
+
+  async mutateTodo(
+    ...args: Parameters<InstanceType<typeof neoTodoMutations.Repository>['commit']>
+  ) {
+    const { neoTodoMutations } = await import('./neo-todo-mutation-writes.ts');
+    return gatewayFor(this.db).call(neoTodoMutations, 'commit', ...args);
   }
 
   snapshot(projectId: string | null | undefined, limit: number) {

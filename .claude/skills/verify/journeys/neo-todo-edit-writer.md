@@ -14,6 +14,9 @@ must roll back completely through the writer, as seen by `neo.snapshot`.
 Successful title edits and concurrent URL edits must retain both current
 claims and exactly one duplicate bookkeeping record. A complete large report
 must survive the RPC reply and snapshot as `closed_unverified`.
+A new PR requirement reopens a previously done todo for checking; URL bookkeeping
+must preserve an existing `closed_unverified` state. Unit cases retain both
+close/sweep overlap orders when URL editing yields to the DB worker.
 
 The edit's todo/ask/question/claim SQL must leave main. Hold an owned WAL lock
 for 1.2 seconds and measure a real health RPC during the waiting edit. The
@@ -26,3 +29,5 @@ port 8399 is used. Unit cases additionally cover stale checks, new human cards,
 and dispatch only after a successful commit. The proof has no artifact input
 or successor dispatch; artifact authorization reads and the remaining runner
 paths are outside this slice. Close/remove callers remain on their old paths.
+The Deno smoke runs the same RPC helper and prints its JSON evidence before
+the smoke's shared cleanup removes temporary daemon data.
