@@ -354,7 +354,10 @@ export function createNeoAskRecordOperations(
         "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
       inputSchema: Open,
       resultSchema: AskResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      policy: {
+        safetyClass: 'mutate',
+        roles: ['neo', 'workflow_worker', 'direct_task_worker', 'long_term_agent'],
+      },
       execute: async (input, caller) => present(await open(input, caller)),
     }),
     defineOperation({
