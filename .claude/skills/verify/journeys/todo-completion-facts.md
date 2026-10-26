@@ -18,7 +18,14 @@ Full worker reports survive, and another scheduled refresh does not change the
 completed rows. This proves automatic completion and public RPC state, not visual
 layout, real deployments, or live GitHub state.
 
+A synthetic legacy pack is installed at the test daemon's pack seam and returns
+both done and an explicit failure. The scheduled refresh must preserve failure
+precedence: the public ask read shows Failed with that reason. This fixture does
+not replace the runner or state reducer. The helper restores the pack seam on exit.
+
 Run against the baseline first: it must fail with a still-doing delivery todo or
 a still-blocked human todo, then pass after the fix. The wrapper preserves all
 RPC replies, stored rows and stub calls before removing the synthetic HOME/data.
 The helper closes the WebSocket and owned daemon in finally, including failures.
+For the legacy-precedence regression, the baseline must fail because the same
+public read incorrectly shows Done for the conflicting result.

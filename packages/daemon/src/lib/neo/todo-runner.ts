@@ -474,7 +474,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         pack && pack.readFacts && pack.judge ? pack.judge(todo, await pack.readFacts(todo)) : null;
       const result = judgement ? null : await rule.check(todo);
       const completion =
-        judgement ?? (result?.done ? { state: 'done' as const, evidence: result.evidence } : null);
+        judgement ??
+        (result?.done && !result.failed
+          ? { state: 'done' as const, evidence: result.evidence }
+          : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
       const next = completion
