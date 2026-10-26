@@ -34,6 +34,8 @@ try {
   await leaf;
   assert.equal(readFileSync(join(outside, 'doc'), 'utf8'), 'Outside sentinel.');
   assert.deepEqual(readFileSync(join(root, 'parent', 'doc')), binary);
+  chmodSync(join(root, 'parent', 'doc'), 0o640);
+  chmodSync(join(outside, 'doc'), 0o666);
   const parentBytes = Buffer.from([0x48, 0xff, 0]);
   const parent = replaceFileWithinWorkspace(root, ['parent', 'doc'], parentBytes);
   queueMicrotask(() => {
@@ -43,6 +45,8 @@ try {
   await parent;
   assert.equal(readFileSync(join(outside, 'doc'), 'utf8'), 'Outside sentinel.');
   assert.deepEqual(readFileSync(join(root, 'preserved', 'doc')), parentBytes);
+  assert.equal(lstatSync(join(root, 'preserved', 'doc')).mode & 0o777, 0o640);
+  evidence.parentSwapMode = '0640 preserved despite outside mode 0666';
   await assert.rejects(replaceFileWithinWorkspace(root, ['parent', 'doc'], null));
   assert.equal(readFileSync(join(outside, 'doc'), 'utf8'), 'Outside sentinel.');
   await replaceFileWithinWorkspace(root, ['parent'], null);
