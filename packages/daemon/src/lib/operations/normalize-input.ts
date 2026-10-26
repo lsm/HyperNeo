@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 const decimal = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+const commonAliases: Readonly<Record<string, readonly string[]>> = {
+  todoId: ['todo_id'],
+  message: ['text'],
+};
 
 export async function normalizeOperationInput(schema: z.ZodType, input: unknown): Promise<unknown> {
   if (input === undefined || input === null) return input;
@@ -74,14 +78,17 @@ export async function normalizeOperationInput(schema: z.ZodType, input: unknown)
   const fields = new Map(entries);
   for (const [name, field] of Object.entries(schema.shape)) {
     const child = field as z.ZodType;
-    const aliases = child.meta()?.aliases;
-    if (Array.isArray(aliases)) {
-      for (const alias of aliases) {
-        if (typeof alias !== 'string' || !fields.has(alias)) continue;
-        if (fields.has(name)) throw new Error(`Conflicting fields: ${name} and ${alias}`);
-        fields.set(name, fields.get(alias));
-        fields.delete(alias);
-      }
+    const declaredAliases = child.meta()?.aliases;
+    const aliases = [
+      ...(commonAliases[name] ?? []),
+      ...(Array.isArray(declaredAliases) ? declaredAliases : []),
+    ];
+    for (const alias of aliases) {
+      if (typeof alias !== 'string' || Object.hasOwn(schema.shape, alias) || !fields.has(alias))
+        continue;
+      if (fields.has(name)) throw new Error(`Conflicting fields: ${name} and ${alias}`);
+      fields.set(name, fields.get(alias));
+      fields.delete(alias);
     }
     if (fields.has(name)) fields.set(name, await normalizeOperationInput(child, fields.get(name)));
   }

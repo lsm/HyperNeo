@@ -19,5 +19,10 @@ wrapper saves evidence and deletes disposable daemon data.
 The question alias fixture comes from failed operation tool results in the
 seven-day guard review; the coding alias was supplied by Neo from a real call.
 All identifiers, repository names and model values are synthetic replacements.
+The work.send text/message and neo.todo.close todo_id/todoId fixtures are
+reconstructed from refused operation names and invalid_input reasons, the current
+schemas and Neo-supplied known aliases. The refusal ledger does not store inputs.
+They must also match their canonical replies; a declared text field must retain
+its original meaning rather than becoming a message alias.
 Unit tests additionally exercise nested numeric variants and validity constraints.
 This journey does not exercise a browser or a real model turn.
