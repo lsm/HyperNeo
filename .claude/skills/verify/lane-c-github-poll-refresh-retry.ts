@@ -78,10 +78,12 @@ try {
   const gateway = app.db.gateway;
   const call = gateway.call;
   let attempts = 0;
+  let successfulReceipts = 0;
   gateway.call = (...args) => {
     if (args[0].name === 'jobs.refreshGitHubPolling') {
       attempts++;
       if (attempts === 1) return Promise.reject(new Error('synthetic refresh admission failure')) as never;
+      return Reflect.apply(call, gateway, args).then((receipt: unknown) => { successfulReceipts++; return receipt; }) as never;
     }
     return Reflect.apply(call, gateway, args);
   };
@@ -95,9 +97,10 @@ try {
     evidence.noAutomaticReplay = attempts === 1;
     evidence.sameValueReply = await update();
     const deadline = Date.now() + 500;
-    while (repo.getJob(first.id) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    while ((repo.getJob(first.id) || successfulReceipts === 0) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
     evidence.afterSameValue = repo.listJobs({ queue: 'github.poll' });
     evidence.warnings = warnings;
+    evidence.successfulReceipts = successfulReceipts;
     evidence.attemptsAfterSameValue = attempts;
     await update();
     await hub.request('system.health', {});
@@ -106,6 +109,7 @@ try {
     evidence.healthAfter = await hub.request('system.health', {});
     assert.equal(attempts, 2, 'actual app subscription must retry the same setting after a failed receipt, then memoize success');
     assert.equal(evidence.noAutomaticReplay, true);
+    assert.equal(successfulReceipts, 1);
     assert.deepEqual(evidence.afterFailure, [first]);
     assert.deepEqual(evidence.afterSameValue, []);
     assert.equal(warnings.length, 1, 'the swallowed subscriber failure must be logged once');

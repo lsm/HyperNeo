@@ -1,9 +1,9 @@
 {
-  "ciRunnerPasses": 39,
+  "ciRunnerPasses": 40,
   "ciRunnerFailures": 0,
   "files": 3,
-  "refreshWriterCases": 12,
-  "productionChangedLines": 70,
+  "refreshWriterCases": 13,
+  "productionChangedLines": 73,
   "authorizedCoreCompanionReplacements": 3,
   "transactionalDeleteAndAdmissionRollback": true,
   "legacyPendingDeletionLimit": 100,
@@ -12,5 +12,11 @@
   "newerEnableSurvivesStaleDisableReceipt": true,
   "lostReceiptDoesNotReplay": true,
   "temporaryHomesRemoved": true,
-  "credentialGatedAppBootstrapVerified": false
+  "credentialGatedAppBootstrapVerified": false,
+  "authorizedAdditionalMemoReorder": true,
+  "actualAppSubscriptionRetryVerified": true,
+  "syntheticProviderGateUsed": true,
+  "providerAuthenticationVerified": false,
+  "admissionErrorsLoggedAndRethrown": true,
+  "automaticReplayAfterFailure": false
 }
