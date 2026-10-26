@@ -123,6 +123,46 @@ afterEach(async () => {
 });
 
 describe('Neo private GitHub home proposal', () => {
+  test.each(['count', 'parameters'])(
+    'preserves inherited %s configuration in gh Git children',
+    async (source) => {
+      const previous = new Map(
+        ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_PARAMETERS'].map(
+          (key) => [key, process.env[key]]
+        )
+      );
+      if (source === 'count') {
+        process.env.GIT_CONFIG_COUNT = '1';
+        process.env.GIT_CONFIG_KEY_0 = 'remote.origin.pushurl';
+        process.env.GIT_CONFIG_VALUE_0 = join(fixture, 'remote.git');
+      } else
+        process.env.GIT_CONFIG_PARAMETERS = `'remote.origin.pushurl'='${join(fixture, 'remote.git')}'`;
+      try {
+        const stub = join(fixture, 'bin', 'gh');
+        await writeFile(
+          stub,
+          (await readFile(stub, 'utf8')).replace(
+            'git remote add origin "$NEO_GITHUB_FIXTURE/remote.git"',
+            'git remote add origin "$NEO_GITHUB_FIXTURE/missing.git"'
+          )
+        );
+        const proposed = await call({ askId: 'ask' });
+        await answer(proposed.questionId);
+        expect(await call({ questionId: proposed.questionId })).toMatchObject({
+          ok: true,
+          status: 'created',
+        });
+        expect(await git('--git-dir', join(fixture, 'remote.git'), 'rev-parse', 'HEAD')).toBe(
+          await git('rev-parse', 'HEAD')
+        );
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  );
   test('asks once and creates/pushes only the human-approved bound private repository', async () => {
     const proposed = await call({ askId: 'ask' });
     expect(proposed).toMatchObject({

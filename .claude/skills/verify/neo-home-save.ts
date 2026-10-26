@@ -4,8 +4,8 @@ if (!port || !run || port === '8399') throw new Error('usage: neo-home-save.ts <
 const log = await readFile(`${run}/daemon.log`, 'utf8');
 if (!log.includes('HyperNeo Test Server') || !log.includes(`Database: ${run}/data/daemon.db`)) throw new Error('Not an isolated test daemon');
 const root = `${run}/data/Neo`;
-async function rpc(input: unknown) {
-  const child = Bun.spawn(['bun', '.claude/skills/verify/rpc.ts', 'neo.home.save', JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit' });
+async function rpc(input: unknown, operation = 'neo.home.save') {
+  const child = Bun.spawn(['bun', '.claude/skills/verify/rpc.ts', operation, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit' });
   const result = JSON.parse(await new Response(child.stdout).text());
   if (await child.exited) throw new Error(JSON.stringify(result));
   return result.reply.value ?? result.reply;
@@ -30,6 +30,52 @@ const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
 const head = await git('rev-parse', 'HEAD');
+if (mode === 'inherited-filters') {
+  const config = `${run}/home/.gitconfig`;
+  const original = await readFile(config, 'utf8');
+  const marker = `${run}/filter-ran-outside-home`;
+  await writeFile(`${root}/.gitattributes`, '*.md filter=home-probe\n');
+  await git('add', '.gitattributes');
+  await git('commit', '-m', 'Synthetic home attributes');
+  const remote = `${run}/remote.git`;
+  const peer = `${run}/peer`;
+  await git('init', '--bare', remote);
+  await git('remote', 'add', 'origin', remote);
+  await git('push', '-u', 'origin', 'HEAD');
+  await git('clone', remote, peer);
+  const evidence = [];
+  try {
+    for (const [driver, conditional] of [['clean', false], ['smudge', false], ['process', false], ['smudge', true], ['process', true]] as const) {
+      await writeFile(config, original);
+      const path = `filter-${driver}${conditional ? '-conditional' : ''}.md`;
+      const content = `Unfiltered ${driver} progress.`;
+      if (driver !== 'clean') {
+        await git('-C', peer, 'pull', '--ff-only');
+        await writeFile(`${peer}/${path}`, content);
+        await git('-C', peer, 'add', path);
+        await git('-C', peer, 'commit', '-m', 'Synthetic peer progress');
+        await git('-C', peer, 'push');
+      }
+      const driverConfig = conditional ? `${run}/filter-driver.cfg` : config;
+      if (conditional) {
+        await writeFile(driverConfig, '');
+        await git('config', '--file', config, `includeIf.gitdir:${root}/.git/worktrees/.path`, driverConfig);
+      }
+      await git('config', '--file', driverConfig, `filter.home-probe.${driver}`, `printf executed > '${marker}'; ${driver === 'process' ? 'exit 1' : 'cat'}`);
+      await git('config', '--file', driverConfig, 'filter.home-probe.required', 'true');
+      const result = driver === 'clean' ? await rpc({ ...input, path, content }) : await rpc({ path }, 'neo.home.read');
+      const executed = await readFile(marker, 'utf8').catch(() => null);
+      const actual = await readFile(`${root}/${path}`, 'utf8').catch(() => null);
+      evidence.push({ driver, conditional, result, executed, actual, expected: content });
+      await writeFile(`${run}/evidence/neo-home-inherited-filters.json`, JSON.stringify(evidence, null, 2));
+      if (executed !== null || !result.ok || actual !== content) throw new Error('Home RPC executed a filter or failed to preserve unfiltered bytes');
+    }
+  } finally {
+    await writeFile(config, original);
+  }
+  console.log('PASS: save and read RPC preserve exact bytes without running inherited clean, smudge or process filters.');
+  process.exit(0);
+}
 if (mode === 'write-races') {
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const evidence = [];
