@@ -1228,15 +1228,20 @@ describe('codex-desktop adapter status and send', () => {
       );
       const prefix = 'same prefix '.repeat(20);
       const messages = [`${prefix} first`, `${prefix} ${identical ? 'first' : 'second'}`];
-      const [first, second] = await Promise.all(
+      const results = await Promise.all(
         messages.map((message) => driver.send!(ref('idle'), message, user))
       );
-      const receipt = { executionId: 'idle', inputId: 'client-0' };
-      expect(first).toEqual({
+      const consumed = requests[0].params;
+      const receipt = { executionId: 'idle', inputId: String(consumed.clientUserMessageId) };
+      expect(
+        results.find((result) => result.ok && result.value.queuedSubmissionId === 'queue-0')
+      ).toEqual({
         ok: true,
         value: { delivered: true, queuedSubmissionId: 'queue-0', receipt },
       });
-      expect(second).toEqual({
+      expect(
+        results.find((result) => result.ok && result.value.queuedSubmissionId === 'queue-1')
+      ).toEqual({
         ok: true,
         value: { delivered: false, queuedSubmissionId: 'queue-1' },
       });
@@ -1246,7 +1251,7 @@ describe('codex-desktop adapter status and send', () => {
           inputEvidence: {
             state: 'observed',
             exchange: [
-              { role: 'user', text: messages[0] },
+              { role: 'user', text: (consumed.input as { text: string }[])[0].text },
               { role: 'agent', text: 'First reply only.' },
             ],
           },

@@ -27,7 +27,11 @@ must remain uncertain, without notSent or a second queue submission. Explicit
 steering retains the same distinction between pre-send failure and a lost reply.
 Two overlapping automatic submissions then share a long prefix, and another pair
 uses identical messages. Both queue calls take their pre-consumption snapshot
-before the receiver writes only the first input and reply. The first submission
+before the receiver writes only the first input and reply. Run both normal and
+reversed receiver arrival orders for each message pair. Identify results by
+their returned queue IDs and submitted client input IDs, never Promise.all
+position: invocation order does not determine which call reaches the queue first.
+The first consumed submission
 may return that receipt only when its client input ID and complete message match;
 the second must remain accepted with its own queue ID and no receipt. Its
 matching text cannot borrow the first exchange. Receipt-bound work.status must

@@ -192,13 +192,16 @@ try {
     collide = true; reverseCollision = reverse; collisionRequests.length = 0;
     const prefix = 'same prefix '.repeat(20), firstText = `${prefix} first`;
     const secondText = `${prefix} ${identical ? 'first' : 'second'}`;
-    const [first, second] = await Promise.all([send(undefined, false, false, undefined, firstText), send(undefined, false, false, undefined, secondText)]);
+    const results = await Promise.all([send(undefined, false, false, undefined, firstText), send(undefined, false, false, undefined, secondText)]);
+    const first = results.find(result => result.value?.queuedSubmissionId === 'collision-0');
+    const second = results.find(result => result.value?.queuedSubmissionId === 'collision-1');
     collisions.push({ identical, reverse, first, second });
     const receipt = { executionId: 'synthetic', inputId: collisionRequests[0].request.params.clientUserMessageId };
     assert.deepEqual(first.value, { delivered: true, queuedSubmissionId: 'collision-0', receipt });
     assert.deepEqual(second.value, { delivered: false, queuedSubmissionId: 'collision-1' }, 'The unconsumed submission must not borrow another input receipt');
     const observed = await send(undefined, false, false, receipt);
     assert.equal(observed.value.inputEvidence.state, 'observed');
+    assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'user' && entry.text === collisionRequests[0].request.params.input[0].text));
     assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'agent' && entry.text === 'First concurrent reply only.'));
     writeFileSync(rollout, ''); collide = false;
   }
