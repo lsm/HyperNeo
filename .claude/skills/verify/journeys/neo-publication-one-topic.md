@@ -17,6 +17,12 @@ A fourth SDK call supplies a valid project link together with missing/legacy lin
 an unknown reply id and an invented artifact. Its text must be delivered with only
 the valid project link; omitted ids must not claim a human answer.
 
+A fifth SDK call uses `operations.describe` for `neo.publication.publish`. Its
+description must explicitly say that non-project and unavailable links are omitted.
+The fourth call includes both legacy `work` and `consultation` links, so the
+discovered guidance and the stored message must agree. The helper records the
+description in `observed.json` before asserting it, including on failure.
+
 Save `observed.json`, `evidence.json` and the proof log outside the run directory,
 then delete the synthetic run. A refused bundle is a failure. After rollout, read
 `hyperneo build` and confirm its commit contains the merged change; do not restart

@@ -156,7 +156,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Optional replyTo lists the received human message ids this publication answers; omit it to leave inputs unanswered. Unknown, foreign, queued and non-human reply ids are omitted. Unavailable project links and artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Optional replyTo lists the received human message ids this publication answers; omit it to leave inputs unanswered. Unknown, foreign, queued and non-human reply ids are omitted. Non-project and unavailable links are omitted, including work and consultation links. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,
