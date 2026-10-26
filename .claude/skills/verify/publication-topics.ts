@@ -104,10 +104,9 @@ try {
   }
   const published = (neo.publications.list(conversation) ?? []).map(({ shortText, fullText }) => ({ shortText, fullText }));
   writeFileSync(join(run, 'observed.json'), JSON.stringify({ receipts, published }, null, 2));
-  assert.match(receipts[0] ?? '', /multiple_topics/);
-  assert.match(receipts[0] ?? '', /publish each topic separately/);
-  assert.deepEqual(published.map((p) => p.fullText), [DESKTOP, QLARK]);
-  writeFileSync(join(run, 'evidence.json'), JSON.stringify({ actualSdkMcp: true, bundledRefused: true, refusal: receipts[0], published }, null, 2));
+  assert.match(JSON.parse(receipts[0] ?? '[]')[0]?.text ?? '', /"accepted"\s*:\s*true/);
+  assert.deepEqual(published.map((p) => p.fullText), [`${DESKTOP}\n\n${QLARK}`, DESKTOP, QLARK]);
+  writeFileSync(join(run, 'evidence.json'), JSON.stringify({ actualSdkMcp: true, bundledAccepted: true, receipt: receipts[0], published }, null, 2));
   console.log(join(run, 'evidence.json'));
 } finally {
   clearTimeout(watchdog);
