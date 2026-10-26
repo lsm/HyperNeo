@@ -619,4 +619,10 @@ env -i HOME="$SESSION_LIST_LIVE_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_L
 	HYPERNEO_DATA_DIR="$SESSION_LIST_LIVE_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-list-live-reader.ts" "$SESSION_LIST_LIVE_READER_RUN"
 
+HEALTH_SESSION_COUNT_READER_RUN="$WORK_DIR/health-session-count-reader"
+mkdir -p "$HEALTH_SESSION_COUNT_READER_RUN/home" "$HEALTH_SESSION_COUNT_READER_RUN/tmp"
+env -i HOME="$HEALTH_SESSION_COUNT_READER_RUN/home" PATH="$PATH" TMPDIR="$HEALTH_SESSION_COUNT_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$HEALTH_SESSION_COUNT_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-health-session-count-reader.ts" "$HEALTH_SESSION_COUNT_READER_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

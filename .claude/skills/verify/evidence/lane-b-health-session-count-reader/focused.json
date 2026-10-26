@@ -1,0 +1,33 @@
+{
+  "base": "dd66e2ffd1e8e63c8d994117484437584ca6f8f1",
+  "redCommit": "8fd3c4c7971db8bd21b0534a7933fcf2a1952e8b",
+  "productionChangedLines": 16,
+  "productionBudget": 70,
+  "focusedTests": 27,
+  "baseline": {
+    "unitFailures": 3,
+    "mainSqlAttempts": 1,
+    "rpcError": "health session counter SQL reached main connection"
+  },
+  "changedCallGraph": [
+    "system.health awaits a typed gateway read operation",
+    "sessions.healthCount.read exposes only existing SessionRepository.countHumanSessions",
+    "maintained counter SQL executes in the existing read-only worker transaction",
+    "response migration/version/uptime and cached active count stay on main; no runtime object crosses the boundary"
+  ],
+  "verification": [
+    "cached session_counters statements denied on main",
+    "cold and 20 concurrent real health RPCs match current human total semantics",
+    "archived human sessions included; room/Space/lobby sessions excluded",
+    "later committed session changes next health count",
+    "native reader failure rejects; separate transcript RPC works; later health recovers current count",
+    "WAL writer outside=0/inside=1 verified before and after reads",
+    "zero target main SQL, empty actor cache and latency under 250 ms on Bun/Deno",
+    "owned data removed after saving evidence"
+  ],
+  "unverified": [
+    "UI and served build",
+    "production workload scale"
+  ],
+  "fullRepositoryCheck": "passed"
+}
