@@ -277,7 +277,8 @@ export class NeoAskTodoRepository {
   constructor(
     private readonly db: Database,
     private readonly changed: () => void = () => {},
-    private readonly rulesChanged: () => void = () => {}
+    private readonly rulesChanged: () => void = () => {},
+    private readonly questionsPruned?: () => void
   ) {}
 
   cardReplyQuestion(conversationId: string, mutationId: string): NeoQuestion | null {
@@ -959,7 +960,8 @@ export class NeoAskTodoRepository {
           (todo) => todo.id === question.todoId && !['done', 'removed'].includes(todo.state)
         )
       ) {
-        this.retireQuestion(question, 'todo no longer active', null, now);
+        if (this.retireQuestion(question, 'todo no longer active', null, now))
+          this.questionsPruned?.();
         continue;
       }
       if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
@@ -982,6 +984,7 @@ export class NeoAskTodoRepository {
             ),
             question.id
           );
+      this.questionsPruned?.();
     }
   }
 

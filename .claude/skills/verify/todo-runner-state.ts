@@ -39,7 +39,7 @@ try {
   const root='neo:10000000-0000-4000-8000-000000009040';
   await app.db.createSession({id:root,title:'Synthetic runner build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
-  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1,repo:'synthetic/base'});
+  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1,repo:'github.com/synthetic/base'});
   for(const id of ['state','claim']) {
     store.addTodo(id,'ask',{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
     sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
@@ -76,7 +76,7 @@ try {
   record=true;
   const claims=await Promise.all([runCommand<Claim>('claim',['claim',11]),runCommand<Claim>('claim',['claim',12])]);
   record=false; assert(claims[0].ok && claims[0].ask); assert(!claims[1].ok && !claims[1].changed);
-  assert.equal(claims[0].target?.ref?.id,'current-worker'); assert.equal(claims[0].ask.repo,'synthetic/other');
+  assert.equal(claims[0].target?.ref?.id,'current-worker'); assert.equal(claims[0].ask.repo,'github.com/synthetic/other');
   assert.equal(claims[0].todo.askId,claims[0].ask.id);
   assert((await visible(claims[0].ask.id)).entry.todos.some(todo=>todo.id==='claim' && todo.state==='doing'));
   assert.equal(sessions.readRef('claim'),null); assert.deepEqual(sessionCount(),originalSessions);
