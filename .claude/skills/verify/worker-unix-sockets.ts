@@ -37,13 +37,19 @@ try {
     assert(store.getQuestion(startupId), 'startup discovers synthetic IdentityAgent');
     report.startupCard = startupId;
     const caller = { source: 'mcp' as const, role: 'neo' as const, sessionId: root.sessionId };
+    await app.jobProcessor.stop();
+    let changed = 0;
+    const unsubscribe = hub.onEvent('neo.changed', () => { changed++; });
     const worker = { source: 'mcp' as const, role: 'direct_task_worker' as const, sessionId: 'synthetic-worker' };
     const refused = await invokeOperation(registry, 'neo.workerSocket.ask', { socket: join(run, 'worker-request.sock') }, worker);
     assert.deepEqual((refused as { value: unknown }).value, { ok: false, reason: 'This operation belongs to Neo.' });
     const allowed = join(run, 'agent.sock');
     const denied = join(run, 'db.sock');
     for (const [socket, answer] of [[allowed, 'yes'], [denied, 'no']] as const) {
+      const before = changed;
       const asked = await invokeOperation(registry, 'neo.workerSocket.ask', { socket }, caller);
+      await new Promise((done) => setTimeout(done, 50));
+      assert(changed > before, 'a requested socket card must notify connected clients');
       assert.equal(asked.kind, 'completed');
       const card = (asked as { value: { id: string; state: string } }).value;
       const again = await invokeOperation(registry, 'neo.workerSocket.ask', { socket }, caller);
@@ -57,6 +63,7 @@ try {
     assert.equal(policy.config.features.network_proxy.unix_sockets[allowed], 'allow');
     assert.equal(policy.config.features.network_proxy.unix_sockets[denied], undefined);
     report[`restart${restart}`] = { allowed, denied, policy };
+    unsubscribe();
     if (restart) {
       await hub.request('settings.global.update', { updates: { workerUnixSockets: [] } });
       assert.deepEqual(codexWorkerSandbox(run).config.features.network_proxy.unix_sockets, {});
