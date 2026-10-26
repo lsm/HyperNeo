@@ -8,7 +8,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 533,
+    "uptime": 584,
     "sessions": {
       "active": 0,
       "total": 0
@@ -17,7 +17,7 @@
   "create": {
     "success": true,
     "provider": {
-      "id": "2bdef643-fa05-485e-a317-390ecd3af349",
+      "id": "9866c873-99d0-4002-aade-feeb78f61560",
       "providerId": "synthetic-provider-created",
       "displayName": "synthetic-provider-created",
       "kind": "built_in",
@@ -26,14 +26,14 @@
       "isDefault": false,
       "sortOrder": 0,
       "healthStatus": "unknown",
-      "createdAt": 1792974569432,
-      "updatedAt": 1792974569432
+      "createdAt": 1792975535867,
+      "updatedAt": 1792975535867
     }
   },
   "update": {
     "success": true,
     "provider": {
-      "id": "860a94aa-8adb-457e-b997-34f7a49c4571",
+      "id": "cbced2cc-ce29-4f20-a9c2-3b8dc48fe8a9",
       "providerId": "synthetic-provider-first",
       "displayName": "Updated synthetic provider",
       "kind": "built_in",
@@ -43,8 +43,8 @@
       "sortOrder": 4,
       "configJson": "{\"command\":\"synthetic-command\",\"discoveredModels\":{\"models\":[{\"id\":\"synthetic-model\"}]}}",
       "healthStatus": "unknown",
-      "createdAt": 1792974569416,
-      "updatedAt": 1792974569435
+      "createdAt": 1792975535849,
+      "updatedAt": 1792975535869
     }
   },
   "setDefault": {
@@ -57,7 +57,7 @@
   "credentialsUpdate": {
     "success": true,
     "provider": {
-      "id": "860a94aa-8adb-457e-b997-34f7a49c4571",
+      "id": "cbced2cc-ce29-4f20-a9c2-3b8dc48fe8a9",
       "providerId": "synthetic-provider-first",
       "displayName": "Updated synthetic provider",
       "kind": "built_in",
@@ -67,13 +67,13 @@
       "sortOrder": 4,
       "configJson": "{\"command\":\"synthetic-command\"}",
       "healthStatus": "healthy",
-      "lastHealthCheckAt": 1792974569438,
-      "createdAt": 1792974569416,
-      "updatedAt": 1792974569442
+      "lastHealthCheckAt": 1792975535872,
+      "createdAt": 1792975535849,
+      "updatedAt": 1792975535880
     }
   },
   "persisted": {
-    "id": "860a94aa-8adb-457e-b997-34f7a49c4571",
+    "id": "cbced2cc-ce29-4f20-a9c2-3b8dc48fe8a9",
     "providerId": "synthetic-provider-first",
     "displayName": "Updated synthetic provider",
     "kind": "built_in",
@@ -83,9 +83,9 @@
     "sortOrder": 4,
     "configJson": "{\"command\":\"synthetic-command\"}",
     "healthStatus": "healthy",
-    "lastHealthCheckAt": 1792974569438,
-    "createdAt": 1792974569416,
-    "updatedAt": 1792974569442
+    "lastHealthCheckAt": 1792975535872,
+    "createdAt": 1792975535849,
+    "updatedAt": 1792975535880
   },
   "rollback": {
     "error": "synthetic credential failure"
@@ -104,7 +104,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 550,
+    "uptime": 604,
     "sessions": {
       "active": 0,
       "total": 0

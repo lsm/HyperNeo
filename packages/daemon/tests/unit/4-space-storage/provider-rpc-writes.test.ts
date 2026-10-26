@@ -7,7 +7,6 @@ import { ProviderRepository } from '../../../src/storage/repositories/provider-r
 import {
   providerRpcWrites,
   providerWriter,
-  recordProviderAuth,
 } from '../../../src/storage/repositories/provider-rpc-writes';
 
 describe('provider RPC writer commits', () => {
@@ -130,21 +129,13 @@ describe('provider RPC writer commits', () => {
 
   it('records only auth metadata without changing provider configuration', async () => {
     const record = repo.createProvider({ ...params(), configJson: '{"command":"keep"}' });
-    await gateway.run(recordProviderAuth, {
-      providerId: record.providerId,
-      authType: 'oauth',
-      healthStatus: 'healthy',
-    });
+    await gateway.call(providerRpcWrites, 'recordAuth', record.providerId, 'oauth', 'healthy');
     expect(repo.getProvider(record.id)).toMatchObject({
       authType: 'oauth',
       healthStatus: 'healthy',
       configJson: record.configJson,
     });
-    await gateway.run(recordProviderAuth, {
-      providerId: record.id,
-      authType: 'api_key',
-      healthStatus: 'unhealthy',
-    });
+    await gateway.call(providerRpcWrites, 'recordAuth', record.id, 'api_key', 'unhealthy');
     expect(repo.getProvider(record.id)).toMatchObject({
       authType: 'api_key',
       healthStatus: 'unhealthy',

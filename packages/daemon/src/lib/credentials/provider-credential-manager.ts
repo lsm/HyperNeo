@@ -2,7 +2,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import { recordProviderAuth } from '../../storage/repositories/provider-rpc-writes.ts';
+import { providerRpcWrites } from '../../storage/repositories/provider-rpc-writes.ts';
 import {
   createCredentialStore,
   credentialService,
@@ -143,7 +143,13 @@ export class ProviderCredentialManager {
     healthStatus: 'unknown' | 'healthy' | 'unhealthy'
   ): Promise<void> {
     if (!this.hasProvidersTable()) return;
-    await gatewayFor(this.db).run(recordProviderAuth, { providerId, authType, healthStatus });
+    await gatewayFor(this.db).call(
+      providerRpcWrites,
+      'recordAuth',
+      providerId,
+      authType,
+      healthStatus
+    );
   }
 
   private hasProvidersTable(): boolean {
