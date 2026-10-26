@@ -107,6 +107,10 @@ The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
 wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
+Export a writable TMPDIR for web tests, build tooling and git commands too;
+their temporary files can otherwise fail before verification starts.
+The wrapper forwards NODE_PATH and VERIFY_BROWSER for browser helpers; its
+child environment remains otherwise scrubbed.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
 For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
