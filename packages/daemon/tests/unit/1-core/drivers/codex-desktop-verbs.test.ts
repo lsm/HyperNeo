@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
@@ -9,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
+import {
+  connectCodexAppServer,
+  type CodexAppServer,
+} from '../../../../src/lib/drivers/codex-app-server';
 import {
   admitCodexSteerTurn,
   codexExchange,
@@ -1323,9 +1328,95 @@ describe('codex-desktop adapter status and send', () => {
       ok: false,
       reason: 'not_delivered',
       detail: error,
+      ...(phase === 'thread/resume' ? { notSent: true } : {}),
     });
     expect(spawned).toEqual([]);
   });
+
+  test.each([
+    'thread idle already has an active writer',
+    'Cannot start: thread idle already has an active writer; retry later',
+  ])(
+    'a typed active-writer refusal remains retryable while a lost reply stays uncertain: %s',
+    async (wording) => {
+      const server = createServer();
+      const sockets = new WebSocketServer({ server });
+      const path = join(dir, 'refusal.sock');
+      let refused = true;
+      let accepted = 0;
+      sockets.on('connection', (socket) =>
+        socket.on('message', (bytes) => {
+          const request = JSON.parse(String(bytes));
+          if (request.id === undefined) return;
+          if (request.method === 'turn/start') {
+            if (refused)
+              socket.send(
+                JSON.stringify({
+                  id: request.id,
+                  error: { code: -32600, message: wording },
+                })
+              );
+            else {
+              accepted++;
+              socket.close();
+            }
+            return;
+          }
+          socket.send(
+            JSON.stringify({
+              id: request.id,
+              result: request.method === 'thread/turns/list' ? { data: [] } : {},
+            })
+          );
+        })
+      );
+      await new Promise<void>((resolve) => server.listen(path, resolve));
+      const driver = adapter(0, '', () => connectCodexAppServer(path));
+      try {
+        expect(await driver.send!(ref('idle'), 'answer', user)).toMatchObject({
+          ok: false,
+          reason: 'not_delivered',
+          notSent: true,
+        });
+        expect(accepted).toBe(0);
+        refused = false;
+        const unknown = await driver.send!(ref('idle'), 'answer', user);
+        expect(unknown).toMatchObject({ ok: false, reason: 'not_delivered' });
+        expect(unknown).not.toHaveProperty('notSent');
+        expect(accepted).toBe(1);
+      } finally {
+        for (const socket of sockets.clients) socket.terminate();
+        sockets.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+  );
+
+  test.each(['thread/turns/list', 'thread/resume', 'turn/start'])(
+    'distinguishes a pre-send refusal from a lost acknowledgement at %s',
+    async (phase) => {
+      const accepted: string[] = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          if (method === 'turn/start') accepted.push(JSON.stringify(params.input));
+          if (method === phase) throw new Error('Synthetic connection lost');
+          if (method === 'thread/turns/list') return { data: [] };
+          if (method === 'thread/resume') return {};
+          throw new Error(`Unexpected ${method}`);
+        },
+        close: () => {},
+      }));
+      const reply = await driver.send!(ref('idle'), 'answer the worker', user);
+      expect(reply).toMatchObject({ ok: false, reason: 'not_delivered' });
+      if (phase === 'turn/start') {
+        expect(reply).not.toHaveProperty('notSent');
+        expect(accepted).toHaveLength(1);
+      } else {
+        expect(reply).toHaveProperty('notSent', true);
+        expect(accepted).toEqual([]);
+      }
+    }
+  );
 
   test.each([false, true])(
     'resumes saved idle work before sending, or reports resume failure: %s',
@@ -1354,7 +1445,12 @@ describe('codex-desktop adapter status and send', () => {
       const result = await driver.send!(ref('idle'), 'continue saved work', user);
       expect(result).toEqual(
         resumeFails
-          ? { ok: false, reason: 'not_delivered', detail: 'thread/resume: rollout unavailable' }
+          ? {
+              ok: false,
+              reason: 'not_delivered',
+              detail: 'thread/resume: rollout unavailable',
+              notSent: true,
+            }
           : { ok: true, value: { delivered: true, startedTurnId: 'resumed-turn' } }
       );
       expect(calls.map(([method]) => method)).toEqual([

@@ -8,6 +8,7 @@ export async function syntheticCodexDesktop(
     active?: () => boolean;
     start: (request: { params: { turnStart: { request: { input: { text: string }[] } } } }) => string;
     steer?: () => string;
+    dropReply?: (method: string) => boolean;
   }
 ) {
   mkdirSync(join(run, 'home/.codex/ipc'), { recursive: true });
@@ -33,6 +34,7 @@ export async function syntheticCodexDesktop(
               : request.method === 'thread-follower-steer-turn' && options.active?.()
                 ? { resultType: 'success', result: { result: { turnId: options.steer?.() ?? 'synthetic-turn' } } }
                 : { resultType: 'error', error: 'NoActiveTurn' };
+        if (options.dropReply?.(request.method)) { socket.destroy(); continue; }
         const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
         const header = Buffer.alloc(4);
         header.writeUInt32LE(body.length);

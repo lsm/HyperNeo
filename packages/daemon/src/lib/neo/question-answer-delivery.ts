@@ -1,15 +1,32 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { SendMessageResultSchema } from '../messaging/message-send.ts';
+import { WorkDeliverySchema } from '../drivers/types.ts';
 import { renderRemoteAddress } from '../mailbox/address.ts';
-import { driverWorkCaller } from './driver-work.ts';
+import { driverWorkCaller, readDriverLanded } from './driver-work.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
 import type { NeoService } from './service.ts';
 import type { NeoTodoRunner, NeoTodoRunnerDeps } from './todo-runner.ts';
 
 type Route = ReturnType<NeoAskTodoRepository['questionAnswers']['pending']>[number];
+const Sent = z.object({ ok: z.literal(true), value: WorkDeliverySchema });
+const NotSent = z.union([
+  z.object({ ok: z.literal(false), notSent: z.literal(true) }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.enum([
+      'not_open',
+      'not_found',
+      'unsupported',
+      'not_supported',
+      'unknown_adapter',
+      'busy',
+    ]),
+  }),
+]);
 
 export function createNeoQuestionAnswerDelivery(
   store: NeoAskTodoRepository,
@@ -27,8 +44,7 @@ export function createNeoQuestionAnswerDelivery(
         const ask = todo && store.getAsk(todo.askId);
         const assigned = sessions.readRef(route.todoId);
         const ref = route.sourceSession;
-        return ref.adapter === 'hyperneo' &&
-          todo?.blockedBy === 'needs-human' &&
+        return todo?.blockedBy === 'needs-human' &&
           ask?.status === 'open' &&
           assigned?.adapter === ref.adapter &&
           assigned.id === ref.id &&
@@ -46,7 +62,9 @@ export function createNeoQuestionAnswerDelivery(
         );
         const question = store.getQuestion(plan.route.questionId)!;
         const note = neoQuestionAnsweredNote(question, []);
-        return { ...plan, key, note, text: `${note}\n[worker-answer:${key}]` };
+        const marker = `[worker-answer:${key}]`;
+        const text = plan.ref.adapter === 'hyperneo' ? `${note}\n${marker}` : `${marker}\n${note}`;
+        return { ...plan, key, note, text };
       },
       'outcome',
       'delivery'
@@ -71,15 +89,37 @@ export function createNeoQuestionAnswerDelivery(
             'event'
           );
         const claimed = store.questionAnswers.claim(route.id, key);
-        const to = ref.daemon
-          ? renderRemoteAddress({ kind: 'remote-session', daemonId: ref.daemon, sessionId: ref.id })
-          : ref.id;
-        const result = await invoke(caller, 'message.send', { to, text, idempotencyKey: key });
-        const sent = SendMessageResultSchema.safeParse(
-          result.kind === 'completed' ? result.value : null
-        );
-        const receipt = sent.success && sent.data.kind === 'accepted' ? sent.data.messageId : null;
-        if (receipt === null && claimed) store.questionAnswers.retry(route.id, key);
+        let receipt: string | null = null;
+        if (ref.adapter === 'hyperneo') {
+          const to = ref.daemon
+            ? renderRemoteAddress({
+                kind: 'remote-session',
+                daemonId: ref.daemon,
+                sessionId: ref.id,
+              })
+            : ref.id;
+          const result = await invoke(caller, 'message.send', { to, text, idempotencyKey: key });
+          const sent = SendMessageResultSchema.safeParse(
+            result.kind === 'completed' ? result.value : null
+          );
+          receipt = sent.success && sent.data.kind === 'accepted' ? sent.data.messageId : null;
+          if (receipt === null && claimed) store.questionAnswers.retry(route.id, key);
+        } else if (claimed) {
+          const result = await invoke(caller, 'work.send', { ref, message: text });
+          const value = result.kind === 'completed' ? result.value : null;
+          const sent = Sent.safeParse(value);
+          if (sent.success && !sent.data.value.unconfirmed) receipt = key;
+          else if (NotSent.safeParse(value).success) store.questionAnswers.retry(route.id, key);
+        } else {
+          const status = await invoke(caller, 'work.status', {
+            ref,
+            since: Math.max(0, (route.attemptedAt ?? route.answeredAt ?? 0) - 1),
+          });
+          if (
+            readDriverLanded(status, { opening: `[worker-answer:${key}]`, inputBefore: 0 }) !== null
+          )
+            receipt = key;
+        }
         return receipt !== null && store.questionAnswers.accept(route.id, receipt, Date.now(), key);
       },
       'delivery',

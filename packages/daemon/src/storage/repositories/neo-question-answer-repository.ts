@@ -7,6 +7,7 @@ type StoredRoute = {
   sourceSession: NeoQuestionSource;
   receipt: string | null;
   acceptedAt: number | null;
+  attemptedAt?: number | null;
 };
 type AnswerRow = {
   id: string;
@@ -90,7 +91,14 @@ export class NeoQuestionAnswerRepository {
         route.questionId,
         JSON.stringify(
           routes.map((stored) =>
-            stored.id === id ? { ...stored, receipt, acceptedAt: now } : stored
+            stored.id === id
+              ? {
+                  ...stored,
+                  receipt,
+                  acceptedAt: now,
+                  ...(now === null ? { attemptedAt: receipt === null ? null : Date.now() } : {}),
+                }
+              : stored
           )
         )
       );

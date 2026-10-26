@@ -22,7 +22,7 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import type { CodexAppServer } from './codex-app-server.ts';
+import { CodexRequestError, type CodexAppServer } from './codex-app-server.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
@@ -922,12 +922,14 @@ async function tryServerCodexSend(
   mode: 'auto' | 'steer'
 ): Promise<CodexSendGate<never>> {
   sendLog.warn('work.send route', { threadId: detail.thread.id, path: route, mode });
+  let attempted = false;
   const result = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     const turn = admitCodexSteerTurn(
       await server.call('thread/turns/list', { threadId: detail.thread.id, limit: 1 })
     );
     if ('value' in turn) {
       try {
+        attempted = true;
         return await callCodexSteer(server, detail.thread.id, turn.value, message);
       } catch (error) {
         if (mode === 'steer' || !/NoActiveTurn|no active turn/.test(String(error))) throw error;
@@ -936,20 +938,42 @@ async function tryServerCodexSend(
     try {
       await server.call('thread/resume', { threadId: detail.thread.id, excludeTurns: true });
     } catch (error) {
-      if (String(error).includes(`thread ${detail.thread.id} already has an active writer`))
+      if (String(error).includes(`thread ${detail.thread.id} already has an active writer`)) {
+        attempted = true;
         return queueCodexMessage(detail, message, deps);
+      }
       throw error;
     }
-    const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(
-      await server.call('turn/start', {
+    const beforeStart = attempted;
+    attempted = true;
+    let reply: unknown;
+    try {
+      reply = await server.call('turn/start', {
         threadId: detail.thread.id,
         input: [{ type: 'text', text: message, text_elements: [] }],
-      })
-    );
+      });
+    } catch (error) {
+      if (
+        error instanceof CodexRequestError &&
+        z
+          .object({
+            code: z.literal(-32600),
+            message: z.string().includes(`thread ${detail.thread.id} already has an active writer`),
+          })
+          .safeParse(error.rejection).success
+      )
+        attempted = beforeStart;
+      throw error;
+    }
+    const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(reply);
     return { ok: true, value: { delivered: true, startedTurnId: started.turn.id } };
   });
   sendLog.warn('work.send app-server result', { threadId: detail.thread.id, mode, result });
-  return { reason: !result.ok ? reject('not_delivered', result.detail) : result };
+  return {
+    reason: !result.ok
+      ? reject('not_delivered', result.detail, attempted ? undefined : true)
+      : result,
+  };
 }
 
 export function codexWithdrawal(queuedSubmissionId: string, withdrawn: boolean): WorkWithdrawal {
