@@ -80,6 +80,7 @@ import { enqueueMailboxAdmission } from '../repositories/mailbox-admission-write
 import { cancelRateLimitDelivery } from '../repositories/rate-limit-cancel-write.ts';
 import { claimOwnedInputWithdrawal } from '../repositories/owned-input-withdrawal-write.ts';
 import type { DbOp } from './db-op.ts';
+import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -148,5 +149,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     cancelRateLimitDelivery,
     claimOwnedInputWithdrawal,
     globalSettingsWrites,
+    releaseRateLimitDeliveries,
   ].map((op) => [op.name, op])
 );

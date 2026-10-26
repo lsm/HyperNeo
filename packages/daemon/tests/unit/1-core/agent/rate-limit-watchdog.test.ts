@@ -1,4 +1,6 @@
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { bindGateway, type DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import type { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { FallbackModelEntry } from '@hyperneo/shared';
 import {
@@ -1438,6 +1440,14 @@ describe('RateLimitWatchdog', () => {
         const restored = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
         restored.armPersistedCooldown(Date.now() + 60_000, 'm1', undefined, 3);
         try {
+          const raw = {} as Database;
+          bindGateway(raw, {
+            run: async (op, input) => {
+              expect(op.name).toBe('jobs.releaseRateLimitDeliveries');
+              expect(input).toEqual({ sessionId: 's' });
+              return true;
+            },
+          } as unknown as DbGateway);
           const session = {
             rateLimitWatchdog: restored,
             networkPause: { resumeNow: async () => false },
@@ -1445,7 +1455,7 @@ describe('RateLimitWatchdog', () => {
             stateManager,
             db: {
               getSession: () => ({ processingState: null }),
-              getJobQueueRepo: () => ({ rescheduleSessionDeliveries: () => true }),
+              getDatabase: () => raw,
             },
           } as unknown as AgentSession;
           expect(await AgentSession.prototype.retryNowAfterRateLimit.call(session)).toBe(true);

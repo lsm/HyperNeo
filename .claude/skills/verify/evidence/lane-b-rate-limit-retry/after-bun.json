@@ -1,0 +1,102 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 423,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "retry": {
+    "success": true
+  },
+  "rpcMs": 1.2382909999998901,
+  "owningJob": {
+    "id": "ae3f33f8-c2bf-413a-b494-07c740c7ad16",
+    "queue": "message_delivery",
+    "status": "pending",
+    "payload": {
+      "sessionId": "synthetic-persisted-retry",
+      "messageUuid": "synthetic-retry-episode",
+      "origin": "chat"
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 2,
+    "runAt": 1792973967235,
+    "createdAt": 1792973967229,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": null
+  },
+  "nextJob": {
+    "id": "a5186818-4b60-4cd4-8ceb-5fe09fdd28ac",
+    "queue": "message_delivery",
+    "status": "pending",
+    "payload": {
+      "sessionId": "synthetic-persisted-retry",
+      "messageUuid": "synthetic-next",
+      "origin": "chat"
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792973967235,
+    "createdAt": 1792973967231,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": null
+  },
+  "otherJob": {
+    "id": "5000cee6-dfc3-4187-a438-ac38a9b1425b",
+    "queue": "message_delivery",
+    "status": "pending",
+    "payload": {
+      "sessionId": "another-session",
+      "messageUuid": "unrelated"
+    },
+    "result": null,
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792974566812,
+    "createdAt": 1792973967231,
+    "startedAt": null,
+    "heartbeatAt": null,
+    "completedAt": null,
+    "claimToken": null
+  },
+  "state": "idle",
+  "persistedState": "{\"status\":\"idle\"}",
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 425,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 0,
+  "oldHeartbeat": false
+}

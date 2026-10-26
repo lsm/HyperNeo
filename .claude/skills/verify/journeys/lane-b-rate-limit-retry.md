@@ -17,5 +17,11 @@ and reject the old heartbeat. Baseline evidence must show a forbidden main write
 and failed retry. Save evidence/rate-limit-retry.json before removing temporary
 data. The helper closes its transport, daemon and seed database in finally.
 
+Focused tests hold the runtime clear callback outside any transaction, restore
+a cooldown while the writer is queued, remove the session before release, and
+abort a later job update to prove all releases roll back. A failed writer must
+return failure without replaying the job update on main. The writer reuses the
+existing session and job repositories; only its boolean result crosses back.
+
 This proves metadata behavior only. It does not exercise a provider turn, other
 retry paths, contention, large payloads, worker death or latency targets.
