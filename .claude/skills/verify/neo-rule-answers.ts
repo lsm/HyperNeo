@@ -46,6 +46,17 @@ for (const phase of ['initial', 'restart']) {
         repo.saveSDKMessage('neo:10000000-0000-4000-8000-000000000002', { type: 'user', uuid, session_id: 'neo:10000000-0000-4000-8000-000000000002', parent_tool_use_id: null, inputKind, message: { role: 'user', content } } as any);
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', 'human-rule');
       assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0], triggerId: 'human:human-rule' })).ok, false);
+      const approvalId = crypto.randomUUID();
+      await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: approvalId, content: 'Yes, remember to ask me before publication.' });
+      repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
+      assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
+      const sources = app.db.getGlobalSettings().neo?.standingRuleSources;
+      assert.deepEqual(sources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
+      evidence.push({ approvalSources: sources });
+      const many = Array.from({ length: 25 }, (_, i) => `Extra rule ${i}.`);
+      assert.equal((await rpc('neo.rule.save', { add: many })).ok, true);
+      assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, [...edit.add, ...many]);
+      await rpc('neo.rule.save', { remove: many });
       await rpc('neo.rule.save', { remove: edit.add, add: edit.remove });
       const declined = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'declined', ...edit });
       assert.equal(declined.ok, true);

@@ -42,13 +42,13 @@ function section() {
   return within(screen.getByRole('region', { name: 'Neo standing rules' }));
 }
 
-test('lists each saved rule on its own row with the 20-rule budget', () => {
+test('lists each saved rule on its own row without a rule budget', () => {
   const ui = section();
   expect(ui.getAllByRole('listitem').map((row) => row.textContent)).toEqual([
     expect.stringContaining(saved[0]),
     expect.stringContaining(saved[1]),
   ]);
-  expect(ui.getByText('2 of 20 rules')).toBeTruthy();
+  expect(ui.getByText('2 rules')).toBeTruthy();
 });
 
 test('adding a rule asks first; Cancel writes nothing and Confirm adds only that rule', async () => {
@@ -105,7 +105,7 @@ test('a refused or disconnected save keeps the dialog open with the reason and t
   expect(ui.getAllByRole('listitem')).toHaveLength(2);
 });
 
-test('the add button stays off for empty, duplicate, over-500-character text and at 20 rules', () => {
+test('the add button stays off for empty, duplicate, over-500-character text but permits more than 20 rules', () => {
   const ui = section();
   const box = ui.getByLabelText('New Neo rule');
   const add = () => ui.getByRole('button', { name: 'Add rule' }) as HTMLButtonElement;
@@ -122,6 +122,5 @@ test('the add button stays off for empty, duplicate, over-500-character text and
   settle(Array.from({ length: 20 }, (_, i) => `Rule ${i + 1}.`));
   const full = section();
   fireEvent.input(full.getByLabelText('New Neo rule'), { target: { value: 'One more.' } });
-  expect((full.getByRole('button', { name: 'Add rule' }) as HTMLButtonElement).disabled).toBe(true);
-  expect(full.getByText('Neo keeps at most 20 rules; remove one first.')).toBeTruthy();
+  expect((full.getByRole('button', { name: 'Add rule' }) as HTMLButtonElement).disabled).toBe(false);
 });

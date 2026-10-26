@@ -65,58 +65,25 @@ async function propose(requestId = 'request', change = edit) {
   return (result as { value: { questionId: string } }).value.questionId;
 }
 describe('human-approved standing rules', () => {
-  test('a cited consumed human input authorizes only a complete text part from this conversation', async () => {
+  test('a consumed human approval saves paraphrased rules with a durable message reference', async () => {
     const messageId = crypto.randomUUID();
-    const content = 'Ask before publishing. Remove Old synthetic rule.';
-    expect(
-      await invoke(
-        'neo.message.send',
-        { sessionId: agent.sessionId, requestId: messageId, content },
-        human
-      )
-    ).toMatchObject({ value: { ok: true } });
-    const input = { ...edit, messageId, from: content };
+    await invoke('neo.message.send', {
+      sessionId: agent.sessionId, requestId: messageId,
+      content: 'Yes, remember to get my permission before publishing, replacing the old instruction.',
+    }, human);
+    const input = { ...edit, messageId };
     expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
     const repo = db.getSDKMessageRepo();
     repo.updateMessageStatus([repo.findMessageIdByUuid(agent.sessionId!, messageId)!], 'consumed');
-    expect(
-      await invoke('neo.rule.save', { ...input, from: 'Words absent from the human message.' })
-    ).toMatchObject({ value: { ok: false } });
-    for (const from of ['e', 'Ask before publishing.']) {
-      expect(await invoke('neo.rule.save', { ...input, from })).toMatchObject({
-        value: { ok: false },
-      });
-      expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
-    }
     expect(await invoke('neo.rule.save', input)).toMatchObject({
       value: { ok: true, standingRules: ['Keep this rule.', ...edit.add] },
     });
-    expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
+    expect(db.getGlobalSettings().neo?.standingRuleSources).toEqual({
+      [edit.add[0]]: { sessionId: agent.sessionId, messageId },
+    });
+    await invoke('neo.rule.save', { remove: edit.add }, human);
+    expect(db.getGlobalSettings().neo?.standingRuleSources).toEqual({});
   });
-
-  test.each(['add', 'remove'] as const)(
-    'an unrelated received greeting cannot authorize a rule %s',
-    async (kind) => {
-      const messageId = crypto.randomUUID();
-      await invoke(
-        'neo.message.send',
-        { sessionId: agent.sessionId, requestId: messageId, content: 'hi' },
-        human
-      );
-      const repo = db.getSDKMessageRepo();
-      repo.updateMessageStatus(
-        [repo.findMessageIdByUuid(agent.sessionId!, messageId)!],
-        'consumed'
-      );
-      const input = {
-        messageId,
-        from: 'hi',
-        [kind]: [kind === 'add' ? 'Invented rule.' : 'Old synthetic rule.'],
-      };
-      expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
-      expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
-    }
-  );
 
   test.each(['unknown', 'foreign', 'system', 'task', 'not-in-conversation'])(
     'refuses %s message ids without changing standing rules',
@@ -235,7 +202,7 @@ describe('human-approved standing rules', () => {
     db.updateGlobalSettings({ neo: { standingRules: rules } });
     expect(
       await invoke('neo.rule.ask', { askId: 'ask', requestId: 'over', add: edit.add })
-    ).toMatchObject({ value: { ok: false } });
+    ).toMatchObject({ value: { ok: true } });
     const id = await propose('replace', { add: edit.add, remove: [rules[0]] });
     service.todos.answerQuestion(service.todos.getQuestion(id)!, 'yes', 'chat', 2);
     expect(saved()).toEqual([...rules.slice(1), ...edit.add]);
@@ -249,7 +216,7 @@ describe('human-approved standing rules', () => {
     ).toMatchObject({ value: { ok: false, reason: 'question_closed' } });
     expect(await propose('new-request')).not.toBe(id);
   });
-  test('a stale cap records consent without discarding another rule', async () => {
+  test('human consent adds beyond twenty without discarding another rule', async () => {
     const id = await propose('cap-change', {
       add: [...edit.add, 'One more rule.'],
       remove: edit.remove,
@@ -262,10 +229,10 @@ describe('human-approved standing rules', () => {
     expect(
       await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
     ).toMatchObject({ value: { ok: true } });
-    expect(saved()).toEqual(current);
+    expect(saved()).toEqual([...current.slice(1), ...edit.add, 'One more rule.']);
     expect(service.todos.getQuestion(id)?.state).toBe('answered');
     expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('At most 20 rules') },
+      value: { ok: true },
     });
   });
   test('an unbound human yes and a changed question body cannot authorize rule edits', async () => {
@@ -298,7 +265,7 @@ describe('human-approved standing rules', () => {
     });
     expect(saved()).toEqual(before);
   });
-  test.each(['missing-removal', 'cap'])(
+  test.each(['missing-removal'])(
     'a chat yes to a %s stale proposal remains accepted and notifies Neo',
     async (kind) => {
       if (kind === 'cap')
