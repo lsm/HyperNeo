@@ -59,6 +59,7 @@ const call = async (name: string, input: unknown) => {
     ok: boolean;
     reason?: string;
     commit?: string;
+    questionId?: string;
     question: { id: string };
   };
 };
@@ -96,6 +97,73 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test.each(['global', 'system', 'local', 'command'])(
+    'reads and resolves conflicts without executing a %s merge driver',
+    async (scope) => {
+      await commit(root, '.gitattributes', 'merged.md merge=home-probe\n');
+      await commit(root, 'merged.md', 'Base version.\n');
+      await git(root, 'push');
+      await git(peer, 'pull', '--ff-only');
+      const local = 'Human local version.\n';
+      await commit(root, 'merged.md', local);
+      await commit(peer, 'merged.md', 'Human peer version.\n');
+      await git(peer, 'push');
+      const marker = join(fixture, 'merge-ran-outside-home');
+      const key = 'merge.home-probe.driver';
+      const driver = `printf executed > '${marker}'; exit 1`;
+      const config = join(fixture, 'merge-gitconfig');
+      const previous = new Map(
+        [
+          'GIT_CONFIG_GLOBAL',
+          'GIT_CONFIG_SYSTEM',
+          'GIT_CONFIG_NOSYSTEM',
+          'GIT_CONFIG_COUNT',
+          'GIT_CONFIG_KEY_0',
+          'GIT_CONFIG_VALUE_0',
+        ].map((key) => [key, process.env[key]])
+      );
+      if (scope === 'local') await git(root, 'config', key, driver);
+      else await git(root, 'config', '--file', config, key, driver);
+      if (scope === 'global') process.env.GIT_CONFIG_GLOBAL = config;
+      if (scope === 'system') {
+        process.env.GIT_CONFIG_SYSTEM = config;
+        process.env.GIT_CONFIG_NOSYSTEM = '0';
+      }
+      if (scope === 'command') {
+        process.env.GIT_CONFIG_COUNT = '1';
+        process.env.GIT_CONFIG_KEY_0 = key;
+        process.env.GIT_CONFIG_VALUE_0 = driver;
+      }
+      try {
+        const conflict = await call('neo.home.read', { path: 'merged.md' });
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(conflict.reason).toContain('conflict');
+        expect(
+          (
+            await call('neo.question.answer', {
+              questionId: conflict.questionId,
+              answer: ['Keep local'],
+            })
+          ).ok
+        ).toBe(true);
+        const result = await call('neo.home.save', {
+          path: 'merged.md',
+          content: local,
+          message: 'Apply human choice',
+          conflictQuestionId: conflict.questionId,
+        });
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(await readFile(join(root, 'merged.md'), 'utf8')).toBe(local);
+        expect(await git(remote, 'show', 'main:merged.md')).toBe(local.trim());
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  );
   test.each([
     ['smudge', false],
     ['process', false],
