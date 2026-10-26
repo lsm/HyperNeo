@@ -2522,7 +2522,7 @@ describe('QueryOptionsBuilder', () => {
         mockSession.config.permissionMode = 'plan';
         expect((await builder.build()).permissionMode).toBe('plan');
       } finally {
-        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+        rmSync(workerSandboxPaths(root).TMPDIR, { recursive: true, force: true });
       }
     });
 

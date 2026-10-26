@@ -22,7 +22,7 @@ beforeEach(() => {
   process.env.HYPERNEO_DATA_DIR = dataDir;
 });
 afterEach(() => {
-  rmSync(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
+  rmSync(workerSandboxPaths(root).TMPDIR, { recursive: true, force: true });
   rmSync(fixture, { recursive: true, force: true });
   rmSync(dataDir, { recursive: true, force: true });
   delete process.env.HYPERNEO_DATA_DIR;

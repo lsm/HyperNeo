@@ -35,17 +35,21 @@ function fixture(target: string, sharedModes = true) {
   dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
   vi.stubEnv('HYPERNEO_DATA_DIR', dataDir);
   Object.defineProperty(process, 'platform', { value: target, configurable: true });
-  Object.defineProperty(process, 'getuid', {
-    value: target === 'win32' ? undefined : () => 501,
-    configurable: true,
-  });
-  if (sharedModes)
+  if (sharedModes) {
+    Object.defineProperty(process, 'getuid', {
+      value: target === 'win32' ? undefined : () => 501,
+      configurable: true,
+    });
     vi.mocked(lstat).mockResolvedValue({
       mode: 0o40777,
       uid: 501,
       isDirectory: () => true,
     } as Stats);
-  else vi.mocked(lstat).mockImplementation((path) => realLstat!(path));
+  } else {
+    if (uid) Object.defineProperty(process, 'getuid', uid);
+    else Reflect.deleteProperty(process, 'getuid');
+    vi.mocked(lstat).mockImplementation((path) => realLstat!(path));
+  }
   return dataDir;
 }
 
