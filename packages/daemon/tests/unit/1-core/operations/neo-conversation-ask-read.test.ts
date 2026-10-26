@@ -62,12 +62,12 @@ describe('durable public ask reads', () => {
   afterEach(() => mailbox.close());
 
   test.each([
-    { source: 'mcp', role: 'neo', sessionId: root.sessionId },
+    { source: 'mcp', role: 'neo', sessionId: 'neo:unbound' },
     { source: 'mcp', role: 'long_term_agent', spaceId: 's' },
     { source: 'internal' },
     { source: 'rpc' },
   ] as OperationCaller[])(
-    'refuses non-human %o before binding or ledger access',
+    'refuses non-human %o before conversation or ledger access',
     async (caller) => {
       const bindings = vi.spyOn(repo, 'conversationId');
       const reads = vi.spyOn(ledger, 'list');

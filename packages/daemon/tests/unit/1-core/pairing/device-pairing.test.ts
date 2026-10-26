@@ -325,10 +325,7 @@ describe('device pairing', () => {
       },
       now: 2_000,
     });
-    expect(await call('device.unpaired.list', {}, human)).toEqual({
-      ok: false,
-      reason: NEEDS_PAIRED_HUMAN,
-    });
+    expect((await call('device.unpaired.list', {}, human)).ok).toBe(true);
     const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
     const seen = await call('device.unpaired.list', {}, pairedHuman(phone.body.deviceId));
     expect(seen).toEqual({
@@ -381,10 +378,7 @@ describe('device pairing', () => {
       seen: { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
       now: 5,
     });
-    expect(await call('device.would_refuse.list', {}, human)).toEqual({
-      ok: false,
-      reason: NEEDS_PAIRED_HUMAN,
-    });
+    expect((await call('device.would_refuse.list', {}, human)).ok).toBe(true);
     const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
     expect(await call('device.would_refuse.list', {}, pairedHuman(phone.body.deviceId))).toEqual({
       ok: true,

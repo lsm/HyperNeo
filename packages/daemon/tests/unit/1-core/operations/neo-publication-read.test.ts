@@ -61,10 +61,25 @@ describe('authored publication reads', () => {
   afterEach(() => mailbox.close());
 
   test('pure reader and conversation gates require actual local human and root identities', () => {
-    expect(requirePublicationReader(page, human)).toEqual({ value: page });
-    expect(requirePublicationReader(page, { source: 'rpc' })).toEqual({
+    const binding = { sessionId: root.sessionId, kind: 'neo' as const, projectId: null };
+    expect(requirePublicationReader(page, human, null)).toEqual({ value: page });
+    expect(
+      requirePublicationReader(
+        page,
+        { source: 'mcp', role: 'neo', sessionId: root.sessionId },
+        binding
+      )
+    ).toEqual({ value: page });
+    expect(requirePublicationReader(page, { source: 'rpc' }, null)).toEqual({
       reason: { ok: false, reason: 'human_only' },
     });
+    expect(
+      requirePublicationReader(
+        page,
+        { source: 'mcp', role: 'neo', sessionId: 'neo:other' },
+        binding
+      )
+    ).toEqual({ reason: { ok: false, reason: 'human_only' } });
     expect(requirePublicationConversation(page, conversationId)).toEqual({ value: page });
     for (const conversation of [null, foreignId]) {
       expect(requirePublicationConversation(page, conversation)).toEqual({
@@ -74,23 +89,20 @@ describe('authored publication reads', () => {
   });
 
   test.each([
-    { source: 'mcp', role: 'neo', sessionId: root.sessionId },
+    { source: 'mcp', role: 'neo', sessionId: 'neo:unbound' },
     { source: 'mcp', role: 'long_term_agent', spaceId: 's' },
     { source: 'internal' },
     { source: 'rpc' },
-  ] as OperationCaller[])(
-    'refuses non-human caller %o before any ledger or binding read',
-    async (caller) => {
-      const bindings = vi.spyOn(repo, 'defaultBinding');
-      const reads = vi.spyOn(ledger, 'list');
-      expect(await invoke({ conversationId }, caller)).toEqual({
-        kind: 'completed',
-        value: { ok: false, reason: 'human_only' },
-      });
-      expect(bindings).not.toHaveBeenCalled();
-      expect(reads).not.toHaveBeenCalled();
-    }
-  );
+  ] as OperationCaller[])('refuses non-human caller %o before any ledger read', async (caller) => {
+    const bindings = vi.spyOn(repo, 'defaultBinding');
+    const reads = vi.spyOn(ledger, 'list');
+    expect(await invoke({ conversationId }, caller)).toEqual({
+      kind: 'completed',
+      value: { ok: false, reason: 'human_only' },
+    });
+    expect(bindings).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+  });
 
   test('the bound Neo session reads its conversation publications; unbound workers stay out', async () => {
     const stored = ledger.append(publication(1));

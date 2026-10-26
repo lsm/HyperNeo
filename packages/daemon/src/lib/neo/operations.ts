@@ -283,7 +283,7 @@ function admitNeoCaller(
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || binding?.kind !== 'neo')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (['neo.open', 'neo.restart', 'neo.session.track'].includes(name))
+  if (['neo.restart', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   return { value: caller };
 }
@@ -810,10 +810,10 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.open',
       description:
-        'Open the one Neo conversation; a projectId is checked and opens the same session.',
+        'Open the one Neo conversation; a projectId is checked and opens the same session. The bound Neo session may open itself.',
       inputSchema: Scope,
       resultSchema: Snapshot,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: open,
     }),
     defineOperation({
