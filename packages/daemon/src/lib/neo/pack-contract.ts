@@ -55,6 +55,10 @@ export interface NeoTodoPack {
     draft: Pick<NeoTodo, 'check' | 'instruction'> & { id?: string },
     peers?: readonly NeoTodo[]
   ): string | null;
+  record?(
+    draft: Pick<NeoTodo, 'check' | 'instruction'> & { id?: string },
+    peers?: readonly NeoTodo[]
+  ): string | null;
 }
 
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
