@@ -388,21 +388,44 @@ describe('DbGateway', () => {
     db.close();
   });
 
-  test('an operation refusal is recorded through the gateway', async () => {
+  test('operation refusals and accepted records are distinguished through the gateway', async () => {
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE operation_refusals (id INTEGER PRIMARY KEY AUTOINCREMENT,
-      operation TEXT NOT NULL, reason TEXT NOT NULL, session_id TEXT, at INTEGER NOT NULL)`);
+      operation TEXT NOT NULL, reason TEXT NOT NULL, session_id TEXT, at INTEGER NOT NULL,
+      accepted INTEGER NOT NULL DEFAULT 0 CHECK (accepted IN (0, 1)))`);
     const gateway = new DbGateway(':memory:', db);
     await gateway.run(recordOperationRefusal, {
       refusal: { operation: 'task.create', reason: 'not_allowed' },
       sessionId: 'session-1',
       at: 7,
     });
+    await gateway.run(recordOperationRefusal, {
+      refusal: { operation: 'neo.todo.add', reason: 'pr_already_tracked', accepted: true },
+      sessionId: 'session-1',
+      at: 8,
+    });
     expect(
       db
-        .prepare('SELECT operation, reason, session_id AS sessionId, at FROM operation_refusals')
+        .prepare(
+          'SELECT operation, reason, session_id AS sessionId, at, accepted FROM operation_refusals ORDER BY id'
+        )
         .all()
-    ).toEqual([{ operation: 'task.create', reason: 'not_allowed', sessionId: 'session-1', at: 7 }]);
+    ).toEqual([
+      {
+        operation: 'task.create',
+        reason: 'not_allowed',
+        sessionId: 'session-1',
+        at: 7,
+        accepted: 0,
+      },
+      {
+        operation: 'neo.todo.add',
+        reason: 'pr_already_tracked',
+        sessionId: 'session-1',
+        at: 8,
+        accepted: 1,
+      },
+    ]);
     db.close();
   });
 });

@@ -4,6 +4,9 @@ import { z } from 'zod';
 import { invokeOperation, type OperationOutcome } from './invoke.ts';
 import type { CallerIdentity } from './caller.ts';
 import type { OperationRegistrySource } from './registry.ts';
+import { Logger } from '../logger.ts';
+
+const log = new Logger('operations-mcp');
 
 export const OperationMcpInvocationSchema = z.object({
   name: z.string().min(1),
@@ -61,8 +64,13 @@ export function createOperationMcpHandler(
       if (!refusal && outcome.kind === 'completed') {
         const recorded = AcceptedRecords.safeParse(outcome.value);
         if (recorded.success)
-          for (const reason of recorded.data.records)
-            await recordRefusal({ operation: parsed.data.name, reason, accepted: true });
+          for (const reason of recorded.data.records) {
+            try {
+              await recordRefusal({ operation: parsed.data.name, reason, accepted: true });
+            } catch (error) {
+              log.warn('Accepted operation record audit failed', parsed.data.name, error);
+            }
+          }
       }
       return outcome.kind === 'completed'
         ? mcpResult(
