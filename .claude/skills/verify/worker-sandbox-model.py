@@ -55,7 +55,7 @@ if os.environ.get('VERIFY_SECRET_READ') == '1':
     secret.write_text('synthetic-secret-never-real')
     (worker / 'readable-repo-fixture.txt').write_text('synthetic-repo-readable')
     with probe.open('a') as script:
-        script.write(f"cat '{secret}' >/dev/null; printf '%s' \"$?\" > secret-read-status-{engine}.txt\n")
+        script.write(f"cat '{secret}' > secret-read-result-{engine}.txt; printf '%s' \"$?\" > secret-read-status-{engine}.txt\n")
         script.write(f"cat readable-repo-fixture.txt > repo-read-result-{engine}.txt\n")
 requests = []
 if (run / 'verify-sockets').exists():
@@ -155,6 +155,7 @@ try:
     (run / f'evidence/{engine}-stderr.log').write_text(result.stderr)
     if os.environ.get('VERIFY_SECRET_READ') == '1':
         assert (worker / f'secret-read-status-{engine}.txt').read_text() != '0', 'BUG: synthetic secret readable'
+        assert (worker / f'secret-read-result-{engine}.txt').read_text() == '', 'BUG: secret output was not empty'
         assert (worker / f'repo-read-result-{engine}.txt').read_text() == 'synthetic-repo-readable', 'BUG: repository read denied'
     observed = {'engine': engine, 'exit': result.returncode, 'requests': len(requests), 'insideAllowed': (worker / f'inside-{engine}.txt').exists(), 'gitAllowed': (worker / f'.git/hyperneo-probe-{engine}').exists(), 'cacheAllowed': bool(expected_env.get('XDG_CACHE_HOME')) and (Path(expected_env['XDG_CACHE_HOME']) / f'probe-{engine}').exists(), 'outsideRefused': not (outside / 'escaped.txt').exists(), 'tempPath': (worker / f'observed-temp-{engine}.txt').read_text() if (worker / f'observed-temp-{engine}.txt').exists() else '', 'tempAllowed': bool(expected_env.get('TMPDIR')) and (worker / f'observed-temp-{engine}.txt').exists() and Path((worker / f'observed-temp-{engine}.txt').read_text()).is_relative_to(Path(expected_env['TMPDIR'])) and (Path((worker / f'observed-temp-{engine}.txt').read_text()) / f'probe-{engine}').exists()}
     observed['policyIntact'] = all(path.exists() and path.read_bytes() == contents for path, contents in policy_before.items())

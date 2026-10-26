@@ -182,6 +182,7 @@ try {
   if (process.env.VERIFY_SECRET_READ === '1') {
     await wait(() => existsSync(join(sdkWorker, 'repo-read-result-sdk.txt')));
     assert.notEqual(readFileSync(join(sdkWorker, 'secret-read-status-sdk.txt'), 'utf8'), '0');
+    assert.equal(readFileSync(join(sdkWorker, 'secret-read-result-sdk.txt'), 'utf8'), '');
     assert.equal(readFileSync(join(sdkWorker, 'repo-read-result-sdk.txt'), 'utf8'), 'synthetic-repo-readable');
     writeFileSync(join(run, 'evidence/sdk-secret-read.json'), JSON.stringify({ secretRefused: true, repoReadable: true }));
   }
