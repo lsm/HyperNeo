@@ -142,14 +142,14 @@ test('environment and private-key filename rules deny synthetic home secrets', a
   >;
   for (const path of [
     join(home, '.env'),
-    join(home, '**/.env.*'),
-    join(home, '**/*.pem'),
-    join(home, '**/*.key'),
+    join(home, '*/.env.*'),
+    join(home, '*/*.pem'),
+    join(home, '*/*.key'),
   ])
     expect(fs[path]).toBe('deny');
   await installClaudeNativeWrites(root, [join(fixture, 'source')]);
-  expect(settings().sandbox.filesystem.denyRead).toContain(join(home, '**/*.pem'));
-  expect(settings().permissions.deny).toContain(`Read(/${home}/**/*.pem)`);
+  expect(settings().sandbox.filesystem.denyRead).toContain(join(home, '*/*.pem'));
+  expect(settings().permissions.deny).toContain(`Read(/${home}/*/*.pem)`);
 });
 
 test('reading a complete Claude policy does not rewrite its settings', async () => {
@@ -168,9 +168,10 @@ test('nested private clones can read repository environment examples and key fix
   const denied = Object.entries(filesystem)
     .filter(([, access]) => access === 'deny')
     .map(([path]) => path);
+  mkdirSync(join(root, 'fixtures'), { recursive: true });
   for (const name of ['.env.example', 'fixtures/test.pem', 'fixtures/test.key']) {
     const path = join(root, name);
-    writeFileSync(join(root, 'repo-read-fixture.txt'), 'synthetic repository');
+    writeFileSync(path, 'synthetic repository fixture');
     expect(
       denied.some((pattern) => matchesGlob(path, pattern) || path.startsWith(`${pattern}/`))
     ).toBe(false);

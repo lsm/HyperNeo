@@ -38,7 +38,7 @@ and 1Password are denied. The broader `.config` denial is intentional.
 
 Retain `evidence/*-stdout.jsonl`, `*-stderr.log`, `sdk-requests.json`,
 `sdk-secret-read.json`, `codex-launch.json`, `codex-turn.json`, and each worker's
-`secret-read-status-*.txt` / `repo-read-result-*.txt` before cleanup. CLI helper
+`secret-read-status-*.txt`, `secret-read-result-*.txt` and `repo-read-result-*.txt` before cleanup. CLI helper
 assertions fail on either incorrect result; the SDK assertion runs after the
 actual daemon turn. Existing outside-write, temp, Git and network checks must
 also pass. Copy evidence out, stop owned children using the existing helper's
@@ -52,3 +52,10 @@ These results prove policy generation only, not OS enforcement, native Desktop
 IPC, arbitrary MCP containment, Keychain/1Password IPC, or live GitHub auth.
 Pre-profile Codex workers that cannot resolve the profile refuse queue admission;
 recreate them as prepared workers rather than restoring workspaceWrite.
+
+Also run `codex-queued-loopback.md` on the host: it now probes the same synthetic
+secret through an actual queued Codex app-server worker and asserts its named
+profile. The synthetic-daemon send journey checks admission and receipt reporting
+locally without claiming OS enforcement. Home filename rules cover the home root
+and immediate children; tracked examples and key fixtures in nested private clones
+remain readable. Known credential directories are denied recursively.

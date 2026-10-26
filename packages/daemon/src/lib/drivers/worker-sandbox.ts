@@ -118,7 +118,6 @@ export function codexWorkerSandbox(root: string, sockets = workerUnixSockets()) 
         'hyperneo-worker': {
           filesystem: {
             ':root': 'read',
-            glob_scan_max_depth: 16,
             ...Object.fromEntries(writableRoots.map((path) => [path, 'write'])),
             ...Object.fromEntries(
               ['.agents', '.codex', '.aws'].map((path) => [join(root, path), 'read'])

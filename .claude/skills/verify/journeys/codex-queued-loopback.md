@@ -22,7 +22,13 @@ and model requests retain the real binding denial. Afterward the calls show
 `thread/settings/update` before `thread/queue/add`, `localServer.connected` is
 true and `outsideRefused` remains true. The helper stops both processes and
 releases worker runtime roots; the wrapper retains evidence and removes its data.
-The recorded turn context must also have `networkAccess: true`. Prepared workers
+The recorded turn context must select `hyperneo-worker`. The helper first selects
+a separate restricted named profile, then checks that production queue admission
+restores the normal worker profile. Its synthetic home secret read must fail with
+an empty in-worker output file, while the repository fixture reads successfully.
+These checks use a real app-server and worker; do not run this journey inside an
+already sandboxed worker. Neo runs it after deployment on the host.
+Prepared workers
 must not fall back to offline CLI queueing when the required policy refresh cannot
 run; unprepared chats keep their existing queue behavior. Policy updates apply to
 future turns, so an already running restricted turn must finish before the next

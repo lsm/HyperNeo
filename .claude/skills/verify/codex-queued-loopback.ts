@@ -21,7 +21,7 @@ const git = spawnSync('git', ['init', '--initial-branch=dev'], { cwd: worker, en
 assert.equal(git.status, 0, git.stderr);
 await prepareWorkerSandbox(worker);
 const model = spawn('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, worker, 'codex-app-server'], {
-  env: { ...process.env, VERIFY_LOOPBACK: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, VERIFY_LOOPBACK: '1', VERIFY_SECRET_READ: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let modelLog = '';
 model.stdout.on('data', chunk => { modelLog += chunk; });
@@ -43,14 +43,17 @@ try {
   server = await startCodexBootstrapServer(codex);
   const sandbox = codexWorkerSandbox(worker);
   const started = await server.call('thread/start', {
-    cwd: worker, sandbox: sandbox.sandbox, approvalPolicy: 'never', model: 'synthetic',
-    config: { ...sandbox.config, model_provider: 'synthetic',
+    cwd: worker, permissions: sandbox.permissions, approvalPolicy: 'never', model: 'synthetic',
+    config: { ...sandbox.config,
+      permissions: { ...sandbox.config.permissions, 'hyperneo-loopback-restricted': { ...sandbox.config.permissions['hyperneo-worker'], network: { enabled: false } } },
+      model_provider: 'synthetic',
       model_providers: { synthetic: { name: 'Synthetic', base_url: `http://127.0.0.1:${port}/v1`, wire_api: 'responses', requires_openai_auth: false } },
-      features: { shell_snapshot: false },
+      features: { ...sandbox.config.features, shell_snapshot: false },
     },
-  }) as { thread: { id: string; path: string } };
+  }) as { thread: { id: string; path: string }; activePermissionProfile: { id: string } };
+  assert.equal(started.activePermissionProfile?.id, sandbox.permissions);
   const id = started.thread.id;
-  await server.call('thread/settings/update', { threadId: id, sandboxPolicy: { ...sandbox.sandboxPolicy, networkAccess: false } });
+  await server.call('thread/settings/update', { threadId: id, permissions: 'hyperneo-loopback-restricted' });
   const deps = {
     appServer: async () => ({
       call: async (method: string, params: Record<string, unknown>) => {
@@ -73,11 +76,14 @@ try {
     try { const record = JSON.parse(line); return record.type === 'turn_context' ? [record.payload] : []; } catch { return []; }
   });
   const observed = { calls, localServer: existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null,
-    networkAccess: contexts.at(-1)?.sandbox_policy?.network_access,
+    profileId: contexts.at(-1)?.active_permission_profile?.id,
+    secretRefused: readFileSync(join(worker, 'secret-read-status-codex-app-server.txt'), 'utf8') !== '0' && readFileSync(join(worker, 'secret-read-result-codex-app-server.txt'), 'utf8') === '',
+    repoReadable: readFileSync(join(worker, 'repo-read-result-codex-app-server.txt'), 'utf8') === 'synthetic-repo-readable',
     outsideRefused: !existsSync(join(run, 'codex-app-server-outside/escaped.txt')),
   };
   writeFileSync(join(run, 'evidence/queued-loopback.json'), JSON.stringify(observed, null, 2));
-  assert.equal(observed.networkAccess, true, 'Queued turn recorded restricted networking');
+  assert.equal(observed.profileId, sandbox.permissions, 'Queued turn lost its named worker profile');
+  assert(observed.secretRefused && observed.repoReadable, 'Secret denial and ordinary repository reads must both hold');
   assert(observed.localServer?.connected, 'Queued worker could not start/connect to a loopback server');
   assert(observed.outsideRefused, 'Worker wrote outside its allowed roots');
 } finally {

@@ -36,7 +36,7 @@ export function secretHomePaths(home: string): string[] {
 }
 
 export function secretNamePatterns(home: string): string[] {
-  return SECRET_NAMES.flatMap((name) => [join(home, name), join(home, '**', name)]);
+  return SECRET_NAMES.flatMap((name) => [join(home, name), join(home, '*', name)]);
 }
 
 export function neoSecretReadRules(): string[] {
