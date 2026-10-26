@@ -164,6 +164,7 @@ async function openAsrSocketWithin(
   protocol: StreamProtocol,
   deps: VoiceStreamDeps
 ): Promise<Gate<WebSocket>> {
+  const startedAt = Date.now();
   const opening = openAsrSocket(streamId, voice, url, protocol, deps);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<Gate<WebSocket>>((resolve) => {
@@ -176,7 +177,19 @@ async function openAsrSocketWithin(
   clearTimeout(timer);
   if ('reason' in opened)
     void opening.then((late) => {
-      if ('value' in late) late.value.close(1000);
+      if (!('value' in late)) return;
+      late.value.once('close', (code, reason) =>
+        voiceDiagnostic('voice.stream.end', {
+          streamId,
+          clientId: deps.clientId,
+          closedBy: 'relay',
+          code,
+          reason: voiceSocketReason(code),
+          peerReasonBytes: voicePeerReasonBytes(reason),
+          durationMs: Date.now() - startedAt,
+        })
+      );
+      late.value.close(1000);
     });
   return opened;
 }
