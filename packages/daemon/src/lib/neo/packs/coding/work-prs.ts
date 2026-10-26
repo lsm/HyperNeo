@@ -343,7 +343,12 @@ async function readCheckRollup(
     for (const status of page.statuses)
       if (status.context) cover(status.context, status.creator?.id ?? null);
   if (typeof raw.baseRefName === 'string' && raw.baseRefName) {
-    const rules = await fetchBranchRules(`${meta.owner}/${meta.repo}`, raw.baseRefName, spawnImpl);
+    const rules = await fetchBranchRules(
+      `${meta.owner}/${meta.repo}`,
+      raw.baseRefName,
+      meta.host,
+      spawnImpl
+    );
     if (rules === null) return null;
     for (const check of requiredChecks(rules)) {
       const providers = covered.get(check.context.toUpperCase());
@@ -360,14 +365,15 @@ async function readCheckRollup(
 async function fetchBranchRules(
   repo: string,
   base: string,
+  host: string,
   spawnImpl: SpawnFn
 ): Promise<readonly BranchRule[] | null> {
-  const key = `${repo}:${base}`;
+  const key = `${host}/${repo}:${base}`;
   const cached = rulesCache.get(key);
   if (cached && Date.now() - cached.at < (cached.rules ? RULES_MS : RULES_RETRY_MS))
     return cached.rules;
   const outcome = await gh(
-    ['gh', 'api', `repos/${repo}/rules/branches/${encodeURIComponent(base)}`],
+    ['gh', 'api', '--hostname', host, `repos/${repo}/rules/branches/${encodeURIComponent(base)}`],
     spawnImpl,
     'core'
   );
@@ -378,7 +384,7 @@ async function fetchBranchRules(
 }
 
 async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
-  return (await fetchBranchRules(repo, base, spawnImpl)) ?? [];
+  return (await fetchBranchRules(repo, base, 'github.com', spawnImpl)) ?? [];
 }
 
 async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail | null> {

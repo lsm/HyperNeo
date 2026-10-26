@@ -350,6 +350,23 @@ describe('readGithubPrs REST check rollup', () => {
     expect(read?.[0]?.checks).toBe('passing');
   });
 
+  test('targets the pull request host for the branch rules lookup', async () => {
+    const ghe = 'https://ghe.example.com/lsm/RequiredF/pull/9';
+    const { spawn, asked } = rollupSpawn(ghPr({ url: ghe, baseRefName: 'dev' }), (path) =>
+      path.includes('check-runs')
+        ? [{ check_runs: [] }]
+        : path.includes('/rules/branches/')
+          ? [{ type: 'pull_request', parameters: {} }]
+          : [{ statuses: [] }]
+    );
+    const read = await readGithubPrs([ghe], spawn as never);
+    expect(read?.[0]?.state).toBe('OPEN');
+    const rules = asked.find((args) =>
+      args.some((arg) => typeof arg === 'string' && arg.includes('/rules/branches/'))
+    );
+    expect(rules?.[rules!.indexOf('--hostname') + 1]).toBe('ghe.example.com');
+  });
+
   test('a same-named run from another provider does not satisfy a pinned required check', async () => {
     const { spawn } = rollupSpawn(
       ghPr({ url: 'https://github.com/lsm/RequiredD/pull/9', baseRefName: 'dev' }),
@@ -594,7 +611,9 @@ describe('readGithubPrs blockers', () => {
       },
     ]);
     await readGithubPrs([url], spawn as never);
-    expect(asked.filter((args) => args[2]?.includes('/rules/'))).toHaveLength(1);
+    expect(
+      asked.filter((args) => args.some((arg) => typeof arg === 'string' && arg.includes('/rules/')))
+    ).toHaveLength(1);
 
     const release = 'https://github.com/lsm/blockers-release/pull/1';
     const view = reply;
@@ -611,8 +630,10 @@ describe('readGithubPrs blockers', () => {
         kill: () => {},
       };
     }) as never);
-    expect(asked.find((args) => args[2]?.includes('/rules/'))?.[2]).toBe(
-      'repos/lsm/blockers-release/rules/branches/release%2F1.x'
-    );
+    expect(
+      asked
+        .flatMap((args) => args.filter((arg) => typeof arg === 'string' && arg.includes('/rules/')))
+        .find(Boolean)
+    ).toBe('repos/lsm/blockers-release/rules/branches/release%2F1.x');
   });
 });
