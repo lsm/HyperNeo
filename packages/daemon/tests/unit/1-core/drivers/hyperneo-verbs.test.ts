@@ -287,14 +287,11 @@ describe('hyperneo adapter send and status', () => {
   });
 
   test.each([
-    ['off', undefined, false],
-    ['off', true, false],
-    ['on-demand', undefined, false],
-    ['on-demand', true, true],
-    ['always', undefined, true],
+    ['off', false],
+    ['always', true],
   ] as const)(
-    'with the worker sandbox preference %s and a start asking %s, the sandbox is on: %s',
-    async (mode, sandbox, enabled) => {
+    'with the worker sandbox preference %s, a prepared start is sandboxed: %s',
+    async (mode, enabled) => {
       configureWorkerSandbox(() => mode);
       const root = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-mode-'));
       const directory = join(root, 'prepared');
@@ -310,7 +307,7 @@ describe('hyperneo adapter send and status', () => {
               place: { machine: 'imac', folder: source, name: 'repo' },
               title: 't',
               message: 'm',
-              preparation: { pack: 'coding', parameters: {}, sandbox },
+              preparation: { pack: 'coding', parameters: {} },
             },
             { from: 'user', caller: { source: 'rpc' } }
           )

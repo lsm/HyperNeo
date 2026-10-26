@@ -59,7 +59,7 @@ export function NeoWorkerPermissionSettings() {
         </SettingsRow>
         <SettingsRow
           label="Worker sandbox"
-          description="Limits where workers Neo starts from now on can write. On demand: only when Neo asks for it, for example for untrusted code."
+          description="Always: workers Neo starts from now on may write only inside their work folder. Off: no OS sandbox."
         >
           <select
             aria-label="Worker sandbox"

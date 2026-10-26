@@ -1,9 +1,9 @@
 # Workers run without the OS sandbox unless the human turns it on
 
-Settings > Workers > Worker sandbox has three modes, stored as `workerSandbox`:
-`off` (default), `always`, and `on-demand` (only starts whose `preparation.sandbox`
-is true, which Neo sets for untrusted or external code). Adapter tests in
-`hyperneo-verbs.test.ts` and `codex-desktop-start.test.ts` pin the mode table.
+Settings > Workers > Worker sandbox has two modes, stored as `workerSandbox`:
+`off` (default) and `always`. Adapter tests in
+`hyperneo-verbs.test.ts` and `codex-desktop-start.test.ts` pin both modes; `claude-desktop-start.test.ts` pins that an
+unsandboxed prepared start passes no `--settings` file.
 
 Off: a prepared start writes no `.claude/settings.local.json` sandbox and Codex threads
 start with `danger-full-access`. Prove the worker can then do real work by running the

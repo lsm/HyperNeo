@@ -1179,9 +1179,7 @@ export async function startCodexThread(
         workFolder = prepared.value;
       }
       const sandbox =
-        request.preparation && workerSandboxOn(request.preparation.sandbox)
-          ? codexWorkerSandbox(workFolder.cwd)
-          : null;
+        request.preparation && workerSandboxOn() ? codexWorkerSandbox(workFolder.cwd) : null;
       if (sandbox) await prepareWorkerSandbox(workFolder.cwd);
       const projectFolder = request.inPlace
         ? folder

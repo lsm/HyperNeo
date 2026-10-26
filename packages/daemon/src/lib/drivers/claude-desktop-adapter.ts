@@ -1574,7 +1574,7 @@ export async function startClaudeSession(
       })
     : null;
   if (prepared && !prepared.ok) return prepared;
-  const sandboxed = !!prepared && workerSandboxOn(request.preparation?.sandbox);
+  const sandboxed = !!prepared && workerSandboxOn();
   if (prepared && sandboxed) {
     try {
       const checkout = await deps.gitCheckout(folder);

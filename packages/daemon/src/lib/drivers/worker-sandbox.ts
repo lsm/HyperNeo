@@ -15,10 +15,7 @@ export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
   readWorkerSandbox = read;
 }
 
-export function workerSandboxOn(requested?: boolean) {
-  const mode = readWorkerSandbox();
-  return mode === 'always' || (mode === 'on-demand' && requested === true);
-}
+export const workerSandboxOn = () => readWorkerSandbox() === 'always';
 
 export function configureWorkerSockets(read: () => string[]) {
   readWorkerSockets = read;

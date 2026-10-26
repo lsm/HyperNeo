@@ -8,7 +8,6 @@ const Schema = z.object({
     .max(100)
     .regex(/^[a-z][a-z0-9-]*$/),
   parameters: z.record(z.string(), z.json()),
-  sandbox: z.boolean().optional(),
 });
 const RefusalSchema = z.enum(['unsupported_preparation', 'preparation_failed']);
 type Request = z.infer<typeof Schema>;
