@@ -1138,9 +1138,11 @@ describe('codex-desktop adapter status and send', () => {
         close: () => {},
       }));
       await driver.send!(ref('idle'), 'routine next input', user);
-      expect(events).toHaveLength(1);
-      expect(events[0]).toContain('"path":"queue"');
-      expect(events[0]).toContain('"reason":"native_queue"');
+      expect(events).toHaveLength(2);
+      expect(events[0]).toContain('"path":"app-server"');
+      expect(events[0]).toContain('"reason":"desktop_not_running"');
+      expect(events[1]).toContain('"path":"queue"');
+      expect(events[1]).toContain('"reason":"native_queue"');
     } finally {
       off();
       configureLogger(config);

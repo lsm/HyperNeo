@@ -406,9 +406,7 @@ describe('withCodexDesktopIpc', () => {
         const driver = createCodexDesktopAdapter({
           statePath,
           desktopSocketPath,
-          desktopRunning: async () => {
-            throw new Error('Automatic input must not inspect Desktop ownership');
-          },
+          desktopRunning: async () => false,
           worktreesDir: directory,
           machine: 'test',
           now: Date.now,

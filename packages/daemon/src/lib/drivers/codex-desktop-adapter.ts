@@ -808,6 +808,19 @@ export async function queueCodexMessage(
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
+  const owner = await steerCodexDesktopTurn(
+    deps.desktopSocketPath,
+    deps.spawn,
+    detail.thread.id,
+    message,
+    deps.newId(),
+    'auto',
+    deps.desktopRunning
+  );
+  if ('reason' in owner) {
+    sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: owner.reason });
+    return owner.reason;
+  }
   const sandbox = await resumeWorkerSandbox(detail.thread.folder);
   sendLog.warn('work.send route', {
     threadId: detail.thread.id,
