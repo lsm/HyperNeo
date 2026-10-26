@@ -351,6 +351,21 @@ describe('claude-desktop start', () => {
     });
   });
 
+  test('with the worker sandbox off, a prepared start passes no sandbox settings file', async () => {
+    configureWorkerSandbox(() => 'off');
+    const directory = join(dir, 'prepared');
+    mkdirSync(join(directory, '.git/info'), { recursive: true });
+    const driver = adapter({
+      prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
+    });
+    expect(
+      (await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user))
+        .ok
+    ).toBe(true);
+    expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(false);
+    expect(spawned.some((args) => args.includes('--settings'))).toBe(false);
+  });
+
   test('B1 accepts and reports the actual imported acceptEdits mode', async () => {
     expect(
       await adapter({
