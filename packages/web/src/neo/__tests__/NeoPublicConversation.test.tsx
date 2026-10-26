@@ -537,6 +537,18 @@ describe('durable public conversation presentation', () => {
     }
   );
 
+  it('does not insert a transient loading row above retained messages during a refresh', async () => {
+    const { rerender } = render(<NeoPublicConversation conversation={conversation()} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    rerender(<NeoPublicConversation conversation={{ ...conversation(), status: 'loading' }} />);
+    expect(await screen.findByText('Fictional detail')).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+    rerender(
+      <NeoPublicConversation conversation={{ ...conversation([], []), status: 'loading' }} />
+    );
+    expect(screen.getByRole('status').textContent).toContain('Loading saved');
+  });
+
   it.each(['loading', 'unavailable'] as const)(
     'shows %s state while preserving retained rows and honest window limits',
     async (status) => {
