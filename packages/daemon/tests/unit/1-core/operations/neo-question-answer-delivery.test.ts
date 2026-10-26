@@ -23,7 +23,7 @@ import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/questio
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import type { NeoTodoRunnerDeps } from '../../../../src/lib/neo/todo-runner.ts';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
-import { workInput } from '../../../../src/lib/drivers/work-messages.ts';
+import { workInput, recentWorkInputs } from '../../../../src/lib/drivers/work-messages.ts';
 
 async function fixture(path = ':memory:', title = 'Choose a destination') {
   const db = new Database(path);
@@ -407,9 +407,16 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
           value: {
             status: 'running',
             lastActivityAt: 9,
-            recentInputs: [
-              workInput(9, visible ? message : 'unrelated answer [worker-answer:other]')!,
-            ],
+            recentInputs: recentWorkInputs(
+              [
+                workInput(9, visible ? message : 'unrelated answer [worker-answer:other]')!,
+                ...Array.from(
+                  { length: 60 },
+                  (_, index) => workInput(10 + index, `Later input ${index}`)!
+                ),
+              ],
+              input.since as number | undefined
+            ),
           },
         },
       };

@@ -1,3 +1,6 @@
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
+import { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry';
 import { describe, expect, test } from 'bun:test';
 import {
   annotateUnreachable,
@@ -85,6 +88,51 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test.each(['before-connect', 'after-dispatch'] as const)(
+    'remote work.send preserves certainty for a failure %s',
+    async (phase) => {
+      const server = createServer();
+      const sockets = new WebSocketServer({ server });
+      let received = 0;
+      sockets.on('connection', (socket) =>
+        socket.on('message', () => {
+          received++;
+          socket.close();
+        })
+      );
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('No synthetic address');
+      const url = `ws://127.0.0.1:${address.port}`;
+      if (phase === 'before-connect')
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 100 });
+      await daemons.attach('laptop', url);
+      try {
+        const result = await call(
+          'work.send',
+          { ref: { adapter: 'codex-desktop', id: 'worker', daemon: 'laptop' }, message: 'answer' },
+          (daemon, name, input) => daemons.invoke(daemon, name, input, { timeoutMs: 100 }),
+          { source: 'rpc' },
+          []
+        );
+        expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
+        if (phase === 'before-connect') {
+          expect(result).toHaveProperty('notSent', true);
+          expect(received).toBe(0);
+        } else {
+          expect(result).not.toHaveProperty('notSent');
+          expect(received).toBe(1);
+        }
+      } finally {
+        await daemons.detach('laptop');
+        for (const socket of sockets.clients) socket.terminate();
+        sockets.close();
+        if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+  );
+
   test('work.send preserves explicit no-send evidence across its operation result', async () => {
     const failure = {
       ok: false as const,

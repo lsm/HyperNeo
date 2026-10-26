@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
@@ -9,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
+import {
+  connectCodexAppServer,
+  type CodexAppServer,
+} from '../../../../src/lib/drivers/codex-app-server';
 import {
   admitCodexSteerTurn,
   codexExchange,
@@ -1326,6 +1331,59 @@ describe('codex-desktop adapter status and send', () => {
       ...(phase === 'thread/resume' ? { notSent: true } : {}),
     });
     expect(spawned).toEqual([]);
+  });
+
+  test('an explicit active-writer start refusal remains retryable while a lost reply stays uncertain', async () => {
+    const server = createServer();
+    const sockets = new WebSocketServer({ server });
+    const path = join(dir, 'refusal.sock');
+    let refused = true;
+    let accepted = 0;
+    sockets.on('connection', (socket) =>
+      socket.on('message', (bytes) => {
+        const request = JSON.parse(String(bytes));
+        if (request.id === undefined) return;
+        if (request.method === 'turn/start') {
+          if (refused)
+            socket.send(
+              JSON.stringify({
+                id: request.id,
+                error: { code: -32600, message: 'thread idle already has an active writer' },
+              })
+            );
+          else {
+            accepted++;
+            socket.close();
+          }
+          return;
+        }
+        socket.send(
+          JSON.stringify({
+            id: request.id,
+            result: request.method === 'thread/turns/list' ? { data: [] } : {},
+          })
+        );
+      })
+    );
+    await new Promise<void>((resolve) => server.listen(path, resolve));
+    const driver = adapter(0, '', () => connectCodexAppServer(path));
+    try {
+      expect(await driver.send!(ref('idle'), 'answer', user)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        notSent: true,
+      });
+      expect(accepted).toBe(0);
+      refused = false;
+      const unknown = await driver.send!(ref('idle'), 'answer', user);
+      expect(unknown).toMatchObject({ ok: false, reason: 'not_delivered' });
+      expect(unknown).not.toHaveProperty('notSent');
+      expect(accepted).toBe(1);
+    } finally {
+      for (const socket of sockets.clients) socket.terminate();
+      sockets.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   test.each(['thread/turns/list', 'thread/resume', 'turn/start'])(

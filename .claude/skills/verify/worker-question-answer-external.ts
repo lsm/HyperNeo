@@ -119,10 +119,11 @@ try {
   assert.equal(waiting.answerDelivery[0].state, 'pending');
   assert.equal(peerInputs.length, 3, 'restart must not blindly resend a lost acknowledgement');
   for (const text of delayed) record(text);
+  for (let index = 0; index < 60; index++) record(`Subsequent unrelated input ${index}`);
   await refresh();
   const reconciled = await rpc('neo.question.get', { questionId: uncertainQuestion.id });
   const restartedStore = new NeoAskTodoRepository(app.db.getDatabase());
-  writeFileSync(join(run, 'evidence/reconciliation.json'), JSON.stringify({ reconciled, status: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' } }), peerInputs }, null, 2));
+  writeFileSync(join(run, 'evidence/reconciliation.json'), JSON.stringify({ reconciled, status: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' } }), statusSince: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, since: Math.max(0, uncertain.answerDelivery[0].answeredAt - 1) }), peerInputs }, null, 2));
   assert.equal(reconciled.answerDelivery[0].state, 'accepted');
   assert.equal(restartedStore.getTodo('target')?.state, 'doing');
   await refresh();
