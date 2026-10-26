@@ -12,6 +12,15 @@
       }
     }
   ],
+  "rollbackNotifications": {
+    "websocket": 0,
+    "internal": 0
+  },
+  "commitNotifications": {
+    "websocket": 1,
+    "internal": 1,
+    "otherClientState": "closed_unverified"
+  },
   "receipts": [
     {
       "kind": "close",
@@ -24,11 +33,15 @@
     "sha256": "3f9b3fceb06c0114abcd818ca083bf1b4f701bd5cb4da59995440ac8398388bb"
   },
   "contention": {
-    "writeMs": 1210.890375,
-    "healthMs": 0.7726669999999558,
-    "maxLagMs": 2.0162920000000213,
+    "writeMs": 1212.213875,
+    "healthMs": 0.5972920000000386,
+    "maxLagMs": 2.5263340000001335,
     "affectedWriteUnder250ms": false
   },
   "verified": true,
+  "notificationCounts": {
+    "websocket": 1,
+    "internal": 1
+  },
   "mainSql": 0
 }
