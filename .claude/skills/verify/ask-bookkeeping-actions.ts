@@ -57,7 +57,7 @@ for (const phase of ['initial', 'reopen']) {
       evidence.push({ beforeSettlement: store.getTodo(unfinished.id), workerQuestion });
       const closed = store.addTodo('closed', ask.id, { title: 'Closed work', doneWhen: 'Checked', instruction: null, check: null, named: null }, 1);
       const failed = store.addTodo('failed', ask.id, { title: 'Failed work', doneWhen: 'Build observed', instruction: null, check: null, named: null }, 1);
-      store.writeTodo(failed, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
+      store.updateTodo(failed, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
       store.updateTodo(closed, { state: 'closed_unverified', reason: 'Not observed' }, 2);
       const question = await call('neo.question.ask', { askId: ask.id, todoId: closed.id, text: 'What next?', kind: 'reply' });
       assert(question.records[0].startsWith('todo_closed:')); assert.equal(question.question.todoId ?? null, null);

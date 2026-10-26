@@ -102,7 +102,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
   test('settlement preserves failure diagnostics in the unverified todo receipt', async () => {
     const h = setup();
     try {
-      h.store.writeTodo(h.todo, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
+      h.store.updateTodo(h.todo, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
       const result = await h.call('neo.ask.settle', {
         askId: h.ask.id,
         status: 'done',
