@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { request } from 'node:http';
 import { resolve } from 'node:path';
 
 const [port, directory] = process.argv.slice(2);
@@ -36,6 +37,30 @@ assert.equal(unpaired.ok, true, JSON.stringify(unpaired));
 const wouldRefuse = rpc('device.would_refuse.list');
 assert.equal(wouldRefuse.ok, true, JSON.stringify(wouldRefuse));
 evidence.deviceDiagnostics = { unpaired, wouldRefuse };
+
+const door = (name, input = {}) =>
+  new Promise((done, fail) => {
+    const call = request(
+      { socketPath: `${run}/data/session-door.sock`, path: '/', method: 'POST' },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => done(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+      }
+    );
+    call.on('error', fail);
+    call.end(JSON.stringify({ sender: 'verify-probe', name, input }));
+  });
+for (const name of ['device.unpaired.list', 'device.would_refuse.list']) {
+  const reply = await door(name);
+  assert.equal(reply.value?.ok, true, JSON.stringify(reply));
+}
+const outside = await door('device.pair.pending');
+assert.match(outside.error ?? '', /^not_allowed/);
+evidence.sessionDoor = {
+  diagnostics: 'ok over the session-door socket without a paired device',
+  outsideAllowlist: outside.error,
+};
 
 mkdirSync(`${run}/evidence`, { recursive: true });
 writeFileSync(`${run}/evidence/neo-local-read-doors.json`, JSON.stringify(evidence, null, 1));

@@ -13,7 +13,10 @@ with no paired device. neo.open opens the conversation, the asks page
 reads empty, a photo read of a missing image still refuses with
 image_not_found, and both device diagnostics (unpaired connections,
 would-refuse requests) now answer ok instead of demanding a paired human
-device. Evidence: evidence/neo-local-read-doors.json.
+device. It also posts to the session-door socket as a sending session:
+both diagnostics answer ok there too, while a name outside the door's
+allowlist (device.pair.pending) still gets not_allowed.
+Evidence: evidence/neo-local-read-doors.json.
 
 No model/provider calls, credentials, live DB, desktop GUI or port 8399
 are used. The bound Neo session reading its own conversation over the
