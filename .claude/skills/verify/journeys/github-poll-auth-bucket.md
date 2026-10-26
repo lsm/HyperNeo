@@ -48,7 +48,8 @@ Observe `evidence/auth-bucket.json`:
   HTTP status, resource, limit and remaining. A real deployment's old log lacked
   limit/resource/source, so it cannot retroactively prove anonymous attribution.
 - One synthetic ledger GraphQL read exercises `PR ledger GitHub read` logging:
-  resource graphql, fixture cost 7, remaining 4,866, reset and elapsed time. This
+  fixture cost 7, remaining 4,866, reset and elapsed time under
+  `PR ledger sweep GitHub budget`, after cheap REST discovery. This
   validates telemetry, not actual live request volume or attribution.
 
 At the failing reproduction commit, `reproduce private` keeps all seven private

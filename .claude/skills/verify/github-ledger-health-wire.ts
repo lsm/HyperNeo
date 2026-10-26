@@ -15,14 +15,19 @@ writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o
 writeFileSync(join(run, 'bin/gh'), String.raw`#!${process.execPath}
 import {readFileSync,appendFileSync} from 'node:fs';
 const root=${JSON.stringify(run)},args=process.argv.slice(2);
-if(args[0]!=='api'||args[1]!=='graphql'||!args.includes('--include'))process.exit(2);
-const owner=args.find(x=>x.startsWith('o='))?.slice(2),name=args.find(x=>x.startsWith('n='))?.slice(2);
+if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
+const rest=args[1]!=='graphql', parts=args[1].split('/');
+const owner=rest?parts[1]:args.find(x=>x.startsWith('o='))?.slice(2),name=rest?parts[2]:args.find(x=>x.startsWith('n='))?.slice(2);
 if(owner!=='synthetic'||!['first','tail'].includes(name))process.exit(2);
 const phase=readFileSync(root+'/phase','utf8'),repo=owner+'/'+name;
 appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase,repo})+'\n');
 if(phase==='rate'){process.stdout.write('HTTP/2.0 429\r\nretry-after: 3600\r\n\r\n{}');process.stderr.write('HTTP 429: Too Many Requests');process.exit(1);}
 const node={number:7,title:'Synthetic',headRefName:'fixture',headRefOid:'a'.repeat(40),state:'OPEN',isDraft:false,mergeable:'MERGEABLE',reviewDecision:null,closedAt:null};
-console.log(JSON.stringify({data:{rateLimit:{remaining:4000},repository:{nameWithOwner:repo,open:{pageInfo:{hasNextPage:phase==='partial'},nodes:phase==='empty'?[]:[node]},done:{nodes:[]}}}}));
+if(rest){
+ const pulls=phase==='partial'?{}:phase==='empty'||args[1].includes('state=closed')?[]:[{number:7,title:'Synthetic',head:{ref:'fixture',sha:node.headRefOid},updated_at:'initial',created_at:'2026-01-01T00:00:00Z',closed_at:null,draft:false,base:{repo:{full_name:repo}}}];
+ console.log(JSON.stringify(pulls));process.exit(0);
+}
+console.log(JSON.stringify({data:{rateLimit:{cost:1,remaining:4000,resetAt:'2099-01-01T00:00:00Z'},repository:{nameWithOwner:repo,p7:node}}}));
 `, { mode: 0o700 });
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
 const network = globalThis.fetch;
@@ -36,6 +41,7 @@ const sql = () => app!.db.getDatabase();
 async function open() {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399); app.db.updateGlobalSettings({ neo: { packs: [] } });
+  sql().prepare("UPDATE neo_pack_preferences SET value_json=? WHERE pack='coding' AND key='watchedRepos'").run(JSON.stringify(repos));
 }
 try {
   phase('seed'); await open(); proof.runtime = { commit: BUILD_METADATA.commit, pid: process.pid, port: app!.server.port };

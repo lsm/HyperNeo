@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { configureLogger, LogLevel } from '../../../packages/daemon/src/lib/logger.ts';
 import { CodingPrLedgerRepository, readCodingLedgerRepo, reconcileCodingPrLedger } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 
 const [mode, run] = process.argv.slice(2);
@@ -37,18 +38,28 @@ console.log(JSON.stringify(result));
 `, { mode: 0o700 });
 const network = globalThis.fetch;
 globalThis.fetch = (async () => { throw new Error('Real network forbidden'); }) as typeof fetch;
-let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
 const evidence: Record<string, unknown> = { mode, verified: false, quota: 'synthetic one point per hydrated PR; not real GitHub cost' };
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
   app.db.updateGlobalSettings({ neo: { packs: [] } });
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connect')); });
+  const rpc = (name: string) => new Promise<Record<string, unknown>>((done, fail) => {
+    const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
+    ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input: {} }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  const root = await rpc('neo.open');
   const db = app.db.getDatabase(), ledger = new CodingPrLedgerRepository(db);
   db.prepare("UPDATE neo_pack_preferences SET value_json=? WHERE pack='coding' AND key='watchedRepos'").run(JSON.stringify(['synthetic/active', 'synthetic/idle']));
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','mergePolicy','\"review_bot\"','human',0)").run();
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','reviewBot','\"bot\"','human',0)").run();
+  await ledger.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: String(root.sessionId) }, status: { state: 'running' }, lastActivityAt: Date.now(), remotes: ['git@github.com:synthetic/active.git'], branches: ['b1'], openedPrs: ['https://github.com/synthetic/active/pull/1'] }], Date.now());
   const base = Date.now(), clock = Date.now;
+  configureLogger({ level: LogLevel.INFO });
   const snapshots: unknown[] = [];
   for (let tick = 0; tick < 12; tick++) {
     writeFileSync(join(run, 'tick'), String(tick));
@@ -58,11 +69,19 @@ try {
     const rows = ledger.snapshot(null, base + tick * 300_000);
     assert.equal(rows.length, 20);
     assert.equal(rows.find(row => row.pr === 'synthetic/active#1')?.state, tick >= 6 ? 'approved_green' : 'waiting_review');
+    assert.equal(rows.find(row => row.pr === 'synthetic/active#1')?.ownerId, root.sessionId);
     assert.equal(rows.find(row => row.pr === 'synthetic/active#2')?.state, tick >= 10 ? 'merged' : 'waiting_review');
     snapshots.push(rows);
   }
   const requests = readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   const graphql = requests.filter(row => !row.rest), cost = graphql.reduce((sum, row) => sum + row.cost, 0);
+  app.db.updateGlobalSettings({ neo: { packs: ['coding'] } });
+  const snapshot = await rpc('neo.snapshot');
+  const coding = (snapshot.packRows as { pack: string; rows: { pr: string; state: string }[] }[]).find(row => row.pack === 'coding');
+  assert(coding, 'Snapshot RPC must expose the coding ledger');
+  assert.equal(coding.rows.find(row => row.pr === 'synthetic/active#1')?.state, 'approved_green');
+  assert.equal(coding.rows.find(row => row.pr === 'synthetic/active#2')?.state, 'merged');
+  evidence.snapshot = snapshot;
   evidence.result = { graphqlReads: graphql.length, costPerHour: cost, restReads: requests.length - graphql.length, snapshots };
   if (mode !== 'baseline') {
     assert(cost < 60, `unchanged PRs still hydrated: ${cost} points`);
@@ -71,6 +90,6 @@ try {
   evidence.verified = true;
   console.log(JSON.stringify({ verified: true, graphqlReads: graphql.length, costPerHour: cost, restReads: requests.length - graphql.length }));
 } finally {
-  await app?.cleanup(); globalThis.fetch = network;
+  ws?.close(); await app?.cleanup(); globalThis.fetch = network;
   writeFileSync(join(run, 'evidence/slimming.json'), JSON.stringify(evidence, null, 2));
 }

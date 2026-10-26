@@ -53,7 +53,7 @@ export const CODING_LEDGER_SNAPSHOT_CLOSED_MS = 24 * 60 * 60_000;
 
 const log = new Logger('NeoCodingLedger');
 
-const Node = z.object({
+export const Node = z.object({
   number: z.number().int(),
   title: z.string(),
   headRefName: z.string(),
@@ -119,7 +119,7 @@ type Node = z.infer<typeof Node>;
 
 const Response = z.object({
   data: z.object({
-    rateLimit: z.object({ remaining: z.number() }),
+    rateLimit: z.object({ remaining: z.number().nullable() }),
     repository: z.object({
       nameWithOwner: z.string(),
       open: z.object({ pageInfo: z.object({ hasNextPage: z.boolean() }), nodes: z.array(Node) }),
@@ -209,7 +209,7 @@ export function planCodingLedgerRead(
   raw: unknown,
   now: number,
   readPolicy: (repo: string) => CodingMergePolicy = () => ({})
-): { repo: string; rows: CodingLedgerRow[]; remaining: number } | null {
+): { repo: string; rows: CodingLedgerRow[]; remaining: number | null } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
   const { open, done, nameWithOwner } = parsed.data.data.repository;

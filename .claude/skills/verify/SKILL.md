@@ -20,9 +20,13 @@ root of your worktree.
 - Model turns go to a local mock of the Anthropic API (`mock-api.ts`, the same
   server CI's dev-proxy mode uses) on port 8000. Give the isolated daemon the
   dev-proxy key over RPC (step 3 below), never through its environment.
-- GitHub is a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
+- GitHub is normally a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
+  When the user requests real quota measurement, `journeys/coding-ledger-live-cost.md`
+  defines the read-only public-metadata exception: a parent CLI bridge, fresh
+  daemon homes and no credentials passed to the daemon. Other journeys retain
+  the refusing stub and network isolation.
 
 ## Launch
 
