@@ -56,6 +56,21 @@ afterEach(() => {
 const settingsPath = () => join(root, '.claude/settings.local.json');
 const settings = () => JSON.parse(readFileSync(settingsPath(), 'utf8'));
 
+test('refreshing an installed profile leaves worker-controlled Git metadata alone', async () => {
+  await persistCodexWorkerProfile(root);
+  const outside = join(fixture, 'synthetic-host');
+  mkdirSync(outside);
+  const path = join(outside, 'exclude');
+  const original = 'synthetic host bytes\n';
+  writeFileSync(path, original);
+  rmSync(join(root, '.git/info'), { recursive: true });
+  symlinkSync(outside, join(root, '.git/info'));
+  await persistCodexWorkerProfile(root);
+  expect(readFileSync(path, 'utf8')).toBe(original);
+  const profile = parse(readFileSync(join(root, '.codex/config.toml'), 'utf8'));
+  expect(profile.permissions).toEqual(codexWorkerSandbox(root).config.permissions);
+});
+
 test('a Git exclude swapped after inspection cannot change host bytes', async () => {
   const path = join(root, '.git/info/exclude');
   writeFileSync(path, 'synthetic excludes\n');
