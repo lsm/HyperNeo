@@ -513,4 +513,10 @@ env -i HOME="$RATE_LIMIT_RETRY_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$RATE_LIMIT_RETRY_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-rate-limit-retry.ts" "$RATE_LIMIT_RETRY_RUN"
 
+PROVIDER_RPC_WRITES_RUN="$WORK_DIR/provider-rpc-writes"
+mkdir -p "$PROVIDER_RPC_WRITES_RUN/home"
+env -i HOME="$PROVIDER_RPC_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$PROVIDER_RPC_WRITES_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-provider-rpc-writes.ts" "$PROVIDER_RPC_WRITES_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

@@ -65,6 +65,10 @@ export class ProviderRepository {
     private reactiveDb: ReactiveDatabase
   ) {}
 
+  getDatabase(): BunDatabase {
+    return this.db;
+  }
+
   listProviders(): ProviderRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM providers ORDER BY sort_order ASC, created_at ASC`)
