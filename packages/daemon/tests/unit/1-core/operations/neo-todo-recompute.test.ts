@@ -184,19 +184,35 @@ describe('ordered ask progression from facts', () => {
     expect(f.starts).toHaveLength(1);
   });
 
-  test('restart completes the persisted handoff exactly once across repeated facts', async () => {
+  test('an unverified close advances the recorded next step without calling it done', async () => {
     const f = fixture();
-    f.add('first', 'done');
+    f.add('first');
     f.add('next');
-    f.restart();
-    await f.refresh();
-    await f.refresh();
-    f.restart();
-    await f.refresh();
+    await f.runner.recompute(f.store.getTodo('first')!, {
+      state: 'closed_unverified',
+      reason: 'Outcome not checked',
+    });
+    expect(f.store.getTodo('first')?.state).toBe('closed_unverified');
     expect(f.store.getTodo('next')?.state).toBe('doing');
     expect(f.starts).toHaveLength(1);
-    expect(f.store.getTodo('first')?.report).toBe('Retain these bytes 🦊');
   });
+
+  test.each(['done', 'closed_unverified'] as const)(
+    'restart completes a %s handoff exactly once across repeated facts',
+    async (state) => {
+      const f = fixture();
+      f.add('first', state);
+      f.add('next');
+      f.restart();
+      await f.refresh();
+      await f.refresh();
+      f.restart();
+      await f.refresh();
+      expect(f.store.getTodo('next')?.state).toBe('doing');
+      expect(f.starts).toHaveLength(1);
+      expect(f.store.getTodo('first')?.report).toBe('Retain these bytes 🦊');
+    }
+  );
 
   test.each(['failed', 'blocked'] as const)(
     '%s does not advance to a later todo',

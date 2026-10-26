@@ -86,6 +86,38 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('settling an ask preserves an unverified close instead of treating it as unfinished', async () => {
+    const h = setup();
+    const opened = await h.call(
+      'neo.ask.open',
+      {
+        title: 'Unverified delivery',
+        request: 'Close without a verified outcome',
+        todos: [{ title: 'Delivery', doneWhen: 'Result checked' }],
+      },
+      turn('m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    h.store.updateTodo(
+      opened.todos[0],
+      { state: 'closed_unverified', reason: 'Outcome not checked' },
+      2
+    );
+    const settled = await h.call(
+      'neo.ask.settle',
+      {
+        askId: opened.ask.id,
+        status: 'done',
+        outcome: 'Closed with verification still outstanding',
+      },
+      turn('m2')
+    );
+    expect(settled).toMatchObject({
+      ok: true,
+      todos: [{ state: 'closed_unverified', reason: 'Outcome not checked' }],
+    });
+  });
+
   test('records a settled discussion decision and links while execution stays open', async () => {
     const h = setup();
     const opened = await h.call(

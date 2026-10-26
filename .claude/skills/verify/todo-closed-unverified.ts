@@ -7,6 +7,8 @@ import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/oper
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { SettingsRepository } from '../../../packages/daemon/src/storage/repositories/settings-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -19,13 +21,21 @@ const sender = 'neo:10000000-0000-4000-8000-000000000002';
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
 let id = '';
+let starts = 0;
 try {
   for (const phase of ['initial', 'restart']) {
     const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
     try {
       await app.jobProcessor.stop();
       const db = app.db.getDatabase(), store = new NeoAskTodoRepository(db);
-      const registry = app.sessionManager.getOperationRegistry();
+      const production = app.sessionManager.getOperationRegistry();
+      const registry = createOperationRegistry(production.entries.map(op => op.name === 'work.start' ? {
+        ...op, execute: async () => {
+          starts++;
+          return { ok: true, value: { ref: { adapter: 'hyperneo', id: 'synthetic-next-worker' }, receipt: { executionId: 'synthetic-next-worker', inputId: 'synthetic-next-input' }, lastActivityAt: Date.now() } };
+        },
+      } : op));
+      app.sessionManager.setOperationRegistryProvider(() => registry);
       const handler = createOperationMcpHandler(() => registry, () => ({ sessionId: sender, role: 'neo' }));
       const invoke = async (name: string, input: unknown) => {
         const reply = await handler({ name, input });
@@ -41,13 +51,22 @@ try {
         new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
         const opened = await invoke('neo.ask.open', { title: 'Synthetic close proof', request: 'Close without claiming verified delivery', todos: [{ title: 'Unverified delivery', doneWhen: 'Result checked', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/proof/pull/1'] } } }] });
         id = opened.todos[0].id;
+        const next = store.addTodo('synthetic-next', opened.todos[0].askId, { title: 'Recorded next step', doneWhen: 'Result checked', check: null, instruction: 'Synthetic already-recorded plan step', named: null }, Date.now());
+        new NeoTodoSessionRepository(db).create(next.id, { verb: 'start', adapter: 'hyperneo' });
         const closed = await invoke('neo.todo.close', { todoId: id, reason: 'Stopping before delivery is verified' });
         assert.equal(closed.todo.state, 'closed_unverified');
+        assert.equal(store.getTodo(next.id)?.state, 'doing');
+        assert.equal(starts, 1);
         const followup = await invoke('neo.todo.add', {
           askId: closed.todo.askId, title: 'Verify the delivery', doneWhen: 'PR merged',
           check: closed.todo.check,
         });
         assert.equal(followup.todo.state, 'todo');
+        const terminal = await invoke('neo.ask.open', { title: 'Terminal unverified work', request: 'Preserve the unverified label when settling', todos: [{ title: 'Unverified terminal step', doneWhen: 'Result checked' }] });
+        await invoke('neo.todo.close', { todoId: terminal.todos[0].id, reason: 'Verification outstanding' });
+        await invoke('neo.ask.settle', { askId: terminal.ask.id, status: 'done', outcome: 'Closed with verification outstanding' });
+        const settled = await invoke('neo.ask.read', { askId: terminal.ask.id });
+        assert(JSON.stringify(settled).includes('Closed unverified'));
       }
       assert.equal(store.getTodo(id)?.state, 'closed_unverified');
       const snapshot = await invoke('neo.ask.read', { askId: store.getTodo(id)!.askId });
