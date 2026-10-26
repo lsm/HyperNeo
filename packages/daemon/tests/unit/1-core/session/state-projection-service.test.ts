@@ -16,6 +16,7 @@ import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Config } from '../../../../src/config';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { sessionProjectionReads } from '../../../../src/storage/repositories/session-projection-read';
 
 describe('StateProjectionService', () => {
   let service: StateProjectionService;
@@ -34,6 +35,18 @@ describe('StateProjectionService', () => {
       getActiveSessions: mock(() => 2),
       getTotalSessions: mock(() => 5),
       listSessions: mock(() => []),
+      getDatabase: () => ({
+        gateway: {
+          call: async (_op: unknown, method: string, ...args: unknown[]) =>
+            method === 'countHumanSessions'
+              ? 5
+              : Reflect.apply(
+                  sessionProjectionReads.Repository.prototype.snapshot,
+                  { listSessions: mockSessionManager.listSessions },
+                  args
+                ),
+        },
+      }),
       getSessionAsync: mock(async () => null),
       getSessionForControl: mock(async () => null),
     } as unknown as SessionManager;
