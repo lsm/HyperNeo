@@ -130,6 +130,23 @@ describe('Neo home save', () => {
       }
     }
   );
+  test('drops inherited aliases and protocol grants from the sanitized home Git config', async () => {
+    const config = join(fixture, 'gitconfig');
+    const marker = join(fixture, 'alias-ran-outside-home');
+    await git('config', '--file', config, 'alias.commit', `!printf executed > '${marker}'`);
+    await git('config', '--file', config, 'protocol.ext.allow', 'always');
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = config;
+    try {
+      const result = await save({ path: 'alias-free.md', content: 'Exact home bytes.' });
+      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+      expect(result.ok).toBe(true);
+      expect(await git('show', 'HEAD:alias-free.md')).toBe('Exact home bytes.');
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
   test.each(['file', 'parent'])(
     'does not write outside home after a %s symlink swap following validation',
     async (state) => {
