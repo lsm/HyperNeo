@@ -66,13 +66,6 @@ export function admitSessionInspection(input: Input, caller: OperationCaller): G
     : { reason: { accepted: false, reason: 'inspection_forbidden' } };
 }
 
-export function requireInspectionCaller(input: Input, caller: OperationCaller): Gate<Input> {
-  return (caller.source === 'rpc' && caller.principal === 'local') ||
-    (caller.source === 'mcp' && !!caller.sessionId)
-    ? { value: input }
-    : { reason: { accepted: false, reason: 'inspection_forbidden' } };
-}
-
 export function requireInspectionTarget(
   input: Input,
   row: SessionInspectionRecord | null
@@ -124,7 +117,6 @@ export function createSessionInspectionOperation(deps: SessionInspectionDependen
   )
     .input(['input', 'caller'])
     .pipe(admitSessionInspection, ['input', 'caller'], 'result:inspection')
-    .pipe(requireInspectionCaller, ['input', 'caller'], 'result:inspection')
     .pipe(
       (input: Input) => ({ row: deps.readSession(input.sessionId) ?? null }),
       'inspection',

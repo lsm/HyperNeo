@@ -4,7 +4,6 @@ import {
   admitSessionInspection,
   createSessionInspectionOperation,
   presentSessionInspection,
-  requireInspectionCaller,
   requireInspectionTarget,
   type SessionInspectionDependencies,
 } from '../../../../src/lib/inventory/session-inspection.ts';
@@ -76,10 +75,10 @@ describe('ordinary inspection pure gates', () => {
   });
   test('any local session is inspect-capable regardless of bindings', () => {
     const worker: OperationCaller = { source: 'mcp', role: 'workflow_worker', sessionId: 'w' };
-    expect(requireInspectionCaller(input, worker)).toEqual({ value: input });
-    expect(requireInspectionCaller(input, neo)).toEqual({ value: input });
-    expect(requireInspectionCaller(input, human)).toEqual({ value: input });
-    expect(requireInspectionCaller(input, { source: 'internal' })).toEqual({
+    expect(admitSessionInspection(input, worker)).toEqual({ value: input });
+    expect(admitSessionInspection(input, neo)).toEqual({ value: input });
+    expect(admitSessionInspection(input, human)).toEqual({ value: input });
+    expect(admitSessionInspection(input, { source: 'internal' })).toEqual({
       reason: { accepted: false, reason: 'inspection_forbidden' },
     });
   });
