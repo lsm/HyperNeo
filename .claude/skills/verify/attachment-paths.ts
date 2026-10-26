@@ -1,3 +1,6 @@
+import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { readFileSync } from 'node:fs';
 import { withArtifactDescriptor } from '../../../packages/daemon/src/lib/runtime-artifact-open.ts';
 import assert from 'node:assert/strict';
@@ -60,6 +63,21 @@ try {
   await mkdir(join(root, 'home/.ssh'));
   await writeFile(join(root, 'home/.codex/auth.json'), '{"synthetic":true}');
   await writeFile(join(root, 'home/.ssh/report.md'), '# Synthetic sensitive-directory sentinel');
+  const credentialStores = ['.claude.json', '.config/gh/hosts.yml', '.claude/projects/synthetic/session.jsonl', '.bash_history', '.zsh_history', 'Library/Application Support/Synthetic/Default/Cookies'];
+  const storeReplies: Reply[] = [];
+  for (const path of credentialStores) {
+    const file = join(root, 'home', path);
+    await mkdir(file.slice(0, file.lastIndexOf('/')), { recursive: true });
+    await writeFile(file, '{"synthetic":"not-a-credential"}\n');
+    storeReplies.push(await invoke('artifact.file.register', { ...input, path: file }));
+  }
+  const callerInput = { ...input, requestId: 'caller-retry', context: { kind: 'ask' as const, id: 'worker-card' } };
+  const humanReceipt = await invoke('artifact.file.register', callerInput);
+  const operation = createArtifactRegistration(() => daemon.db.getDatabase(), join(root, 'data'), join(root, 'home'));
+  const workerRetry = await invokeOperation(createOperationRegistry([operation]), 'artifact.file.register', callerInput, { source: 'mcp', role: 'neo', sessionId: 'neo:10000000-0000-4000-8000-000000008120' });
+  Object.assign(evidence, { credentialStores, storeReplies, humanReceipt, workerRetry });
+  for (const reply of storeReplies) assert.deepEqual(reply, { accepted: false, reason: 'sensitive_path' });
+  assert.deepEqual(workerRetry, { kind: 'completed', value: humanReceipt });
   const refusals: unknown[] = [];
   for (const path of ['.env', '.ssh/id_ed25519', '.codex/auth.json', '.codex/config.toml', 'credentials.json', 'private.key', 'secrets.txt']) {
     const reply = await invoke('artifact.file.register', { ...input, path: join(root, 'home', path) });

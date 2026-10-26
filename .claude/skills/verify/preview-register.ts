@@ -87,6 +87,20 @@ assert.equal((await register({ ...input, path: 'elsewhere.md' }, { source: 'mcp'
 const last = await register({ ...input, path: 'elsewhere.md' }, { source: 'rpc', principal: 'local' });
 assert.equal(last.accepted, true);
 
+const callerStable = await register({ ...input, requestId: 'caller-stable', path: 'elsewhere.md' });
+const callerRetry = await register({ ...input, requestId: 'caller-stable', path: 'elsewhere.md' }, { source: 'mcp', role: 'neo', sessionId: 'neo' });
+const credentialStores = ['.claude.json', '.config/gh/hosts.yml', '.claude/projects/synthetic/session.jsonl', '.bash_history', '.zsh_history', 'Library/Application Support/Synthetic/Default/Cookies'];
+const storeReplies: unknown[] = [];
+for (const path of credentialStores) {
+  const file = join(root, 'home', path);
+  mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true });
+  writeFileSync(file, '{"synthetic":"not-a-credential"}\n');
+  storeReplies.push(await register({ ...input, path: file }));
+}
+mkdirSync(join(root, 'evidence'), { recursive: true });
+writeFileSync(join(root, 'evidence/review-findings.json'), JSON.stringify({ callerStable, callerRetry, credentialStores, storeReplies }, null, 2));
+for (const reply of storeReplies) assert.deepEqual(reply, { accepted: false, reason: 'sensitive_path' });
+assert.deepEqual(callerRetry, callerStable);
 for (const scope of ['global', 'room', 'space'] as const) {
   assert(!getScopeConfig(scope).some((entry) => entry.tableName.startsWith('artifact_file')));
 }
