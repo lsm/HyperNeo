@@ -80,7 +80,7 @@ export class NeoHomeRepository {
       },
       dirname(this.root)
     );
-    if (command.failure) {
+    if ('failure' in command && command.failure) {
       const { code, error } = command.failure;
       if (!allowFailure) throw new Error(`home ${args.join(' ')}: ${error}`);
       return { code, bytes: Buffer.alloc(0), text: '', error };
