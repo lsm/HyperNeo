@@ -50,7 +50,6 @@ const clear = () => {
 clear();
 seed({
   verbatim: true,
-  shortText: 'A collapsed preview must not appear.',
   fullText: content,
 });
 seed({

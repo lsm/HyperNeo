@@ -27,9 +27,9 @@ export type GoalRejectionReason = (typeof GOAL_REJECTION_REASONS)[number];
 export type GoalAccess = 'read' | 'mutate' | 'owner';
 
 const GOAL_ACCESS_ROLE_LISTS: Record<GoalAccess, readonly OperationCallerRole[]> = {
-  read: ['long_term_agent', 'neo'],
-  mutate: ['long_term_agent', 'neo'],
-  owner: ['long_term_agent', 'neo'],
+  read: ['long_term_agent', 'neo', 'workflow_worker', 'direct_task_worker'],
+  mutate: ['long_term_agent', 'neo', 'workflow_worker', 'direct_task_worker'],
+  owner: ['long_term_agent', 'neo', 'workflow_worker', 'direct_task_worker'],
 };
 
 export const GOAL_READ_POLICY = {

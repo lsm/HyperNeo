@@ -25,6 +25,15 @@ no override retains its default. Neo preferences still clamp 1 to 10 and 101 to
 100, reject non-integers, preserve the setting across reopening, and expose the
 same preference/snapshot API used by the Settings page in #8121.
 
+The proof also checks that a percentage never crosses models (#9027): saving a
+preference whose new primary has no entry while the session is busy keeps the
+running model's own percentage until the switch lands, and once it lands the
+session takes the new model's entry — its metadata default when the entry has no
+percentage — with no pending value left behind. The per-model entry lookup
+itself (a model not in the preference list gets the model default, never the
+primary's percentage) is covered by the unit contracts in
+`tests/unit/1-core/operations/neo-model-preference.test.ts`.
+
 Read `evidence/observed.json` and `evidence/rpc.log` for the actual RPC results,
 and `evidence/unit.log` for the contracts. This proof checks the daemon boundary;
 it does not claim a browser rendering check. Rerun the separate

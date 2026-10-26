@@ -10,19 +10,19 @@ export async function verifyCleanupWriteBoundary(run: string) {
   const clone = join(fixture, 'clone');
   mkdirSync(join(clone, '.git'), { recursive: true });
   const env = await prepareWorkerSandbox(clone);
-  const runtime = join(env.TMPDIR, '..');
+  const runtime = env.TMPDIR;
   mkdirSync(join(env.TMPDIR, 'swap'));
   const outside = join(fixture, 'outside');
   mkdirSync(join(outside, 'child'), { recursive: true, mode: 0o755 });
   try {
     const args = await workerRuntimeCleanupCommand(runtime);
     args[args.indexOf('/bin/sh') + 2] = `
-[ -d "$1/tmp/swap" ] || exit 1
-/bin/mv "$1/tmp/swap" "$1/cache/moved" || exit 1
-/bin/ln -s "$3" "$1/tmp/swap" || exit 1
-/bin/chmod 700 "$1/tmp/swap"
+[ -d "$1/swap" ] || exit 1
+/bin/mv "$1/swap" "$1/cache/moved" || exit 1
+/bin/ln -s "$3" "$1/swap" || exit 1
+/bin/chmod 700 "$1/swap"
 outer=$?
-/bin/chmod 700 "$1/tmp/swap/child"
+/bin/chmod 700 "$1/swap/child"
 inner=$?
 printf inside > "$1/inside"
 printf '%s,%s' "$outer" "$inner" > "$1/outside-status"

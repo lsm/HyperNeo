@@ -175,7 +175,7 @@ export function neoQuoteExcerpt(text: string): string {
 export function neoPublicationQuoteExcerpt(
   publication: Pick<NeoPublication, 'shortText' | 'fullText'>
 ): string {
-  return neoReplyExcerpt(publication.shortText || publication.fullText);
+  return neoReplyExcerpt(publication.shortText ?? publication.fullText);
 }
 
 export function neoDraftPayload(submission: Submission, thumbnails: readonly NeoThumbnail[] = []) {

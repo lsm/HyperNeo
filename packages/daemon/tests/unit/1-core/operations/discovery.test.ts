@@ -299,6 +299,26 @@ describe('operationSignature', () => {
     );
   });
 
+  test('preserves required fields of top-level variants in compact call shapes', () => {
+    const inputSchema = z.discriminatedUnion('kind', [
+      z.object({ askId: z.string(), kind: z.literal('choice'), options: z.array(z.string()) }),
+      z.object({ askId: z.string(), kind: z.literal('reply'), text: z.string().optional() }),
+    ]);
+    expect(operationSignature({ name: 'neo.question.ask', inputSchema }, true)).toBe(
+      'neo.question.ask {askId}&({kind:"choice",options:string[]}|{kind:"reply",text?})'
+    );
+    expect(operationSignature({ name: 'neo.question.ask', inputSchema })).toBe(
+      'neo.question.ask {askId: string, kind: "choice", options: string[]}|{askId: string, kind: "reply", text?: string}'
+    );
+  });
+
+  test('keeps unions inside array parentheses', () => {
+    const inputSchema = z.object({ items: z.array(z.union([z.string(), z.number()])) });
+    expect(operationSignature({ name: 'demo.array', inputSchema })).toBe(
+      'demo.array {items: (string|number)[]}'
+    );
+  });
+
   test('spells out nested object fields with their types', () => {
     const inputSchema = z.object({
       items: z.array(z.object({ text: z.string(), watch: z.array(z.string()).optional() })),

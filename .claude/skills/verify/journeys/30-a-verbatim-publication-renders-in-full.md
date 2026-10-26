@@ -21,9 +21,8 @@ with zero `more` controls and no details block, while the control bubble keeps
 its `more` button and hides the table until expanded. Evidence: a full-page
 screenshot plus `verbatim-publication.json`.
 
-Until the server slice (#9034) lets `neo.publication.publish` omit `shortText`,
-the seeded verbatim row carries a short text alongside the flag (rendering must
-ignore it); the omitted-shortText parse path is covered by
-`publication-client.test.tsx` and the flag's storage round-trip by
-`neo-publications.test.ts`. Copy behavior is asserted in
+The verbatim row carries no short text, matching the #9034 contract; the parse
+boundary and the flag's storage round-trip are covered by
+`publication-client.test.tsx` and `neo-publications.test.ts`. Copy behavior is
+asserted in
 `NeoPublicConversation.test.tsx`; the browser proof covers rendering only.

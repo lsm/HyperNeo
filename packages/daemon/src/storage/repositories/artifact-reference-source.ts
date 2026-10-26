@@ -67,7 +67,9 @@ export class ArtifactReferenceSourceRepository {
           : [];
       return version
         ? {
-            text: [version.shortText, version.fullText],
+            text: [version.shortText, version.fullText].filter(
+              (part): part is string => part !== undefined
+            ),
             contexts,
           }
         : null;

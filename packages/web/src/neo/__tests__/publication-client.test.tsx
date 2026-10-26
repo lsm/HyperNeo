@@ -106,6 +106,37 @@ describe('authored publication client', () => {
     });
   });
 
+  it('reads a verbatim reply with one text field and refuses a split reply without one', async () => {
+    const { shortText: _dropped, ...verbatim } = item();
+    const row = { ...verbatim, verbatim: true };
+    expect(
+      await readNeoPublications(
+        page,
+        transport({ ok: true, conversationId, items: [row], nextAfter: 1 }).getHub,
+        current
+      )
+    ).toEqual({ state: 'ready', items: [row], nextAfter: 1 });
+    expect(
+      await readNeoPublications(
+        page,
+        transport({ ok: true, conversationId, items: [verbatim], nextAfter: 1 }).getHub,
+        current
+      )
+    ).toMatchObject({ state: 'unavailable' });
+    expect(
+      await readNeoPublications(
+        page,
+        transport({
+          ok: true,
+          conversationId,
+          items: [{ ...item(), verbatim: true }],
+          nextAfter: 1,
+        }).getHub,
+        current
+      )
+    ).toMatchObject({ state: 'unavailable' });
+  });
+
   it('preserves explicit human references and refuses malformed references', async () => {
     const authored = { ...item(), replyTo: [foreignId] };
     expect(
@@ -210,14 +241,18 @@ describe('authored publication client', () => {
     expect(await readNeoPublications(page, io.getHub, current)).toEqual({ state: 'unavailable' });
   });
 
-  it('parses a verbatim row without a short text', async () => {
+  it('parses a verbatim row without a short text and refuses one carrying it', async () => {
     const row = { ...item(), verbatim: true, shortText: undefined };
     const io = transport(response([row]));
     const result = await readNeoPublications(page, io.getHub, current);
     expect(result).toMatchObject({
       state: 'ready',
-      items: [{ verbatim: true, shortText: '', fullText: row.fullText }],
+      items: [{ verbatim: true, fullText: row.fullText }],
       nextAfter: 1,
+    });
+    const mixed = transport(response([{ ...item(), verbatim: true }]));
+    expect(await readNeoPublications(page, mixed.getHub, current)).toEqual({
+      state: 'unavailable',
     });
   });
 

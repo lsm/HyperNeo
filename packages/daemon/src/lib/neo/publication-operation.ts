@@ -5,14 +5,18 @@ import type {
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
-import { NeoPublicationSchema, NeoPublicationResultSchema } from './publication.ts';
+import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
+import {
+  NeoPublicationObject,
+  NeoPublicationResultSchema,
+  publicationTextRule,
+} from './publication.ts';
 
-const Draft = NeoPublicationSchema.omit({
+const Draft = NeoPublicationObject.omit({
   conversationId: true,
   publicationId: true,
   askOrigin: true,
@@ -25,7 +29,9 @@ const Draft = NeoPublicationSchema.omit({
   languageMismatch: true,
   revisionId: true,
   revisions: true,
-}).extend({ requestId: z.string().min(1).max(160) });
+})
+  .extend({ requestId: z.string().min(1).max(160) })
+  .superRefine(publicationTextRule);
 type Draft = z.infer<typeof Draft>;
 type Rejection = { accepted: false; reason: string; detail?: string };
 type Receipt = NeoPublicationAppendResult | Rejection;
@@ -156,7 +162,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Optional replyTo lists the received human message ids this publication answers; omit it to leave inputs unanswered. Unknown, foreign, queued and non-human reply ids are omitted. Non-project and unavailable links are omitted, including work and consultation links. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; omit it to leave inputs unanswered. Unknown, foreign, queued and non-human reply ids are omitted. Non-project and unavailable links are omitted, including work and consultation links. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,

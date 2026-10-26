@@ -2218,6 +2218,7 @@ describe('QueryOptionsBuilder', () => {
               'WebFetch',
               'Bash',
               'mcp__hyperneo-operations__invoke',
+              'mcp__fetch-mcp',
               'Bash(sleep:*)',
             ]);
             expect(options.permissionMode).toBe('dontAsk');
@@ -2523,7 +2524,7 @@ describe('QueryOptionsBuilder', () => {
         mockSession.config.permissionMode = 'plan';
         expect((await builder.build()).permissionMode).toBe('plan');
       } finally {
-        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+        rmSync(workerSandboxPaths(root).TMPDIR, { recursive: true, force: true });
       }
     });
 
