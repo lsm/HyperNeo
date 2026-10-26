@@ -160,11 +160,19 @@ describe('readGithubPrs', () => {
     const spawn = (args: string[]) => {
       asked.push(args);
       const ok = args[2] === 'view' && args[3].endsWith('/42');
+      const api =
+        args[1] === 'api'
+          ? String(args.find((arg) => arg.startsWith('repos/')) ?? '').includes('check-runs')
+            ? [{ check_runs: [] }]
+            : [{ statuses: [] }]
+          : null;
       return {
-        stdout: new Response(ok ? JSON.stringify(ghPr()) : args[1] === 'api' ? '{}' : '').body,
+        stdout: new Response(
+          ok ? JSON.stringify(ghPr()) : api ? JSON.stringify(api) : ''
+        ).body,
         stderr: new Response(ok ? '' : 'not found').body,
-        exited: Promise.resolve(ok || args[1] === 'api' ? 0 : 1),
-        exitCode: ok || args[1] === 'api' ? 0 : 1,
+        exited: Promise.resolve(ok || api ? 0 : 1),
+        exitCode: ok || api ? 0 : 1,
         kill: () => {},
       };
     };
@@ -225,7 +233,14 @@ describe('readGithubPrs REST check rollup', () => {
   test('asks for CI on REST check-runs and combined status, not GraphQL statusCheckRollup', async () => {
     const { spawn, asked } = rollupSpawn(ghPr(), (path) =>
       path.includes('check-runs')
-        ? [{ check_runs: [{ status: 'completed', conclusion: 'success' }, { status: 'completed', conclusion: 'skipped' }] }]
+        ? [
+            {
+              check_runs: [
+                { status: 'completed', conclusion: 'success' },
+                { status: 'completed', conclusion: 'skipped' },
+              ],
+            },
+          ]
         : [{ statuses: [{ state: 'success' }] }]
     );
     const read = await readGithubPrs([url], spawn as never);
@@ -252,19 +267,26 @@ describe('readGithubPrs REST check rollup', () => {
     expect((await readGithubPrs([url], spawn as never))?.[0]?.checks).toBe('failing');
   });
 
-  test('skips the REST rollup for a settled pull request', async () => {
-    const { spawn, asked } = rollupSpawn(ghPr({ state: 'MERGED', mergedAt: '2026-10-25T00:00:00Z' }));
+  test('reads the REST rollup for a settled pull request too', async () => {
+    const { spawn, asked } = rollupSpawn(
+      ghPr({ state: 'MERGED', mergedAt: '2026-10-25T00:00:00Z' }),
+      (path) =>
+        path.includes('check-runs')
+          ? [{ check_runs: [{ status: 'completed', conclusion: 'success' }] }]
+          : [{ statuses: [] }]
+    );
     const read = await readGithubPrs([url], spawn as never);
     expect(read?.[0]?.state).toBe('MERGED');
-    expect(read?.[0]?.checks).toBe('none');
-    expect(asked.some((args) => args[2]?.includes('/commits/'))).toBe(false);
+    expect(read?.[0]?.checks).toBe('passing');
+    expect(
+      asked.some((args) => args.some((arg) => typeof arg === 'string' && arg.includes('/commits/')))
+    ).toBe(true);
   });
 
-  test('keeps reading when the REST rollup is unavailable', async () => {
+  test('fails the read when the REST rollup is unavailable, keeping the stored value', async () => {
     const { spawn } = rollupSpawn(ghPr(), () => null);
     const read = await readGithubPrs([url], spawn as never);
-    expect(read?.[0]?.checks).toBe('none');
-    expect(read?.[0]?.head).toBe(head);
+    expect(read).toBe(null);
   });
 
   test('follows check-runs pagination to a failure past the first page', async () => {
@@ -419,6 +441,9 @@ describe('readGithubPrs blockers', () => {
           mergeStateStatus: 'BLOCKED',
           headRefOid: '1bad987',
         });
+      const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
+      if (path.includes('/check-runs')) return [{ check_runs: [] }];
+      if (path.endsWith('/status')) return [{ statuses: [] }];
       if (args[2] === 'graphql')
         return {
           data: {

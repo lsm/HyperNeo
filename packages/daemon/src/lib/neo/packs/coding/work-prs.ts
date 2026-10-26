@@ -241,12 +241,12 @@ async function readCheckRollup(
   url: string,
   raw: Record<string, unknown>,
   spawnImpl: SpawnFn
-): Promise<GhCheck[]> {
-  if (raw.state !== 'OPEN' || typeof raw.headRefOid !== 'string' || !raw.headRefOid) return [];
+): Promise<GhCheck[] | null> {
   const meta = parsePrUrl(url);
-  if (!meta) return [];
+  if (!meta || typeof raw.headRefOid !== 'string' || !raw.headRefOid) return null;
   const base = `repos/${meta.owner}/${meta.repo}/commits/${raw.headRefOid}`;
   const rollup: GhCheck[] = [];
+  let sourced = false;
   const runs = await gh(
     [
       'gh',
@@ -261,13 +261,15 @@ async function readCheckRollup(
     'core'
   );
   const parsedRuns = runs.ok ? CheckRunsSchema.safeParse(runs.data) : null;
-  if (parsedRuns?.success)
+  if (parsedRuns?.success) {
+    sourced = true;
     for (const page of parsedRuns.data)
       for (const run of page.check_runs)
         rollup.push({
           status: run.status ? run.status.toUpperCase() : null,
           conclusion: run.conclusion ? run.conclusion.toUpperCase() : null,
         });
+  }
   const statuses = await gh(
     [
       'gh',
@@ -282,10 +284,12 @@ async function readCheckRollup(
     'core'
   );
   const parsedStatuses = statuses.ok ? CombinedStatusSchema.safeParse(statuses.data) : null;
-  if (parsedStatuses?.success)
+  if (parsedStatuses?.success) {
+    sourced = true;
     for (const page of parsedStatuses.data)
       for (const status of page.statuses) rollup.push({ state: status.state.toUpperCase() });
-  return rollup;
+  }
+  return sourced ? rollup : null;
 }
 
 async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
@@ -337,7 +341,9 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
       );
       if (!outcome.ok) return { raw: null };
       const raw = { ...(outcome.data as Record<string, unknown>) };
-      raw.statusCheckRollup = await readCheckRollup(url, raw, spawnImpl);
+      const rollup = await readCheckRollup(url, raw, spawnImpl);
+      if (rollup === null) return { raw: null };
+      raw.statusCheckRollup = rollup;
       return { raw };
     },
     ['url', 'spawnImpl'],

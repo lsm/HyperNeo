@@ -50,6 +50,10 @@ if (args[0] === 'api' && args[1].startsWith(`repos/${repo}/pulls?`)) {
   family = 'deploy-ancestry'; body = { status: 'ahead' };
 } else if (args[0] === 'api' && args.some(arg => arg.includes('/rules/branches/'))) {
   family = 'work-rules'; body = [{ type: 'pull_request', parameters: { required_review_thread_resolution: true } }];
+} else if (args[0] === 'api' && args.some(arg => arg.includes('/commits/') && arg.includes('/check-runs'))) {
+  family = 'work-ci'; body = [{ check_runs: [{ status: 'completed', conclusion: 'success' }] }];
+} else if (args[0] === 'api' && args.some(arg => arg.includes('/commits/') && arg.includes('/status?'))) {
+  family = 'work-ci'; body = [{ statuses: [] }];
 } else {
   process.stderr.write('unsupported synthetic request'); process.exit(2);
 }
