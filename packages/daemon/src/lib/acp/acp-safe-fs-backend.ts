@@ -42,6 +42,7 @@ interface LibcSymbols {
 }
 
 interface SafeFsBackend {
+  library: ReturnType<BunFfiModule['dlopen']>;
   atFdcwd: number;
   symbols: LibcSymbols;
   errno: () => number;
@@ -189,8 +190,10 @@ async function loadSafeFsBackend(allowDeno = false): Promise<SafeFsBackend> {
 
     for (const candidate of candidates) {
       try {
-        const symbols = ffi.dlopen(candidate, definitions).symbols;
+        const library = ffi.dlopen(candidate, definitions);
+        const { symbols } = library;
         return {
+          library,
           atFdcwd: process.platform === 'darwin' ? -2 : -100,
           symbols,
           errno: () =>
