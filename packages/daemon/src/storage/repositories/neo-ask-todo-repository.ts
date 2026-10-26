@@ -67,6 +67,11 @@ const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo,
   origin_message_id AS originMessageId, title, request, status, outcome, focused_session_json AS focusedSessionJson,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
+const ASK_ATTENTION = `(status = 'open'
+  OR EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
+    AND t.state NOT IN ('done', 'removed'))
+  OR EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open'))`;
+
 type AskRow = Omit<NeoAsk, 'focusedSession'> & { focusedSessionJson: string | null };
 const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
   ...row,
@@ -255,16 +260,34 @@ export class NeoAskTodoRepository {
     >;
   }
 
-  snapshot(projectId: string | null | undefined, limit: number) {
-    const asks = this.listAsks(projectId, limit);
+  snapshot(
+    projectId: string | null | undefined,
+    limit: number,
+    work = false,
+    before?: { updatedAt: number; id: string }
+  ) {
+    const asks = this.listAsks(projectId, limit, work, before);
     const ids = asks.map((ask) => ask.id);
     const todos = this.listTodosForAsks(ids);
+    const questions = this.listQuestionsForAsks(ids);
+    const attention = new Set([
+      ...todos
+        .filter((todo) => !['done', 'removed'].includes(todo.state))
+        .map((todo) => todo.askId),
+      ...questions
+        .filter((question) => question.state === 'open')
+        .map((question) => question.askId),
+    ]);
+    const last = asks.filter((ask) => ask.status !== 'open' && !attention.has(ask.id)).at(-1);
+    const unlisted = this.countAsks(projectId) - asks.length;
     return {
       asks,
-      unlisted: this.countAsks(projectId) - asks.length,
+      unlisted,
+      historyCursor:
+        work && unlisted > 0 && last ? { updatedAt: last.updatedAt, id: last.id } : null,
       facts: {
         todos,
-        questions: this.listQuestionsForAsks(ids),
+        questions,
         links: new NeoTodoSessionRepository(this.db).readLinksForTodos(
           todos.map((todo) => todo.id)
         ),
@@ -470,14 +493,31 @@ export class NeoAskTodoRepository {
     return foundAsk(this.db.prepare(`${ASK_SELECT} WHERE id = ?`).get(id) as AskRow | null);
   }
 
-  listAsks(projectId: string | null | undefined, limit: number): NeoAsk[] {
+  listAsks(
+    projectId: string | null | undefined,
+    limit: number,
+    work = false,
+    before?: { updatedAt: number; id: string }
+  ): NeoAsk[] {
+    const window = work
+      ? `(?6 = 1 AND ${ASK_ATTENTION}) OR id IN (
+          SELECT id FROM neo_asks WHERE (?1 = 0 OR project_id IS ?2) AND NOT ${ASK_ATTENTION}
+            AND (?4 IS NULL OR (updated_at, id) < (?4, ?5))
+          ORDER BY updated_at DESC, id DESC LIMIT ?3)`
+      : `id IN (SELECT id FROM neo_asks WHERE (?1 = 0 OR project_id IS ?2)
+          ORDER BY status = 'open' DESC, updated_at DESC LIMIT ?3)`;
     return (
       this.db
         .prepare(
-          `${ASK_SELECT} WHERE (?1 = 0 OR project_id IS ?2)
-          ORDER BY status = 'open' DESC, updated_at DESC LIMIT ?3`
+          `${ASK_SELECT} WHERE (?1 = 0 OR project_id IS ?2) AND (${window})
+          ORDER BY status = 'open' DESC, updated_at DESC, id DESC`
         )
-        .all(projectId === undefined ? 0 : 1, projectId ?? null, limit) as AskRow[]
+        .all(
+          projectId === undefined ? 0 : 1,
+          projectId ?? null,
+          limit,
+          ...(work ? [before?.updatedAt ?? null, before?.id ?? null, before ? 0 : 1] : [])
+        ) as AskRow[]
     ).map(toAsk);
   }
 

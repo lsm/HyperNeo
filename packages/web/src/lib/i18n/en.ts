@@ -121,6 +121,8 @@ export const en = {
   'live.group.attention': 'Needs your attention',
   'live.group.running': 'In progress',
   'live.group.outcomes': 'Recent outcomes',
+  'live.showOlder': 'Show older outcomes',
+  'live.loadingOlder': 'Loading older outcomes…',
   'live.drop.title': 'Drop photos or files here',
   'live.drop.hint': 'Added to this conversation. Review before sending.',
   'live.menu': 'Settings and connection',
