@@ -180,6 +180,27 @@ describe('Neo publication ledger', () => {
     expect(repo.list(input.conversationId)).toEqual([]);
   });
 
+  test('a verbatim publication is admitted, stored and listed without a short text', () => {
+    const { shortText: _shortText, ...rest } = input;
+    const verbatim = { ...rest, verbatim: true as const };
+    const admitted = admitNeoPublication(verbatim);
+    if (!('value' in admitted)) throw new Error('verbatim publication rejected');
+    expect(admitted.value.verbatim).toBe(true);
+    expect(admitted.value.shortText).toBeUndefined();
+    expect(repo.append(verbatim)).toMatchObject({ accepted: true });
+    const listed = repo
+      .list(input.conversationId)
+      .find((row) => row.publicationId === input.publicationId);
+    expect(listed?.verbatim).toBe(true);
+    expect(listed?.shortText).toBeUndefined();
+    expect(admitNeoPublication({ ...input, verbatim: true })).toEqual({
+      reason: 'invalid_publication',
+    });
+    expect(admitNeoPublication({ ...input, verbatim: 'yes' })).toEqual({
+      reason: 'invalid_publication',
+    });
+  });
+
   test('maximum bounds, Unicode, authored whitespace and link ordering are preserved', () => {
     const bounded = {
       ...input,

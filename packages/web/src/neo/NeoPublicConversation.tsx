@@ -442,7 +442,7 @@ function PublicEntry({
   const [restoring, setRestoring] = useState(false);
   const short = publication?.shortText?.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
-  const hasDetails = !!short && !!full && full !== short;
+  const hasDetails = !!short && !!full && full !== short && publication?.verbatim !== true;
   const copyText = ask ? publicAskText(ask.content) : full || short;
   const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
   const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;

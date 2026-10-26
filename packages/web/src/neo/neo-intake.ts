@@ -1,14 +1,14 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
-import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
-import { readNeoPreviewReference } from './neo-preview-context.ts';
+import { generateUUID } from '@hyperneo/shared';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import { neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 import { neoIntakeSnapshots } from './neo-intake-snapshot.ts';
 import { createNeoIntakeStorage } from './neo-intake-storage.ts';
+import { readNeoPreviewReference } from './neo-preview-context.ts';
 export const NEO_SEND_TIMEOUT_MS = 90_000;
 
 export type NeoQuote = {
