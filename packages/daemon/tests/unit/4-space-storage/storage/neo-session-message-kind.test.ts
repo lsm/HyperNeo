@@ -1,19 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { runMigration411 } from '../../../../src/storage/schema/m411-neo-session-messages.ts';
-import { runMigration459 } from '../../../../src/storage/schema/m459-neo-session-message-kind.ts';
-import { createTestDb } from '../../../helpers/database';
+import { planNeoSessionMessage } from '../../../../src/lib/neo/session-messages';
 import {
   NeoSessionMessageRepository,
   WORKER_BATCH_SENDER,
 } from '../../../../src/storage/repositories/neo-session-message-repository';
-import { planNeoSessionMessage } from '../../../../src/lib/neo/session-messages';
+import { runMigration411 } from '../../../../src/storage/schema/m411-neo-session-messages.ts';
+import { runMigration460 } from '../../../../src/storage/schema/m460-neo-session-message-kind.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { createTestDb } from '../../../helpers/database';
 
 const root = 'neo:10000000-0000-4000-8000-000000008799';
 const conversationId = root.slice(4);
 const at = '2026-10-25T12:00:00.000Z';
 
-describe('runMigration459', () => {
+describe('runMigration460', () => {
   const kinds = (db: Database) =>
     db
       .prepare('SELECT message_id AS id, kind FROM neo_session_messages ORDER BY message_id')
@@ -28,8 +28,8 @@ describe('runMigration459', () => {
     );
     insert.run(conversationId, 'batch', WORKER_BATCH_SENDER, root, 'System-forwarded bundle', at);
     insert.run(conversationId, 'note', root, 'session:worker', 'Rebase on dev', at);
-    runMigration459(db);
-    runMigration459(db);
+    runMigration460(db);
+    runMigration460(db);
     expect(kinds(db)).toEqual([
       { id: 'batch', kind: 'worker-batch' },
       { id: 'note', kind: 'session' },
@@ -54,7 +54,13 @@ describe('neo session message kind', () => {
       kind: 'worker-batch',
     });
     const sent = planNeoSessionMessage(
-      { messageId: 'note', fromSession: root, toSession: 'session:worker', text: 'Rebase', at: 0 },
+      {
+        messageId: 'note',
+        fromSession: root,
+        toSession: 'session:worker',
+        text: 'Rebase',
+        at: Date.parse('2026-10-25T12:00:01.000Z'),
+      },
       { sessionId: root, conversationId },
       () => null
     );

@@ -139,6 +139,7 @@ const SnapshotOk = z.object({
         toName: z.string().nullable(),
         text: z.string(),
         createdAt: z.string(),
+        kind: z.enum(['session', 'worker-batch']),
       })
     )
     .max(NEO_SESSION_MESSAGES_SHOWN)

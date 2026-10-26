@@ -105,7 +105,9 @@ it.each(['small', 'large'])(
       conversation.entries.flatMap((entry) =>
         entry.kind === 'session' ? [entry.message.messageId] : []
       )
-    ).toEqual(messages.filter((message) => message.kind !== 'worker-batch').map((m) => m.messageId));
+    ).toEqual(
+      messages.filter((message) => message.kind !== 'worker-batch').map((m) => m.messageId)
+    );
     const first = render(<NeoPublicConversation conversation={conversation} />);
     expect(first.container.textContent).not.toContain('System-forwarded worker messages');
     expect(first.container.textContent).not.toContain('worker note 00');
@@ -117,13 +119,13 @@ it.each(['small', 'large'])(
         ...first.container.querySelectorAll<HTMLDetailsElement>('details[data-public-entry]'),
       ].find(
         (row) =>
-          row.getAttribute('data-public-entry') === JSON.stringify([page.conversationId, 'session', 'note'])
+          row.getAttribute('data-public-entry') ===
+          JSON.stringify([page.conversationId, 'session', 'note'])
       );
       expect(note).toBeDefined();
       expect(note!.textContent).toContain('Rebase on dev, then tell me.');
     }
-    if (run)
-      await evidence.write(run, `evidence/rendered-${size}.html`, first.container.innerHTML);
+    if (run) await evidence.write(run, `evidence/rendered-${size}.html`, first.container.innerHTML);
     first.unmount();
     const reopened = render(<NeoPublicConversation conversation={conversation} />);
     expect(await screen.findByText(new RegExp(`Human ${size}:`))).toBeTruthy();

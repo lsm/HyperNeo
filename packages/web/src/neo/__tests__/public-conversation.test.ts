@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { describe, expect, it } from 'vitest';
 import {
   admitNeoPublicSources,
   neoPublicationAnswerOrigins,
