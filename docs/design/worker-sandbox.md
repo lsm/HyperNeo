@@ -125,6 +125,9 @@ toolchains remain readable. Section 3 deliberately denies all of `.config`;
 tools needing those configurations must use explicit session grants later.
 Startup requires confirmed profile provenance; queue admission requires the
 profile catalog to recognize and allow it before changing settings or sending.
+Home `.env`/`.env.*` and PEM/key filename patterns are denied too. Codex uses
+the engine's depth-16 bounded glob snapshot on Linux; future matching files and
+deeper paths require a fresh sandbox or explicit credential-directory rules.
 Claude persists matching Bash `denyRead` and native `Read` denies, including on
 legacy resume and sibling refresh. Covered paths include section 3's tool-auth
 locations, engine auth files and shell profiles, with configured engine-home

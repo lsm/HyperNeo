@@ -1,6 +1,6 @@
 import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { getDataDir } from '../data-dir.ts';
-import { secretHomePaths } from '../neo/secret-read-rules.ts';
+import { secretHomePaths, secretNamePatterns } from '../neo/secret-read-rules.ts';
 import { parse, stringify } from 'smol-toml';
 import { simpleGit } from 'simple-git';
 import type { CodexAppServer } from './codex-app-server.ts';
@@ -101,11 +101,13 @@ export function codexWorkerSandbox(root: string) {
         'hyperneo-worker': {
           filesystem: {
             ':root': 'read',
+            glob_scan_max_depth: 16,
             ...Object.fromEntries(writableRoots.map((path) => [path, 'write'])),
             ...Object.fromEntries(
               ['.agents', '.codex', '.aws'].map((path) => [join(root, path), 'read'])
             ),
             ...Object.fromEntries(workerSecretPaths().map((path) => [path, 'deny'])),
+            ...Object.fromEntries(secretNamePatterns(homedir()).map((path) => [path, 'deny'])),
           },
           network: { enabled: true },
         },

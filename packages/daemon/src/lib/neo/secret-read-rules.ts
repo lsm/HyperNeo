@@ -35,6 +35,10 @@ export function secretHomePaths(home: string): string[] {
   return [...SECRET_DIRS, ...SECRET_FILES].map((path) => join(home, path));
 }
 
+export function secretNamePatterns(home: string): string[] {
+  return SECRET_NAMES.flatMap((name) => [join(home, name), join(home, '**', name)]);
+}
+
 export function neoSecretReadRules(): string[] {
   return [
     ...SECRET_DIRS.map((dir) => `~/${dir}/**`),

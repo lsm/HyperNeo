@@ -53,7 +53,7 @@ const settings = () => JSON.parse(readFileSync(settingsPath(), 'utf8'));
 test('Codex selected profile denies synthetic credentials and permits repository reads', () => {
   const launch = codexWorkerSandbox(root) as unknown as {
     permissions: string;
-    config: { permissions: Record<string, { filesystem: Record<string, string> }> };
+    config: { permissions: Record<string, { filesystem: Record<string, unknown> }> };
   };
   const fs = launch.config.permissions[launch.permissions].filesystem;
   expect(fs[join(fixture, 'home/.ssh')]).toBe('deny');

@@ -1,6 +1,8 @@
 import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { homedir } from 'node:os';
+import { secretNamePatterns } from '../neo/secret-read-rules.ts';
 import { prepareWorkerSandbox, workerSandboxPaths, workerSecretPaths } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
@@ -20,7 +22,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       allowUnsandboxedCommands: false,
       excludedCommands: [],
       filesystem: {
-        denyRead: workerSecretPaths(),
+        denyRead: [...workerSecretPaths(), ...secretNamePatterns(homedir())],
         allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
         denyWrite: [
           ...roots,
@@ -40,6 +42,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
     permissions: {
       allow: [editRule(root, true)],
       deny: [
+        ...secretNamePatterns(homedir()).map((path) => `Read(/${path})`),
         ...workerSecretPaths().flatMap((path) => [
           editRule(path).replace(/^Edit\(/, 'Read('),
           editRule(path, true).replace(/^Edit\(/, 'Read('),
@@ -147,15 +150,14 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   const existing = await readFile(settingsPath(directory), 'utf8')
     .then(JSON.parse)
     .catch(() => ({}));
+  const before = JSON.stringify(existing);
   if (!existing?.env || !existing?.sandbox) {
     Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
-    await writePolicy(directory, { ...computed, ...existing });
   }
   if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
-    await writePolicy(directory, { ...computed, ...existing });
   }
   const upgraded = withSecretDenials(computed, existing);
-  await writePolicy(directory, upgraded);
+  if (before !== JSON.stringify(upgraded)) await writePolicy(directory, upgraded);
   return upgraded;
 }
