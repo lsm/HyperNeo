@@ -1018,6 +1018,29 @@ describe('AgentSession', () => {
       return commit;
     }
 
+    function attachRetryWriter(release: () => Promise<boolean> = async () => true) {
+      const raw = {} as SqliteDatabase;
+      const commit = mock(release);
+      bindGateway(raw, {
+        run: async (op, input) => {
+          expect(op.name).toBe('jobs.releaseRateLimitDeliveries');
+          expect(input).toEqual({ sessionId: 'test-session-id' });
+          return commit();
+        },
+      } as unknown as DbGateway);
+      mockDb.getDatabase = () => raw;
+      return commit;
+    }
+
+    function armRetry() {
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        resumePersistedCooldown: mock(() => {}),
+        retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
+        getPersistedEpisodeMessageUuid: () => 'msg-episode',
+      } as never;
+    }
+
     beforeEach(() => {
       mockSession = {
         id: 'test-session-id',
@@ -1468,164 +1491,65 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
     });
 
-    it('retryNowAfterRateLimit releases the parked delivery for a persisted episode', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      const cancel = mock(() => {});
-      const retryNow = mock(() => true);
-      const capturedUuids: Array<string | null> = [];
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: cancel,
-        retryNow,
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => {
-          capturedUuids.push(cancel.mock.calls.length === 0 ? 'msg-persisted-episode' : null);
-          return capturedUuids[capturedUuids.length - 1] ?? null;
-        },
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(retryNow).not.toHaveBeenCalled();
-      expect(capturedUuids[0]).toBe('msg-persisted-episode');
-      expect(rescheduleDelivery).toHaveBeenCalledWith(
-        'test-session-id',
-        'msg-persisted-episode',
-        expect.any(Number)
-      );
-    });
-
-    it('retryNowAfterRateLimit releases the episode delivery directly', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(rescheduleDelivery).toHaveBeenCalledWith(
-        'test-session-id',
-        'msg-episode',
-        expect.any(Number)
-      );
+    it('retryNowAfterRateLimit commits the persisted episode release through the writer', async () => {
+      const commit = attachRetryWriter();
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(true);
+      expect(commit).toHaveBeenCalledTimes(1);
     });
 
     it('retryNowAfterRateLimit clears the persisted cooldown before releasing', async () => {
       const order: string[] = [];
-      const rescheduleDelivery = mock(() => {
-        order.push('reschedule');
+      const commit = attachRetryWriter(async () => {
+        order.push('release');
         return true;
       });
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      let processingState = JSON.stringify({
-        status: 'rate_limit_cooldown',
-        retryAt: Date.now() + 60_000,
-        messageId: 'msg-persisted-episode',
-      });
-      mockDb.getSession = mock(
-        () =>
-          ({
-            id: 'test-session-id',
-            get processingState() {
-              return processingState;
-            },
-          }) as never
-      );
-      const originalUpdateSession = mockDb.updateSession as ReturnType<typeof mock>;
-      (mockDb.updateSession as ReturnType<typeof mock>) = mock((...args: unknown[]) => {
+      let processingState = JSON.stringify({ status: 'rate_limit_cooldown' });
+      mockDb.getSession = mock(() => ({ processingState }) as never);
+      const update = mockDb.updateSession as ReturnType<typeof mock>;
+      mockDb.updateSession = mock((...args: unknown[]) => {
         order.push('persist-idle');
-        const result = originalUpdateSession(...args);
         processingState = JSON.stringify({ status: 'idle' });
-        return result;
-      });
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
-        processingState: JSON.stringify({ status: 'idle' }),
-      });
-      expect(order).toEqual(['persist-idle', 'reschedule']);
-    });
-
-    it('retryNowAfterRateLimit releases the active delivery for a legacy persisted cooldown', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            rescheduleDelivery,
-            getActiveDeliveryMessageUuid: mock(() => 'msg-active'),
-          }) as never
-      );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => null,
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(rescheduleDelivery).toHaveBeenCalledWith(
-        'test-session-id',
-        'msg-active',
-        expect.any(Number)
-      );
+        return update(...args);
+      }) as never;
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(true);
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['persist-idle', 'release']);
     });
 
     it('retryNowAfterRateLimit refuses to release when the cooldown row survives', async () => {
-      const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
+      const commit = attachRetryWriter();
       mockDb.getSession = mock(
         () =>
           ({
-            id: 'test-session-id',
-            processingState: JSON.stringify({
-              status: 'rate_limit_cooldown',
-              retryAt: Date.now() + 60_000,
-              messageId: 'msg-persisted-episode',
-            }),
+            processingState: JSON.stringify({ status: 'rate_limit_cooldown' }),
           }) as never
       );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(false);
-      expect(rescheduleDelivery).not.toHaveBeenCalled();
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(false);
+      expect(commit).not.toHaveBeenCalled();
     });
 
     it('retryNowAfterRateLimit reports failure when the parked delivery is gone', async () => {
-      const rescheduleDelivery = mock(() => false);
-      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
+      const commit = attachRetryWriter(async () => false);
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(false);
+      expect(commit).toHaveBeenCalledTimes(1);
+    });
 
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(false);
+    it('retryNowAfterRateLimit rejects a writer fault without a main-connection release', async () => {
+      const commit = attachRetryWriter(async () => {
+        throw new Error('writer unavailable');
+      });
+      const inline = mock(() => {
+        throw new Error('main release forbidden');
+      });
+      mockDb.getJobQueueRepo = mock(() => ({ rescheduleSessionDeliveries: inline }) as never);
+      armRetry();
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(false);
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(inline).not.toHaveBeenCalled();
     });
 
     it('startStreamingQuery refuses to start an archived session', async () => {
@@ -1749,48 +1673,16 @@ describe('AgentSession', () => {
       });
     });
 
-    it('retryNowAfterRateLimit reports failure when the session-wide release misses', async () => {
-      const rescheduleSessionDeliveries = mock(() => false);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            rescheduleSessionDeliveries,
-          }) as never
-      );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(false);
-    });
-
-    it('retryNowAfterRateLimit releases every parked delivery for the session', async () => {
-      const rescheduleSessionDeliveries = mock(() => true);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            rescheduleSessionDeliveries,
-          }) as never
-      );
-      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        resumePersistedCooldown: mock(() => {}),
-        retryNow: mock(() => true),
-        isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
-      } as never;
-
-      const resumed = await agentSession.retryNowAfterRateLimit();
-
-      expect(resumed).toBe(true);
-      expect(rescheduleSessionDeliveries).toHaveBeenCalledWith(
-        'test-session-id',
-        expect.any(Number)
-      );
+    it('retryNowAfterRateLimit releases the session even without an episode UUID', async () => {
+      const commit = attachRetryWriter();
+      armRetry();
+      (
+        agentSession as unknown as {
+          rateLimitWatchdog: { getPersistedEpisodeMessageUuid: () => null };
+        }
+      ).rateLimitWatchdog.getPersistedEpisodeMessageUuid = () => null;
+      expect(await agentSession.retryNowAfterRateLimit()).toBe(true);
+      expect(commit).toHaveBeenCalledTimes(1);
     });
 
     it('driveDeliveryTurn completes once a fresh admission acknowledgment resolves', async () => {

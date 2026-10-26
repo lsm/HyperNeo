@@ -157,3 +157,17 @@ empty recovery fallback or replacement ID. Pre-existing overflow stays visible;
 only explicit durable discard or authoritative ledger settlement may free a slot.
 The activation rung must add failing-before-fix tests for the transport/storage
 gate and failed-write/removal recovery before it is wired into the application.
+
+Storage port Build checks additionally require `intakeSnapshotStorage` and
+`intakeSnapshotStorageRestartReplay`. Save the actual pending projection through
+the scoped port with injected synthetic Storage, read it through a fresh adapter,
+refuse a stale writer and manually replay the loaded exact request. Repeat the
+read/manual replay after the owned daemon restarts; one SDK message/job remains.
+This is actual port/codec/RPC behavior using synthetic storage, not real-browser
+durability, resource hydration or application persistence activation.
+
+Focused port cases distinguish absence from denied/corrupt reads, retain raw
+revisions for later explicit recovery, bind scope and generation, refuse stale/ABA
+writes, and confirm read-back before reporting success. Quota/ambiguous writes
+cannot silently switch to a memory outbox or remove the previous record first.
+Default sessionStorage access stays deferred until the port is explicitly used.
