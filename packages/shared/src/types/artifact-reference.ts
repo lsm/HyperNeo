@@ -74,7 +74,7 @@ export function previewReferenceCandidates(text: string): PreviewReferenceCandid
       return;
     }
     if (node.type === 'inlineCode') {
-      add(node.value ?? '', false);
+      add(node.value ?? '', true);
       return;
     }
     if (node.type === 'text') {
