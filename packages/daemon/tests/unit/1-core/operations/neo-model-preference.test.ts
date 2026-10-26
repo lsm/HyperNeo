@@ -4,6 +4,7 @@ import { getSessionContextModelInfo, setModelsCache } from '../../../../src/lib/
 import {
   clampNeoThinking,
   effectiveNeoPreference,
+  neoCompactPercentFor,
   planNeoAlignment,
   requireNeoPreferenceModel,
 } from '../../../../src/lib/neo/model-preference.ts';
@@ -155,6 +156,36 @@ describe('planNeoAlignment', () => {
   });
 });
 
+describe('neoCompactPercentFor', () => {
+  const preferences = {
+    model: 'flash',
+    provider: 'deepseek',
+    thinkingLevel: 'off' as const,
+    fallbacks: [
+      { model: 'opus', provider: 'anthropic', thinkingLevel: 'off', autoCompactPercent: 35 },
+    ],
+  };
+
+  test('gives the running model its own entry', () => {
+    expect(neoCompactPercentFor(preferences, { model: 'opus', provider: 'anthropic' })).toBe(35);
+    expect(neoCompactPercentFor(preferences, { model: 'flash', provider: 'deepseek' })).toBe(
+      undefined
+    );
+  });
+
+  test('gives a model without an entry the model default, never another model entry', () => {
+    expect(neoCompactPercentFor(preferences, { model: 'unlisted', provider: 'glm' })).toBe(
+      undefined
+    );
+    expect(
+      neoCompactPercentFor(
+        { ...preferences, autoCompactPercent: 70 },
+        { model: 'unlisted', provider: 'glm' }
+      )
+    ).toBe(undefined);
+  });
+});
+
 describe('neo.preferences.set', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: ReturnType<typeof createNeoService>;
@@ -166,6 +197,7 @@ describe('neo.preferences.set', () => {
   let busy: boolean;
   let events: InternalEventBus<DaemonInternalEventMap>;
   let switchFailure: 'refused' | 'throws' | 'pending' | undefined;
+  let pendingFor: { sessionId: string; percent: number | null } | undefined;
 
   beforeEach(async () => {
     db = await createTestDb();
@@ -182,6 +214,7 @@ describe('neo.preferences.set', () => {
     recovering = false;
     busy = false;
     switchFailure = undefined;
+    pendingFor = undefined;
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
         isLimitRecoveryPending: () => false,
@@ -192,6 +225,9 @@ describe('neo.preferences.set', () => {
         getRateLimitWatchdogState: () => ({
           lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
         }),
+        updateMetadata: (updates: Partial<Session>) => {
+          db.updateSession(sessionId, updates);
+        },
         requestModelSwitch: async (model: string, provider: string) => {
           switched.push([sessionId, model, provider]);
           if (switchFailure === 'pending')
@@ -216,6 +252,18 @@ describe('neo.preferences.set', () => {
       }),
       updateSession: async (sessionId: string, updates: Partial<Session>) => {
         updated.push([sessionId, updates]);
+        if (busy && updates.config && 'autoCompactPercent' in updates.config) {
+          const { autoCompactPercent, ...rest } = updates.config;
+          pendingFor = { sessionId, percent: autoCompactPercent ?? null };
+          db.updateSession(sessionId, {
+            config: rest,
+            metadata: {
+              ...db.getSession(sessionId)!.metadata,
+              pendingAutoCompactPercent: autoCompactPercent ?? null,
+            },
+          });
+          return;
+        }
         db.updateSession(sessionId, updates);
       },
       createSession: async (params: unknown) => {
@@ -230,6 +278,21 @@ describe('neo.preferences.set', () => {
       events
     );
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+    events.subscribe(
+      'session.updated',
+      ({ sessionId, processingState }) => {
+        if (processingState?.status !== 'idle' || pendingFor?.sessionId !== sessionId) return;
+        const session = db.getSession(sessionId);
+        if (!session) return;
+        const { sessionId: _id, percent } = pendingFor;
+        pendingFor = undefined;
+        db.updateSession(sessionId, {
+          config: { ...session.config, autoCompactPercent: percent ?? undefined },
+          metadata: { ...session.metadata, pendingAutoCompactPercent: undefined },
+        });
+      },
+      { subscriberName: 'test-idle-percent-flush' }
+    );
   });
   afterEach(() => {
     service.dispose();
@@ -461,8 +524,47 @@ describe('neo.preferences.set', () => {
     await service.saveModelPreference(db.getGlobalSettings().neo!.preferences!);
     expect(db.getSession('neo:root')?.config).toMatchObject({
       model: 'deepseek-v4-flash',
-      autoCompactPercent: 70,
+      autoCompactPercent: 100,
     });
+  });
+
+  test('a mid-run switch to a model without an entry drops the old percent at once', async () => {
+    await invoke('neo.preferences.set', {
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
+      thinkingLevel: 'off',
+      fallbacks: [
+        {
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'off',
+          autoCompactPercent: 35,
+        },
+      ],
+    });
+    db.updateSession('neo:root', {
+      config: {
+        ...db.getSession('neo:root')!.config,
+        model: 'claude-opus',
+        provider: 'anthropic',
+        autoCompactPercent: 35,
+      },
+    });
+    busy = true;
+    const config = {
+      ...db.getSession('neo:root')!.config,
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek' as const,
+    };
+    db.updateSession('neo:root', { config });
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      source: 'model-switch',
+      session: { config },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(undefined);
+    expect(db.getSession('neo:root')?.metadata.pendingAutoCompactPercent).toBe(undefined);
+    busy = false;
   });
 
   test('a mid-run switch to a fallback gives the Neo session that model percentage', async () => {
