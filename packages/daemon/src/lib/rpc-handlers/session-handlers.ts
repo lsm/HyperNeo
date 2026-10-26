@@ -809,7 +809,7 @@ export function setupSessionHandlers(
       let didRefresh = forceRefresh;
 
       if (forceRefresh) {
-        await refreshModels(undefined, { forceRemote: true });
+        await refreshModels(undefined, { forceRemote: true, allowPartial: true });
       }
 
       let availableModels = getAvailableModels('global');
@@ -860,7 +860,17 @@ export function setupSessionHandlers(
         }
       }
 
+      const { getAllProviderFailures } = await import('../providers/provider-failure-store.js');
+      const failures = getAllProviderFailures().filter((failure) =>
+        getProviderRegistry().has(failure.providerId)
+      );
+      const unavailable = new Set(failures.map((failure) => failure.providerId));
       return {
+        unavailableProviders: failures.map(({ providerId, errorKind }) => ({
+          providerId,
+          errorKind,
+          available: false,
+        })),
         models: availableModels.map((m) => ({
           id: m.id,
           display_name: m.name,
@@ -871,7 +881,7 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
-          available: m.available !== false,
+          available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),
         cached: !didRefresh && availableModels.length > 0,

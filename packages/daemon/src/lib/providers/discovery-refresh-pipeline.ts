@@ -2,6 +2,8 @@ import type { ProviderCredentials } from '@hyperneo/shared/provider';
 
 const LAST_GOOD_DISCOVERY_KEY = 'discoveredModels';
 
+export const PROVIDER_MODEL_LOAD_TIMEOUT_MS = 30_000;
+
 export function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
