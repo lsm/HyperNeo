@@ -191,7 +191,9 @@ function requiredChecks(rules: readonly BranchRule[]): RequiredCheck[] {
               {
                 context: check.context,
                 integrationId:
-                  typeof check.integration_id === 'number' ? check.integration_id : null,
+                  typeof check.integration_id === 'number' && check.integration_id >= 0
+                    ? check.integration_id
+                    : null,
               },
             ];
           return [];
