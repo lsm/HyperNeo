@@ -59,3 +59,18 @@ Keep Git's required escaping for quotes/backslashes; subsection whitespace must
 remain literal. Inspect `neo-home-config-drivers.json`. Operation contracts also
 exercise the real conflict-question/answer/save path. This command proof does
 not establish daemon RPC startup or native SDK sandbox enforcement.
+
+For legacy Git configuration bytes, run the shared wrapper with
+`.claude/skills/verify/neo-home-config-bytes.ts` under Bun and pinned Deno.
+Its synthetic profiles use a Latin-1 identity, an explicit commit encoding and
+a filter name containing a non-UTF-8 byte. The raw commit author header must
+match the original bytes in global, system, local and included command settings.
+A UTF-8 identity supplied through command configuration must remain UTF-8, and no
+selected raw filter name may execute its outside-home marker. Inspect the recorded hex
+prefixes in `neo-home-config-bytes.json`.
+
+Command settings and driver overrides live in a protected command-scope include
+file so their bytes do not pass through UTF-8-only environment strings. Repeat the existing driver
+and URL-rewrite proof too: local identity precedence, executable isolation and
+ordinary UTF-8 settings must survive that transport. These are real Git command
+proofs; the separate daemon RPC journey still requires its isolated launch.

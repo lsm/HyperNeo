@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
@@ -54,7 +55,7 @@ export async function spawnHomeCommand(args: string[], options: SpawnOptions, di
     stderr: 'pipe',
   });
   const [output, error, code] = await Promise.all([
-    new Response(probe.stdout).text(),
+    new Response(probe.stdout).arrayBuffer().then((bytes) => Buffer.from(bytes).toString('latin1')),
     new Response(probe.stderr).text(),
     probe.exited,
   ]);
@@ -87,7 +88,13 @@ export async function spawnHomeCommand(args: string[], options: SpawnOptions, di
   const dispose = () => rm(temporary, { recursive: true, force: true });
   try {
     const path = join(temporary, 'config');
-    await writeFile(path, configuration, { mode: 0o600 });
+    const overrides = join(temporary, 'drivers');
+    await writeFile(path, Buffer.from(configuration, 'latin1'), { mode: 0o600 });
+    await writeFile(
+      overrides,
+      Buffer.from(command.map(([key, value]) => configurationEntry(key, value)).join(''), 'latin1'),
+      { mode: 0o600 }
+    );
     const child = spawnProcess(args, {
       ...options,
       env: {
@@ -96,13 +103,9 @@ export async function spawnHomeCommand(args: string[], options: SpawnOptions, di
         GIT_CONFIG_SYSTEM: '/dev/null',
         GIT_CONFIG_GLOBAL: path,
         GIT_CONFIG_PARAMETERS: '',
-        GIT_CONFIG_COUNT: String(command.length),
-        ...Object.fromEntries(
-          command.flatMap(([key, value], index) => [
-            [`GIT_CONFIG_KEY_${index}`, key],
-            [`GIT_CONFIG_VALUE_${index}`, value],
-          ])
-        ),
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'include.path',
+        GIT_CONFIG_VALUE_0: overrides,
       },
     });
     return { child, dispose };
