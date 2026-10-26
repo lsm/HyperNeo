@@ -97,6 +97,38 @@ describe('session operation MCP attachment', () => {
     }
   });
 
+  test('refreshes cached call shapes when the resolved caller role changes', async () => {
+    const record = createTestSession('changing-role');
+    await db.createSession(record);
+    const session = await restore(record.id);
+    session.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'neo.snapshot',
+          description: 'Read a snapshot',
+          inputSchema: z.object({}),
+          resultSchema: z.unknown(),
+          execute: async () => null,
+        }),
+      ])
+    );
+    const initial = operationInvokeTool(session.getOperationMcpServer()).description;
+    expect(initial).not.toContain('Core input shapes:');
+    session.setCallerScopeResolver(() => ({ role: 'neo' }));
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
+      'neo.snapshot'
+    );
+    let role: 'neo' | undefined;
+    session.setCallerScopeResolver(() => ({ role }));
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
+    role = 'neo';
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
+      'neo.snapshot'
+    );
+    role = undefined;
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
+  });
+
   test('manager provider adoption reaches cached, restored, new and registered session servers', async () => {
     const manager = new SessionManager(
       db,
