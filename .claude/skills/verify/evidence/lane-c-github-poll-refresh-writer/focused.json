@@ -1,9 +1,9 @@
 {
-  "ciRunnerPasses": 40,
+  "ciRunnerPasses": 44,
   "ciRunnerFailures": 0,
   "files": 3,
-  "refreshWriterCases": 13,
-  "productionChangedLines": 73,
+  "refreshWriterCases": 17,
+  "productionChangedLines": 92,
   "authorizedCoreCompanionReplacements": 3,
   "transactionalDeleteAndAdmissionRollback": true,
   "legacyPendingDeletionLimit": 100,
@@ -17,6 +17,12 @@
   "actualAppSubscriptionRetryVerified": true,
   "syntheticProviderGateUsed": true,
   "providerAuthenticationVerified": false,
-  "admissionErrorsLoggedAndRethrown": true,
-  "automaticReplayAfterFailure": false
+  "manualAdmissionErrorsLoggedAndRethrown": true,
+  "manualRefreshAutomaticReplay": false,
+  "startupResolvesDegraded": true,
+  "startupRetryOnNextPollTick": true,
+  "startupImmediateReplay": false,
+  "startupRetryCancelledOnStop": true,
+  "startupUnknownReceiptRechecksJob": true,
+  "generalStartupCleanupIssue": 8956
 }

@@ -1,0 +1,83 @@
+{
+  "syntheticAuthGate": true,
+  "providerDiscoveryStubbed": true,
+  "startResolved": true,
+  "degradedAtStartup": true,
+  "retryDelay": 120000,
+  "initial": [],
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 372,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "admitted": [
+    {
+      "id": "098777a0-6137-4913-a90b-c328a2eb9edf",
+      "queue": "github.poll",
+      "status": "pending",
+      "payload": {},
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1793003589746,
+      "createdAt": 1793003589746,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "degradedAfterTick": false,
+  "attempts": 2,
+  "warnings": [
+    "GitHub polling refresh persistence failed Error: synthetic startup admission rejected"
+  ],
+  "completed": {
+    "id": "098777a0-6137-4913-a90b-c328a2eb9edf",
+    "queue": "github.poll",
+    "status": "completed",
+    "payload": {},
+    "result": {
+      "polled": true,
+      "nextRunAt": 1793003709760
+    },
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1793003589746,
+    "createdAt": 1793003589746,
+    "startedAt": 1793003589759,
+    "heartbeatAt": null,
+    "completedAt": 1793003589760,
+    "claimToken": "3d97c75c-0928-4c8c-800b-4b99893418f4"
+  },
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 386,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 0
+}

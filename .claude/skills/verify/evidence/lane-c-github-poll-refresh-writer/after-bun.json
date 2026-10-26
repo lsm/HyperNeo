@@ -8,7 +8,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 336,
+    "uptime": 341,
     "sessions": {
       "active": 0,
       "total": 0
@@ -16,7 +16,7 @@
   },
   "initial": [
     {
-      "id": "57f2e066-539d-4020-ac1a-d83ec683f653",
+      "id": "cc490f6c-02dd-4e5b-a421-921d4f360f35",
       "queue": "github.poll",
       "status": "pending",
       "payload": {},
@@ -25,8 +25,8 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792999424708,
-      "createdAt": 1792999424709,
+      "runAt": 1793003606500,
+      "createdAt": 1793003606501,
       "startedAt": null,
       "heartbeatAt": null,
       "completedAt": null,
@@ -35,24 +35,24 @@
   ],
   "claimed": 1,
   "completed": {
-    "id": "57f2e066-539d-4020-ac1a-d83ec683f653",
+    "id": "cc490f6c-02dd-4e5b-a421-921d4f360f35",
     "queue": "github.poll",
     "status": "completed",
     "payload": {},
     "result": {
       "polled": true,
-      "nextRunAt": 1792999544711
+      "nextRunAt": 1793003726504
     },
     "error": null,
     "priority": 0,
     "maxRetries": 3,
     "retryCount": 0,
-    "runAt": 1792999424708,
-    "createdAt": 1792999424709,
-    "startedAt": 1792999424710,
+    "runAt": 1793003606500,
+    "createdAt": 1793003606501,
+    "startedAt": 1793003606503,
     "heartbeatAt": null,
-    "completedAt": 1792999424711,
-    "claimToken": "87d2a9fd-67ea-4de6-b809-212b40e751b2"
+    "completedAt": 1793003606504,
+    "claimToken": "38643cee-8a55-4d64-9afc-fe12f988015d"
   },
   "reschedule": {
     "success": true,
@@ -160,33 +160,33 @@
       "toolSelectionDefaults": {
         "version": 1,
         "choices": {
-          "mcp:ff6e9874-2992-435a-a6e5-dbf24d1db349": {
+          "mcp:6a20dfea-6054-4d7b-855f-9a853c2b6a5a": {
             "selected": true,
             "aliases": [
               "fetch-mcp"
             ]
           },
-          "mcp:87b2d975-131d-41db-bfda-43087a669410": {
+          "mcp:64963b6f-37da-4aa9-ac09-5a15b2dee0b8": {
             "selected": false,
             "aliases": [
               "chrome-devtools-mcp"
             ]
           },
-          "mcp:37766356-017c-4af2-8fa8-ecae9023dc64": {
+          "mcp:95f6ff9f-5ce7-4fc1-9c8f-99254651873e": {
             "selected": false,
             "aliases": [
               "chrome-devtools-user-mcp"
             ]
           },
-          "skill:6b9b7bf3-4ed3-4722-868b-c5b018b78384": {
+          "skill:56380a0d-bb9e-4248-9d40-595eb75e6b40": {
             "selected": true,
             "aliases": []
           },
-          "skill:4b7acd66-709e-4e3f-a4de-bb3c801b5bff": {
+          "skill:74d75a5a-54ed-4204-bc7c-4a75e07f184f": {
             "selected": true,
             "aliases": []
           },
-          "skill:fc3d6913-5a41-48e2-b2d8-e0a51af1a656": {
+          "skill:898dafc3-f28f-4f25-a706-42a2abcc05b4": {
             "selected": true,
             "aliases": []
           }
@@ -300,33 +300,33 @@
       "toolSelectionDefaults": {
         "version": 1,
         "choices": {
-          "mcp:ff6e9874-2992-435a-a6e5-dbf24d1db349": {
+          "mcp:6a20dfea-6054-4d7b-855f-9a853c2b6a5a": {
             "selected": true,
             "aliases": [
               "fetch-mcp"
             ]
           },
-          "mcp:87b2d975-131d-41db-bfda-43087a669410": {
+          "mcp:64963b6f-37da-4aa9-ac09-5a15b2dee0b8": {
             "selected": false,
             "aliases": [
               "chrome-devtools-mcp"
             ]
           },
-          "mcp:37766356-017c-4af2-8fa8-ecae9023dc64": {
+          "mcp:95f6ff9f-5ce7-4fc1-9c8f-99254651873e": {
             "selected": false,
             "aliases": [
               "chrome-devtools-user-mcp"
             ]
           },
-          "skill:6b9b7bf3-4ed3-4722-868b-c5b018b78384": {
+          "skill:56380a0d-bb9e-4248-9d40-595eb75e6b40": {
             "selected": true,
             "aliases": []
           },
-          "skill:4b7acd66-709e-4e3f-a4de-bb3c801b5bff": {
+          "skill:74d75a5a-54ed-4204-bc7c-4a75e07f184f": {
             "selected": true,
             "aliases": []
           },
-          "skill:fc3d6913-5a41-48e2-b2d8-e0a51af1a656": {
+          "skill:898dafc3-f28f-4f25-a706-42a2abcc05b4": {
             "selected": true,
             "aliases": []
           }
@@ -440,33 +440,33 @@
       "toolSelectionDefaults": {
         "version": 1,
         "choices": {
-          "mcp:ff6e9874-2992-435a-a6e5-dbf24d1db349": {
+          "mcp:6a20dfea-6054-4d7b-855f-9a853c2b6a5a": {
             "selected": true,
             "aliases": [
               "fetch-mcp"
             ]
           },
-          "mcp:87b2d975-131d-41db-bfda-43087a669410": {
+          "mcp:64963b6f-37da-4aa9-ac09-5a15b2dee0b8": {
             "selected": false,
             "aliases": [
               "chrome-devtools-mcp"
             ]
           },
-          "mcp:37766356-017c-4af2-8fa8-ecae9023dc64": {
+          "mcp:95f6ff9f-5ce7-4fc1-9c8f-99254651873e": {
             "selected": false,
             "aliases": [
               "chrome-devtools-user-mcp"
             ]
           },
-          "skill:6b9b7bf3-4ed3-4722-868b-c5b018b78384": {
+          "skill:56380a0d-bb9e-4248-9d40-595eb75e6b40": {
             "selected": true,
             "aliases": []
           },
-          "skill:4b7acd66-709e-4e3f-a4de-bb3c801b5bff": {
+          "skill:74d75a5a-54ed-4204-bc7c-4a75e07f184f": {
             "selected": true,
             "aliases": []
           },
-          "skill:fc3d6913-5a41-48e2-b2d8-e0a51af1a656": {
+          "skill:898dafc3-f28f-4f25-a706-42a2abcc05b4": {
             "selected": true,
             "aliases": []
           }
@@ -477,7 +477,7 @@
   "processingLeaseRetained": true,
   "jobs": [
     {
-      "id": "4588cf1a-a6e9-4d17-a994-cd2dbaf80973",
+      "id": "e635c210-1f9c-4ef1-8e19-e581df6d4c98",
       "queue": "github.poll",
       "status": "processing",
       "payload": {},
@@ -486,32 +486,32 @@
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792999424724,
-      "createdAt": 1792999424725,
-      "startedAt": 1792999424726,
-      "heartbeatAt": 1792999424726,
+      "runAt": 1793003606517,
+      "createdAt": 1793003606517,
+      "startedAt": 1793003606519,
+      "heartbeatAt": 1793003606519,
       "completedAt": null,
-      "claimToken": "a8519316-6261-464a-b3e5-d96b19b3fcee"
+      "claimToken": "62d03388-b213-4220-8170-f9804626a855"
     },
     {
-      "id": "57f2e066-539d-4020-ac1a-d83ec683f653",
+      "id": "cc490f6c-02dd-4e5b-a421-921d4f360f35",
       "queue": "github.poll",
       "status": "completed",
       "payload": {},
       "result": {
         "polled": true,
-        "nextRunAt": 1792999544711
+        "nextRunAt": 1793003726504
       },
       "error": null,
       "priority": 0,
       "maxRetries": 3,
       "retryCount": 0,
-      "runAt": 1792999424708,
-      "createdAt": 1792999424709,
-      "startedAt": 1792999424710,
+      "runAt": 1793003606500,
+      "createdAt": 1793003606501,
+      "startedAt": 1793003606503,
       "heartbeatAt": null,
-      "completedAt": 1792999424711,
-      "claimToken": "87d2a9fd-67ea-4de6-b809-212b40e751b2"
+      "completedAt": 1793003606504,
+      "claimToken": "38643cee-8a55-4d64-9afc-fe12f988015d"
     }
   ],
   "healthAfter": {
@@ -523,7 +523,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 380,
+    "uptime": 385,
     "sessions": {
       "active": 0,
       "total": 0
