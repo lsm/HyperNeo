@@ -44,6 +44,22 @@ afterEach(() => {
   db.close();
 });
 const snapshot = (input: unknown = {}) => invokeOperation(registry, 'neo.snapshot', input, caller);
+test('Work cards defer full todo bodies until the card is opened', async () => {
+  const value = read(await snapshot());
+  const todo = value.todoAsks
+    .flatMap((entry) => entry.todos)
+    .find((item) => item.id === 'todo-230')!;
+  expect(todo.instruction).toBeNull();
+  expect(todo.report).toBeNull();
+  const detail = await invokeOperation(registry, 'neo.ask.read', { todoId: todo.id }, caller);
+  expect(detail.kind).toBe('completed');
+  if (detail.kind !== 'completed') throw new Error(detail.message);
+  expect(
+    (
+      detail.value as { entry: { todos: (typeof value.todoAsks)[number]['todos'] } }
+    ).entry.todos.find((item) => item.id === todo.id)?.instruction
+  ).toBe('x'.repeat(1155));
+});
 function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
   expect(outcome.kind).toBe('completed');
   if (outcome.kind !== 'completed') throw new Error(outcome.message);
