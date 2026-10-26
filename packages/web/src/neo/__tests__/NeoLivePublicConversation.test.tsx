@@ -566,7 +566,11 @@ describe('NeoLive durable conversation activation', () => {
             settledAt: Date.parse(reply.createdAt),
             summary: 'Ready.',
             additions: [
-              { kind: 'publication', id: reply.publicationId, label: reply.shortText ?? reply.fullText },
+              {
+                kind: 'publication',
+                id: reply.publicationId,
+                label: reply.shortText ?? reply.fullText,
+              },
             ],
           },
         ],
