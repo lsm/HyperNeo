@@ -168,16 +168,28 @@ describe('human-approved standing rules', () => {
     }
   );
 
-  test.each(['button', 'applyAnswer'])('%s approval retains its actual question reference', async (surface) => {
-    const questionId = await propose('question-reference');
-    if (surface === 'applyAnswer') db.updateGlobalSettings({ neo: { standingRules: ['Keep this rule.'] } });
-    expect(await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)).toMatchObject({ value: { ok: true } });
-    if (surface === 'applyAnswer') {
-      db.updateGlobalSettings({ neo: { standingRules: ['Old synthetic rule.', 'Keep this rule.'] } });
-      expect(await invoke('neo.rule.applyAnswer', { questionId })).toMatchObject({ value: { ok: true } });
+  test.each(['button', 'applyAnswer'])(
+    '%s approval retains its actual question reference',
+    async (surface) => {
+      const questionId = await propose('question-reference');
+      if (surface === 'applyAnswer')
+        db.updateGlobalSettings({ neo: { standingRules: ['Keep this rule.'] } });
+      expect(
+        await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)
+      ).toMatchObject({ value: { ok: true } });
+      if (surface === 'applyAnswer') {
+        db.updateGlobalSettings({
+          neo: { standingRules: ['Old synthetic rule.', 'Keep this rule.'] },
+        });
+        expect(await invoke('neo.rule.applyAnswer', { questionId })).toMatchObject({
+          value: { ok: true },
+        });
+      }
+      expect(await invoke('neo.snapshot', {})).toMatchObject({
+        value: { standingRuleSources: { [edit.add[0]]: { questionId } } },
+      });
     }
-    expect((await invoke('neo.snapshot', {})).value).toMatchObject({ standingRuleSources: { [edit.add[0]]: { questionId } } });
-  });
+  );
 
   test.each(['unknown', 'foreign', 'system', 'task', 'not-in-conversation'])(
     'refuses %s message ids without changing standing rules',

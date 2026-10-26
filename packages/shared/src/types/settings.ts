@@ -118,9 +118,11 @@ export const NEO_WORKER_PERMISSION_MODES = [
 ] as const;
 export type NeoWorkerPermissionMode = (typeof NEO_WORKER_PERMISSION_MODES)[number];
 
+export type NeoRuleSource = { sessionId: string; messageId: string } | { questionId: string };
+
 export interface NeoSettings {
   standingRules?: string[];
-  standingRuleSources?: Record<string, { sessionId: string; messageId: string }>;
+  standingRuleSources?: Record<string, NeoRuleSource>;
   preferences?: NeoModelPreference;
   packs?: string[];
   mutedSessions?: string[];

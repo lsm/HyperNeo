@@ -80,7 +80,10 @@ describe('Neo settings writer ownership', () => {
     expect(
       await gateway.call(globalSettingsWrites, 'neoRules', { add: ['Another rule'] })
     ).toHaveProperty('value');
-    expect(settings.getGlobalSettings().neo?.standingRules).toEqual([...before.neo!.standingRules!, 'Another rule']);
+    expect(settings.getGlobalSettings().neo?.standingRules).toEqual([
+      ...before.neo!.standingRules!,
+      'Another rule',
+    ]);
     expect(
       await gateway.call(globalSettingsWrites, 'neoRules', {
         remove: ['Rule 0'],

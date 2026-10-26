@@ -88,7 +88,7 @@ import {
   PackSettingSchema,
 } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
-import { readNeoRuleApproval } from './saved-rules.ts';
+import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -123,7 +123,13 @@ const SnapshotOk = z.object({
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
   standingRules: z.array(z.string()).optional(),
   standingRuleSources: z
-    .record(z.string(), z.object({ sessionId: z.string(), messageId: z.string() }))
+    .record(
+      z.string(),
+      z.union([
+        z.object({ sessionId: z.string(), messageId: z.string() }),
+        z.object({ questionId: z.string() }),
+      ])
+    )
     .optional(),
   sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),

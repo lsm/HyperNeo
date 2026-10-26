@@ -15,6 +15,9 @@ an edit, and even a valid approval cannot authorize different rule content.
 The approving message need not quote the rule text. Re-saving an already-applied
 removal or replacement returns the current rules without replaying old edits. The saved `standingRuleSources`
 reference identifies that actual human message and session and survives restart.
+Button and delayed applyAnswer approvals instead retain their real questionId,
+which links to the recorded human yes and immutable proposal; they never invent
+a human message ID.
 A stale worker-permission Settings update cannot overwrite the saved consent
 reference. The helper also saves 25 additional rules and observes all of them in `neo.snapshot`.
 
