@@ -104,7 +104,7 @@ try {
   const checks = {
     refusedModelNoFolder: rejectedReply.todo?.state === 'failed' && !existsSync(rejectedFolder) && !starts.some(start => start.title === 'refused-model'),
     namedParentGuard: nestedReply.todo?.state === 'failed' && !existsSync(missingParent),
-    coordinatorGuidance: coordinatorPrompt.includes(NEO_ROOT_PROMPT) && coordinatorPrompt.includes(NEO_FOCUSED_DISCUSSION) && coordinatorPrompt.includes('~/HyperNeo') && coordinatorPrompt.includes('旅行/2026圣诞') && NEO_ROOT_PROMPT.split(/\s+/).length < 260 && NEO_FOCUSED_DISCUSSION.split(/\s+/).length < 250,
+    coordinatorGuidance: coordinatorPrompt.includes(NEO_ROOT_PROMPT) && coordinatorPrompt.includes(NEO_FOCUSED_DISCUSSION) && coordinatorPrompt.includes('~/HyperNeo') && coordinatorPrompt.includes('旅行/2026圣诞') && NEO_ROOT_PROMPT.split(/\s+/).length < 300 && NEO_FOCUSED_DISCUSSION.split(/\s+/).length < 250,
     coordinatorSeparate: app.db.getSession(sender)?.workspacePath === join(run, 'data/Neo') && expectedHome !== join(run, 'data/Neo'),
     codingUnchanged: codingReply.ok === true && codingStart?.folder === codingFolder && codingStart?.mode === 'worktree',
     nonCodingFileGuidance: workerIntake.length === 1 && JSON.stringify(workerIntake[0]).includes('Most non-coding tasks write nothing') && JSON.stringify(workerIntake[0]).includes('旅行/2026圣诞'),

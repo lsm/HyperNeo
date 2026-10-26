@@ -12,6 +12,11 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('root Neo system prompt', () => {
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+    expect(prompt).toContain('project and a number');
+    expect(prompt).toContain('never a task title');
+    expect(prompt).toContain('work.rename');
+    expect(prompt).toContain('Coordination questions');
+    expect(prompt).toContain('never human cards');
     expect(prompt).toContain('Message Neo only at milestones');
     expect(prompt).toContain('PR opened, merged or closed; blocked; a question; done; failed');
     expect(prompt).toContain('no acknowledgments and no progress pings');
@@ -26,7 +31,7 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
-    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(260);
+    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(300);
     expect(NEO_ROOT_PROMPT).toContain('neo.publication.publish');
     expect(NEO_ROOT_PROMPT).not.toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
@@ -115,6 +120,18 @@ describe('root Neo system prompt', () => {
 });
 
 describe('coding worker rules', () => {
+  test('keeps simulator slots and coordination with workers and Neo', () => {
+    for (const phrase of [
+      'at most 2 booted machine-wide',
+      'wait and retry yourself',
+      'never ask the human for a slot',
+      'coordination questions',
+      'kind question and no question envelope',
+      'never a human card',
+    ])
+      expect(NEO_PACK_CODING_WORKER_RULES).toContain(phrase);
+  });
+
   test('requires concise public PR descriptions and issues while retaining full reports to Neo', () => {
     expect(
       NEO_PACK_CODING_WORKER_RULES
