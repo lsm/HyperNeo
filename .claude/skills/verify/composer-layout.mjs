@@ -78,7 +78,9 @@ try {
       el.querySelector('[aria-label="Stop recording and keep the text as a draft"]'),
       el.querySelector('[aria-label="Stop recording and send the message"]'),
     ].map(button => { const box = button.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; }));
-    evidence.recording = { stop: r, send: rs, gap: rs.x - r.x - r.width };
+    const recordingForm = await bounds(form);
+    assert.equal(recordingForm.height, 78, 'unfocused empty recording must retain the previous one-row layout');
+    evidence.recording = { form: recordingForm, stop: r, send: rs, gap: rs.x - r.x - r.width };
     assert(rs.x - (r.x + r.width) >= 15.5, `recording gap must be 16px: ${rs.x - r.x - r.width}`);
     await page.screenshot({ path: `${run}/evidence/composer-${width}-recording.png` });
     evidence.observations.push({ width, collapsed, proportion, radius, recordingGap: rs.x - r.x - r.width, draftPreserved: true });
