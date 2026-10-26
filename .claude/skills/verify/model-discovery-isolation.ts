@@ -5,9 +5,12 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
 import { clearModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
+import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
+import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import type { Provider } from '../../../packages/shared/src/provider/index.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
+const [node, browserModules, chromium] = process.argv.slice(2, -1);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -15,6 +18,7 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: Record<string, unknown> = { steps: [] };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
+let webServer: Awaited<ReturnType<typeof createHttpWsServer>> | undefined;
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true, disableGoalProcessing: true, verbose: false });
   await app.jobProcessor.stop();
@@ -49,9 +53,35 @@ try {
   assert(data.unavailableProviders.some(provider => provider.providerId === 'dead-fixture' && !provider.available));
   assert(Math.abs(starts['cold-fixture'] - starts['dead-fixture']) < 100);
   assert(Number(evidence.elapsedMs) < 35000);
+  if (node) {
+    clearModelsCache();
+    const daemon = app;
+    webServer = await createHttpWsServer({
+      hostname: '127.0.0.1', port: 0,
+      async fetch(req, upgrade, client) {
+        const url = new URL(req.url);
+        const refused = daemon.guardRequest(req);
+        if (refused) return refused;
+        if (url.pathname === '/ws') return upgrade(req, {
+          connectionSessionId: 'global', device: await daemon.authenticateUpgrade(req, client?.remoteAddress ?? null),
+        }) ?? new Response('Upgrade failed', { status: 500 });
+        const path = url.pathname.startsWith('/assets/') ? url.pathname : '/index.html';
+        const file = Bun.file(join(process.cwd(), 'packages/web/dist', path));
+        return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
+      },
+      websocket: createWebSocketHandlers(daemon.transport, daemon.sessionManager),
+    });
+    assert.notEqual(webServer.port, 8399);
+    const browser = Bun.spawn([node, '.claude/skills/verify/model-discovery-web.mjs', String(webServer.port), run], {
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, NODE_ENV: 'test', NODE_PATH: browserModules, VERIFY_BROWSER: chromium },
+      stdout: 'inherit', stderr: 'inherit',
+    });
+    assert.equal(await browser.exited, 0, 'Settings browser proof failed');
+    evidence.browser = 'model-discovery-browser.json and PNG';
+  }
   evidence.passed = true;
 } catch (error) { evidence.error = String(error); throw error; }
 finally {
-  ws?.close(); clearModelsCache(); await app?.cleanup();
+  webServer?.stop(true); ws?.close(); clearModelsCache(); await app?.cleanup();
   writeFileSync(join(run, 'evidence/model-discovery.json'), JSON.stringify(evidence, null, 2));
 }

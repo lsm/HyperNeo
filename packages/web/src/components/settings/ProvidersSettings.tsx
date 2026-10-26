@@ -1,3 +1,4 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
@@ -648,7 +649,7 @@ export function ProvidersSettings() {
     } else {
       const cached = (await connectionManager
         .getHubIfConnected()
-        ?.request('models.list', { useCache: true })
+        ?.request('models.list', { useCache: true }, { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS })
         .catch(() => null)) as {
         models?: Array<{ id?: unknown; display_name?: unknown; provider?: unknown }>;
       } | null;
@@ -748,7 +749,11 @@ export function ProvidersSettings() {
     const hub = connectionManager.getHubIfConnected();
     if (hub) {
       try {
-        const response = (await hub.request('models.list', {})) as {
+        const response = (await hub.request(
+          'models.list',
+          {},
+          { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+        )) as {
           models?: Array<{ id?: string; provider?: string }>;
         };
         if (provider.isEnabled) {

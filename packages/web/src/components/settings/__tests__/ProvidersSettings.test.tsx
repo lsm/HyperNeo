@@ -1,3 +1,4 @@
+import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 import type { ProviderRecord } from '@hyperneo/shared';
@@ -1997,7 +1998,11 @@ describe('ProvidersSettings', () => {
       });
       const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
       expect(JSON.parse(params.configJson).models).toEqual([{ id: 'kimi-k3', name: 'Kimi K3' }]);
-      expect(mockRequest).toHaveBeenCalledWith('models.list', {});
+      expect(mockRequest).toHaveBeenCalledWith(
+        'models.list',
+        {},
+        { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+      );
       expect(mockToastWarning).not.toHaveBeenCalled();
     });
 
@@ -2061,7 +2066,11 @@ describe('ProvidersSettings', () => {
       });
       const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
       expect(JSON.parse(params.configJson).models).toEqual([]);
-      expect(mockRequest).toHaveBeenCalledWith('models.list', {});
+      expect(mockRequest).toHaveBeenCalledWith(
+        'models.list',
+        {},
+        { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+      );
     });
 
     it('picker reflects the new subset after save', async () => {
@@ -2323,7 +2332,11 @@ describe('ProvidersSettings', () => {
 
       fireEvent.click(screen.getByText('Fetch models'));
       await waitFor(() =>
-        expect(mockRequest).toHaveBeenCalledWith('models.list', { useCache: true })
+        expect(mockRequest).toHaveBeenCalledWith(
+          'models.list',
+          { useCache: true },
+          { timeout: MODEL_LIST_REQUEST_TIMEOUT_MS }
+        )
       );
 
       mockListProviders.mockResolvedValue({ providers: [p2] });
