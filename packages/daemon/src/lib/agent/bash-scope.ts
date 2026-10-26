@@ -9,6 +9,7 @@ export function parseScopedBashPrefix(entry: string): string | null {
 }
 
 export function extractBashScopePrefixes(entries: readonly string[]): string[] {
+  if (entries.includes('Bash')) return [];
   const prefixes: string[] = [];
   for (const entry of entries) {
     const prefix = parseScopedBashPrefix(entry);
@@ -292,10 +293,10 @@ function segmentHasAllowedHead(segment: string, prefixes: readonly string[]): bo
 
 export function isBashCommandAllowed(command: string, prefixes: readonly string[]): boolean {
   if (prefixes.length === 0) return false;
-  return checkCommandText(command, prefixes);
+  return checkCommandText(command, (segment) => segmentHasAllowedHead(segment, prefixes));
 }
 
-function checkCommandText(text: string, prefixes: readonly string[]): boolean {
+function checkCommandText(text: string, visit: (segment: string) => boolean): boolean {
   const n = text.length;
   let i = 0;
   let current = '';
@@ -307,7 +308,7 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
     const segment = current;
     current = '';
     lineHasContent = false;
-    if (!segmentHasAllowedHead(segment, prefixes)) ok = false;
+    if (!visit(segment)) ok = false;
     return ok;
   };
 
@@ -339,13 +340,13 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
         }
         if (text[i] === '$' && text[i + 1] === '(') {
           const span = extractBalancedParen(text, i + 1);
-          if (!checkCommandText(span.content, prefixes)) ok = false;
+          if (!checkCommandText(span.content, visit)) ok = false;
           i = span.end;
           continue;
         }
         if (text[i] === '`') {
           const span = extractBacktick(text, i);
-          if (!checkCommandText(span.content, prefixes)) ok = false;
+          if (!checkCommandText(span.content, visit)) ok = false;
           i = span.end;
           continue;
         }
@@ -369,7 +370,7 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
     }
     if (ch === '$' && text[i + 1] === '(') {
       const span = extractBalancedParen(text, i + 1);
-      if (!checkCommandText(span.content, prefixes)) ok = false;
+      if (!checkCommandText(span.content, visit)) ok = false;
       current += '$()';
       lineHasContent = true;
       i = span.end;
@@ -377,7 +378,7 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
     }
     if (ch === '`') {
       const span = extractBacktick(text, i);
-      if (!checkCommandText(span.content, prefixes)) ok = false;
+      if (!checkCommandText(span.content, visit)) ok = false;
       current += '``';
       lineHasContent = true;
       i = span.end;
@@ -454,4 +455,65 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
   }
   flush();
   return ok;
+}
+
+export const NEO_SLEEP_MAX_SECONDS = 300;
+
+type SleepVerdict = 'none' | 'allowed' | 'denied';
+
+function sleepSegmentVerdict(segment: string, maxSeconds: number): SleepVerdict {
+  let s = segment.trim();
+  if (!s) return 'none';
+  s = s
+    .replace(/^[({]+/, '')
+    .replace(/[})]+$/, '')
+    .trim();
+  if (!s) return 'none';
+  const stripped = stripLeadingAssignments(s);
+  if (stripped === null || !stripped) return 'none';
+  const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
+  if (head !== 'sleep') return 'none';
+  if (args.length === 0) return 'denied';
+  let total = 0;
+  for (const arg of args) {
+    const match = arg.match(/^(\d+(?:\.\d+)?)([smhd]?)$/);
+    if (!match) return 'denied';
+    const unit = match[2] === 'm' ? 60 : match[2] === 'h' ? 3600 : match[2] === 'd' ? 86400 : 1;
+    total += Number.parseFloat(match[1]) * unit;
+  }
+  return total > maxSeconds ? 'denied' : 'allowed';
+}
+
+export function sleepCommandVerdict(
+  command: string,
+  maxSeconds: number = NEO_SLEEP_MAX_SECONDS
+): SleepVerdict {
+  let seen = false;
+  const clean = checkCommandText(command, (segment) => {
+    const verdict = sleepSegmentVerdict(segment, maxSeconds);
+    if (verdict !== 'none') seen = true;
+    return verdict !== 'denied';
+  });
+  if (!seen) return 'none';
+  return clean ? 'allowed' : 'denied';
+}
+
+export function createSleepBoundHook(maxSeconds: number = NEO_SLEEP_MAX_SECONDS): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
+    const command = (input.tool_input as Record<string, unknown> | undefined)?.command;
+    if (typeof command !== 'string') return {};
+    const verdict = sleepCommandVerdict(command, maxSeconds);
+    if (verdict === 'none') return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse' as const,
+        permissionDecision: verdict === 'allowed' ? ('allow' as const) : ('deny' as const),
+        permissionDecisionReason:
+          verdict === 'allowed'
+            ? `Bounded sleep admitted for the Neo coordinator; waits above ${maxSeconds}s stay vetoed.`
+            : `Sleep waits above ${maxSeconds}s or with computed durations stay vetoed for the Neo coordinator.`,
+      },
+    };
+  };
 }

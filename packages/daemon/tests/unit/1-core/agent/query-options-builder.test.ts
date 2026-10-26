@@ -2218,6 +2218,7 @@ describe('QueryOptionsBuilder', () => {
               'WebFetch',
               'Bash',
               'mcp__hyperneo-operations__invoke',
+              'Bash(sleep:*)',
             ]);
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.agent).toBeUndefined();
@@ -2654,6 +2655,62 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')).toBeUndefined();
+    });
+
+    it('adds no Bash scope hook when a bare Bash grant sits beside scoped entries', async () => {
+      mockSession.config.allowedTools = ['Bash', 'Bash(sleep:*)'];
+      const options = await builder.build();
+
+      expect(options.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')).toBeUndefined();
+    });
+
+    it('installs a bounded-sleep admission hook for the neo coordinator only', async () => {
+      const sqlite = new BunDatabase(':memory:');
+      const ordinaryId = mockSession.id;
+      try {
+        createNeoTables(sqlite);
+        mockSession.id = `neo:${generateUUID()}`;
+        sqlite
+          .prepare(
+            'INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,NULL,?)'
+          )
+          .run(mockSession.id, 'neo');
+        const neoContext = {
+          ...mockContext,
+          db: {
+            ...mockContext.db!,
+            getDatabase: () => sqlite,
+          },
+        };
+        const options = await new QueryOptionsBuilder(neoContext).build();
+        const bashHooks = options.hooks?.PreToolUse?.flatMap((entry) =>
+          entry.matcher === 'Bash' ? entry.hooks : []
+        );
+        expect(bashHooks).toHaveLength(1);
+        const run = (command: string) =>
+          bashHooks?.[0]?.({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Bash',
+            tool_input: { command },
+          } as never);
+        const allowed = (await run('sleep 30')) as {
+          hookSpecificOutput: { permissionDecision: string };
+        };
+        expect(allowed.hookSpecificOutput.permissionDecision).toBe('allow');
+        const denied = (await run('sleep 999')) as {
+          hookSpecificOutput: { permissionDecision: string };
+        };
+        expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+        expect(await run('ls -la')).toEqual({});
+
+        mockSession.id = ordinaryId;
+        const ordinary = await builder.build();
+        expect(
+          ordinary.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')
+        ).toBeUndefined();
+      } finally {
+        sqlite.close();
+      }
     });
 
     it('getCurrentPermissionMode re-resolves the live mode for the deferred-switch staleness guard', async () => {

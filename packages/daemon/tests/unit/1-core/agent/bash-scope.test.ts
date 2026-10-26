@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   bashScopeDenyReason,
   createBashScopeHook,
+  createSleepBoundHook,
   extractBashScopePrefixes,
   isBashCommandAllowed,
   parseScopedBashPrefix,
+  sleepCommandVerdict,
 } from '../../../../src/lib/agent/bash-scope';
 import { PRESET_AGENT_TOOLS } from '../../../../src/lib/agents/seed-agents';
 
@@ -391,5 +393,59 @@ describe('bashScopeDenyReason', () => {
     expect(reason).toContain('gh pr view, jq');
     expect(reason).toContain('do not route around it');
     expect(reason).toContain('no sh -c / bash -c');
+  });
+});
+
+describe('scoped entries beside an unrestricted Bash grant', () => {
+  test('a bare Bash entry disables scoping like the SDK does', () => {
+    expect(extractBashScopePrefixes(['Read', 'Bash', 'Bash(sleep:*)'])).toEqual([]);
+  });
+});
+
+describe('sleepCommandVerdict / createSleepBoundHook', () => {
+  test('bounded sleeps are admitted', () => {
+    expect(sleepCommandVerdict('sleep 30')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 300')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 0.5')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 1m')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 10 && sleep 20')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 5; echo done')).toBe('allowed');
+  });
+
+  test('over-limit, unit-shifted, and computed waits stay vetoed', () => {
+    expect(sleepCommandVerdict('sleep 301')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 10 && sleep 291')).toBe('allowed');
+    expect(sleepCommandVerdict('sleep 10 && sleep 301')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 6m')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 1h')).toBe('denied');
+    expect(sleepCommandVerdict('sleep $(cat s)')).toBe('denied');
+    expect(sleepCommandVerdict('sleep $N')).toBe('denied');
+    expect(sleepCommandVerdict('sleep')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 1d')).toBe('denied');
+  });
+
+  test('commands without sleeps are neutral', () => {
+    expect(sleepCommandVerdict('echo done')).toBe('none');
+    expect(sleepCommandVerdict('echo "sleep 999"')).toBe('none');
+    expect(sleepCommandVerdict('asleep 5')).toBe('none');
+  });
+
+  test('the hook allows bounded sleeps and denies unbounded ones', async () => {
+    const hook = createSleepBoundHook();
+    const run = (command: string) =>
+      hook({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: { command },
+      });
+    const allowed = (await run('sleep 30')) as {
+      hookSpecificOutput: { permissionDecision: string };
+    };
+    expect(allowed.hookSpecificOutput.permissionDecision).toBe('allow');
+    const denied = (await run('sleep 999')) as {
+      hookSpecificOutput: { permissionDecision: string };
+    };
+    expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(await run('ls -la')).toEqual({});
   });
 });

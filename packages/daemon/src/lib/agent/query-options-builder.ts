@@ -69,7 +69,11 @@ import { stripRejectedSessionConfig } from '../session/create-session-config.ts'
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import {
+  createBashScopeHook,
+  createSleepBoundHook,
+  extractBashScopePrefixes,
+} from './bash-scope.ts';
 import { createSendMessageRedirectHook } from '../messaging/session-reply.ts';
 import {
   builtinSkillPluginPath,
@@ -1140,6 +1144,13 @@ export class QueryOptionsBuilder {
       preToolUse.push({
         matcher: 'Bash',
         hooks: [createBashScopeHook(bashScopePrefixes)],
+      });
+    }
+
+    if (neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {
+      preToolUse.push({
+        matcher: 'Bash',
+        hooks: [createSleepBoundHook()],
       });
     }
 
