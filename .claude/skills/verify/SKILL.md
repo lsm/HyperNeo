@@ -185,7 +185,8 @@ They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
 Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
 sends use the native app-server queue; their proofs must show no Desktop ownership
-probe, open, resume or new writer.
+probe, open or turn/start. Check the loaded list and resume saved unloaded threads
+before settings or enqueue; already loaded threads must not be resumed.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

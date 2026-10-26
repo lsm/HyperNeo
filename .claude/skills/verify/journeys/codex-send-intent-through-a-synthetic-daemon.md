@@ -15,7 +15,11 @@ model, real Codex state or GUI is involved.
 
 Automatic input for active and completed targets must return a native queue ID,
 delivered false and no receipt before consumption. It must make no Desktop
-ownership request, open, resume, steer or turn/start call. The synthetic receiver
+ownership request, open, steer or turn/start call. The app-server loaded list
+is checked before settings or queue calls; only a saved, unloaded thread is resumed.
+The stateful peer rejects settings and enqueue requests until that resume succeeds.
+The proof supplies a synthetic prepared-worker policy at the sandbox seam, so it
+does not require or prove OS runtime-directory permissions. The synthetic receiver
 then becomes idle and consumes that same queued input exactly once. work.status
 must show the matching input and reply; queue acceptance alone is not delivery.
 Explicit steer still returns its confirmed active turn ID; a known refusal must
@@ -47,7 +51,11 @@ an unrelated matching input while accepting a queue request: that route returns
 only the queue ID and delivered false, because it has no correlated input ID.
 
 The failing reproduction is committed before the fix: the unchanged adapter
-steers instead of returning a queue ID. Retain observed.json, proof.log and
+returns `not_delivered` with `thread/settings/update: thread not found` for the
+unloaded prepared worker. The fixed run observes that worker's matching reply
+after one enqueue. Disconnects at loaded-list, resume and settings must name
+the failed step, return typed `not_delivered` with `notSent: true`, and never enqueue.
+Retain observed.json, proof.log and
 run-status.json for red and green runs. The wrapper removes disposable daemon
 data after saving evidence.
 

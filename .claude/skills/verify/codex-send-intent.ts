@@ -60,6 +60,7 @@ let openedReadyAt = 0;
 let active = true;
 let loaded = true;
 let resumeError = '';
+let failedStep = '';
 let pendingText = '';
 let uncertain = false;
 let refuse = false;
@@ -116,6 +117,10 @@ const server = new WebSocketServer({ server: http });
 server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
+  if (request.method === failedStep) {
+    socket.close();
+    return;
+  }
   if (request.method === 'thread/loaded/list') {
     socket.send(JSON.stringify({ id: request.id, result: { data: loaded ? ['synthetic'] : [], nextCursor: null } }));
     return;
@@ -210,6 +215,17 @@ try {
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
+  for (const step of ['thread/loaded/list', 'thread/resume', 'thread/settings/update']) {
+    loaded = false; failedStep = step;
+    const before = calls.length;
+    const failure = await send();
+    assert.equal(failure.ok, false);
+    assert.equal(failure.reason, 'not_delivered');
+    assert.equal(failure.notSent, true);
+    assert(failure.detail.includes(step), JSON.stringify(failure));
+    assert(!calls.slice(before).some(call => (call as { server?: string }).server === 'thread/queue/add'));
+  }
+  failedStep = ''; loaded = true;
   for (const { identical, reverse } of [false, true].flatMap(identical => [false, true].map(reverse => ({ identical, reverse })))) {
     collide = true; reverseCollision = reverse; collisionRequests.length = 0;
     const prefix = 'same prefix '.repeat(20), firstText = `${prefix} first`;
