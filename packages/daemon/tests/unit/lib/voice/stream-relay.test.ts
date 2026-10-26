@@ -275,6 +275,34 @@ describe('VoiceStream against a stub Deepgram server', () => {
     }
   });
 
+  test('a socket that opens after the startup timeout still logs a relay-closed stream end', async () => {
+    let release: (value: null) => void = () => {};
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const starting = VoiceStream.start('s1', {
+        ...deps({ apiKeyEndpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions` }),
+        credentialManager: {
+          getCredentials: () =>
+            new Promise<null>((resolve) => {
+              release = resolve;
+            }),
+        },
+      });
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect(await starting).toMatchObject({ via: 'batch' });
+    } finally {
+      vi.useRealTimers();
+    }
+    release(null);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(logs.find((event) => event.message === 'voice.stream.end')?.metadata).toMatchObject({
+      streamId: 's1',
+      closedBy: 'relay',
+      code: 1000,
+      reason: 'normal_closure',
+    });
+  });
+
   test('without a streaming endpoint auto mode goes to batch', async () => {
     const { via } = await start({ streamEndpoint: undefined });
     expect(via).toBe('batch');
