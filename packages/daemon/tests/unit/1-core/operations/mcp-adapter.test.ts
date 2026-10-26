@@ -22,6 +22,31 @@ function fixture() {
 }
 
 describe('generic operation MCP adapter', () => {
+  test('returns accepted bookkeeping records and sends them to the audit as accepted', async () => {
+    const record = mock(async (_record: OperationRefusal) => {});
+    const definition = defineOperation({
+      name: 'example',
+      description: 'Recorded success',
+      inputSchema: z.object({}),
+      resultSchema: z.object({ ok: z.literal(true), records: z.array(z.string()) }),
+      execute: async () => ({ ok: true as const, records: ['pr_already_tracked: existing todo'] }),
+    });
+    const handler = createOperationMcpHandler(
+      createOperationRegistry([definition]),
+      () => ({ sessionId: 'trusted-sender' }),
+      record
+    );
+    const result = await handler({ name: 'example', input: {} });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      ok: true,
+      records: ['pr_already_tracked: existing todo'],
+    });
+    expect(record.mock.calls).toEqual([
+      [{ operation: 'example', reason: 'pr_already_tracked: existing todo', accepted: true }],
+    ]);
+  });
+
   test('formats the shared result and ignores caller metadata in arguments', async () => {
     const { handler, caller, execute } = fixture();
     expect(
