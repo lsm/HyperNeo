@@ -71,9 +71,9 @@ try {
  await version('Human five'); evidence.humanSecond = await rpc('neo.home.read', { path: 'direction.md' });
  assert.equal((evidence.humanSecond as { content: string }).content, 'Human five'); assert.equal(await pulls(), 9);
  await writeFile(join(root, 'direction.md'), 'Human uncommitted edit'); const head = await git(root, 'rev-parse', 'HEAD');
- evidence.dirty = await mcpRead(); assert.match((evidence.dirty as { reason: string }).reason, /dirty/);
+ evidence.dirty = await mcpRead(); assert.equal((evidence.dirty as { content: string }).content, 'Human uncommitted edit');
  assert.equal(await readFile(join(root, 'direction.md'), 'utf8'), 'Human uncommitted edit'); assert.equal(await git(root, 'rev-parse', 'HEAD'), head);
- assert.equal(await pulls(), 9); evidence.pullCount = await pulls(); evidence.localEditPreserved = true;
+ assert.equal(await pulls(), 10); evidence.pullCount = await pulls(); evidence.localEditPreserved = true;
  console.log(`PASS: home read-sync RPC/MCP proof. ${run}/evidence/neo-home-read-sync.json`);
 } finally {
  await writeFile(join(run, 'evidence', 'neo-home-read-sync.json'), JSON.stringify(evidence, null, 2));
