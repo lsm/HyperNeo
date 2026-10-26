@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { createNodeSpawn } from '../../../../src/lib/runtime-spawn/node-backend';
 import { listProcesses } from '../../../../src/lib/process-watchdog';
 import { neoReadCheckoutPaths } from '../../../../src/lib/neo/read-access';
@@ -58,6 +59,7 @@ describe('claude-desktop start', () => {
   let handoffs: number;
 
   beforeEach(() => {
+    configureWorkerSandbox(() => 'always');
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
     spawned = [];
     cwds = [];
@@ -71,6 +73,7 @@ describe('claude-desktop start', () => {
   });
 
   afterEach(() => {
+    configureWorkerSandbox(() => 'off');
     vi.unstubAllEnvs();
     rmSync(dir, { recursive: true, force: true });
   });

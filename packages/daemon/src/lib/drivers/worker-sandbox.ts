@@ -6,8 +6,16 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { WorkerSandboxMode } from '@hyperneo/shared';
 
 let readWorkerSockets = (): string[] => [];
+let readWorkerSandbox = (): WorkerSandboxMode => 'off';
+
+export function configureWorkerSandbox(read: () => WorkerSandboxMode) {
+  readWorkerSandbox = read;
+}
+
+export const workerSandboxOn = (_requested?: boolean) => !!readWorkerSandbox;
 
 export function configureWorkerSockets(read: () => string[]) {
   readWorkerSockets = read;
