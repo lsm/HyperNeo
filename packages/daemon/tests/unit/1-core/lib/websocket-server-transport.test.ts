@@ -70,6 +70,35 @@ describe('WebSocketServerTransport', () => {
   });
 
   describe('registerClient', () => {
+    it('delivers a burst in order after backpressure drains without replaying the accepted frame', () => {
+      const ws = createMockWebSocket();
+      const id = transport.registerClient(ws, 'slow-client');
+      const delivered: string[] = [];
+      (ws.send as ReturnType<typeof mock>).mockImplementation((data: string) => {
+        delivered.push(data);
+        return delivered.length === 1 ? -1 : data.length;
+      });
+      registeredConnection!.send('first');
+      registeredConnection!.send('second');
+      registeredConnection!.send('third');
+      expect(delivered).toEqual(['first']);
+      transport.handleDrain(ws);
+      expect(delivered).toEqual(['first', 'second', 'third']);
+      expect(ws.close).not.toHaveBeenCalled();
+      transport.unregisterClient(id);
+    });
+
+    it('does not force a resync when a socket is already closing', () => {
+      const ws = createMockWebSocket();
+      transport.registerClient(ws, 'closing-client');
+      (ws.send as ReturnType<typeof mock>).mockImplementation(() => {
+        ws.readyState = 2;
+        return 0;
+      });
+      expect(() => registeredConnection!.send('closing')).not.toThrow();
+      expect(ws.close).not.toHaveBeenCalled();
+    });
+
     it('should register a client and return clientId', () => {
       const mockWs = createMockWebSocket();
 
