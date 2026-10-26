@@ -154,7 +154,7 @@ describe('native artifact workspace ownership', () => {
     expect(load()).toBeNull();
   });
 
-  test('accepts nonsensitive roots and rereads cwd instead of caching it', () => {
+  test('denies home application folders and rereads cwd instead of caching it', () => {
     for (const folder of ['.codex', '.claude', '.config']) {
       const path = join(home, folder, 'worktree');
       native.prepare('UPDATE threads SET cwd = ?').run(path);
@@ -162,7 +162,7 @@ describe('native artifact workspace ownership', () => {
       expect(binding.workspacePath).toBe(path);
       expect(
         resolveArtifactSource(binding, 'report.md', { daemonId: 'daemon', home, loadBinding: load })
-      ).toEqual({ value: { context, root: path, relativePath: 'report.md' } });
+      ).toEqual({ reason: { accepted: false, reason: 'sensitive_path' } });
     }
     native.prepare('UPDATE threads SET cwd = ?').run(workspace);
     expect(load()?.workspacePath).toBe(workspace);

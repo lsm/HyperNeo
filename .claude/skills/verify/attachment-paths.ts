@@ -59,7 +59,7 @@ try {
   await mkdir(join(root, 'home/.codex/reports'), { recursive: true });
   const benign = join(root, 'home/.codex/reports/report.md');
   await writeFile(benign, '# Benign application folder\n');
-  assert.equal((await invoke('artifact.file.register', { ...input, path: benign })).accepted, true);
+  assert.deepEqual(await invoke('artifact.file.register', { ...input, path: benign }), { accepted: false, reason: 'sensitive_path' });
   await mkdir(join(root, 'home/.ssh'));
   await writeFile(join(root, 'home/.codex/auth.json'), '{"synthetic":true}');
   await writeFile(join(root, 'home/.ssh/report.md'), '# Synthetic sensitive-directory sentinel');

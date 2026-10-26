@@ -95,16 +95,16 @@ for (const path of homeFolders) {
   const file = join(root, 'home', path);
   mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true });
   writeFileSync(file, '# Synthetic protected folder sentinel\n');
-  folderReplies.push(await register({ ...input, path: file }));
+  folderReplies.push(await register({ ...input, requestId: 'home-folder:' + path, path: file }));
 }
 const credentialDirectory = join(root, 'backup/.config/gh/report.md');
 mkdirSync(credentialDirectory.slice(0, credentialDirectory.lastIndexOf('/')), { recursive: true });
 writeFileSync(credentialDirectory, '# Synthetic credential-directory sentinel\n');
-const credentialDirectoryReply = await register({ ...input, path: credentialDirectory });
+const credentialDirectoryReply = await register({ ...input, requestId: 'credential-directory', path: credentialDirectory });
 const chosenFile = join(root, 'unrelated/project/report.md');
 mkdirSync(chosenFile.slice(0, chosenFile.lastIndexOf('/')), { recursive: true });
 writeFileSync(chosenFile, '# Explicitly chosen outside file\n');
-const outsideReply = await register({ ...input, path: chosenFile });
+const outsideReply = await register({ ...input, requestId: 'outside-preserved', path: chosenFile });
 mkdirSync(join(root, 'evidence'), { recursive: true });
 writeFileSync(join(root, 'evidence/home-folder-policy.json'), JSON.stringify({ homeFolders, folderReplies, credentialDirectoryReply, outsideReply }, null, 2));
 for (const reply of [...folderReplies, credentialDirectoryReply]) assert.deepEqual(reply, { accepted: false, reason: 'sensitive_path' });

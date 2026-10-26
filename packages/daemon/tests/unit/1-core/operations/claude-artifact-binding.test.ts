@@ -126,7 +126,7 @@ describe('loadRegistrationBinding for Claude workers', () => {
     expect(load()).toBeNull();
   });
 
-  test('accepts benign reports under application and worktree folders', () => {
+  test('denies home application folders while accepting repo worktree reports', () => {
     sessions.recordRef('todo', { adapter: 'claude-desktop', id: 'local_w' });
     for (const cwd of [
       join(home, '.claude', 'worktrees', 'w'),
@@ -136,9 +136,11 @@ describe('loadRegistrationBinding for Claude workers', () => {
       join(repo, '.claude', 'worktrees', 'w', '.codex', 'x'),
     ]) {
       desktopRecord({ cwd });
-      expect(resolveArtifactSource(load()!, 'report.md', deps())).toEqual({
-        value: { context, root: cwd, relativePath: 'report.md' },
-      });
+      expect(resolveArtifactSource(load()!, 'report.md', deps())).toEqual(
+        cwd.startsWith(home + '/')
+          ? { reason: { accepted: false, reason: 'sensitive_path' } }
+          : { value: { context, root: cwd, relativePath: 'report.md' } }
+      );
     }
   });
 });

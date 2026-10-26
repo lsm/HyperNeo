@@ -6,8 +6,8 @@ run directory as its last argument. No provider, model turn or web build is
 needed: this journey changes the registration RPC, with no viewer change.
 
 The helper owns an ephemeral loopback daemon and synthetic native-session state.
-Through `operation.invoke` it registers a file outside the workspace, a benign
-report in an application folder, and an absolute file with an unknown context or
+Through `operation.invoke` it registers a file outside the workspace, a blocked
+report in a protected home dot-folder, and an absolute file with an unknown context or
 missing native cwd. Relative paths still need an authoritative workspace.
 
 Reusing a request after editing its source must return a new artifact ID. Read
@@ -18,8 +18,9 @@ snapshot ownership checks stay in force, independently of registration admission
 
 The review regression also uses inert sentinels for `.claude.json`, GitHub's
 `hosts.yml`, Claude transcript JSONL, shell history and browser `Cookies`. Each
-must return `sensitive_path`; benign reports under `.claude/projects` and
-`.config/gh` remain allowed. Retry an unchanged ask-context registration first
+must return `sensitive_path`. Entire home dot-folders are denied even for benign
+names, and `.config/gh` is a credential directory wherever it sits. Explicit files
+in ordinary outside folders and repository worktrees remain allowed. Retry an unchanged ask-context registration first
 through local RPC and then Neo's MCP operation door: the receipt must stay equal.
 
 For the native operation-door proof without a listening socket, use the shared
@@ -46,3 +47,10 @@ Before the fix, the same RPC helper records `outside_roots`, `unavailable` and
 
 After merge use `hyperneo build` to confirm the live served commit contains the
 merged change. Never restart the human's daemon to satisfy that check.
+
+The home-folder regression in preview-register.ts saves home-folder-policy.json.
+Before the fix all four home dot-folders and a copied credential directory accept
+synthetic report.md files; afterward all refuse sensitive_path while the ordinary
+explicit outside file still registers. Policy tests cover absolute and relative
+forms. Native adapter binding tests preserve normal repository worktrees while
+denying sources inside protected home application folders.

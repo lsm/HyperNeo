@@ -89,7 +89,7 @@ export function unsafePath(path: string): boolean {
 
 export function sensitivePath(path: string): boolean {
   if (
-    /(?:^|\/)(?:\.claude\/settings(?:\.local)?\.json|\.codex\/(?:config\.toml|auth\.json)|\.config\/gcloud)(?:$|\/)/i.test(
+    /(?:^|\/)(?:\.claude\/settings(?:\.local)?\.json|\.codex\/(?:config\.toml|auth\.json)|\.config\/(?:gcloud|gh))(?:$|\/)/i.test(
       posix.normalize(path)
     )
   )
@@ -126,7 +126,7 @@ function within(root: string, path: string): boolean {
 export function resolveArtifactSource(
   binding: ArtifactContextBinding,
   source: string,
-  _deps: ArtifactPolicyDependencies
+  deps: ArtifactPolicyDependencies
 ): Gate<OpenPlan> {
   if (typeof source !== 'string' || unsafePath(source)) return refused('unsafe_path');
   if (sensitivePath(source)) return refused('sensitive_path');
@@ -137,6 +137,9 @@ export function resolveArtifactSource(
     return refused('ambiguous_context');
   const path = posix.resolve(binding.workspacePath ?? '/', source);
   if (sensitivePath(path)) return refused('sensitive_path');
+  const homeRelative = posix.relative(deps.home.toLowerCase(), path.toLowerCase());
+  if (homeRelative.startsWith('.') && !homeRelative.startsWith('../') && homeRelative.includes('/'))
+    return refused('sensitive_path');
   const root =
     binding.workspacePath &&
     posix.isAbsolute(binding.workspacePath) &&
