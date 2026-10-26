@@ -87,6 +87,9 @@ export function codexWorkerSandbox(root: string) {
           filesystem: {
             ':root': 'read',
             ...Object.fromEntries(writableRoots.map((path) => [path, 'write'])),
+            ...Object.fromEntries(
+              ['.agents', '.codex', '.aws'].map((path) => [join(root, path), 'read'])
+            ),
             ...Object.fromEntries(workerSecretPaths().map((path) => [path, 'deny'])),
           },
           network: { enabled: true },

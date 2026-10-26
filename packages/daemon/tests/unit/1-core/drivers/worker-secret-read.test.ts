@@ -45,6 +45,8 @@ test('Codex selected profile denies synthetic credentials and permits repository
   expect(fs[join(fixture, 'home/.ssh')]).toBe('deny');
   expect(fs[join(fixture, 'home/.codex/auth.json')]).toBe('deny');
   expect(fs[root]).toBe('write');
+  expect(fs[join(root, '.codex')]).toBe('read');
+  expect(fs[join(root, '.agents')]).toBe('read');
   expect(fs[':root']).toBe('read');
 });
 
