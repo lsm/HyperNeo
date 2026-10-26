@@ -87,8 +87,8 @@ try {
   }
   assert.equal(queries.length, 1); assert.deepEqual(queries[0].aliases, []);
   const choose = async (id: string, key: string, selected: boolean) => {
-    const result = await hub.request<{ kind: string; value?: { ok: boolean; application: string; reason?: string } }>('operation.invoke', { name: 'session.tools.setChoice', input: { sessionId: id, key, selected } });
-    assert.equal(result.kind, 'completed', 'authorized tool activation operation must exist'); assert(result.value?.ok); return result.value;
+    const result = await hub.request<{ ok: boolean; application: string; reason?: string }>('operation.invoke', { name: 'session.tools.setChoice', input: { sessionId: id, key, selected } });
+    assert(result.ok, 'authorized tool activation must persist a choice'); return result;
   };
   const enabled = await choose(sessionId, `mcp:${server.id}`, true);
   assert.equal(enabled.application, 'live'); assert.deepEqual(queries[0].aliases, aliases);
