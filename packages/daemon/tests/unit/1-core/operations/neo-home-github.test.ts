@@ -123,6 +123,28 @@ afterEach(async () => {
 });
 
 describe('Neo private GitHub home proposal', () => {
+  test('does not publish credentials added only in a merge resolution', async () => {
+    const branch = await git('symbolic-ref', '--short', 'HEAD');
+    await git('switch', '-c', 'side');
+    await writeFile(join(root, 'side.md'), 'Side progress.');
+    await git('add', 'side.md');
+    await git('commit', '-m', 'Side progress');
+    await git('switch', branch);
+    await writeFile(join(root, 'main.md'), 'Main progress.');
+    await git('add', 'main.md');
+    await git('commit', '-m', 'Main progress');
+    await git('merge', '--no-ff', '--no-commit', 'side');
+    await writeFile(join(root, 'fixture.md'), 'TOKEN=' + 'synthetic'.repeat(4));
+    await git('add', 'fixture.md');
+    await git('commit', '-m', 'Merge resolution');
+    const proposed = await call({ askId: 'ask' });
+    await answer(proposed.questionId);
+    const result = await call({ questionId: proposed.questionId });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await log()).not.toContain('repo create');
+  });
+
   test('asks once and creates/pushes only the human-approved bound private repository', async () => {
     const proposed = await call({ askId: 'ask' });
     expect(proposed).toMatchObject({

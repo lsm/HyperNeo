@@ -71,6 +71,21 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test.each([false, true])(
+    'ignore repair leaves an unrelated direction draft uncommitted (staged: %s)',
+    async (staged) => {
+      await writeFile(join(root, '.gitignore'), '# Legacy home\n');
+      await git('commit', '-am', 'Legacy ignores');
+      await writeFile(join(root, 'direction.md'), 'Pending direction draft.');
+      if (staged) await git('add', 'direction.md');
+      const result = await save({ path: 'digest.md', content: 'Curated progress.' });
+      expect(result.ok).toBe(true);
+      expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Pending direction draft.');
+      expect(await git('show', 'HEAD:direction.md')).toBe('');
+      expect(await git('diff', '--cached', '--name-only')).toBe(staged ? 'direction.md' : '');
+      expect(await git('show', 'HEAD:digest.md')).toBe('Curated progress.');
+    }
+  );
   test('Neo saves and commits with an untracked evidence folder in its home', async () => {
     await mkdir(join(root, 'evidence'));
     await writeFile(join(root, 'evidence', 'run.json'), '{"observed":true}');

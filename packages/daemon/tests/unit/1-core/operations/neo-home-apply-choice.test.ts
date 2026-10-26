@@ -174,6 +174,31 @@ afterEach(async () => {
 });
 
 describe('Human-recorded conflict version saves', () => {
+  test('does not cite an unrelated answered question as a home conflict choice', async () => {
+    const { question } = await conflict();
+    const unrelated = await call(
+      'neo.question.ask',
+      {
+        askId: question.askId,
+        kind: 'choice',
+        text: 'Which version?',
+        options: ['Keep local', 'Use remote'],
+        multiple: false,
+      },
+      owner
+    );
+    await approve(unrelated.question.id);
+    const before = await state();
+    const result = await call('neo.home.save', {
+      path: 'notes.md',
+      content: remoteText,
+      message: 'Apply choice',
+      conflictQuestionId: unrelated.question.id,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('question does not bind');
+    expect(await state()).toEqual(before);
+  });
   test.each(['Keep local', 'Use remote'])(
     'applies a human chat reply recording the scalar %s',
     async (answer) => {

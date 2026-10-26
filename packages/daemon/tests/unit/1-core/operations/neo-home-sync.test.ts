@@ -96,6 +96,14 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test('does not publish credential-like bytes introduced in binary history', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    await commit(root, 'fixture.bin', '\0TOKEN=' + 'synthetic'.repeat(4));
+    const result = await call('neo.home.save', input);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
+  });
   test('pulls peer changes, commits and pushes exact content, including an unchanged retry', async () => {
     await commit(peer, 'peer.md', 'Peer progress.\n');
     await git(peer, 'push');
