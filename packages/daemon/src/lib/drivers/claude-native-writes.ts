@@ -32,7 +32,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       network: {
         allowedDomains: ['*'],
         allowUnixSockets: workerUnixSockets(),
-        allowAllUnixSockets: false,
+        allowAllUnixSockets: true,
         allowLocalBinding: true,
       },
     },
@@ -123,7 +123,7 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   }
   const updated = { ...computed, ...existing } as typeof computed;
   updated.sandbox.network.allowUnixSockets = computed.sandbox.network.allowUnixSockets;
-  updated.sandbox.network.allowAllUnixSockets = false;
+  updated.sandbox.network.allowAllUnixSockets = true;
   await writePolicy(directory, updated);
   return updated;
 }

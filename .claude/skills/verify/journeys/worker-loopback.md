@@ -16,8 +16,16 @@ The Claude child alone receives a synthetic key for the local model, as describe
 in the shared native-worker setup. No sandbox bypass or permission relaxation is
 injected. Existing outside-write, policy-protection and private-temp checks remain.
 
-Inspect `{claude,codex}-observed.json`: `localServer.connected` must be true and
-`outsideRefused` must remain true. The stdout JSONL retains actual shell results;
+Each shell also makes an SSH-signed commit (`git commit -S`) in its private temp
+directory through a throwaway `ssh-agent` socket outside the worker, the way 1Password's
+`op-ssh-sign` reaches its agent. Pass the HyperNeo-bundled Claude binary
+(`node_modules/.bun/@anthropic-ai+claude-agent-sdk-darwin-arm64@*/.../claude`), and keep
+the evidence directory and `TMPDIR` outside `/tmp`: the standalone Codex CLI's default
+policy lets workers write `/tmp`, which would make the outside-write check meaningless.
+
+Inspect `{claude,codex}-observed.json`: `localServer.connected` and `signedCommit` must
+be true and `outsideRefused` must remain true. Before workers could reach every Unix
+socket, Claude reported `signedCommit: false` with "Couldn't get agent socket". The stdout JSONL retains actual shell results;
 baseline Claude must lack the local-server receipt and report an OS binding denial.
 The wrapper saves failures separately, releases private runtime roots and removes
 the disposable workers. This proves native CLI enforcement on the current host;
