@@ -220,7 +220,7 @@ describe('PR ledger reconcile', () => {
     db.close();
   });
 
-  test('a failed or partial read leaves the rows untouched, and a low rate limit ends the cycle', async () => {
+  test('a failed read preserves its rows without blocking unrelated targets on a summary budget', async () => {
     const { db, ledger } = setup();
     await reconcile(ledger, ['a/a', 'b/b'], async () => response([node(1)]), 100);
     const reads: string[] = [];
@@ -235,7 +235,7 @@ describe('PR ledger reconcile', () => {
       200
     );
     db.prepare("UPDATE pack_coding_pr_ledger SET read_at = 10 WHERE repo = 'a/a'").run();
-    expect(reads).toEqual(['c/c']);
+    expect(reads).toEqual(['c/c', 'd/d', 'a/a', 'b/b']);
     reads.length = 0;
     await reconcile(
       ledger,
@@ -760,7 +760,7 @@ describe('CodingPrLedgerRepository.pruneSessions', () => {
 });
 
 describe('PR ledger read order', () => {
-  test('reads the least recently read repos first, so a low budget does not starve the same repos', async () => {
+  test('reads new targets first without treating an unattributed budget as a shared stop', async () => {
     const { db, ledger } = setup();
     await reconcile(ledger, ['a/a', 'b/b', 'c/c'], async () => response([node(1)]), 100);
     db.prepare("UPDATE pack_coding_pr_ledger SET read_at = 50 WHERE repo = 'c/c'").run();
@@ -774,7 +774,7 @@ describe('PR ledger read order', () => {
       },
       200
     );
-    expect(reads).toEqual(['new/new']);
+    expect(reads).toEqual(['new/new', 'a/a', 'b/b', 'c/c']);
     reads.length = 0;
     await reconcile(
       ledger,
@@ -785,7 +785,7 @@ describe('PR ledger read order', () => {
       },
       300
     );
-    expect(reads).toEqual(['c/c']);
+    expect(reads).toEqual(['a/a', 'b/b', 'c/c', 'new/new']);
     db.close();
   });
 });
