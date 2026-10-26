@@ -37,3 +37,8 @@ for visible full card bodies, including the unabridged report. The edit proof
 also changes a completion check to core evidence and verifies its derived label.
 The writer uses the current pure core/coding policies; final peer admission and
 check/card revalidation remain in the same writer transaction.
+
+The RPC proof also edits an already-settled ask and observes a successful
+`ask_settled` bookkeeping receipt with the full visible card unchanged. Unit
+regressions cover settlement before preparation and while a completion check
+is in flight; neither case writes state, prunes cards or starts another worker.

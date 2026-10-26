@@ -26,7 +26,7 @@ type Checked = { check: NeoTodo['check']; result: NeoTodoCheckResult | null };
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
 type Outcome =
   | { ok: false; reason: string }
-  | { ok: true; todo: NeoTodo; todos: NeoTodo[]; startNext: string | null; records?: string[] };
+  | { ok: true; todo: NeoTodo; todos: NeoTodo[]; startNext?: string | null; records?: string[] };
 
 class NeoTodoMutationWriter {
   private readonly todos: NeoAskTodoRepository;
@@ -91,13 +91,25 @@ class NeoTodoMutationWriter {
     input: Input,
     now: number,
     registered: readonly (ArtifactRef | null)[] = []
-  ): ({ ok: true } & Plan) | Extract<Outcome, { ok: false }> {
+  ): ({ ok: true } & Plan) | Outcome {
     const todos = this.todos;
     const execute = (superpipe({})('neo.todo.prepare-mutation') as PipelineAPI)
       .input(['input', 'now', 'registered'])
       .pipe((input: Input) => todos.getTodo(input.todoId), 'input', 'current')
       .pipe(
-        (todo: NeoTodo | null) => requireNeoOpenTodo(todo, todo ? todos.getAsk(todo.askId) : null),
+        (todo: NeoTodo | null) => {
+          const ask = todo ? todos.getAsk(todo.askId) : null;
+          return todo && ask && ask.status !== 'open'
+            ? {
+                reason: {
+                  ok: true as const,
+                  todo,
+                  todos: todos.listTodos(ask.id),
+                  records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
+                },
+              }
+            : requireNeoOpenTodo(todo, ask);
+        },
         'current',
         'result:outcome'
       )
@@ -122,7 +134,7 @@ class NeoTodoMutationWriter {
       input: Input,
       now: number,
       registered: readonly (ArtifactRef | null)[]
-    ) => ({ ok: true } & Plan) | Extract<Outcome, { ok: false }>;
+    ) => ({ ok: true } & Plan) | Outcome;
     return execute(input, now, registered);
   }
 
@@ -138,7 +150,7 @@ class NeoTodoMutationWriter {
       .pipe(
         (input: Input, now: number, registered: readonly (ArtifactRef | null)[]) => {
           const plan = this.plan(input, now, registered);
-          return plan.ok ? { value: plan } : { reason: plan };
+          return 'patch' in plan ? { value: plan } : { reason: plan };
         },
         ['input', 'now', 'registered'],
         'result:outcome'

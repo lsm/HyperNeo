@@ -513,7 +513,7 @@ export function createNeoTodoOperations(
           Date.now(),
           registered
         );
-        return prepared.ok ? { value: prepared } : { reason: prepared };
+        return 'patch' in prepared ? { value: prepared } : { reason: prepared };
       },
       ['input', 'registered'],
       'result:outcome'

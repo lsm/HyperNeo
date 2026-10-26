@@ -185,7 +185,7 @@ describe('Neo todo mutation writer admission', () => {
     expect(todos.getTodo(first.id)?.state).toBe('todo');
   });
 
-  test('a settled ask and an already removed todo are refused without changing rows', async () => {
+  test('a settled ask records and a removed todo refuses without changing rows', async () => {
     const first = todo('first', [url(1)]);
     todos.updateTodo(first, { state: 'removed' }, 2);
     expect(await commit({ kind: 'edit', todoId: first.id, title: 'Late edit' })).toMatchObject({
@@ -195,7 +195,7 @@ describe('Neo todo mutation writer admission', () => {
     db.prepare("UPDATE neo_asks SET status='done' WHERE id='ask'").run();
     expect(
       await commit({ kind: 'remove', todoId: first.id, reason: 'Late removal' })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('ask_settled') });
+    ).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled:')] });
     expect(todos.getTodo(first.id)?.title).toBe('first');
     expect(await commit({ kind: 'edit', todoId: 'missing', title: 'Missing' })).toMatchObject({
       ok: false,
