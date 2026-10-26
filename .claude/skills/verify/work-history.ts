@@ -16,6 +16,11 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 assert(![8399, 8499].includes(app.server.port));
 const socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+const opened = new Promise<void>((done, fail) => {
+  const timer = setTimeout(() => fail(new Error('Proof WebSocket did not open')), 15000);
+  socket.onopen = () => { clearTimeout(timer); done(); };
+  socket.onerror = error => { clearTimeout(timer); fail(error); };
+});
 let sequence = 0;
 const pending = new Map<string, (value: { data: unknown; error?: unknown }) => void>();
 socket.onmessage = event => {
@@ -56,7 +61,7 @@ try {
     todo.run(`${project}-unverified-todo`, `${project}-unverified`, 'closed_unverified', 'Inspect this unfinished task', 'Not verified');
     db.prepare(`INSERT INTO neo_questions (id,ask_id,text,kind,state,created_at) VALUES (?,?,'Answer this older question','reply','open',-1)`).run(`${project}-q`, `${project}-waiting`);
   }
-  await new Promise<void>((done, fail) => { socket.onopen = () => done(); socket.onerror = fail; });
+  await opened;
   for (const [project, count] of [['small', 3], ['busy', 63]] as const) {
     const view = await invoke<NeoSnapshot>('neo.snapshot', { projectId: project });
     const rows = view.todoAsks!;
