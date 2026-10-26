@@ -63,6 +63,15 @@ Object.assign(evidence, { pushFailed, retainedCommit, retainedCount, retried, fi
 if (pushFailed.ok || !pushFailed.reason?.includes('push_failed') || !pushFailed.reason.includes(retainedCommit) || !retried.ok || retried.commit !== retainedCommit || retainedCount !== evidence.finalCount || retainedCommit !== evidence.finalRemoteHead || evidence.finalStatus) throw new Error('Failed push lost the commit or retry added another');
 console.log('PASS: real RPC fetches peer changes, pushes exact committed content, refuses conflicts without changing the original home, and retries a retained failed-push commit without duplication.');
 
+const message = 'Rotate ghp_' + 'synthetic'.repeat(5);
+const messagePublication = await rpc({ ...input, path: 'message-check.md', message });
+const messageCommit = await git(root, 'rev-parse', 'HEAD');
+const messageOnDisk = await git(root, 'log', '-1', '--format=%B');
+const remoteAfterMessage = await git(remote, 'rev-parse', 'main');
+Object.assign(evidence, { messagePublication, messageCommit, messageOnDisk, remoteAfterMessage }); await saveEvidence();
+if (messagePublication.ok || !messagePublication.reason?.includes('content_refused') || messageOnDisk !== message || remoteAfterMessage !== retainedCommit) throw new Error('Credential-like commit message was published');
+console.log('PASS: real RPC keeps the credential-like commit message local.');
+await git(root, 'reset', '--hard', retainedCommit);
 await commit(root, 'fixture.bin', '\0TOKEN=' + 'synthetic'.repeat(4));
 const binaryPublication = await rpc({ ...input, path: 'binary-check.md' });
 const remoteAfterBinary = await git(remote, 'rev-parse', 'main');
