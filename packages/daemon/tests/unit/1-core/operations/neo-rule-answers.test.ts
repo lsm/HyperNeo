@@ -67,10 +67,16 @@ async function propose(requestId = 'request', change = edit) {
 describe('human-approved standing rules', () => {
   test('a consumed human approval saves paraphrased rules with a durable message reference', async () => {
     const messageId = crypto.randomUUID();
-    await invoke('neo.message.send', {
-      sessionId: agent.sessionId, requestId: messageId,
-      content: 'Yes, remember to get my permission before publishing, replacing the old instruction.',
-    }, human);
+    await invoke(
+      'neo.message.send',
+      {
+        sessionId: agent.sessionId,
+        requestId: messageId,
+        content:
+          'Yes, remember to get my permission before publishing, replacing the old instruction.',
+      },
+      human
+    );
     const input = { ...edit, messageId };
     expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
     const repo = db.getSDKMessageRepo();
@@ -100,6 +106,7 @@ describe('human-approved standing rules', () => {
           inputKind: kind === 'system' || kind === 'task' ? kind : 'human',
           message: { role: 'user', content: edit.add[0] },
         } as import('@hyperneo/shared/sdk').SDKUserMessage);
+        db.getSDKMessageRepo().markDeliveryConsumedByUuid(sessionId, messageId);
         if (kind !== 'not-in-conversation')
           service.asks.append({
             conversationId: service.repo.conversationId()!,

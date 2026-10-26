@@ -2,7 +2,7 @@ import type { GlobalSettings } from '@hyperneo/shared';
 import { neoStandingRules, type NeoModelPreference } from '@hyperneo/shared/types/settings';
 import { canonicalJson } from '../../lib/agent/prompt-comparison.ts';
 import { keepNeoOwnedSettings } from '../../lib/global-settings-patch.ts';
-import { planNeoRuleEdit } from '../../lib/neo/saved-rules.ts';
+import { planNeoRuleEdit, planNeoRuleSources } from '../../lib/neo/saved-rules.ts';
 import { planNeoSessionMutes } from '../../lib/neo/session-watch.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { SettingsRepository } from './settings-repository.ts';
@@ -36,11 +36,13 @@ class GlobalSettingsWriter extends SettingsRepository {
     });
   }
 
-  neoRules(edit: { add?: readonly string[]; remove?: readonly string[] }) {
+  neoRules(edit: { add?: readonly string[]; remove?: readonly string[] }, approval?: { sessionId: string; messageId: string }) {
     const neo = this.getGlobalSettings().neo;
     const plan = planNeoRuleEdit(neoStandingRules(neo), edit);
     if ('reason' in plan) return plan;
-    return { value: super.updateGlobalSettings({ neo: { ...neo, standingRules: plan.value } }) };
+    return { value: super.updateGlobalSettings({ neo: { ...neo, standingRules: plan.value,
+      ...(approval || neo?.standingRuleSources ? { standingRuleSources: planNeoRuleSources(plan.value, neo?.standingRuleSources, edit.add, approval) } : {}),
+    } }) };
   }
 
   apply(updates: Patch): GlobalSettingsCommit {

@@ -122,5 +122,7 @@ test('the add button stays off for empty, duplicate, over-500-character text but
   settle(Array.from({ length: 20 }, (_, i) => `Rule ${i + 1}.`));
   const full = section();
   fireEvent.input(full.getByLabelText('New Neo rule'), { target: { value: 'One more.' } });
-  expect((full.getByRole('button', { name: 'Add rule' }) as HTMLButtonElement).disabled).toBe(false);
+  expect((full.getByRole('button', { name: 'Add rule' }) as HTMLButtonElement).disabled).toBe(
+    false
+  );
 });

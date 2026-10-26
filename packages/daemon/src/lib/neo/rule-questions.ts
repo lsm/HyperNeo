@@ -1,10 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import {
-  NEO_STANDING_RULE_MAX_CHARS,
-  NEO_STANDING_RULES_MAX,
-  neoStandingRules,
-} from '@hyperneo/shared/types/settings';
+import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { applyNeoRuleAnswer } from '../../storage/repositories/neo-rule-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { planNeoRuleEdit } from './saved-rules.ts';
@@ -13,8 +9,8 @@ import type { NeoService } from './service.ts';
 const Rule = z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS);
 const Edit = z
   .object({
-    add: z.array(Rule).max(NEO_STANDING_RULES_MAX).optional(),
-    remove: z.array(Rule).max(NEO_STANDING_RULES_MAX).optional(),
+    add: z.array(Rule).optional(),
+    remove: z.array(Rule).optional(),
   })
   .strict();
 const Ask = Edit.extend({ askId: z.string().min(1), requestId: z.string().min(1) }).strict();
@@ -105,7 +101,7 @@ export function createNeoRuleQuestions(service: NeoService) {
     defineOperation({
       name: 'neo.rule.ask',
       description:
-        'Default path for standing-rule edits in any Neo turn: ask human yes to the exact add/remove arrays. Removal uses exact saved text; at the 20-rule cap include a removal. No rule changes before human yes. Pending retries reuse requestId; question_closed needs a new requestId.',
+        'Default path for standing-rule edits in any Neo turn: ask human yes to the exact add/remove arrays. Removal uses exact saved text; No rule changes before human yes. Pending retries reuse requestId; question_closed needs a new requestId.',
       inputSchema: Ask,
       resultSchema: Result,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

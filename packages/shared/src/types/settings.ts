@@ -120,6 +120,7 @@ export type NeoWorkerPermissionMode = (typeof NEO_WORKER_PERMISSION_MODES)[numbe
 
 export interface NeoSettings {
   standingRules?: string[];
+  standingRuleSources?: Record<string, { sessionId: string; messageId: string }>;
   preferences?: NeoModelPreference;
   packs?: string[];
   mutedSessions?: string[];
@@ -132,7 +133,6 @@ export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermis
   return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'auto';
 }
 
-export const NEO_STANDING_RULES_MAX = 20;
 export const NEO_STANDING_RULE_MAX_CHARS = 500;
 
 export function neoStandingRules(settings?: NeoSettings): string[] {

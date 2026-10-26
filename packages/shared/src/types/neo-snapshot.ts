@@ -186,6 +186,7 @@ export interface NeoSnapshot {
   wakes?: NeoConversationWake[];
   mutedSessions?: string[];
   standingRules?: string[];
+  standingRuleSources?: Record<string, { sessionId: string; messageId: string }>;
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];

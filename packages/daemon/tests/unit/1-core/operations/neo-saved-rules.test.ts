@@ -4,7 +4,9 @@ import { planNeoRuleEdit } from '../../../../src/lib/neo/saved-rules.ts';
 describe('planNeoRuleEdit', () => {
   test('keeps every rule beyond twenty', () => {
     const rules = Array.from({ length: 25 }, (_, i) => `Rule ${i}.`);
-    expect(planNeoRuleEdit(rules, { add: ['Another.'] })).toEqual({ value: [...rules, 'Another.'] });
+    expect(planNeoRuleEdit(rules, { add: ['Another.'] })).toEqual({
+      value: [...rules, 'Another.'],
+    });
   });
   test.each([
     ['adding one rule keeps the others', ['A.', 'B.'], { add: ['C.'] }, ['A.', 'B.', 'C.']],
@@ -23,7 +25,6 @@ describe('planNeoRuleEdit', () => {
   test.each([
     ['an empty edit', ['A.'], {}, 'Name a rule to add or remove.'],
     ['removing a rule that is not saved', ['A.'], { remove: ['Z.'] }, '"Z." is not a saved rule'],
-
   ])('refuses %s', (_label, current, edit, reason) => {
     expect(planNeoRuleEdit(current, edit)).toMatchObject({
       reason: { ok: false, reason: expect.stringContaining(reason) },

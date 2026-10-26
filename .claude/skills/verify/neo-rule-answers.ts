@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -15,6 +16,7 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
 const edit = { add: ['Ask before publishing synthetic work.'], remove: ['Retire this synthetic rule.'] };
 let questionId = '';
+let approvalId = '';
 for (const phase of ['initial', 'restart']) {
   const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath }), verbose: false });
   let ws: WebSocket | undefined;
@@ -31,6 +33,7 @@ for (const phase of ['initial', 'restart']) {
     });
     const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'neo:10000000-0000-4000-8000-000000000002', role: 'neo' }));
     const mcp = async (name: string, input: unknown) => {
+      await app.db.updateSession('neo:10000000-0000-4000-8000-000000000002', { title: 'Synthetic Neo' });
       const result = await handler({ name, input }); evidence.push({ phase, name, input, mcp: result });
       return JSON.parse(result.content[0].text);
     };
@@ -46,8 +49,11 @@ for (const phase of ['initial', 'restart']) {
         repo.saveSDKMessage('neo:10000000-0000-4000-8000-000000000002', { type: 'user', uuid, session_id: 'neo:10000000-0000-4000-8000-000000000002', parent_tool_use_id: null, inputKind, message: { role: 'user', content } } as any);
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', 'human-rule');
       assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0], triggerId: 'human:human-rule' })).ok, false);
-      const approvalId = crypto.randomUUID();
-      await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: approvalId, content: 'Yes, remember to ask me before publication.' });
+      approvalId = crypto.randomUUID();
+      const sessionId = 'neo:10000000-0000-4000-8000-000000000002';
+      const content = 'Yes, remember to ask me before publication.';
+      repo.saveSDKMessage(sessionId, { type: 'user', uuid: approvalId, session_id: sessionId, parent_tool_use_id: null, inputKind: 'human', message: { role: 'user', content } } as any);
+      new NeoConversationAskRepository(db).append({ conversationId: new NeoRepository(db).conversationId(), requestId: approvalId, askOrigin: { sessionId, messageId: approvalId }, content });
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
       assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
       const sources = app.db.getGlobalSettings().neo?.standingRuleSources;
@@ -107,6 +113,8 @@ for (const phase of ['initial', 'restart']) {
     assert.equal((await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'accepted', add: ['Tampered.'] })).ok, false);
     assert.equal((await mcp('neo.rule.applyAnswer', { questionId })).ok, true);
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.add);
+    if (phase === 'initial') assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
+    assert.deepEqual((await rpc('neo.snapshot', {})).standingRuleSources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
   } finally { ws?.close(); await app.cleanup(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
 writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

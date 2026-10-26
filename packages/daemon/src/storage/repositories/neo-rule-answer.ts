@@ -1,7 +1,7 @@
 import type { Database } from '../sqlite-compat.ts';
 import { neoStandingRules } from '@hyperneo/shared/types/settings';
 import { SettingsRepository } from './settings-repository.ts';
-import { planNeoRuleEdit } from '../../lib/neo/saved-rules.ts';
+import { planNeoRuleEdit, planNeoRuleSources } from '../../lib/neo/saved-rules.ts';
 
 export function applyNeoRuleAnswer(db: Database, questionId: string) {
   return db.transaction(() => {
@@ -35,7 +35,13 @@ export function applyNeoRuleAnswer(db: Database, questionId: string) {
     const current = settings.getGlobalSettings();
     const plan = planNeoRuleEdit(neoStandingRules(current.neo), JSON.parse(row.edit_json));
     if ('reason' in plan) return plan.reason;
-    settings.updateGlobalSettings({ neo: { ...current.neo, standingRules: plan.value } });
+    settings.updateGlobalSettings({
+      neo: {
+        ...current.neo,
+        standingRules: plan.value,
+        standingRuleSources: planNeoRuleSources(plan.value, current.neo?.standingRuleSources),
+      },
+    });
     const now = Date.now();
     db.prepare('UPDATE neo_rule_proposals SET applied_at=? WHERE question_id=?').run(
       now,

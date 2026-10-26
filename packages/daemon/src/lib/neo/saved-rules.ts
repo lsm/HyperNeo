@@ -1,5 +1,3 @@
-import { NEO_STANDING_RULES_MAX } from '@hyperneo/shared/types/settings';
-
 type NeoRuleRefusal = { reason: { ok: false; reason: string } };
 const refuseRule = (reason: string): NeoRuleRefusal => ({ reason: { ok: false, reason } });
 
@@ -17,7 +15,17 @@ export function planNeoRuleEdit(
     );
   const kept = current.filter((rule) => !remove.includes(rule));
   const rules = [...kept, ...[...new Set(add)].filter((rule) => !kept.includes(rule))];
-  return rules.length > NEO_STANDING_RULES_MAX
-    ? refuseRule(`At most ${NEO_STANDING_RULES_MAX} rules are kept; remove one first.`)
-    : { value: rules };
+  return { value: rules };
+}
+
+export function planNeoRuleSources(
+  rules: readonly string[],
+  current: Record<string, { sessionId: string; messageId: string }> = {},
+  add: readonly string[] = [],
+  approval?: { sessionId: string; messageId: string }
+): Record<string, { sessionId: string; messageId: string }> {
+  return Object.fromEntries([
+    ...Object.entries(current).filter(([rule]) => rules.includes(rule)),
+    ...(approval ? add.filter((rule) => rules.includes(rule)).map((rule) => [rule, approval]) : []),
+  ]);
 }
