@@ -44,6 +44,23 @@ afterEach(() => {
   db.close();
 });
 const snapshot = (input: unknown = {}) => invokeOperation(registry, 'neo.snapshot', input, caller);
+test('paired relays can open summarized cards without gaining mutation access', async () => {
+  const relay = { ...caller, device: { deviceId: 'relay', kind: 'relay' as const } };
+  const detail = await invokeOperation(registry, 'neo.ask.read', { askId: 'ask-18' }, relay);
+  expect(detail.kind).toBe('completed');
+  if (detail.kind !== 'completed') throw new Error(detail.message);
+  expect(
+    (detail.value as { entry: { todos: { instruction: string }[] } }).entry.todos[0].instruction
+  ).toBe('x'.repeat(1155));
+  expect(
+    await invokeOperation(
+      registry,
+      'neo.ask.settle',
+      { askId: 'ask-18', status: 'done', outcome: 'Not authorized' },
+      relay
+    )
+  ).toMatchObject({ kind: 'failed', code: 'forbidden' });
+});
 test('Work cards defer full todo bodies until the card is opened', async () => {
   const value = read(await snapshot());
   const todo = value.todoAsks
