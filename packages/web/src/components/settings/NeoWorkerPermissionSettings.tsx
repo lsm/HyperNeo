@@ -3,6 +3,8 @@ import {
   NEO_WORKER_PERMISSION_MODES,
   neoWorkerPermissionMode,
   type NeoWorkerPermissionMode,
+  WORKER_SANDBOX_MODES,
+  type WorkerSandboxMode,
 } from '@hyperneo/shared/types/settings';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
@@ -51,6 +53,26 @@ export function NeoWorkerPermissionSettings() {
             {NEO_WORKER_PERMISSION_MODES.map((mode) => (
               <option key={mode} value={mode}>
                 {mode === effective && !neo?.workerPermissionMode ? `${mode} (not set)` : mode}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
+        <SettingsRow
+          label="Worker sandbox"
+          description="Limits where workers Neo starts from now on can write. On demand: only when Neo asks for it, for example for untrusted code."
+        >
+          <select
+            aria-label="Worker sandbox"
+            class="st-select"
+            value={settings.workerSandbox ?? 'off'}
+            disabled={saving}
+            onChange={({ currentTarget }) =>
+              save({ workerSandbox: currentTarget.value as WorkerSandboxMode })
+            }
+          >
+            {WORKER_SANDBOX_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
               </option>
             ))}
           </select>

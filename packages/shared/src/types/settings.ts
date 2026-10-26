@@ -203,6 +203,7 @@ export interface SessionSettings extends GlobalSettings {
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
+  workerSandbox: 'off',
   workerUnixSockets: [],
   settingSources: ['user', 'project', 'local'],
   permissionMode: 'default',
