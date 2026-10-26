@@ -1,0 +1,66 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 319,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "recoveryQueued": true,
+  "publication": {
+    "delivered": 2,
+    "failures": 0
+  },
+  "recoveryStatus": {
+    "status": "queued"
+  },
+  "chatStatus": {
+    "status": "queued"
+  },
+  "jobs": [
+    {
+      "payload": {
+        "sessionId": "synthetic-delivery-session",
+        "messageUuid": "synthetic-orphaned-input",
+        "origin": "recovery",
+        "parentToolUseId": null
+      },
+      "max_retries": 8,
+      "status": "pending"
+    },
+    {
+      "payload": {
+        "sessionId": "synthetic-delivery-session",
+        "messageUuid": "synthetic-direct-chat",
+        "origin": "chat",
+        "parentToolUseId": null
+      },
+      "max_retries": 8,
+      "status": "pending"
+    }
+  ],
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 339,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 0
+}

@@ -2971,7 +2971,7 @@ export class AgentSession
         throw new Error(`Session ${this.session.id} is archived`);
       }
       try {
-        deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+        await deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
         });
       } catch (err) {
@@ -3063,7 +3063,7 @@ export class AgentSession
         (uuid) => this.messageQueue.isRunning() && this.messageQueue.hasPendingOrInFlight(uuid)
       );
       for (const uuid of stranded) {
-        deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+        await deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
         void this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
       }
       return stranded.length;

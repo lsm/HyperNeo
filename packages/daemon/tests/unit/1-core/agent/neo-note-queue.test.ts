@@ -79,7 +79,7 @@ async function makeHarness(sessionId: string): Promise<Harness> {
   return harness;
 }
 
-function queueNote(harness: Harness, uuid: string): void {
+async function queueNote(harness: Harness, uuid: string): Promise<void> {
   harness.db.getSDKMessageRepo().saveUserMessage(
     harness.sessionId,
     {
@@ -90,7 +90,9 @@ function queueNote(harness: Harness, uuid: string): void {
     } as unknown as SDKMessage,
     'enqueued'
   );
-  deliverMessage(harness.db.getJobQueueRepo(), harness.sessionId, uuid, { origin: 'recovery' });
+  await deliverMessage(harness.db.getJobQueueRepo(), harness.sessionId, uuid, {
+    origin: 'recovery',
+  });
 }
 
 function consumeHumanInput(harness: Harness, uuid: string): void {
@@ -130,9 +132,9 @@ async function streamIntoRunningTurn(harness: Harness, head: string) {
 describe('Neo note queue', () => {
   it('retains older notes when a newer note for the same card or ask arrives', async () => {
     const harness = await makeHarness('neo:supersede');
-    queueNote(harness, 'w1:done-check:1');
-    queueNote(harness, 'neo-ask-evidence:a1:old');
-    queueNote(harness, 'w2:done-check:1');
+    await queueNote(harness, 'w1:done-check:1');
+    await queueNote(harness, 'neo-ask-evidence:a1:old');
+    await queueNote(harness, 'w2:done-check:1');
     await harness.service.deliverForward(
       harness.sessionId,
       'w1:stall:7',
@@ -157,7 +159,7 @@ describe('Neo note queue', () => {
 
   it('queues and delivers notes even when their card or ask has settled', async () => {
     const harness = await makeHarness('neo:settled');
-    queueNote(harness, 'neo-card-pr:w-done:s1');
+    await queueNote(harness, 'neo-card-pr:w-done:s1');
     await harness.service.deliverForward(
       harness.sessionId,
       'w-done:done-check:4',
@@ -185,7 +187,7 @@ describe('Neo note queue', () => {
   it('delivers queued facts older than the last consumed human input', async () => {
     const harness = await makeHarness('neo:stale');
     const facts = ['w1:done-check:1', 'neo-ask-evidence:a1:x'];
-    for (const uuid of facts) queueNote(harness, uuid);
+    for (const uuid of facts) await queueNote(harness, uuid);
     consumeHumanInput(harness, 'h1');
     await harness.service.deliverForward(
       harness.sessionId,
