@@ -1,6 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { NeoPublication, NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import { ARTIFACT_KINDS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+import type { NeoCardReply, NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 
@@ -79,12 +79,14 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
   const row = object(value);
   const producer = optionalOrigin(row?.producerInput);
   const ask = optionalOrigin(row?.askOrigin);
+  const shortText =
+    row?.shortText === undefined ? undefined : text(row.shortText, 2000) ? row.shortText : null;
   if (
     !row ||
     ask === null ||
+    shortText === null ||
     typeof row.revisionId !== 'string' ||
     !uuid.test(row.revisionId) ||
-    !text(row.shortText, 2000) ||
     !text(row.fullText, 16000) ||
     !text(row.createdAt, 40) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
@@ -94,7 +96,7 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
     return null;
   return {
     revisionId: row.revisionId,
-    shortText: row.shortText,
+    ...(shortText !== undefined ? { shortText } : {}),
     fullText: row.fullText,
     createdAt: row.createdAt,
     ...(producer ? { producerInput: producer } : {}),
@@ -110,7 +112,11 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
   const producer = optionalOrigin(row.producerInput);
   const answer = optionalOrigin(row.answerInput);
   const answerOrigin = optionalOrigin(row.answerOrigin);
+  const shortText =
+    row.shortText === undefined ? undefined : text(row.shortText, 2000) ? row.shortText : null;
+  const verbatim = row.verbatim === true;
   if (
+    shortText === null ||
     row.conversationId !== page.conversationId ||
     typeof row.publicationId !== 'string' ||
     !uuid.test(row.publicationId) ||
@@ -119,7 +125,9 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     !text(row.createdAt, 40) ||
     !/^\d{4}-\d{2}-\d{2}T.*Z$/.test(row.createdAt) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
-    !text(row.shortText, 2000) ||
+    (row.verbatim !== undefined && !verbatim) ||
+    (verbatim && shortText !== undefined) ||
+    (!verbatim && shortText === undefined) ||
     !text(row.fullText, 16000) ||
     ask === null ||
     producer === null ||
@@ -185,7 +193,8 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     publicationId: row.publicationId,
     sequence: row.sequence,
     createdAt: row.createdAt,
-    shortText: row.shortText,
+    ...(shortText !== undefined ? { shortText } : {}),
+    ...(verbatim ? { verbatim: true } : {}),
     fullText: row.fullText,
     ...(ask ? { askOrigin: ask } : {}),
     ...(producer ? { producerInput: producer } : {}),
