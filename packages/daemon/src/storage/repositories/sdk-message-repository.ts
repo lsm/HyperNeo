@@ -1123,7 +1123,7 @@ export class SDKMessageRepository {
               AND newer.parent_tool_use_id IS NULL
               AND (
                 newer.timestamp > sdk_messages.timestamp
-                OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
+                OR (newer.timestamp = sdk_messages.timestamp AND newer.rowid > sdk_messages.rowid)
               )
               AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
           )
