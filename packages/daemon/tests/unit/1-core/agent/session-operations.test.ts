@@ -5,7 +5,12 @@ import { z } from 'zod';
 import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
-import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  defineOperation,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
 import type { Database } from '../../../../src/storage/database';
@@ -271,6 +276,57 @@ describe('session operation MCP attachment', () => {
     if (listed.type !== 'text') throw new Error('Expected catalog JSON');
     expect(JSON.parse(listed.text)).toContainEqual(expect.objectContaining({ name: 'task.get' }));
   });
+
+  test.each([
+    ['worker', ['message.send', 'note.read']],
+    [undefined, ['message.send', 'neo.restart', 'note.read', 'pack.preferences.set', 'work.start']],
+  ] as const)(
+    'a %s session lists only the operations its tool profile advertises, and may still call the rest',
+    async (toolProfile, listed) => {
+      const base = createTestSession('profiled');
+      await db.createSession({
+        ...base,
+        config: { ...base.config, ...(toolProfile ? { toolProfile } : {}) },
+      });
+      const session = await restore('profiled');
+      const stub = (name: string) =>
+        defineOperation({
+          name,
+          description: name,
+          inputSchema: z.object({}),
+          resultSchema: z.string(),
+          execute: async () => 'ran',
+        });
+      const registry: OperationRegistry = createOperationRegistry([
+        ...['message.send', 'neo.restart', 'note.read', 'pack.preferences.set', 'work.start'].map(
+          stub
+        ),
+        ...createDiscoveryOperations(() => registry),
+      ]);
+      session.setOperationRegistryProvider(() => registry);
+      const invoke = operationInvoke(session.getOperationMcpServer());
+      const discovery = await invoke({ name: 'operations.list' });
+      const content = discovery.content[0];
+      if (content.type !== 'text') throw new Error('Expected catalog JSON');
+      expect(
+        JSON.parse(content.text)
+          .map((entry: { name: string }) => entry.name)
+          .filter((name: string) => !name.startsWith('operations.'))
+          .sort()
+      ).toEqual(listed);
+      const full = (await invoke({ name: 'operations.list', input: { all: true } })).content[0];
+      if (full.type !== 'text') throw new Error('Expected catalog JSON');
+      expect(
+        JSON.parse(full.text)
+          .map((entry: { name: string }) => entry.name)
+          .filter((name: string) => !name.startsWith('operations.'))
+          .sort()
+      ).toEqual(listed);
+      expect(JSON.stringify((await invoke({ name: 'work.start', input: {} })).content)).toContain(
+        'ran'
+      );
+    }
+  );
 
   test.each([undefined, 'lobby', 'worker', 'space_chat', 'worker'] as const)(
     'exposes canonical send for restored session type %s',

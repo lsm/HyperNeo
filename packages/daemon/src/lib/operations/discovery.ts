@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { isAdvertisedToProfile } from '../tools/session-tool-profiles.ts';
 import { z } from 'zod';
 import { isOperationAdmitted } from './invoke.ts';
 import {
@@ -29,6 +30,7 @@ export function isOperationListed(
   caller: OperationCaller
 ): boolean {
   if (caller.source !== 'mcp') return true;
+  if (!isAdvertisedToProfile(operation.name, caller.profile)) return false;
   const policy = operation.policy;
   if (!policy) return true;
   if (policy.safetyClass === 'human_only') return false;
@@ -57,6 +59,7 @@ export function listOperationSummaries(
     .filter(
       (entry) =>
         isOperationAdmitted(entry, caller) &&
+        (caller.source !== 'mcp' || isAdvertisedToProfile(entry.name, caller.profile)) &&
         (all || isOperationListed(entry, caller)) &&
         matchesOperationQuery(entry, query)
     )
@@ -171,7 +174,7 @@ export function createDiscoveryOperations(
     defineOperation({
       name: 'operations.list',
       description:
-        'List the operations meant for this session. Pass { all: true } for the full catalog and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
+        'List the operations meant for this session. Pass { all: true } for the full catalog the session tool profile advertises and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
       inputSchema: ListInputSchema,
       resultSchema: z.array(SummarySchema),
       execute: async ({ all, query }, caller) =>

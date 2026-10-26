@@ -1,5 +1,6 @@
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import type { z } from 'zod';
+import type { SessionToolProfile } from '@hyperneo/shared/types/session-tool-choice';
 
 export type OperationCallerRole =
   | 'neo'
@@ -16,6 +17,7 @@ export interface OperationCaller {
   readonly sessionId?: string;
   readonly spaceId?: string;
   readonly role?: OperationCallerRole;
+  readonly profile?: SessionToolProfile;
   readonly agentId?: string;
   readonly agentName?: string;
   readonly hookReplay?: {
