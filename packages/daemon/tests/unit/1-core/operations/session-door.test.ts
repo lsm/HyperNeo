@@ -1,19 +1,19 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { request, Server } from 'node:http';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { request, Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
-import { createBuildOperation } from '../../../../src/lib/system/build-operation';
-import { startSessionDoor } from '../../../../src/lib/messaging/session-door';
+import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send';
+import { startSessionDoor } from '../../../../src/lib/messaging/session-door';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
-import { createDevicePairingOperations } from '../../../../src/lib/pairing/pairing-operations';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter';
+import { createDevicePairingOperations } from '../../../../src/lib/pairing/pairing-operations';
+import { createBuildOperation } from '../../../../src/lib/system/build-operation';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 
 function post(socketPath: string, body: unknown): Promise<{ status: number; body: unknown }> {
