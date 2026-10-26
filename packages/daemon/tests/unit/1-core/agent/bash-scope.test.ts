@@ -397,8 +397,8 @@ describe('bashScopeDenyReason', () => {
 });
 
 describe('scoped entries beside an unrestricted Bash grant', () => {
-  test('a bare Bash entry disables scoping like the SDK does', () => {
-    expect(extractBashScopePrefixes(['Read', 'Bash', 'Bash(sleep:*)'])).toEqual([]);
+  test('prefixes still extract; the coordinator-keyed bypass lives at hook install', () => {
+    expect(extractBashScopePrefixes(['Read', 'Bash', 'Bash(sleep:*)'])).toEqual(['sleep']);
   });
 });
 

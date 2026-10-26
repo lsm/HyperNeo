@@ -12,8 +12,8 @@ describe('neo wait admission', () => {
     expect(tools.allowedTools).toContain('Bash(sleep:*)');
   });
 
-  test('the scoped sleep rule does not scope the coordinator bash down to waits', () => {
-    expect(extractBashScopePrefixes(neoReadTools().allowedTools)).toEqual([]);
+  test('the preset carries the sleep scope entry; only the coordinator skips scoping', () => {
+    expect(extractBashScopePrefixes(neoReadTools().allowedTools)).toEqual(['sleep']);
   });
 
   test('bounded waits pass the admission bound and longer or computed waits stay vetoed', () => {
@@ -25,5 +25,15 @@ describe('neo wait admission', () => {
     expect(sleepCommandVerdict('/usr/bin/sleep 301')).toBe('denied');
     expect(sleepCommandVerdict('sleep $(cat seconds.txt)')).toBe('denied');
     expect(sleepCommandVerdict('echo done')).toBe('none');
+  });
+
+  test('indirect heads and non-sleep wait primitives stay vetoed', () => {
+    expect(sleepCommandVerdict('$x 999')).toBe('denied');
+    expect(sleepCommandVerdict('a=sl; b=eep; $a$b 999')).toBe('denied');
+    expect(sleepCommandVerdict('`sleep 999`')).toBe('denied');
+    expect(sleepCommandVerdict('python3 -c "import time; time.sleep(999)"')).toBe('denied');
+    expect(sleepCommandVerdict('read -t 600')).toBe('denied');
+    expect(sleepCommandVerdict('sleep 300 && read -t 300')).toBe('denied');
+    expect(sleepCommandVerdict('FOO=time.sleep echo $FOO')).toBe('denied');
   });
 });

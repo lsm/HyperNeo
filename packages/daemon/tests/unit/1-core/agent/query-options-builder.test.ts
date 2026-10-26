@@ -2657,11 +2657,25 @@ describe('QueryOptionsBuilder', () => {
       expect(options.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')).toBeUndefined();
     });
 
-    it('adds no Bash scope hook when a bare Bash grant sits beside scoped entries', async () => {
+    it('keeps the Bash scope hook for a non-coordinator config mixing bare and scoped grants', async () => {
       mockSession.config.allowedTools = ['Bash', 'Bash(sleep:*)'];
       const options = await builder.build();
 
-      expect(options.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')).toBeUndefined();
+      const bashHooks = options.hooks?.PreToolUse?.flatMap((entry) =>
+        entry.matcher === 'Bash' ? entry.hooks : []
+      );
+      expect(bashHooks).toHaveLength(1);
+      const run = (command: string) =>
+        bashHooks?.[0]?.({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command },
+        } as never);
+      const denied = (await run('ls -la')) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(await run('sleep 30')).toEqual({});
     });
 
     it('installs a bounded-sleep admission hook for the neo coordinator only', async () => {
@@ -2669,6 +2683,7 @@ describe('QueryOptionsBuilder', () => {
       const ordinaryId = mockSession.id;
       try {
         createNeoTables(sqlite);
+        mockSession.config.allowedTools = ['Bash', 'Bash(sleep:*)'];
         mockSession.id = `neo:${generateUUID()}`;
         sqlite
           .prepare(
@@ -2705,9 +2720,8 @@ describe('QueryOptionsBuilder', () => {
 
         mockSession.id = ordinaryId;
         const ordinary = await builder.build();
-        expect(
-          ordinary.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')
-        ).toBeUndefined();
+        const ordinaryHook = ordinary.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash');
+        expect(ordinaryHook?.hooks).toHaveLength(1);
       } finally {
         sqlite.close();
       }

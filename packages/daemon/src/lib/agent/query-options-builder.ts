@@ -1139,15 +1139,18 @@ export class QueryOptionsBuilder {
       hooks: [createSendMessageRedirectHook((id) => !!this.ctx.db?.getSession?.(id))],
     });
 
-    const bashScopePrefixes = extractBashScopePrefixes(this.ctx.session.config.allowedTools ?? []);
-    if (bashScopePrefixes.length > 0) {
+    const allowedToolEntries = this.ctx.session.config.allowedTools ?? [];
+    const isNeoCoordinator = !!neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
+    const bashScopePrefixes = extractBashScopePrefixes(allowedToolEntries);
+    const bareBashSkipsScope = isNeoCoordinator && allowedToolEntries.includes('Bash');
+    if (bashScopePrefixes.length > 0 && !bareBashSkipsScope) {
       preToolUse.push({
         matcher: 'Bash',
         hooks: [createBashScopeHook(bashScopePrefixes)],
       });
     }
 
-    if (neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {
+    if (isNeoCoordinator) {
       preToolUse.push({
         matcher: 'Bash',
         hooks: [createSleepBoundHook()],

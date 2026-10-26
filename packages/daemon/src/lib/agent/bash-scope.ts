@@ -9,7 +9,6 @@ export function parseScopedBashPrefix(entry: string): string | null {
 }
 
 export function extractBashScopePrefixes(entries: readonly string[]): string[] {
-  if (entries.includes('Bash')) return [];
   const prefixes: string[] = [];
   for (const entry of entries) {
     const prefix = parseScopedBashPrefix(entry);
@@ -482,13 +481,7 @@ function containsSleepWord(text: string): boolean {
       const after = text[i + 5];
       const wordEnd = after === undefined || SLEEP_BOUNDARY.has(after);
       const before = text.slice(boundaryEnd, i);
-      if (
-        wordEnd &&
-        (i === boundaryEnd ||
-          /^[^\s'"`;|&(){}]*\/$/.test(before) ||
-          /^[A-Za-z_][A-Za-z0-9_]*=$/.test(before))
-      )
-        return true;
+      if (wordEnd && (i === boundaryEnd || /[/.=]$/.test(before))) return true;
     }
     if (SLEEP_BOUNDARY.has(text[i])) boundaryEnd = i + 1;
   }
@@ -507,7 +500,10 @@ function sleepSegmentSeconds(segment: string): number | 'none' | 'invalid' {
   if (stripped === null || !stripped)
     return stripped === null && containsSleepWord(s) ? 'invalid' : 'none';
   const [head, ...args] = stripped.split(/[ \t]+/).filter(Boolean);
-  if (!head || !isSleepToken(head)) return containsSleepWord(stripped) ? 'invalid' : 'none';
+  if (!head) return 'none';
+  if (head.startsWith('$') || head.startsWith('`') || head === 'read' || head.endsWith('/read'))
+    return 'invalid';
+  if (!isSleepToken(head)) return containsSleepWord(stripped) ? 'invalid' : 'none';
   if (args.length === 0) return 'invalid';
   let total = 0;
   for (const arg of args) {
