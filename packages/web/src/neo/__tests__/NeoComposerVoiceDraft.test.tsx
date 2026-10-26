@@ -95,6 +95,7 @@ describe('Neo composer draft while voice is active', () => {
     'shows the draft read-only at the same height during %s, then editable and focused',
     (phase) => {
       const { rerender } = render(composer());
+      fireEvent.focus(textarea());
       const idleHeight = textarea().style.height;
       expect(idleHeight).not.toBe('');
 
@@ -133,12 +134,14 @@ describe('Neo composer draft while voice is active', () => {
   it('hands the attach and model controls over to the voice bar while voice is active', () => {
     voice.phase = 'recording';
     const { rerender } = render(composer());
-    const attach = screen.getByRole('button', { name: 'Attach photos or files' });
-    expect(attach.parentElement?.classList.contains('hidden')).toBe(true);
+    const attach = screen.getByRole('button', {
+      name: 'Attach photos or files',
+    }) as HTMLButtonElement;
+    expect(attach.disabled).toBe(true);
 
     voice.phase = 'idle';
     rerender(composer());
-    expect(attach.parentElement?.classList.contains('hidden')).toBe(false);
+    expect(attach.disabled).toBe(false);
   });
 
   it('tells an empty draft where the dictated words will appear', () => {
@@ -160,5 +163,35 @@ describe('Neo composer draft while voice is active', () => {
 
     rerender(composer(''));
     expect(screen.queryByText('Sending with your draft…')).toBeNull();
+  });
+});
+
+describe('Neo composer focus layout', () => {
+  it('starts with one line, expands on focus and collapses without losing the draft', () => {
+    render(composer());
+    expect(textarea().getAttribute('rows')).toBe('1');
+    fireEvent.focus(textarea());
+    expect(textarea().getAttribute('rows')).toBe('2');
+    fireEvent.focusOut(textarea(), { relatedTarget: document.body });
+    expect(textarea().getAttribute('rows')).toBe('1');
+    expect(textarea().value).toBe('Fictional draft about lunch');
+  });
+
+  it('keeps the expanded layout while moving focus to a composer control', () => {
+    render(composer());
+    fireEvent.focus(textarea());
+    fireEvent.focusOut(textarea(), {
+      relatedTarget: screen.getByRole('button', { name: 'Send message' }),
+    });
+    expect(textarea().getAttribute('rows')).toBe('2');
+  });
+
+  it('collapses multiline drafts to one line without changing their content', () => {
+    render(composer('First line\nSecond line'));
+    const input = screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
+    expect(input.getAttribute('rows')).toBe('1');
+    expect(input.value).toBe('First line\nSecond line');
+    fireEvent.focus(input);
+    expect(input.getAttribute('rows')).toBe('2');
   });
 });
