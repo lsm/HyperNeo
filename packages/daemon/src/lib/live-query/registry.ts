@@ -1,4 +1,5 @@
 import type { NamedQuery } from './types.ts';
+import { mayChangeSessionList } from '../../storage/repositories/session-list-live-read.ts';
 import {
   SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
   DEBOUNCE_SESSION_GROUP_MESSAGES_MS,
@@ -39,7 +40,6 @@ import {
   SESSIONS_LIST_SQL,
   DEBOUNCE_SESSION_LIST_MS,
   mapSessionRow,
-  SESSION_LIST_EXCLUDED_TYPES,
 } from './queries/sessions.ts';
 import {
   MESSAGES_BY_SESSION_SQL,
@@ -185,25 +185,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       paramCount: 1,
       debounceMs: DEBOUNCE_SESSION_LIST_MS,
       mapRow: mapSessionRow,
-      buildScopeFilter: (_params, db) => {
-        const stmt = db.prepare(`SELECT type, room_id, space_id FROM sessions WHERE id = ?`);
-        return (scope) => {
-          if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
-            return false;
-          }
-          if (scope.roomId || scope.spaceId) return false;
-          if (scope.sessionId) {
-            const row = stmt.get(scope.sessionId) as
-              | { type: string | null; room_id: string | null; space_id: string | null }
-              | undefined;
-            if (row) {
-              if (row.type && SESSION_LIST_EXCLUDED_TYPES.has(row.type)) return false;
-              if (row.room_id || row.space_id) return false;
-            }
-          }
-          return true;
-        };
-      },
+      buildScopeFilter: () => mayChangeSessionList,
     },
   ],
 ]);

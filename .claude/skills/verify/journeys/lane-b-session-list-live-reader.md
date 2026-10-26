@@ -6,7 +6,8 @@ HOME/data/TMPDIR. No provider, model turn or external HTTP is used.
 
 The helper seeds full human/archived/excluded session rows and captures the
 existing wire projection as its reference. A main-thread statement proxy,
-installed before daemon startup, denies session/counter SQL during measurement
+installed before daemon startup, denies session SQL and the subscription's
+total/archived counter projection during measurement
 even for statements prepared before the guard is enabled. Real WebSocket
 sessions.list subscriptions must deliver unchanged complete rows and counters
 while a second synthetic WAL writer holds a transaction. The actor cache must
@@ -27,3 +28,9 @@ and included in timings. A latency miss is recorded explicitly, not relabelled
 as a pass. Source proof data, socket, writers and daemon are closed and removed
 after evidence is saved. UI/served-build smoke and production scale are not
 established by this source proof.
+
+The broader diagnostic also observed system.health's distinct countHumanSessions
+counter read on main. That pre-existing path is outside this slice and is
+not covered by its zero-target-SQL claim. The guard still blocks both the exact
+subscription counter projection and all session-table statements, including
+cached statement execution.

@@ -4977,7 +4977,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(filter({ sessionId: 's', taskId: 'task-1' })).toBe(true);
       });
 
-      test('session-ID-only scopes resolve visibility from the database', () => {
+      test('session-ID-only scopes conservatively invalidate regardless of persisted visibility', () => {
         db.exec(`
           INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
           VALUES ('db-worker', 'Worker', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'worker', '{"spaceId":"space-1"}')
@@ -4991,8 +4991,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
           VALUES ('db-human', 'Human', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'general', NULL)
         `);
         const filter = buildFilter();
-        expect(filter({ sessionId: 'db-worker' })).toBe(false);
-        expect(filter({ sessionId: 'db-space-chat' })).toBe(false);
+        expect(filter({ sessionId: 'db-worker' })).toBe(true);
+        expect(filter({ sessionId: 'db-space-chat' })).toBe(true);
         expect(filter({ sessionId: 'db-human' })).toBe(true);
         expect(filter({ sessionId: 'missing-session' })).toBe(true);
       });
@@ -5317,7 +5317,7 @@ describe('sessions.list reactive scope filter', () => {
     } as SDKMessage;
   }
 
-  test('worker session message saves do not re-run the list', async () => {
+  test('unclassified worker message notifications conservatively re-run the list', async () => {
     await reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
     const spy = spyOnEvaluate();
     const diffs: QueryDiff<Record<string, unknown>>[] = [];
@@ -5325,10 +5325,10 @@ describe('sessions.list reactive scope filter', () => {
     await flush();
     spy.mockClear();
 
-    reactiveDb.db.saveSDKMessage('space-worker-1', makeAssistantMessage('worker-msg-1'));
+    await reactiveDb.db.saveSDKMessage('space-worker-1', makeAssistantMessage('worker-msg-1'));
     await flush();
 
-    expect(spy.mock.calls).toHaveLength(0);
+    expect(spy.mock.calls).toHaveLength(1);
     expect(diffs).toHaveLength(1);
   });
 
@@ -5339,7 +5339,7 @@ describe('sessions.list reactive scope filter', () => {
     await flush();
     spy.mockClear();
 
-    reactiveDb.db.saveSDKMessage('human-1', makeAssistantMessage('human-msg-1'));
+    await reactiveDb.db.saveSDKMessage('human-1', makeAssistantMessage('human-msg-1'));
     await flush();
 
     expect(spy.mock.calls).toHaveLength(1);

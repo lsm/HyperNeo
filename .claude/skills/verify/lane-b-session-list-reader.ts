@@ -110,7 +110,15 @@ try {
     evidence.coldMs = performance.now() - coldAt;
     assert.deepEqual(cold, JSON.parse(JSON.stringify(expected[0])));
     writer = new SQLite(app.db.getDbPath());
-    writer.exec('BEGIN IMMEDIATE; UPDATE synthetic_session_list_counter SET value=value+1');
+    writer.exec('PRAGMA busy_timeout=5000');
+    writer.exec('BEGIN IMMEDIATE');
+    writer.prepare('UPDATE synthetic_session_list_counter SET value=value+1').run();
+    const counters = () => ({
+      outside: (raw.prepare('SELECT value FROM synthetic_session_list_counter').get() as { value: number }).value,
+      inside: (writer!.prepare('SELECT value FROM synthetic_session_list_counter').get() as { value: number }).value,
+    });
+    evidence.writerCounterBefore = counters();
+    assert.deepEqual(evidence.writerCounterBefore, { outside: 0, inside: 1 });
     try {
       const warmAt = performance.now();
       const healthAt = performance.now();
@@ -121,6 +129,8 @@ try {
       assert.deepEqual(replies, JSON.parse(JSON.stringify(expected)));
       evidence.fullRowCounts = replies.map((value) => (value as { sessions: Session[] }).sessions.length);
       evidence.replyHash = createHash('sha256').update(JSON.stringify(replies)).digest('hex');
+      evidence.writerCounterAfter = counters();
+      assert.deepEqual(evidence.writerCounterAfter, { outside: 0, inside: 1 });
       evidence.concurrentWalWriter = true;
     } finally {
       writer.exec('ROLLBACK'); writer.close(); writer = undefined;

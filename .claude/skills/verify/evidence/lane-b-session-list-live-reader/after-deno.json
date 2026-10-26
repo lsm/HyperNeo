@@ -1,0 +1,43 @@
+{
+  "sqlGuard": "all session SQL and the subscribed total/archived counter projection; distinct health countHumanSessions read is outside this slice",
+  "writerCounterBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldSubscribeMs": 5.088749999999891,
+  "concurrentHealthMs": 0.3952920000001541,
+  "warmSubscribeMs": 0.7312920000001668,
+  "writerCounterAfter": {
+    "outside": 0,
+    "inside": 1
+  },
+  "concurrentWalWriter": true,
+  "fullSnapshotsMatched": true,
+  "archiveAndMetadataOnlyDeltas": true,
+  "unknownScopeInvalidatedWithoutLookup": true,
+  "initialReaderFailure": "MessageHubResponseError: synthetic live session reader failure",
+  "healthAfterFailures": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 1612,
+    "sessions": {
+      "active": 0,
+      "total": 4
+    }
+  },
+  "workerFailureRecoveryAndDisposal": true,
+  "coherentSnapshotsAndDeltas": true,
+  "actorCacheStayedEmpty": true,
+  "readLaneRequests": 12,
+  "maxLoopLagMs": 14.552165999999943,
+  "snapshotLatencyUnder250ms": true,
+  "storedHeldPromptRetained": true,
+  "mainSqlAttempts": 0,
+  "mainSqlDetails": []
+}

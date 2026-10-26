@@ -103,6 +103,7 @@ import { sessionTitleEnqueueWrites } from '../repositories/session-title-enqueue
 import { skillValidationEnqueueWrites } from '../repositories/skill-validation-enqueue-write.ts';
 import { githubPollRefreshWrites } from '../repositories/github-poll-refresh-write.ts';
 import { sessionListReads } from '../repositories/session-list-read.ts';
+import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -189,5 +190,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     skillValidationEnqueueWrites,
     githubPollRefreshWrites,
     sessionListReads,
+    readLiveSessionList,
   ].map((op) => [op.name, op])
 );

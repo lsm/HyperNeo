@@ -26,15 +26,17 @@ let rejectNextList = false;
 let listRequests = 0;
 let measuring = false;
 let mainSqlAttempts = 0;
+const mainSqlDetails: { sql: string; stack: string }[] = [];
 SQLite.prototype.prepare = function (...args) {
   const statement = Reflect.apply(prepare, this, args);
-  if (!/\b(?:sessions|session_counters)\b/i.test(args[0])) return statement;
+  if (!/\bsessions\b/i.test(args[0]) && args[0].replace(/\s+/g, ' ').trim() !== SESSION_COUNTERS_SQL.replace(/\s+/g, ' ').trim()) return statement;
   return new Proxy(statement, { get(target, key) {
     const value = Reflect.get(target, key);
     if (typeof value !== 'function') return value;
     return (...values: unknown[]) => {
       if (measuring && ['get', 'all', 'iterate', 'run', 'values'].includes(String(key))) {
         mainSqlAttempts++;
+        mainSqlDetails.push({ sql: args[0], stack: new Error().stack ?? '' });
         throw new Error('live session list or counters SQL reached main connection');
       }
       return Reflect.apply(value, target, values);
@@ -65,7 +67,7 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: InstanceType<typeof WebSocketClientTransport> | undefined;
 let writer: InstanceType<typeof SQLite> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
-const evidence: Record<string, unknown> = {};
+const evidence: Record<string, unknown> = { sqlGuard: 'all session SQL and the subscribed total/archived counter projection; distinct health countHumanSessions read is outside this slice' };
 const waitFor = async (predicate: () => boolean) => {
   const deadline = Date.now() + 3000;
   while (!predicate()) { assert(Date.now() < deadline, 'subscription evidence timed out'); await new Promise((resolve) => setTimeout(resolve, 10)); }
@@ -104,24 +106,50 @@ try {
   const snapshots: LiveQuerySnapshotEvent[] = [];
   const deltas: LiveQueryDeltaEvent[] = [];
   const errors: { subscriptionId: string }[] = [];
-  hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => snapshots.push(event));
-  hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => deltas.push(event));
+  const states = new Map<string, Map<unknown, Record<string, unknown>>>();
+  const incoherent: string[] = [];
+  const checkCounts = (id: string, metadata?: Record<string, unknown>) => {
+    const rows = [...states.get(id)!.values()];
+    const total = Number(metadata?.totalCount); const archived = Number(metadata?.archivedCount);
+    if (id === 'live-active') {
+      if (rows.length !== total - archived) incoherent.push(id);
+    } else if (rows.length !== total || rows.filter((row) => row.status === 'archived').length !== archived) incoherent.push(id);
+  };
+  hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+    snapshots.push(event); states.set(event.subscriptionId, new Map(event.rows.map((row) => [row.id, row])));
+    checkCounts(event.subscriptionId, event.metadata);
+  });
+  hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+    deltas.push(event); const rows = states.get(event.subscriptionId)!;
+    for (const row of event.removed ?? []) rows.delete(row.id);
+    for (const row of [...(event.added ?? []), ...(event.updated ?? [])]) rows.set(row.id, row);
+    checkCounts(event.subscriptionId, event.metadata);
+  });
   hub.onEvent<{ subscriptionId: string }>('liveQuery.error', (event) => errors.push(event));
   const subscribe = (subscriptionId: string, includeArchived: number) => hub.request('liveQuery.subscribe', { subscriptionId, queryName: 'sessions.list', params: [includeArchived] });
   const unsubscribe = (subscriptionId: string) => hub.request('liveQuery.unsubscribe', { subscriptionId });
   let previous = performance.now(); let maxLagMs = 0;
+  writer = new SQLite(app.db.getDbPath()); writer.exec('PRAGMA busy_timeout=5000');
+  writer.exec('BEGIN IMMEDIATE');
+  writer.prepare('UPDATE synthetic_live_counter SET value=value+1').run();
+  const outsideCounter = () => (raw.prepare('SELECT value FROM synthetic_live_counter').get() as { value: number }).value;
+  const insideCounter = () => (writer!.prepare('SELECT value FROM synthetic_live_counter').get() as { value: number }).value;
+  evidence.writerCounterBefore = { outside: outsideCounter(), inside: insideCounter() };
+  assert.deepEqual(evidence.writerCounterBefore, { outside: 0, inside: 1 });
+  previous = performance.now();
   timer = setInterval(() => { const now = performance.now(); maxLagMs = Math.max(maxLagMs, now - previous - 5); previous = now; }, 5);
   measuring = true;
-  writer = new SQLite(app.db.getDbPath()); writer.exec('BEGIN IMMEDIATE; UPDATE synthetic_live_counter SET value=value+1');
   try {
     const coldAt = performance.now();
     await subscribe('live-all', 1); evidence.coldSubscribeMs = performance.now() - coldAt;
     const warmAt = performance.now(); const healthAt = performance.now();
     await Promise.all([subscribe('live-active', 0), hub.request('system.health', {}).then((value) => { assert.equal((value as { status: string }).status, 'ok'); evidence.concurrentHealthMs = performance.now() - healthAt; })]);
     evidence.warmSubscribeMs = performance.now() - warmAt;
+    evidence.writerCounterAfter = { outside: outsideCounter(), inside: insideCounter() };
+    assert.deepEqual(evidence.writerCounterAfter, { outside: 0, inside: 1 });
     evidence.concurrentWalWriter = true;
   } finally {
-    try { writer.exec('ROLLBACK'); } catch (error) { evidence.rollbackAfterFailure = String(error); }
+    writer.exec('ROLLBACK');
     writer.close(); writer = undefined;
   }
   const all = snapshots.find((event) => event.subscriptionId === 'live-all')!;
@@ -162,6 +190,7 @@ try {
   assert.equal((evidence.healthAfterFailures as { status: string }).status, 'ok');
   await unsubscribe('live-final');
   evidence.workerFailureRecoveryAndDisposal = true;
+  assert.deepEqual(incoherent, []); evidence.coherentSnapshotsAndDeltas = true;
   assert.equal(app.sessionManager.getCachedSessions().length, 0);
   evidence.actorCacheStayedEmpty = true;
   evidence.readLaneRequests = listRequests; evidence.maxLoopLagMs = maxLagMs;
@@ -181,6 +210,7 @@ try {
   SQLite.prototype.prepare = prepare;
   globalThis.Worker = NativeWorker; globalThis.fetch = fetch;
   evidence.mainSqlAttempts = mainSqlAttempts;
+  evidence.mainSqlDetails = mainSqlDetails;
   writeFileSync(join(run, 'evidence/session-list-live-reader.json'), JSON.stringify(evidence, null, 2));
   for (const name of ['data', 'home', 'workspace']) rmSync(join(run, name), { recursive: true, force: true });
 }
