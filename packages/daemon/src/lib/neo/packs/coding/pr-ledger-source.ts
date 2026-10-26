@@ -9,7 +9,7 @@ export type CodingLedgerRead = (repo: string) => Promise<unknown | null>;
 const log = new Logger('NeoCodingLedger');
 
 const DONE_FIELDS =
-  'number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt createdAt';
+  'number title body headRefName headRefOid state isDraft mergeable reviewDecision closedAt createdAt';
 
 const FIELDS = `${DONE_FIELDS}
   files(first: 100) { nodes { path } pageInfo { hasNextPage } }

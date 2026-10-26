@@ -15,6 +15,8 @@ import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';
 import { neoGitRepo } from '../../todo-repo.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
+import { planCodingIssuePrClaims } from './issue-pr-claims.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
 
 export type CodingPrClaim = 'named' | 'reported' | 'branch';
 export type CodingPrClaimRow = {
@@ -47,24 +49,41 @@ export class CodingTodoPrRepository {
     this.deliveryFacts = new CodingDeliveryFactsRepository(db);
   }
 
+  claimClosingIssues(
+    rows: readonly { repo: string; number: number; body?: string }[],
+    now: number
+  ): void {
+    const store = new NeoAskTodoRepository(this.db);
+    const todos = store.listTodosForAsks(store.listOpenAsks().map((ask) => ask.id));
+    for (const row of rows)
+      for (const claim of planCodingIssuePrClaims(row.repo, row.number, row.body ?? '', todos))
+        this.claim(claim.todoId, [{ url: claim.url, claim: 'branch' }], now, 'additive');
+  }
+
   stages(todoId: string) {
     return this.urls(todoId).flatMap((url) => this.stageFacts.read(url));
   }
 
-  claim(todoId: string, claims: readonly { url: string; claim: CodingPrClaim }[], now: number) {
+  claim(
+    todoId: string,
+    claims: readonly { url: string; claim: CodingPrClaim }[],
+    now: number,
+    mode: 'replace-reported' | 'additive' = 'replace-reported'
+  ) {
     const keyed = claims.flatMap(({ url, claim }) => {
       const key = codingPrKey(url);
       return key ? [{ key, claim }] : [];
     });
-    this.db
-      .prepare(
-        `DELETE FROM pack_coding_pr_claims WHERE todo_id = ? AND claim = 'reported'
+    if (mode === 'replace-reported')
+      this.db
+        .prepare(
+          `DELETE FROM pack_coding_pr_claims WHERE todo_id = ? AND claim = 'reported'
            AND url NOT IN (SELECT value FROM json_each(?))`
-      )
-      .run(
-        todoId,
-        JSON.stringify(keyed.filter((item) => item.claim === 'reported').map((item) => item.key))
-      );
+        )
+        .run(
+          todoId,
+          JSON.stringify(keyed.filter((item) => item.claim === 'reported').map((item) => item.key))
+        );
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(todo_id, url) DO UPDATE SET claim = excluded.claim, claimed_at = excluded.claimed_at
@@ -550,7 +569,6 @@ export function createCodingTodoPack(
     schema: createCodingPackTables,
     repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
     openedPrs: async (todo, urls) => {
-      if (todo.check?.kind === 'issue_closed') return;
       await repo.write(
         'claim',
         todo.id,
@@ -598,8 +616,13 @@ export function createCodingTodoPack(
         const duplicate = [...named, ...repo.urls(peer.id)].find(
           (url) => typeof url === 'string' && keys.has(codingPrKey(url) ?? '')
         );
-        if (duplicate)
-          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}"; use neo.todo.edit addUrls on that todo.`;
+        if (duplicate) {
+          const next =
+            peer.check?.kind === 'pr_merged'
+              ? 'Use neo.todo.edit addUrls on that todo.'
+              : 'Continue that todo instead.';
+          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}". ${next}`;
+        }
       }
       return null;
     },
