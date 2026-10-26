@@ -207,6 +207,35 @@ describe('Read-only todo mutation plans', () => {
     expect(result.ok && result.patch?.state).toBeUndefined();
   });
 
+  test.each(['edit', 'close'])(
+    'a %s completion plan refuses an unanswered todo card',
+    async (kind) => {
+      store.askQuestion(
+        'reply',
+        'ask',
+        {
+          kind: 'reply',
+          todoId: 'first',
+          text: 'Answer before completion',
+          options: null,
+          multiple: false,
+          yesLabel: null,
+          noLabel: null,
+        },
+        2
+      );
+      expect(
+        await plan({
+          kind,
+          todoId: 'first',
+          done: 'reported',
+          evidence: 'Complete proposed report',
+          reason: 'Finished',
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('card_unanswered:') });
+    }
+  );
+
   test('close and remove only propose their changes', async () => {
     expect(await plan({ kind: 'close', todoId: 'first', reason: 'Finished' })).toMatchObject({
       ok: true,

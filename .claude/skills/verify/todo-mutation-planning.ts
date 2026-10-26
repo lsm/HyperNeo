@@ -52,6 +52,7 @@ try {
   store.updateTodo(first,{report:text},2);
   store.addTodo('peer','ask',{title:'Peer',doneWhen:'Merged',check:{...check,params:{urls:['https://github.com/synthetic/planning/pull/1']}},instruction:null,named:null},1);
   store.askQuestion('card','ask',{text:'Start?',kind:'start',options:null,multiple:false,yesLabel:null,noLabel:null,startTodos:['first']},3);
+  store.askQuestion('reply','ask',{kind:'reply',todoId:'first',text:'Answer before completion',options:null,multiple:false,yesLabel:null,noLabel:null},3);
   const before = await visible();
   assert.equal(before.entry.todos[0].report,text);
   await hub.request('system.health',{});
@@ -70,6 +71,9 @@ try {
     assert(proposed.ok && proposed.patch);
     assert.equal(proposed.patch.doneWhen,`File ${join(run,'not-created')} exists.`);
     assert.equal((await plan({kind:'remove',todoId:'first',reason:'Only a plan'})).ok,true);
+    const completion = await plan({kind:'edit',todoId:'first',done:'reported',evidence:'Only a proposal'});
+    assert(!completion.ok && completion.reason.startsWith('card_unanswered:'), 'planning must refuse completion while a todo card is unanswered');
+    report.unansweredCompletionRefused = true;
     report.plannerRegistered = true;
     report.records = planned.records;
     report.derivedCheck = proposed.patch.check;
