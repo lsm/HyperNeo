@@ -209,7 +209,8 @@ describe('readGithubPrs REST check rollup', () => {
     const asked: string[][] = [];
     const spawn = (args: string[]) => {
       asked.push(args);
-      const body = args[2] === 'view' ? viewBody : args[1] === 'api' ? api(String(args[2])) : [];
+      const path = String(args.find((arg) => arg.startsWith('repos/')) ?? '');
+      const body = args[2] === 'view' ? viewBody : args[1] === 'api' ? api(path) : [];
       return {
         stdout: new Response(JSON.stringify(body)).body,
         stderr: new Response('').body,
@@ -224,27 +225,29 @@ describe('readGithubPrs REST check rollup', () => {
   test('asks for CI on REST check-runs and combined status, not GraphQL statusCheckRollup', async () => {
     const { spawn, asked } = rollupSpawn(ghPr(), (path) =>
       path.includes('check-runs')
-        ? { check_runs: [{ status: 'completed', conclusion: 'success' }, { status: 'completed', conclusion: 'skipped' }] }
-        : { statuses: [{ state: 'success' }] }
+        ? [{ check_runs: [{ status: 'completed', conclusion: 'success' }, { status: 'completed', conclusion: 'skipped' }] }]
+        : [{ statuses: [{ state: 'success' }] }]
     );
     const read = await readGithubPrs([url], spawn as never);
     expect(read?.[0]?.checks).toBe('passing');
     expect(asked[0].join(' ')).not.toContain('statusCheckRollup');
     expect(
       asked
-        .map((args) => String(args[2]))
+        .map((args) => String(args.find((arg) => arg.startsWith('repos/')) ?? ''))
         .some((path) => path.startsWith('repos/lsm/HyperNeo/commits/abc123/check-runs'))
     ).toBe(true);
     expect(
-      asked.map((args) => String(args[2])).some((path) => path.startsWith('repos/lsm/HyperNeo/commits/abc123/status'))
+      asked
+        .map((args) => String(args.find((arg) => arg.startsWith('repos/')) ?? ''))
+        .some((path) => path.startsWith('repos/lsm/HyperNeo/commits/abc123/status'))
     ).toBe(true);
   });
 
   test('maps a failed check run and an errored status to failing', async () => {
     const { spawn } = rollupSpawn(ghPr(), (path) =>
       path.includes('check-runs')
-        ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
-        : { statuses: [{ state: 'error' }] }
+        ? [{ check_runs: [{ status: 'completed', conclusion: 'failure' }] }]
+        : [{ statuses: [{ state: 'error' }] }]
     );
     expect((await readGithubPrs([url], spawn as never))?.[0]?.checks).toBe('failing');
   });
@@ -271,16 +274,26 @@ describe('readGithubPrs REST check rollup', () => {
     }));
     const { spawn, asked } = rollupSpawn(ghPr(), (path) => {
       if (path.includes('check-runs'))
-        return path.includes('page=2')
-          ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
-          : { check_runs: fullPage };
-      return { statuses: [] };
+        return [
+          { check_runs: fullPage },
+          { check_runs: [{ status: 'completed', conclusion: 'failure' }] },
+        ];
+      return [{ statuses: [] }];
     });
     const read = await readGithubPrs([url], spawn as never);
     expect(read?.[0]?.checks).toBe('failing');
-    expect(
-      asked.filter((args) => String(args[2]).includes('check-runs') && String(args[2]).includes('page=2'))
-    ).toHaveLength(1);
+    expect(asked.find((args) => args.includes('--paginate'))).toBeTruthy();
+  });
+
+  test('targets the pull request host for REST lookups', async () => {
+    const ghe = 'https://ghe.example.com/lsm/HyperNeo/pull/42';
+    const { spawn, asked } = rollupSpawn(ghPr({ url: ghe }), () => [{ statuses: [] }]);
+    await readGithubPrs([ghe], spawn as never);
+    const hostnames = asked
+      .filter((args) => args.includes('--hostname'))
+      .map((args) => args[args.indexOf('--hostname') + 1]);
+    expect(hostnames.length).toBeGreaterThan(0);
+    expect(new Set(hostnames)).toEqual(new Set(['ghe.example.com']));
   });
 });
 
