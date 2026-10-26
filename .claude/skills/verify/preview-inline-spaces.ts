@@ -13,6 +13,8 @@ const run = realpathSync(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 const rpc = process.argv.includes('--rpc');
+mkdirSync(join(run, 'bin'), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 const seed = Bun.spawn([process.execPath, fileURLToPath(new URL('./preview-resolve.ts', import.meta.url)), run, 'seed'],
   { env: process.env, stdout: 'pipe', stderr: 'inherit' });
 assert.equal(await seed.exited, 0, await new Response(seed.stdout).text());

@@ -86,16 +86,27 @@ describe('stored preview reference planning', () => {
       'docs/other.md',
       'docs/a report.md',
       'docs/reference.md',
+      'cat docs/command.md',
     ]);
     expect(previewReferenceCandidates('docs/a report.md').map((item) => item.reference)).toEqual([
       'report.md',
     ]);
-    expect(previewReferenceCandidates('`docs/a report.md`')).toEqual([]);
+    expect(previewReferenceCandidates('`docs/a report.md`')).toEqual([
+      { kind: 'local', reference: 'docs/a report.md', path: 'docs/a report.md' },
+    ]);
     expect(previewReferenceCandidates('`$(pwd)/report.md`')).toEqual([]);
     expect(previewReferenceCandidates('report.md')).toEqual([
       { kind: 'local', reference: 'report.md', path: 'report.md' },
     ]);
   });
+  test.each(['My notes.md', 'My docs/review notes.md', '资料/审阅 记录.md'])(
+    'recognizes the entire inline literal %s without splitting its path',
+    (path) => {
+      expect(previewReferenceCandidates(`Read \`${path}\`.`)).toEqual([
+        { kind: 'local', reference: path, path },
+      ]);
+    }
+  );
   test('recognizes file URLs and immutable GitHub references without fetching them', () => {
     const refs = previewReferenceCandidates(
       [

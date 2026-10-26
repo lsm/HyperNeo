@@ -5,9 +5,12 @@ candidate/planner modules. Recognition uses unified + remark-parse + remark-gfm,
 the existing chat Markdown grammar, without a second Markdown parser or renderer.
 Exercise explicit links (including reference definitions and space-containing
 paths), inline paths, standalone tokens, file URLs, PR links and full-SHA blob
-URLs. Fenced/indented code, images, raw HTML attributes and command snippets do
-not supply candidates. Whitespace-separated tokens never combine into a path
-containing spaces. Limits bound candidate work; stored text is never rewritten.
+URLs. Fenced/indented code, images and raw HTML attributes do not supply
+candidates. Inline code supplies one complete literal, including spaces; command
+arguments are never extracted from it. A command-looking literal can resolve only
+if that entire literal names a reviewable file under the authorized root. Bare
+whitespace-separated tokens never combine into a spaced path. Limits bound
+candidate work; stored text is never rewritten.
 
 Require an exact reference match in the loaded source and exact source/revision
 key. The injected loader is a trusted server port, never client-supplied text,
