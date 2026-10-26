@@ -102,7 +102,9 @@ export class NeoHomeRepository {
           }
         : {
             ...inherited,
-            ...(isolateConfig ? { GIT_CONFIG_GLOBAL: '/dev/null' } : {}),
+            ...(isolateConfig
+              ? { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
+              : {}),
           },
     });
     let timedOut = false;
