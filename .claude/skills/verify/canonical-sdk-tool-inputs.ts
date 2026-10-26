@@ -77,13 +77,18 @@ try {
       for (const skill of [wrapper, guide, plugin]) await hub.request('skill.setEnabled', { id: skill.id, enabled: true });
     }
     const alias = name === 'reserved-runtime' ? 'hyperneo-operations' : 'frozen-browser';
-    const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: name, config: { model: 'haiku', provider: 'anthropic', sdkToolsPreset: ['Read'], tools: { disabledSkills: on ? [wrapper.id, guide.id, plugin.id] : [] }, ...(name === 'reserved-runtime' ? { mcpServers: { 'runtime-fixture': { command: 'not-executed-runtime' } } } : {}) } });
+    const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: name, config: { model: 'haiku', provider: 'anthropic', sdkToolsPreset: ['Read'], tools: { disabledSkills: on ? [wrapper.id, guide.id, plugin.id] : [] } } });
     const selection: SessionToolSelection = { version: 1, choices: { [`mcp:${server.id}`]: { selected: on, aliases: [alias] }, [`skill:${guide.id}`]: { selected: on }, [`skill:${plugin.id}`]: { selected: on } } };
     const snapshot = app.db.captureSessionRuntimeSettings(sessionId)!;
     assert.equal(await app.db.casSessionRuntimeSettings(snapshot, { toolSelection: selection }), 'won');
     await app.sessionManager.interruptInMemorySession(sessionId);
     const persisted = (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
     assert.deepEqual(persisted.config.toolSelection, selection);
+    if (name === 'reserved-runtime') {
+      const agent = await app.sessionManager.getSessionAsync(sessionId);
+      assert(agent);
+      agent.mergeRuntimeMcpServers({ 'runtime-fixture': { command: 'not-executed-runtime' } });
+    }
     const before = queries.length;
     await hub.request('message.send', { sessionId, content: 'Use my selected tools' });
     let observed: { state: string; mcpServers: Array<{ name: string; tools: string[] }> } | undefined;

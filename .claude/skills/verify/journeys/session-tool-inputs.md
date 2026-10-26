@@ -7,7 +7,8 @@ its WebSocket and an in-memory MCP protocol server exposing `navigate`. No exter
 MCP executable or SDK query starts.
 
 This helper checks preparation directly; initial-tool-defaults covers constructor
-and cache wiring. SDK and UI consumers remain later slices. Supplied
+and cache wiring. `canonical-sdk-tool-inputs.md` covers active SDK consumers;
+the one-click UI remains a later slice. Supplied
 canonical defaults must already represent the chosen global/Space/profile scope;
 that inheritance and legacy compatibility belong to 6c. Initial veto IDs are a
 required argument, supplied from captured session/workflow facts at creation.
@@ -30,7 +31,8 @@ Pass requires:
 Read `evidence/session-tool-inputs.json`: pass=true, matching initial/rpcReadback,
 correct aliases and protocolTools, runtimeAndReservedMergePreserved=true, and
 initialCreationWired=true and explicit false
-activeConsumerWired/sdkApplyVerified/queryStarted flags.
+activeConsumerWired/sdkApplyVerified/queryStarted flags. These false legacy field
+names describe this preparation-only harness, not global consumer availability.
 
 Focused suites: session-tool-inputs.test.ts, session-tool-choice.test.ts,
 change-session-tool-choice.test.ts and query-options-builder.test.ts. They cover

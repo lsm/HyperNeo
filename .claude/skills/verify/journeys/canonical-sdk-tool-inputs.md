@@ -20,6 +20,8 @@ Public session/message/inventory RPCs must show the following:
 - A persisted off selection attaches nothing after catalog defaults turn on.
 - The operations server and an explicit runtime server survive composition;
   a conflicting frozen catalog alias is renamed using the existing merge helper.
+  Attach the fixture runtime server through the owned AgentSession method;
+  human session configuration intentionally cannot inject trusted runtime servers.
 - Observed inventory reports the scripted query's actual submitted MCP aliases
   and tool names supplied by the in-memory MCP protocol. Native Read stays Read.
 
