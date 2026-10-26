@@ -64,7 +64,9 @@ function fixture(remaining = 4000, resetAt = '2099-01-01T00:00:00Z') {
 describe('coding ledger acquisition', () => {
   for (const change of ['checks', 'mergeability', 'review'] as const) {
     test(`observes same-head ${change} changes by the next sweep without updated_at`, async () => {
-      const clock = Date.now, start = clock(), f = fixture();
+      const clock = Date.now,
+        start = clock(),
+        f = fixture();
       Date.now = () => start;
       try {
         await f.read('synthetic/repo');
@@ -74,11 +76,15 @@ describe('coding ledger acquisition', () => {
         Date.now = () => start + 299_999;
         const cached = planCodingLedgerRead(await f.read('synthetic/repo'), Date.now());
         expect(cached?.rows[0].state).toBe('waiting_human');
-        expect(f.requests.filter(args => args[2] === 'graphql')).toHaveLength(1);
+        expect(f.requests.filter((args) => args[2] === 'graphql')).toHaveLength(1);
         Date.now = () => start + 300_000;
         const refreshed = planCodingLedgerRead(await f.read('synthetic/repo'), Date.now());
-        expect(refreshed?.rows[0].state).toBe({ checks: 'failing', mergeability: 'dirty', review: 'changes_requested' }[change]);
-      } finally { Date.now = clock; }
+        expect(refreshed?.rows[0].state).toBe(
+          { checks: 'failing', mergeability: 'dirty', review: 'changes_requested' }[change]
+        );
+      } finally {
+        Date.now = clock;
+      }
     });
   }
   test('expired quota evidence cannot keep cached facts in an old cooldown', async () => {

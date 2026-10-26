@@ -63,6 +63,7 @@ const Hydration = z.object({
 });
 type CachedFact = { updated: string; at: number; value: z.infer<typeof Node> };
 const IDLE_MS = 30 * 60_000;
+const HEAD_REFRESH_MS = 5 * 60_000;
 const selectHeads = (superpipe({})('coding-ledger-hydration') as PipelineAPI)
   .input(['pulls', 'cached', 'now'])
   .pipe(
@@ -73,7 +74,7 @@ const selectHeads = (superpipe({})('coding-ledger-hydration') as PipelineAPI)
         return (
           !hit ||
           hit.updated !== pr.updated_at ||
-          now - hit.at >= IDLE_MS ||
+          now - hit.at >= HEAD_REFRESH_MS ||
           hit.value.mergeable === 'UNKNOWN' ||
           (ci !== undefined && ci !== 'SUCCESS' && ci !== null)
         );
