@@ -11,7 +11,7 @@ import { hyperneoInputText } from '../../../packages/daemon/src/lib/drivers/hype
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
-assert(['before', 'verify'].includes(mode));
+assert(['before', 'status-before', 'verify'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -53,13 +53,15 @@ const messages = () => (db.prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS bod
 try {
   await seedSession(root);
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-  for (const explicit of [false, true]) {
-    const worker = `worker-${explicit}`;
+  for (const scenario of [false, true, 'status-drift']) {
+    const explicit = scenario === true;
+    const drifting = scenario === 'status-drift';
+    const worker = `worker-${scenario}`;
     await seedSession(worker);
     const at = Date.now();
     todos.openAsk({ id: worker, title: worker, request: 'Observe worker milestone', sessionId: root, projectId: null, originMessageId: null, createdAt: at });
     const ref = { adapter: 'hyperneo', id: worker };
-    for (let index = 0; index < 2; index++) {
+    const bind = async (index: number) => {
       const id = `${worker}-${index}`;
       const todo = todos.addTodo(id, worker, { title: id, doneWhen: 'Synthetic PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [] } }, instruction: 'Observe this worker', named: null }, at);
       sessions.create(id, { verb: 'send', ref });
@@ -68,7 +70,8 @@ try {
       todos.updateTodo(todo, { state: 'doing', startedAt: at, report: 'Previously retained result' }, at);
       const dispatch = await sessions.inputs.accept(id, root, { verb: 'send', ref }, 'Observe this worker', at);
       await sessions.inputs.recordOutcome(dispatch, { ref, receipt: { executionId: worker, inputId: `${worker}-input` } }, at);
-    }
+    };
+    for (let index = 0; index < (drifting ? 1 : 2); index++) await bind(index);
     const put = (id: string, type: string, text: string) => {
       const uuid = id;
       const body = type === 'result' ? { type, uuid, subtype: 'success', result: text, is_error: false } : { type, uuid, message: { content: text } };
@@ -78,11 +81,21 @@ try {
     if (explicit) evidence.explicitReceipt = await rpc('message.send', { to: root, text: 'PR opened: synthetic milestone', kind: 'done', from: `session:${worker}` });
     put(`${worker}-result`, 'result', 'PR opened: synthetic milestone');
     await refresh();
+    if (drifting) {
+      evidence.firstStatus = await rpc('work.status', { ref });
+      db.prepare('UPDATE sessions SET processing_state=? WHERE id=?').run(JSON.stringify({ status: 'processing' }), worker);
+      await bind(1);
+      evidence.secondStatus = await rpc('work.status', { ref });
+      assert.equal((evidence.firstStatus as any).value.status, 'done');
+      assert.equal((evidence.secondStatus as any).value.status, 'running');
+      await refresh();
+      db.prepare('UPDATE sessions SET processing_state=NULL WHERE id=?').run(worker);
+    }
     await new Promise((done) => setTimeout(done, 500));
     await refresh();
     const delivered = messages().filter((text) => text.startsWith('Worker turn report') && text.includes(`todo ${worker}-`));
     evidence[worker] = { reportInputs: delivered.length, delivered, stored: [0, 1].map((index) => todos.getTodo(`${worker}-${index}`)) };
-    assert.equal(delivered.length, mode === 'before' ? 2 : explicit ? 0 : 1);
+    assert.equal(delivered.length, mode === 'before' || (mode === 'status-before' && drifting) ? 2 : explicit ? 0 : 1);
     for (let index = 0; index < 2; index++) assert.equal(todos.getTodo(`${worker}-${index}`)?.report, 'Agent: PR opened: synthetic milestone');
   }
   evidence.recipientInputs = messages();

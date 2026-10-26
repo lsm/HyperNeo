@@ -477,6 +477,36 @@ describe('neo todo runner', () => {
     }
   );
 
+  test('delivers one shared turn when bound todos first observe different live statuses', async () => {
+    let startedAt: number | null = null;
+    let reads = 0;
+    const h = setup(false, ':memory:', (name) => {
+      if (name !== 'work.status' || startedAt === null) return;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: ++reads === 1 ? 'done' : 'running',
+          lastActivityAt: startedAt + 100,
+          turnEnds: [{ id: 'shared-turn', startedAt, at: startedAt + 100, message: 'PR opened' }],
+        },
+      });
+    });
+    try {
+      const todos = [
+        h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+        h.add({ pack: 'coding', kind: 'pr_merged', params: {} }),
+      ];
+      for (const todo of todos) await h.runner.start(todo.id);
+      startedAt = Date.now() + 10;
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(reads).toBeGreaterThan(1);
+      expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
     'does not silence a new worker report for an unrelated send: %s',
     async (scenario) => {
