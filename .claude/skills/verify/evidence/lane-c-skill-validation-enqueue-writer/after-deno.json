@@ -1,0 +1,133 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 506,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "initial": [
+    {
+      "id": "7b8f8b2e-7af5-4076-8e66-e064b87c4f56",
+      "queue": "skill.validate",
+      "status": "pending",
+      "payload": {
+        "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1792997499225,
+      "createdAt": 1792997499225,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "firstCompleted": {
+    "id": "7b8f8b2e-7af5-4076-8e66-e064b87c4f56",
+    "queue": "skill.validate",
+    "status": "completed",
+    "payload": {
+      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+    },
+    "result": {
+      "valid": true,
+      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+    },
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792997499225,
+    "createdAt": 1792997499225,
+    "startedAt": 1792997499226,
+    "heartbeatAt": null,
+    "completedAt": 1792997499227,
+    "claimToken": "b9650c6f-bb8c-4020-bb0a-cffc08969b81"
+  },
+  "firstObserved": {
+    "skill": {
+      "id": "05bdce95-a3b1-4afb-bf85-ae119582df99",
+      "name": "synthetic-validation-skill",
+      "displayName": "Synthetic validation",
+      "description": "Observed synthetic validation",
+      "sourceType": "plugin",
+      "config": {
+        "type": "plugin",
+        "pluginPath": "/private/tmp/hyperneo-skill-validation-deno-3dh4hb2m/workspace"
+      },
+      "enabled": false,
+      "builtIn": false,
+      "validationStatus": "valid",
+      "createdAt": 1792997499224
+    }
+  },
+  "secondCompleted": {
+    "id": "182bc56f-a816-47e4-9a59-1c980ab1ef1b",
+    "queue": "skill.validate",
+    "status": "completed",
+    "payload": {
+      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+    },
+    "result": {
+      "valid": true,
+      "skillId": "05bdce95-a3b1-4afb-bf85-ae119582df99"
+    },
+    "error": null,
+    "priority": 0,
+    "maxRetries": 3,
+    "retryCount": 0,
+    "runAt": 1792997499229,
+    "createdAt": 1792997499229,
+    "startedAt": 1792997499230,
+    "heartbeatAt": null,
+    "completedAt": 1792997499230,
+    "claimToken": "4b5e54a0-f4d5-438b-afca-d87bb53af5a1"
+  },
+  "secondObserved": {
+    "skill": {
+      "id": "05bdce95-a3b1-4afb-bf85-ae119582df99",
+      "name": "synthetic-validation-skill",
+      "displayName": "Synthetic validation",
+      "description": "Observed synthetic validation",
+      "sourceType": "plugin",
+      "config": {
+        "type": "plugin",
+        "pluginPath": "/private/tmp/hyperneo-skill-validation-deno-3dh4hb2m/workspace"
+      },
+      "enabled": false,
+      "builtIn": false,
+      "validationStatus": "valid",
+      "createdAt": 1792997499224
+    }
+  },
+  "rejectedUpdate": "MessageHubResponseError: synthetic validation rejection",
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 518,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 0
+}

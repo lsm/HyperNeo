@@ -1,0 +1,15 @@
+{
+  "ciRunnerPasses": 129,
+  "ciRunnerFailures": 0,
+  "files": 4,
+  "writerCases": 8,
+  "productionChangedLines": 24,
+  "createAndConfigUpdateAwaitReceipt": true,
+  "metadataOnlyUpdateDoesNotEnqueue": true,
+  "registryBeforeAdmissionFailureSemanticsPreserved": true,
+  "insertAndReceiptFailureRollBackJob": true,
+  "lostReceiptDoesNotReplay": true,
+  "optionalQueuePreserved": true,
+  "temporaryHomesRemoved": true,
+  "remoteSkillInstallationVerified": false
+}
