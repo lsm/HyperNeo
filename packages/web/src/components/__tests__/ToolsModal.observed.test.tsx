@@ -117,6 +117,55 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ToolsModal observed running inventory', () => {
+  it('enables a globally-off linked browser through one canonical Use here action', async () => {
+    const current = {
+      ...session,
+      config: {
+        ...session.config,
+        toolSelection: {
+          version: 1 as const,
+          choices: { 'mcp:browser': { selected: false, aliases: ['browser-alias'] } },
+        },
+      },
+    };
+    backend.request.mockImplementation(async (name: string, input: unknown) => {
+      if (name === 'session.getToolInventory') return response;
+      if (name === 'globalTools.getConfig') return { config: {} };
+      if (name === 'session.mcp.list')
+        return {
+          entries: [
+            {
+              server: { id: 'browser', name: 'browser-server', enabled: false, source: 'builtin' },
+              enabled: false,
+              source: 'registry',
+            },
+          ],
+        };
+      if (name === 'operation.invoke') {
+        expect(input).toEqual({
+          name: 'session.tools.setChoice',
+          input: { sessionId: 'one', key: 'mcp:browser', selected: true },
+        });
+        response = attached();
+        return { ok: true, changed: true, application: 'live' };
+      }
+      throw new Error(`Unexpected RPC ${name}`);
+    });
+    const view = render(<ToolsModal isOpen onClose={() => {}} session={current} />);
+    fireEvent.click(await view.findByRole('button', { name: 'Use here: Synthetic Browser' }));
+    expect(view.queryAllByRole('checkbox')).toHaveLength(0);
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: 'Stop using here: Synthetic Browser' })).toBeTruthy()
+    );
+    expect(view.getByText('Saved · applied to the running session')).toBeTruthy();
+    await waitFor(() => expect(view.getAllByText('Attached · 1 tool').length).toBeGreaterThan(0));
+    expect(
+      backend.request.mock.calls.some(([name]) =>
+        ['tools.save', 'mcp.enablement.setOverride', 'session.interrupt'].includes(name)
+      )
+    ).toBe(false);
+  });
+
   it('retains the confirmed snapshot while an ordinary refresh is pending', async () => {
     response = attached();
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);

@@ -10,7 +10,7 @@ import { Server } from '../../../packages/daemon/node_modules/@modelcontextproto
 import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { ListToolsRequestSchema } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.slice(2).find(argument => !argument.startsWith('--'))!);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -27,24 +27,35 @@ const client = new Client({ name: 'scripted-sdk', version: '1' });
 const [a, b] = InMemoryTransport.createLinkedPair();
 await mcp.connect(a); await client.connect(b);
 let interrupts = 0;
+const discoveryProbes = { created: 0, interrupted: 0 };
+const interruptOrigins: string[] = [];
+const queryOrigins: string[] = [];
 let statusFails = false;
+let initialReplyHandled = false;
 const applications: string[][] = [];
 const queries: Array<{ aliases: string[]; allNames: string[]; plugins: string[]; tools: unknown; finish: () => void }> = [];
 const sdk = await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({ ...sdk, query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Options }) => {
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({ ...sdk, query: ({ prompt, options }: { prompt: AsyncIterable<unknown> | string; options: Options }) => {
   let finish!: () => void;
   const ended = new Promise<void>(done => { finish = done; });
   const allNames = Object.keys(options.mcpServers ?? {});
   const aliases = Object.entries(options.mcpServers ?? {}).filter(([, config]) => config.type !== 'sdk').map(([name]) => name);
   const plugins = (options.plugins ?? []).map(plugin => basename(plugin.path));
-  queries.push({ aliases, allNames, plugins, tools: options.tools, finish });
+  const discovery = typeof prompt === 'string' && options.maxTurns === 0;
+  if (discovery) discoveryProbes.created++;
+  else queries.push({ aliases, allNames, plugins, tools: options.tools, finish });
+  queryOrigins.push(new Error('Synthetic query created').stack ?? '');
   return {
     async *[Symbol.asyncIterator]() {
-      const feed = prompt[Symbol.asyncIterator](); await feed.next(); void feed.next().catch(() => {});
+      assert.notEqual(typeof prompt, 'string');
+      const feed = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator](); await feed.next(); void feed.next().catch(() => {});
       yield { type: 'system', subtype: 'init', uuid: crypto.randomUUID(), session_id: crypto.randomUUID(), cwd: join(run, 'workspace'), model: 'claude-haiku-4-5-20251001', permissionMode: 'default', apiKeySource: 'user', claude_code_version: 'scripted', tools: ['Read', ...aliases.map(name => `mcp__${name}__navigate`)], skills: [], plugins: (options.plugins ?? []).map(plugin => ({ name: basename(plugin.path), path: plugin.path })), mcp_servers: aliases.map(name => ({ name, status: 'connected' })), slash_commands: [], output_style: 'default' };
+      yield { type: 'assistant', uuid: crypto.randomUUID(), session_id: crypto.randomUUID(), parent_tool_use_id: null,
+        message: { id: crypto.randomUUID(), type: 'message', role: 'assistant', content: [{type: 'text', text: 'Synthetic session ready for tool choices.'}], model: 'claude-haiku-4-5-20251001', stop_reason: null, stop_sequence: null, usage: {input_tokens: 1, output_tokens: 1} } };
+      initialReplyHandled = true;
       await ended;
     },
-    close: finish, interrupt: async () => { interrupts++; finish(); }, supportedModels: async () => [], supportedCommands: async () => [], setPermissionMode: async () => {},
+    close: finish, interrupt: async () => { if (discovery) discoveryProbes.interrupted++; else interrupts++; interruptOrigins.push(new Error('Synthetic interrupt').stack ?? ''); finish(); }, supportedModels: async () => [], supportedCommands: async () => [], setPermissionMode: async () => {},
     setMcpServers: async (servers: NonNullable<Options['mcpServers']>) => {
       const prior = [...aliases];
       const next = Object.entries(servers).filter(([, config]) => config.type !== 'sdk').map(([name]) => name);
@@ -62,6 +73,7 @@ const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: InstanceType<typeof WebSocketClientTransport> | undefined;
+let preview: ReturnType<typeof Bun.serve> | undefined;
 const network = globalThis.fetch;
 globalThis.fetch = (async () => { throw new Error('No external HTTP in canonical SDK proof'); }) as typeof fetch;
 const evidence: Record<string, unknown> = { pass: false, cases: [], scriptedSDK: true, realProvider: false, browserExecutionVerified: false, liveActivationWired: true, panelVerified: false };
@@ -86,15 +98,46 @@ try {
   const aliases = session.config.toolSelection!.choices[`mcp:${server.id}`]!.aliases!;
   await hub.request('message.send', { sessionId, content: 'Use my tools' });
   const deadline = Date.now() + 15000;
-  while ((await hub.request<{ state: string }>('session.getToolInventory', { sessionId })).state !== 'observed') {
+  while ((await hub.request<{ state: string }>('session.getToolInventory', { sessionId })).state !== 'observed' || !initialReplyHandled) {
     assert(Date.now() < deadline, 'query init missing'); await new Promise(done => setTimeout(done, 25));
   }
   assert.equal(queries.length, 1); assert.deepEqual(queries[0].aliases, []);
   const initialPlugins = [...queries[0].plugins];
   const choose = async (id: string, key: string, selected: boolean) => {
     const result = await hub.request<{ ok: boolean; application: string; reason?: string }>('operation.invoke', { name: 'session.tools.setChoice', input: { sessionId: id, key, selected } });
-    assert(result.ok, 'authorized tool activation must persist a choice'); return result;
+    assert(result.ok, `authorized tool activation must persist a choice: ${JSON.stringify(result)}`); return result;
   };
+  if (process.argv.includes('--show-panel') || process.argv.includes('--show-panel-before')) {
+    const { Hono } = await import(Bun.resolveSync('hono', resolve(import.meta.dir, '../../../packages/cli')));
+    const { serveStatic } = await import(Bun.resolveSync('hono/bun', resolve(import.meta.dir, '../../../packages/cli')));
+    const { createWebSocketHandlers } = await import('../../../packages/daemon/src/routes/setup-websocket.ts');
+    const dist = resolve(import.meta.dir, '../../../packages/web/dist');
+    const web = new Hono();
+    web.use('/*', serveStatic({ root: dist }));
+    web.get('*', async c => c.html(await Bun.file(join(dist, 'index.html')).text()));
+    const owned = app;
+    preview = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async (request, server) => {
+      const refused = owned.guardRequest(request);
+      if (refused) return refused;
+      if (new URL(request.url).pathname === '/ws') {
+        const device = await owned.authenticateUpgrade(request, server.requestIP(request)?.address ?? null);
+        if (server.upgrade(request, { data: { connectionSessionId: 'global', device } })) return;
+        return new Response('Upgrade failed', { status: 500 });
+      }
+      return web.fetch(request);
+    }, websocket: createWebSocketHandlers(owned.transport, owned.sessionManager) });
+    console.log(`PANEL: http://127.0.0.1:${preview.port}/session/${sessionId} PID=${process.pid}`);
+    await new Promise<void>(done => process.once('SIGUSR1', done));
+    evidence.panel = { applications, interrupts, discoveryProbes, interruptOrigins, queryOrigins, workerQueryCount: queries.length, session: (await hub.request<{session: Session}>('session.get', {sessionId})).session.config.toolSelection, inventory: await hub.request('session.getToolInventory', {sessionId}) };
+    assert.equal(interrupts, 0); assert.equal(queries.length, 1);
+    if (process.argv.includes('--show-panel')) {
+      assert(applications.some(names => names.includes(aliases[0])));
+      assert(applications.some(names => names.length === 0));
+      assert.equal((evidence.panel as {session: SessionToolSelection}).session.choices[`skill:${guide.id}`]?.selected, true);
+    }
+    evidence.panelVerified = process.argv.includes('--show-panel');
+    evidence.pass = true;
+  } else {
   const enabled = await choose(sessionId, `mcp:${server.id}`, true);
   assert.equal(enabled.application, 'live'); assert.deepEqual(queries[0].aliases, aliases);
   const observed = await hub.request<{ mcpServers: Array<{ name: string; tools: string[] }>; plugins: string[]; tools: string[] }>('session.getToolInventory', { sessionId });
@@ -121,9 +164,12 @@ try {
   assert.equal(cold.application, 'next_query'); assert.equal(queries.length, 1); assert.equal(interrupts, 0);
   evidence.results = { initialPlugins, enabled, disabled, instructions, cold, observed, unavailable, recovered, applications, interrupts, queryCount: queries.length };
   evidence.pass = true; console.log('PASS: public tool activation applies live MCP choices and verifies observed tools; instructions disclose restart, cold choices wait, no automatic interrupt');
+  }
 } finally {
+  preview?.stop(true);
   for (const query of queries) query.finish();
   await transport?.close(); await app?.cleanup(); await client.close(); await mcp.close(); globalThis.fetch = network;
   evidence.resourcesStopped = true;
+  evidence.discoveryProbes = discoveryProbes;
   writeFileSync(join(run, 'evidence/session-tool-activation.json'), JSON.stringify(evidence, null, 2));
 }
