@@ -311,6 +311,23 @@ describe('readGithubPrs REST check rollup', () => {
     expect(read?.[0]?.checks).toBe('pending');
   });
 
+  test('fails the read when branch rules are unreadable for an open PR', async () => {
+    const { spawn } = rollupSpawn(
+      ghPr({ url: 'https://github.com/lsm/RequiredC/pull/9', baseRefName: 'dev' }),
+      (path) =>
+        path.includes('check-runs')
+          ? [{ check_runs: [] }]
+          : path.includes('/rules/branches/')
+            ? null
+            : [{ statuses: [] }]
+    );
+    const read = await readGithubPrs(
+      ['https://github.com/lsm/RequiredC/pull/9'],
+      spawn as never
+    );
+    expect(read).toBe(null);
+  });
+
   test('keeps a started required check out of the expected set', async () => {
     const { spawn } = rollupSpawn(
       ghPr({ url: 'https://github.com/lsm/RequiredB/pull/9', baseRefName: 'dev' }),

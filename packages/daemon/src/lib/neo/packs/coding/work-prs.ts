@@ -135,11 +135,12 @@ type BranchRule = {
 type PrDetail = { commits: { oid: string; signed: boolean }[]; unresolved: number };
 
 const RULES_MS = 10 * 60_000;
+const RULES_RETRY_MS = 60_000;
 const githubPr = (url: string) => {
   const pr = parsePrUrl(url);
   return pr?.host === 'github.com' ? pr : null;
 };
-const rulesCache = new Map<string, { at: number; rules: BranchRule[] }>();
+const rulesCache = new Map<string, { at: number; rules: readonly BranchRule[] | null }>();
 const RulesSchema = z.array(
   z.object({
     type: z.string(),
@@ -321,26 +322,40 @@ async function readCheckRollup(
     ),
   ]);
   if (typeof raw.baseRefName === 'string' && raw.baseRefName) {
-    const rules = await readBranchRules(`${meta.owner}/${meta.repo}`, raw.baseRefName, spawnImpl);
+    const rules = await fetchBranchRules(
+      `${meta.owner}/${meta.repo}`,
+      raw.baseRefName,
+      spawnImpl
+    );
+    if (rules === null) return null;
     for (const context of requiredCheckContexts(rules))
       if (!covered.has(context.toUpperCase())) rollup.push({ state: 'EXPECTED' });
   }
   return rollup;
 }
 
-async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
+async function fetchBranchRules(
+  repo: string,
+  base: string,
+  spawnImpl: SpawnFn
+): Promise<readonly BranchRule[] | null> {
   const key = `${repo}:${base}`;
   const cached = rulesCache.get(key);
-  if (cached && Date.now() - cached.at < RULES_MS) return cached.rules;
+  if (cached && Date.now() - cached.at < (cached.rules ? RULES_MS : RULES_RETRY_MS))
+    return cached.rules;
   const outcome = await gh(
     ['gh', 'api', `repos/${repo}/rules/branches/${encodeURIComponent(base)}`],
     spawnImpl,
     'core'
   );
   const parsed = outcome.ok ? RulesSchema.safeParse(outcome.data) : null;
-  const rules = parsed?.success ? parsed.data : [];
-  if (parsed?.success) rulesCache.set(key, { at: Date.now(), rules });
+  const rules = parsed?.success ? parsed.data : null;
+  rulesCache.set(key, { at: Date.now(), rules });
   return rules;
+}
+
+async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
+  return (await fetchBranchRules(repo, base, spawnImpl)) ?? [];
 }
 
 async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail | null> {
