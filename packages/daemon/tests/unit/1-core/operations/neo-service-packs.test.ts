@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
+import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -23,6 +24,77 @@ beforeEach(async () => {
 afterEach(() => {
   service.dispose();
   db.close();
+});
+
+test('core checks stay installed with only life-admin enabled and read actual outcomes', async () => {
+  db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
+  const core = service.pack('core');
+  expect(core).not.toBeNull();
+  service.todos.openAsk({
+    id: 'ask',
+    title: 'Decision',
+    request: 'Confirm the result',
+    sessionId: 'neo',
+    projectId: null,
+    originMessageId: null,
+    createdAt: 1,
+  });
+  const question = service.todos.askQuestion(
+    'question',
+    'ask',
+    {
+      text: 'Is it done?',
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: null,
+    },
+    1
+  );
+  const todo = service.todos.addTodo(
+    'todo',
+    'ask',
+    {
+      title: 'Confirm result',
+      doneWhen: 'Human confirms',
+      instruction: null,
+      named: null,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: question.id } },
+    },
+    1
+  );
+  expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
+  service.todos.answerQuestion(question, 'no', 'button', 2);
+  expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
+  service.todos.answerQuestion(service.todos.getQuestion(question.id)!, 'yes', 'chat', 3);
+  expect(await core!.todos!.check(todo)).toMatchObject({ done: true });
+  expect(await core!.todos!.check({ ...todo, askId: 'foreign' })).toEqual({
+    done: false,
+    evidence: null,
+  });
+  expect(
+    await core!.todos!.check({
+      ...todo,
+      check: {
+        pack: 'core',
+        kind: 'deployed',
+        params: { repo: 'lsm/HyperNeo', sha: BUILD_METADATA.commit },
+      },
+    })
+  ).toMatchObject({ done: true });
+  expect(
+    await core!.todos!.check({
+      ...todo,
+      check: {
+        pack: 'core',
+        kind: 'deployed',
+        params: { repo: 'other/repository', sha: BUILD_METADATA.commit },
+      },
+    })
+  ).toEqual({ done: false, evidence: null });
+  expect(service.todos.getTodo(todo.id)?.state).toBe('todo');
 });
 
 test('installed builtins keep identity and settings select without rebuilding them', () => {
