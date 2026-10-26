@@ -1,0 +1,291 @@
+import { expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository';
+import {
+  createNeoQuestionOperations,
+  createNeoWorkerQuestionWriter,
+  readNeoQuestion,
+} from '../../../../src/lib/neo/question-operations';
+import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+
+const owner = { source: 'mcp', sessionId: 'neo', role: 'neo' } as const;
+const rule = 'Use staging for previews.';
+async function fixture(path = ':memory:') {
+  const db = new Database(path);
+  runMigrations(db, () => {});
+  createTables(db);
+  const store = new NeoAskTodoRepository(db);
+  const sessions = new NeoTodoSessionRepository(db);
+  store.openAsk({
+    id: 'ask',
+    sessionId: 'neo',
+    projectId: null,
+    originMessageId: null,
+    title: 'Plan',
+    request: 'Build',
+    createdAt: 1,
+  });
+  const todo = store.addTodo(
+    'todo',
+    'ask',
+    { title: 'Build', doneWhen: 'Built', instruction: null, check: null, named: null },
+    1
+  );
+  const source = {
+    adapter: 'hyperneo',
+    id: 'worker',
+    name: 'Worker',
+    label: 'Worker',
+    provider: 'Synthetic',
+    link: null,
+  };
+  sessions.bind(todo.id, source, 2);
+  store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
+  const write = createNeoWorkerQuestionWriter(
+    store,
+    sessions,
+    () => 'en',
+    async () => source
+  );
+  const reported = await write(source, {
+    todoId: todo.id,
+    kind: 'blocked',
+    title: 'Choose a destination',
+    options: ['Staging', 'Production'],
+    language: 'en',
+    report: 'Need a destination',
+  });
+  if (!reported.ok) throw new Error(reported.reason);
+  const rules = [rule];
+  const messages = new Map<string, string>();
+  const notes = new Map<string, string>();
+  let unavailable = false;
+  const flush = createNeoQuestionAnswerDelivery(
+    store,
+    sessions,
+    async (_caller, _name, input) => {
+      if (unavailable)
+        return { kind: 'completed', value: { kind: 'rejected', reason: 'Unavailable' } };
+      messages.set(String(input.idempotencyKey), String(input.text));
+      return {
+        kind: 'completed',
+        value: { kind: 'accepted', messageId: 'accepted-input', mailboxId: 'mailbox' },
+      };
+    },
+    async (_session, key, text) => {
+      notes.set(key, String(text));
+    },
+    async (current) => store.recompute(current, {}, 10, { state: 'no_opinion' }, async () => {}),
+    (error) => {
+      throw error;
+    }
+  );
+  const registry = createOperationRegistry(
+    createNeoQuestionOperations(
+      store,
+      async (_ask, question, note) => {
+        notes.set(`neo-question:${question.id}`, note);
+      },
+      async () => ({ ok: true }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (id) => flush(id),
+      () => rules
+    )
+  );
+  const call = async (name: string, input: unknown, caller: OperationCaller = owner) => {
+    const result = await invokeOperation(registry, name, input, caller);
+    return result.kind === 'completed' ? result.value : result;
+  };
+  const resolve = (
+    source: unknown,
+    extra: Record<string, unknown> = {},
+    caller: OperationCaller = owner
+  ) =>
+    call(
+      'neo.question.resolve',
+      { questionId: reported.question.id, answer: ['Staging'], source, ...extra },
+      caller
+    );
+  const prior = (askId = 'ask') => {
+    const question = store.askQuestion(
+      'prior',
+      askId,
+      {
+        text: 'Previous destination',
+        kind: 'choice',
+        options: ['Staging', 'Production'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      1
+    );
+    store.answerQuestion(question, ['Staging'], 'chat', 2);
+    return question;
+  };
+  return {
+    db,
+    store,
+    rules,
+    messages,
+    notes,
+    flush,
+    call,
+    resolve,
+    prior,
+    question: reported.question,
+    unavailable(value: boolean) {
+      unavailable = value;
+    },
+  };
+}
+
+test('a cited saved rule retires the worker card and delivers once without human approval', async () => {
+  const f = await fixture();
+  try {
+    expect(await f.resolve({ kind: 'rule', text: rule })).toMatchObject({
+      ok: true,
+      question: { state: 'retired', answer: ['Staging'], answeredBy: null },
+    });
+    expect(await f.call('neo.question.get', { questionId: f.question.id })).toMatchObject({
+      answeredByHuman: false,
+      resolvedByAgent: true,
+      question: { retiredReason: expect.stringContaining(rule) },
+      answerDelivery: [{ answeredBy: 'rule', state: 'accepted' }],
+    });
+    expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+    expect([...f.messages.values()][0]).toContain('Neo resolved');
+    expect([...f.messages.values()][0]).toContain(rule);
+    expect([...f.notes.values()].join()).toContain('Neo resolved');
+    expect([...f.notes.values()].join()).not.toContain('The human answered');
+    await f.resolve({ kind: 'rule', text: rule });
+    await f.flush();
+    expect(f.messages.size).toBe(1);
+  } finally {
+    f.db.close();
+  }
+});
+
+test('an earlier human answer can be cited, while a retired agent resolution cannot', async () => {
+  const f = await fixture();
+  try {
+    const prior = f.prior();
+    expect(await f.resolve({ kind: 'answer', questionId: prior.id })).toMatchObject({ ok: true });
+    expect(f.store.getQuestion(f.question.id)?.retiredReason).toContain(prior.id);
+    expect(readNeoQuestion(f.store.getQuestion(prior.id))).toMatchObject({
+      answeredByHuman: true,
+      resolvedByAgent: false,
+    });
+    expect(readNeoQuestion(f.store.getQuestion(f.question.id))).toMatchObject({
+      answeredByHuman: false,
+      resolvedByAgent: true,
+    });
+  } finally {
+    f.db.close();
+  }
+});
+
+test.each([
+  'missing-rule',
+  'missing-answer',
+  'foreign-answer',
+  'worker',
+  'foreign-neo',
+  'approval-card',
+  'ordinary-card',
+])('invalid triage leaves the card open and worker held: %s', async (bad) => {
+  const f = await fixture();
+  try {
+    let source: unknown = { kind: 'rule', text: rule };
+    let caller: OperationCaller = owner;
+    let questionId = f.question.id;
+    if (bad === 'missing-rule') f.rules.length = 0;
+    if (bad === 'missing-answer') source = { kind: 'answer', questionId: 'missing' };
+    if (bad === 'foreign-answer') {
+      f.store.openAsk({
+        id: 'foreign',
+        sessionId: 'another-neo',
+        projectId: null,
+        originMessageId: null,
+        title: 'Other',
+        request: 'Other',
+        createdAt: 1,
+      });
+      source = { kind: 'answer', questionId: f.prior('foreign').id };
+    }
+    if (bad === 'worker') caller = { source: 'mcp', sessionId: 'worker', role: 'worker' };
+    if (bad === 'foreign-neo') caller = { ...owner, sessionId: 'another-neo' };
+    if (bad === 'approval-card' || bad === 'ordinary-card') {
+      questionId = f.store.askQuestion(
+        'ordinary',
+        'ask',
+        {
+          text: 'May I proceed?',
+          kind: bad === 'approval-card' ? 'yesno' : 'reply',
+          options: null,
+          multiple: false,
+          noLabel: 'No',
+          yesLabel: 'Yes',
+          startTodos: null,
+          confirm:
+            bad === 'approval-card' ? { path: 'direction.md', sha256: 'a'.repeat(64) } : null,
+        },
+        1
+      ).id;
+    }
+    expect(await f.resolve(source, { questionId }, caller)).toMatchObject({ ok: false });
+    expect(f.store.getQuestion(questionId)?.state).toBe('open');
+    expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    expect(f.messages.size).toBe(0);
+  } finally {
+    f.db.close();
+  }
+});
+
+test('failed delivery retains its hold and durable citation through restart', async () => {
+  const run = mkdtempSync(join(tmpdir(), 'question-resolution-'));
+  const path = join(run, 'daemon.db');
+  const f = await fixture(path);
+  try {
+    f.unavailable(true);
+    expect(await f.resolve({ kind: 'rule', text: rule })).toMatchObject({ ok: true });
+    expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+    f.rules.length = 0;
+    f.unavailable(false);
+    await f.flush();
+    expect(f.store.getTodo('todo')?.state).toBe('doing');
+    f.db.close();
+    const reopened = new Database(path);
+    try {
+      const store = new NeoAskTodoRepository(reopened);
+      expect(readNeoQuestion(store.getQuestion(f.question.id))).toMatchObject({
+        answeredByHuman: false,
+        resolvedByAgent: true,
+        question: { retiredReason: expect.stringContaining(rule) },
+      });
+      expect(store.questionAnswers.list(f.question.id)).toMatchObject([
+        { answeredBy: 'rule', state: 'accepted' },
+      ]);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    f.db.close();
+    rmSync(run, { recursive: true, force: true });
+  }
+});
