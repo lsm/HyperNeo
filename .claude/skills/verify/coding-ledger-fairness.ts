@@ -18,12 +18,12 @@ const root=${JSON.stringify(run)},args=process.argv.slice(2),c=JSON.parse(readFi
 if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
 const user=args[1]==='user', graphql=args[1]==='graphql', empty=c.repo==='synthetic/empty';
 if(!user&&!graphql&&!args[1].startsWith('repos/'+c.repo+'/pulls?'))process.exit(2);
-const denied=['limited','recovery'].includes(c.phase)&&empty&&!user;
+const denied=empty&&(c.phase==='identity-refused'||(['limited','recovery'].includes(c.phase)&&!user));
 appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase:c.phase,repo:c.repo,user,graphql,denied})+'\n');
 process.stdout.write('HTTP/2.0 '+(denied?'403 Forbidden':'200 OK')+'\r\nx-ratelimit-resource: '+(graphql?'graphql':'core')+'\r\nx-ratelimit-remaining: '+(denied?0:4000)+'\r\nx-ratelimit-reset: '+Math.floor((c.base+7200000)/1000)+'\r\n\r\n');
 let data;
-if(user)data={id:empty?1:2,url:'https://api.github.com/users/'+(empty?'limited':'healthy')};
-else if(denied)data={message:'API rate limit exceeded'};
+if(denied)data={message:'API rate limit exceeded'};
+else if(user)data={id:empty?1:2,url:'https://api.github.com/users/'+(empty?'limited':'healthy')};
 else if(!graphql)data=empty||args[1].includes('state=closed')?[]:[{number:7,title:'Healthy PR',head:{ref:'branch',sha:'head'},updated_at:'unchanged',created_at:new Date(c.base).toISOString(),closed_at:null,draft:false,base:{repo:{full_name:c.repo}}}];
 else data={data:{rateLimit:{cost:1,remaining:4000,resetAt:new Date(c.base+7200000).toISOString()},repository:{nameWithOwner:c.repo,p7:{number:7,title:'Healthy PR',headRefName:'branch',headRefOid:'head',state:'OPEN',isDraft:false,mergeable:'MERGEABLE',reviewDecision:null,closedAt:null,commits:{nodes:[{commit:{statusCheckRollup:{state:c.phase==='limited'?'FAILURE':'SUCCESS'}}}]}}}}};
 await Bun.write(Bun.stdout,JSON.stringify(data));if(denied){await Bun.write(Bun.stderr,'HTTP 403: API rate limit exceeded');process.exit(1);}
@@ -77,6 +77,22 @@ try {
   assert.equal(recoveredRows.find(row=>row.pr==='synthetic/healthy#7')?.state,'waiting_human','An earlier target cooldown must not hide another account CI recovery');
   assert.equal(ledger.health.read('synthetic/empty')?.reason,'cooldown');
   assert.equal(ledger.health.read('synthetic/empty')?.misses,1);
+  phase = 'identity-refused';
+  for (const minute of [41, 46, 51]) {
+    readers.set('synthetic/empty', createCodingLedgerReader());
+    Date.now = () => base + minute*60000;
+    await reconcileCodingPrLedger(ledger, repos, read, Date.now());
+    Date.now = clock;
+    assert.equal(ledger.health.read('synthetic/empty')?.reason,'cooldown');
+    assert.equal(ledger.health.read('synthetic/empty')?.misses,1,'A refused identity probe must not create target misses');
+    assert.equal(ledger.health.read('synthetic/empty')?.incident,null);
+    assert.equal(ledger.health.read('synthetic/healthy')?.reason,'complete');
+  }
+  const requests=readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  const probeFailureReads=requests.filter(row=>row.phase==='identity-refused'&&row.repo==='synthetic/empty');
+  assert.equal(probeFailureReads.length,1,'Probe refusal cooldown must survive reader recreation');
+  assert(probeFailureReads[0].user);
+  evidence.identityRefusalReads=probeFailureReads;
   evidence.health = repos.map(repo=>({repo,health:ledger.health.read(repo)})); evidence.verified = true;
   console.log(JSON.stringify({verified:true,order,healthyFailureAndRecovery:true,scopedCooldownSurvivesReaderRecreation:true,inventedEmptyPRs:0}));
 } finally {

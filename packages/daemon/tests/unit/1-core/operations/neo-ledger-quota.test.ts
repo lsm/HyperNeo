@@ -8,6 +8,25 @@ import {
 } from '../../../../src/lib/neo/packs/coding/ledger-quota.ts';
 
 describe('credential quota acquisition', () => {
+  test('a rate-limited identity probe defers target reads across sweeps and reader recreation', async () => {
+    const clock = Date.now, start = clock(), calls: string[] = [];
+    const run: LedgerQuotaRun = async args => {
+      calls.push(args[2]);
+      return { ok: false, error: 'API rate limit exceeded', retryAfterMs: 3600000,
+        quota: { status: 403, resource: 'core', remaining: 0, resetAt: start+3600000, retryAfterMs: null, requestId: 'probe-refused' } };
+    };
+    let previous: Awaited<ReturnType<LedgerQuotaRun>>['quota'];
+    try {
+      for (const offset of [0, 300000, 600000]) {
+        Date.now = () => start + offset;
+        const read = createCodingQuotaReader(run);
+        const result = await read(['gh','api','repos/synthetic/repo/pulls'],'core',previous);
+        expect(result.quota?.deferred).toBe(true);
+        previous = result.quota;
+      }
+      expect(calls).toEqual(['user']);
+    } finally { Date.now = clock; }
+  });
   test('the quota reader loads as a direct Bun entry point', () => {
     const module = new URL('../../../../src/lib/neo/packs/coding/ledger-quota.ts', import.meta.url)
       .href;
