@@ -56,9 +56,9 @@ try {
   await hub.request('system.health',{});
   db.exec('ROLLBACK'); held=false;
   const receipt=await pending;
-  assert(receipt.ok); assert.equal(receipt.todo.report,text); assert(events>0);
+  assert(receipt.ok); assert(receipt.todo.report===text,'The committed receipt must preserve the entire report'); assert(events>0);
   record=false;
-  assert.equal((await visible()).entry.todos[0].report,text);
+  assert((await visible()).entry.todos.find(todo=>todo.id==='first')?.report===text,'The public card must preserve the entire report');
   result.commitBeforeReply=true;
   result.notificationsAfterCommit=true;
   result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
