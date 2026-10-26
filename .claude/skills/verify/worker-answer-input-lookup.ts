@@ -30,7 +30,7 @@ async function rpc(name: string, input: unknown) {
   });
   const result = JSON.parse(await new Response(child.stdout).text());
   assert.equal(await child.exited, 0); assert(!result.reply.error, JSON.stringify(result));
-  const value = result.reply.value ?? result.reply;
+  const value = result.reply;
   receipts.push({ name, input, value });
   writeFileSync(join(run, 'evidence/receipts.json'), JSON.stringify(receipts, null, 2));
   return value;
