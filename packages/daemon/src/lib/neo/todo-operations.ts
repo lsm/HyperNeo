@@ -1,5 +1,4 @@
-import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
-import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -8,19 +7,20 @@ import type {
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
+import { type WorkRef, WorkRefSchema } from '../drivers/types.ts';
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './pack-contract.ts';
-import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
+import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { planNeoTodoAwaitingStart } from './todo-runner.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
-import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -384,6 +384,11 @@ export function createNeoTodoOperations(
       ...(input.addUrls && !appended
         ? [
             `check_urls_unsupported: URLs recorded without changing the check: ${input.addUrls.join(', ')}`,
+          ]
+        : []),
+      ...(input.doneWhen
+        ? [
+            `done_when_regenerated: doneWhen supplied with a check edit was replaced by the check's wording.`,
           ]
         : []),
     ];
