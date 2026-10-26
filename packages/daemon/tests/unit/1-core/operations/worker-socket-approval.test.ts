@@ -36,3 +36,10 @@ test.each(['yes', 'no'] as const)('human %s persists without asking again', (ans
     expect(db.getGlobalSettings().workerUnixSockets).toEqual([]);
   }
 });
+
+test('approval shows bidirectional controls as visible escapes', () => {
+  const path = join(tmpdir(), 'agent-\u202e.sock');
+  const question = store.requestWorkerSocket(session, path)!;
+  expect(question.text).not.toContain('\u202e');
+  expect(question.text).toContain('\\u202e');
+});
