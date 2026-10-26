@@ -1,0 +1,147 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 367,
+    "sessions": {
+      "active": 0,
+      "total": 1
+    }
+  },
+  "jobs": [
+    {
+      "id": "11b0fde1-1120-4f62-892f-27d5df09ab07",
+      "queue": "session.title_generation",
+      "status": "pending",
+      "payload": {
+        "sessionId": "synthetic-title-session",
+        "userMessageText": "Synthetic first input"
+      },
+      "result": null,
+      "error": null,
+      "priority": 0,
+      "maxRetries": 2,
+      "retryCount": 0,
+      "runAt": 1792994867901,
+      "createdAt": 1792994867901,
+      "startedAt": null,
+      "heartbeatAt": null,
+      "completedAt": null,
+      "claimToken": null
+    }
+  ],
+  "claimed": 1,
+  "completed": {
+    "id": "11b0fde1-1120-4f62-892f-27d5df09ab07",
+    "queue": "session.title_generation",
+    "status": "completed",
+    "payload": {
+      "sessionId": "synthetic-title-session",
+      "userMessageText": "Synthetic first input"
+    },
+    "result": {
+      "generated": true
+    },
+    "error": null,
+    "priority": 0,
+    "maxRetries": 2,
+    "retryCount": 0,
+    "runAt": 1792994867901,
+    "createdAt": 1792994867901,
+    "startedAt": 1792994867902,
+    "heartbeatAt": null,
+    "completedAt": 1792994867903,
+    "claimToken": "4ca51d3e-aef1-4f28-a3ab-3495ebb8a269"
+  },
+  "session": {
+    "session": {
+      "id": "synthetic-title-session",
+      "title": "Human title wins",
+      "workspacePath": "/private/tmp/hyperneo-proof-FKIExn/workspace",
+      "createdAt": "2026-10-26T06:07:47.898Z",
+      "lastActiveAt": "2026-10-26T06:07:47.898Z",
+      "status": "active",
+      "config": {
+        "queryMode": "manual",
+        "model": "claude-sonnet-4-20250514",
+        "maxTokens": 8192,
+        "temperature": 0,
+        "toolSelection": {
+          "version": 1,
+          "choices": {
+            "mcp:f09ef2bc-4453-4230-824d-68673ad7b8c1": {
+              "selected": true,
+              "aliases": [
+                "fetch-mcp"
+              ]
+            },
+            "mcp:6e729e01-ac40-4008-be59-7b93a5030ddc": {
+              "selected": false,
+              "aliases": [
+                "chrome-devtools-mcp"
+              ]
+            },
+            "mcp:59adbf03-342b-44ec-84ff-fab7ab9de650": {
+              "selected": false,
+              "aliases": [
+                "chrome-devtools-user-mcp"
+              ]
+            },
+            "skill:feec092f-c3f4-4307-8248-f410479dd429": {
+              "selected": true,
+              "aliases": []
+            },
+            "skill:9f29640d-c386-49d3-a326-bc97398c907e": {
+              "selected": true,
+              "aliases": []
+            },
+            "skill:a4fac42e-17bb-4ae4-9aa3-495c75d722bc": {
+              "selected": false,
+              "aliases": []
+            }
+          }
+        }
+      },
+      "metadata": {
+        "messageCount": 0,
+        "totalTokens": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalCost": 0,
+        "toolCallCount": 0,
+        "titleGenerated": false,
+        "titleSetBy": "user"
+      },
+      "processingState": "{\"status\":\"idle\"}",
+      "type": "worker",
+      "parentSessionId": null
+    },
+    "activeTools": [],
+    "context": {
+      "files": [],
+      "workingDirectory": "/private/tmp/hyperneo-proof-FKIExn/workspace"
+    }
+  },
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 371,
+    "sessions": {
+      "active": 1,
+      "total": 1
+    }
+  },
+  "mainSqlAttempts": 0
+}

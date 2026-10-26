@@ -565,4 +565,10 @@ env -i HOME="$NATIVE_FEED_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$NATIVE_FEED_EN
 	HYPERNEO_DATA_DIR="$NATIVE_FEED_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-native-feed-enqueue-writer.ts" "$NATIVE_FEED_ENQUEUE_RUN"
 
+SESSION_TITLE_ENQUEUE_RUN="$WORK_DIR/session-title-enqueue-writer"
+mkdir -p "$SESSION_TITLE_ENQUEUE_RUN/home" "$SESSION_TITLE_ENQUEUE_RUN/tmp"
+env -i HOME="$SESSION_TITLE_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SESSION_TITLE_ENQUEUE_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$SESSION_TITLE_ENQUEUE_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-title-enqueue-writer.ts" "$SESSION_TITLE_ENQUEUE_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

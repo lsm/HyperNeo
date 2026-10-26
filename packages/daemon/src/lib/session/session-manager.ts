@@ -19,6 +19,8 @@ import type { SessionInputDraftSnapshot } from '../../storage/repositories/sessi
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { sessionTitleEnqueueWrites } from '../../storage/repositories/session-title-enqueue-write.ts';
 import {
   AgentSession,
   type AgentSessionRuntimeOptions,
@@ -365,7 +367,7 @@ export class SessionManager {
 
         try {
           if (needsWorkspaceInit) {
-            this.jobQueue.enqueue({
+            await gatewayFor(this.jobQueue.db).call(sessionTitleEnqueueWrites, 'enqueue', {
               queue: SESSION_TITLE_GENERATION,
               payload: { sessionId, userMessageText },
               maxRetries: 2,
