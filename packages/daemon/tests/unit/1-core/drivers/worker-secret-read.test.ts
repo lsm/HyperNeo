@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, matchesGlob } from 'node:path';
 import { parse } from 'smol-toml';
 import { execFileSync } from 'node:child_process';
 import { secretHomePaths } from '../../../../src/lib/neo/secret-read-rules.ts';
@@ -157,6 +157,30 @@ test('reading a complete Claude policy does not rewrite its settings', async () 
   utimesSync(settingsPath(), new Date(1000), new Date(1000));
   await readClaudeWorkerSandbox(root);
   expect(statSync(settingsPath()).mtimeMs).toBe(1000);
+});
+
+test('nested private clones can read repository environment examples and key fixtures', async () => {
+  root = join(fixture, 'home/worktrees/coding/repo');
+  mkdirSync(join(root, '.git/info'), { recursive: true });
+  await installClaudeNativeWrites(root, [join(fixture, 'source')]);
+  const filesystem = codexWorkerSandbox(root).config.permissions['hyperneo-worker']
+    .filesystem as Record<string, unknown>;
+  const denied = Object.entries(filesystem)
+    .filter(([, access]) => access === 'deny')
+    .map(([path]) => path);
+  for (const name of ['.env.example', 'fixtures/test.pem', 'fixtures/test.key']) {
+    const path = join(root, name);
+    writeFileSync(join(root, 'repo-read-fixture.txt'), 'synthetic repository');
+    expect(
+      denied.some((pattern) => matchesGlob(path, pattern) || path.startsWith(`${pattern}/`))
+    ).toBe(false);
+    expect(
+      settings().sandbox.filesystem.denyRead.some(
+        (pattern: string) => matchesGlob(path, pattern) || path.startsWith(`${pattern}/`)
+      )
+    ).toBe(false);
+  }
+  expect(filesystem[root]).toBe('write');
 });
 
 test('Desktop reload can resolve the protected profile without bootstrap overrides', async () => {
