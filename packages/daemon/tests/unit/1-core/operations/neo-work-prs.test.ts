@@ -224,27 +224,27 @@ describe('readGithubPrs REST check rollup', () => {
   test('asks for CI on REST check-runs and combined status, not GraphQL statusCheckRollup', async () => {
     const { spawn, asked } = rollupSpawn(ghPr(), (path) =>
       path.includes('check-runs')
-        ? { check_runs: [{ status: 'completed', conclusion: 'SUCCESS' }, { status: 'in_progress' }] }
-        : { statuses: [{ state: 'SUCCESS' }] }
+        ? { check_runs: [{ status: 'completed', conclusion: 'success' }, { status: 'completed', conclusion: 'skipped' }] }
+        : { statuses: [{ state: 'success' }] }
     );
     const read = await readGithubPrs([url], spawn as never);
-    expect(read?.[0]?.checks).toBe('pending');
+    expect(read?.[0]?.checks).toBe('passing');
     expect(asked[0].join(' ')).not.toContain('statusCheckRollup');
     expect(
       asked
         .map((args) => String(args[2]))
         .some((path) => path.startsWith('repos/lsm/HyperNeo/commits/abc123/check-runs'))
     ).toBe(true);
-    expect(asked.map((args) => String(args[2]))).toContain(
-      'repos/lsm/HyperNeo/commits/abc123/status'
-    );
+    expect(
+      asked.map((args) => String(args[2])).some((path) => path.startsWith('repos/lsm/HyperNeo/commits/abc123/status'))
+    ).toBe(true);
   });
 
   test('maps a failed check run and an errored status to failing', async () => {
     const { spawn } = rollupSpawn(ghPr(), (path) =>
       path.includes('check-runs')
-        ? { check_runs: [{ status: 'completed', conclusion: 'FAILURE' }] }
-        : { statuses: [{ state: 'ERROR' }] }
+        ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
+        : { statuses: [{ state: 'error' }] }
     );
     expect((await readGithubPrs([url], spawn as never))?.[0]?.checks).toBe('failing');
   });
@@ -262,6 +262,25 @@ describe('readGithubPrs REST check rollup', () => {
     const read = await readGithubPrs([url], spawn as never);
     expect(read?.[0]?.checks).toBe('none');
     expect(read?.[0]?.head).toBe(head);
+  });
+
+  test('follows check-runs pagination to a failure past the first page', async () => {
+    const fullPage = Array.from({ length: 100 }, () => ({
+      status: 'completed',
+      conclusion: 'success',
+    }));
+    const { spawn, asked } = rollupSpawn(ghPr(), (path) => {
+      if (path.includes('check-runs'))
+        return path.includes('page=2')
+          ? { check_runs: [{ status: 'completed', conclusion: 'failure' }] }
+          : { check_runs: fullPage };
+      return { statuses: [] };
+    });
+    const read = await readGithubPrs([url], spawn as never);
+    expect(read?.[0]?.checks).toBe('failing');
+    expect(
+      asked.filter((args) => String(args[2]).includes('check-runs') && String(args[2]).includes('page=2'))
+    ).toHaveLength(1);
   });
 });
 

@@ -233,7 +233,12 @@ const CombinedStatusSchema = z.object({ statuses: z.array(z.object({ state: z.st
 
 // statusCheckRollup costs one GraphQL node per check context, so it dominates the
 // pullRequest query's point cost. CI state comes from REST instead, which draws
-// from the separate 15k/hour REST quota.
+// from the separate 15k/hour REST quota. REST replies use lowercase statuses,
+// conclusions and states; checkResult compares GraphQL-cased values, so every
+// field is uppercased here.
+const REST_PAGE_SIZE = 100;
+const REST_MAX_PAGES = 3; // caps the sweep at 300 checks/statuses per head
+
 async function readCheckRollup(
   url: string,
   raw: Record<string, unknown>,
@@ -244,18 +249,33 @@ async function readCheckRollup(
   if (!meta) return [];
   const base = `repos/${meta.owner}/${meta.repo}/commits/${raw.headRefOid}`;
   const rollup: GhCheck[] = [];
-  const runs = await gh(['gh', 'api', `${base}/check-runs?per_page=100`], spawnImpl, 'core');
-  const parsedRuns = runs.ok ? CheckRunsSchema.safeParse(runs.data) : null;
-  if (parsedRuns?.success)
-    for (const run of parsedRuns.data.check_runs)
+  for (let page = 1; page <= REST_MAX_PAGES; page++) {
+    const runs = await gh(
+      ['gh', 'api', `${base}/check-runs?per_page=${REST_PAGE_SIZE}&page=${page}`],
+      spawnImpl,
+      'core'
+    );
+    const parsed = runs.ok ? CheckRunsSchema.safeParse(runs.data) : null;
+    if (!parsed?.success) break;
+    for (const run of parsed.data.check_runs)
       rollup.push({
         status: run.status ? run.status.toUpperCase() : null,
-        conclusion: run.conclusion ?? null,
+        conclusion: run.conclusion ? run.conclusion.toUpperCase() : null,
       });
-  const statuses = await gh(['gh', 'api', `${base}/status`], spawnImpl, 'core');
-  const parsedStatuses = statuses.ok ? CombinedStatusSchema.safeParse(statuses.data) : null;
-  if (parsedStatuses?.success)
-    for (const status of parsedStatuses.data.statuses) rollup.push({ state: status.state });
+    if (parsed.data.check_runs.length < REST_PAGE_SIZE) break;
+  }
+  for (let page = 1; page <= REST_MAX_PAGES; page++) {
+    const statuses = await gh(
+      ['gh', 'api', `${base}/status?per_page=${REST_PAGE_SIZE}&page=${page}`],
+      spawnImpl,
+      'core'
+    );
+    const parsed = statuses.ok ? CombinedStatusSchema.safeParse(statuses.data) : null;
+    if (!parsed?.success) break;
+    for (const status of parsed.data.statuses)
+      rollup.push({ state: status.state.toUpperCase() });
+    if (parsed.data.statuses.length < REST_PAGE_SIZE) break;
+  }
   return rollup;
 }
 
