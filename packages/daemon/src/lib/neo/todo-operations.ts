@@ -26,6 +26,7 @@ type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 type TodoReceipt = { ok: true; todo: NeoTodo; todos: NeoTodo[]; records?: string[] };
 type TodoPlan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
+export type NeoTodoPolicy = { id: string; todos?: Partial<NonNullable<NeoPack['todos']>> };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
@@ -76,7 +77,7 @@ const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
 
 export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction' | 'doneWhen'>>(
   draft: T,
-  packs: readonly NeoPack[],
+  packs: readonly NeoTodoPolicy[],
   peers: readonly NeoTodo[] = []
 ): Gate<T & { records?: string[] }> {
   const pack = draft.check && packs.find((item) => item.id === draft.check?.pack)?.todos;
@@ -96,7 +97,7 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
 export function requireNeoDoneWhenEditable(
   todo: NeoTodo,
   input: { doneWhen?: string },
-  packs: readonly NeoPack[]
+  packs: readonly NeoTodoPolicy[]
 ): Gate<NeoTodo> {
   const pack = todo.check && packs.find((item) => item.id === todo.check?.pack)?.todos;
   return input.doneWhen && todo.check && pack?.doneWhen?.(todo.check) === todo.doneWhen

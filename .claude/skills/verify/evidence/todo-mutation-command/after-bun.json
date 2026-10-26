@@ -1,0 +1,48 @@
+{
+  "mode": "verify",
+  "runtimeCallersMoved": false,
+  "refused": {
+    "error": "Error: synthetic mutation refusal",
+    "observed": {
+      "title": "first",
+      "question": "open",
+      "visibleTitle": "first"
+    }
+  },
+  "concurrent": [
+    {
+      "id": "first",
+      "urls": [
+        "https://github.com/synthetic/mutation/pull/1",
+        "https://github.com/synthetic/mutation/pull/2"
+      ],
+      "records": []
+    },
+    {
+      "id": "second",
+      "urls": [
+        "https://github.com/synthetic/mutation/pull/2"
+      ],
+      "records": [
+        "pr_already_tracked: https://github.com/synthetic/mutation/pull/2 is already tracked by todo first \"Committed title\". Use neo.todo.edit addUrls on that todo."
+      ]
+    }
+  ],
+  "unverified": {
+    "state": "closed_unverified",
+    "startNext": "second"
+  },
+  "fullReport": {
+    "bytes": 620000,
+    "sha256": "4604a730dfc8c84626365ad3b239631384ac3dff3ba023afb34a096cff2c5ca7",
+    "replyBytes": 1281824
+  },
+  "contention": {
+    "writeMs": 1213.2269999999999,
+    "healthMs": 0.4521660000000338,
+    "maxLagMs": 2.234916999999996,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true,
+  "mainSql": 0
+}

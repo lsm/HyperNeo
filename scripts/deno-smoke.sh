@@ -475,6 +475,12 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
+TODO_MUTATION_RUN="$WORK_DIR/todo-mutation-command"
+mkdir -p "$TODO_MUTATION_RUN/home" "$TODO_MUTATION_RUN/tmp"
+env -i HOME="$TODO_MUTATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_MUTATION_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-command.ts" verify "$TODO_MUTATION_RUN"
+
 NEO_SETTINGS_RUN="$WORK_DIR/neo-settings-writer"
 mkdir -p "$NEO_SETTINGS_RUN/home" "$NEO_SETTINGS_RUN/tmp"
 env -i HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test \

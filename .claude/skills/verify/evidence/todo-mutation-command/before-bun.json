@@ -1,0 +1,14 @@
+{
+  "mode": "before",
+  "runtimeCallersMoved": false,
+  "refused": {
+    "error": "MessageHubResponseError: synthetic mutation refusal",
+    "observed": {
+      "title": "Must roll back",
+      "question": "retired",
+      "visibleTitle": "Must roll back"
+    }
+  },
+  "baselineReproduced": true,
+  "mainSql": 11
+}

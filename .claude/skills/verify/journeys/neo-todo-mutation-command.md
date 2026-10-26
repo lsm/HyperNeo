@@ -37,3 +37,6 @@ Unit contracts additionally cover removals, replacement admission, closed asks,
 missing/removed todos, malformed checks, derived labels and artifact receipts.
 GUI layout, real provider turns, worker-stop wiring, queue/SQL/clone timing and
 runtime RPC migration are not proved by this build slice.
+The Deno 2.9.4 smoke runs the same worker/snapshot proof and saves its JSON
+summary in the smoke log before deleting temporary data. Run that smoke as
+one separate guarded heavy job.

@@ -1,4 +1,5 @@
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
+import { neoTodoMutations } from '../repositories/neo-todo-mutation-writes.ts';
 import {
   codingPollPageReads,
   codingPollPageWrites,
@@ -101,6 +102,7 @@ import { githubPollSuccessorWrites } from '../repositories/github-poll-successor
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    neoTodoMutations,
     codingPollPageReads,
     codingPollPageWrites,
     readWorkInput,

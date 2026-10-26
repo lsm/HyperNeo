@@ -1,0 +1,13 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "mainSql": 0,
+  "contention": {
+    "writeMs": 1255.7264169999999,
+    "healthMs": 0.5791249999999764,
+    "maxLagMs": 2.182499999999891,
+    "affectedWriteUnder250ms": false
+  },
+  "smokePassed": true,
+  "temporaryDataRemoved": true
+}
