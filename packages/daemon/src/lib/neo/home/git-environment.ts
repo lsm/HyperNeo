@@ -16,7 +16,8 @@ function configurationEntry(key: string, value: string) {
   const first = key.indexOf('.');
   const last = key.lastIndexOf('.');
   const section = key.slice(0, first);
-  const subsection = first === last ? '' : ` "${quoted(key.slice(first + 1, last))}"`;
+  const subsection =
+    first === last ? '' : ` "${key.slice(first + 1, last).replace(/[\\"]/g, '\\$&')}"`;
   return `[${section}${subsection}]\n${key.slice(last + 1)} = "${quoted(value)}"\n`;
 }
 
@@ -59,7 +60,7 @@ export async function spawnHomeCommand(args: string[], options: SpawnOptions, di
   ]);
   if (code) return { failure: { code, error: `Git configuration: ${error.trim()}` } };
   const entries = output.split('\0');
-  const drivers = new Set<string>();
+  const drivers = new Map<string, string>();
   const command: [string, string][] = [];
   let configuration = '';
   for (let index = 0; index + 1 < entries.length; index += 2) {
@@ -69,16 +70,19 @@ export async function spawnHomeCommand(args: string[], options: SpawnOptions, di
     const key = separator < 0 ? entry : entry.slice(0, separator);
     const value = separator < 0 ? 'true' : entry.slice(separator + 1);
     if (/^filter\..*\.(clean|smudge|process|required)$/.test(key)) {
-      drivers.add(key);
+      drivers.set(key, key.endsWith('.required') ? 'false' : '');
       continue;
     }
+    if (/^merge\..*\.driver$/.test(key)) {
+      drivers.set(key, 'git merge-file --marker-size=%L -- %A %O %B');
+      continue;
+    }
+    if (/^diff\..*\.(command|textconv)$/.test(key)) continue;
     if (/^include(?:if)?\./i.test(key)) continue;
     if (scope === 'global' || scope === 'system') configuration += configurationEntry(key, value);
     if (scope === 'command') command.push([key, value]);
   }
-  command.push(
-    ...[...drivers].map((key): [string, string] => [key, key.endsWith('.required') ? 'false' : ''])
-  );
+  command.push(...drivers);
   const temporary = await mkdtemp(join(directory, '.neo-git-config-'));
   const dispose = () => rm(temporary, { recursive: true, force: true });
   try {

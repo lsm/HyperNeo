@@ -43,3 +43,19 @@ configuration isolation, not the RPC or SDK sandbox surface.
 The local-read operation contract also seeds a malformed inherited Git profile.
 Tolerant Git probes must preserve local document access; required Git commands
 must still fail rather than silently discard the profile.
+
+Run the shared wrapper with `.claude/skills/verify/neo-home-config-drivers.ts`,
+once under Bun and once under pinned Deno. This listener-free proof runs real
+rebase and merge commands with custom drivers configured in global, system,
+local and command scopes. Each unsafe driver would write outside the home.
+Conflicts must still contain both versions and remain resolvable using Git's
+builtin text merge, with no outside marker. Inherited external diff and textconv
+commands must be absent, leaving ordinary diff output. Local diff settings remain
+covered by the daemon's explicit no-ext-diff/no-textconv flags.
+
+The same helper clones through inherited URL rewrites whose subsection names
+contain quotes, backslashes and literal tabs, checking the exact document bytes.
+Keep Git's required escaping for quotes/backslashes; subsection whitespace must
+remain literal. Inspect `neo-home-config-drivers.json`. Operation contracts also
+exercise the real conflict-question/answer/save path. This command proof does
+not establish daemon RPC startup or native SDK sandbox enforcement.

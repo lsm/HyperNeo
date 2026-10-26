@@ -76,4 +76,36 @@ for (const scope of ['global', 'system', 'local', 'command']) {
     }
   }
 }
-console.log('PASS: real rebase, merge and inherited diff conversions do not execute configured outside-home drivers.');
+const fixture = join(run, 'subsections');
+const root = join(fixture, 'Neo');
+const env = { ...baseEnv, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ALLOW_PROTOCOL: 'file' };
+await mkdir(root, { recursive: true });
+const git = async (...args: string[]) => {
+  const result = await invoke(root, env, args);
+  assert.equal(result.code, 0, result.error);
+};
+try {
+  await git('init', '--quiet');
+  await git('config', 'user.name', 'Verify Neo');
+  await git('config', 'user.email', 'verify@example.invalid');
+  await git('config', 'commit.gpgsign', 'false');
+  await writeFile(join(root, 'doc.md'), 'Exact cloned bytes.\n');
+  await git('add', '.');
+  await git('commit', '--quiet', '-m', 'Synthetic source');
+  for (const [index, name] of ['plain', 'back\\slash', 'quoted"name', 'tab\tname'].entries()) {
+    const remote = join(fixture, name);
+    const profile = join(fixture, `profile-${index}`);
+    const clone = join(fixture, `clone-${index}`);
+    await git('clone', '--bare', root, remote);
+    await git('config', '--file', profile, `url.${remote}.insteadOf`, 'neo-test-8832://');
+    const result = await invoke(root, { ...env, GIT_CONFIG_GLOBAL: profile }, ['clone', '--no-hardlinks', '--', 'neo-test-8832://', clone], true);
+    const content = await readFile(join(clone, 'doc.md'), 'utf8').catch(() => null);
+    evidence.push({ subsection: name, ...result, content });
+    await save();
+    assert.equal(result.code, 0, result.error);
+    assert.equal(content, 'Exact cloned bytes.\n');
+  }
+} finally {
+  await rm(fixture, { recursive: true, force: true });
+}
+console.log('PASS: real rebase/merge/diff disable configured executable drivers; inherited URL rewrites preserve exact cloned bytes.');
