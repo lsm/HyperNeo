@@ -21,13 +21,17 @@ released while the card stays pending and the todo stays needs-human. Restore
 the peer and make only the owned driver's persisted refresh job due; run one
 processor tick. The real handler must retry, deliver and resume.
 
-For another card, let the peer accept the input but close its connection before
-acknowledging it. Withhold the input's rollout entry temporarily. The adapter's
+For another card with an 80-character title, let the peer accept the input but
+close its connection before acknowledging it. Withhold the input's rollout entry temporarily. The adapter's
 not_delivered result must lack notSent. Restart only this daemon and run its
 real refresh handler: the card must stay pending with no new peer input. Publish
 that accepted input into the synthetic rollout, then refresh again. work.status
 must reconcile the exact worker-answer marker, accept delivery and return doing,
 without resending. An extra refresh must leave the peer input count at three.
+The complete marker must survive the adapter's actual 160-character recentInputs
+projection. External answer markers go first; HyperNeo's existing message payload
+stays stable for durable idempotency receipts. Keep reconciliation.json with the
+actual work.status projection, including a long card's shortened input text.
 No marker or unavailable status is evidence of uncertainty, never permission to
 resend. Other adapters without explicit pre-dispatch evidence remain conservative.
 
