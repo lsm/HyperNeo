@@ -96,9 +96,14 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
-  test.each(['smudge', 'process'])(
-    'reads peer progress without executing an inherited %s filter',
-    async (driver) => {
+  test.each([
+    ['smudge', false],
+    ['process', false],
+    ['smudge', true],
+    ['process', true],
+  ])(
+    'reads peer progress without executing an inherited %s filter (conditional: %s)',
+    async (driver, conditional) => {
       await commit(peer, '.gitattributes', 'peer.md filter=home-probe\n');
       await commit(peer, 'peer.md', 'Unfiltered peer progress.\n');
       await git(peer, 'push');
@@ -114,7 +119,14 @@ describe('Neo home save remote sync', () => {
       );
       await git(root, 'config', '--file', config, 'filter.home-probe.required', 'true');
       const previous = process.env.GIT_CONFIG_GLOBAL;
-      process.env.GIT_CONFIG_GLOBAL = config;
+      if (conditional) {
+        const include = join(fixture, 'conditional-gitconfig');
+        await writeFile(
+          include,
+          `[includeIf "gitdir:${root}/.git/worktrees/"]\n path = ${config}\n`
+        );
+        process.env.GIT_CONFIG_GLOBAL = include;
+      } else process.env.GIT_CONFIG_GLOBAL = config;
       try {
         const result = await call('neo.home.read', { path: 'peer.md' }).catch((error) => ({
           ok: false,
