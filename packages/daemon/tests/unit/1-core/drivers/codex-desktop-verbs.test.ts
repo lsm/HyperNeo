@@ -577,6 +577,27 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
+  test.each(['busy', 'idle'])(
+    'automatic input waits in the native queue for %s without starting another writer',
+    async (id) => {
+      const calls: string[] = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (method) => {
+          calls.push(method);
+          if (method !== 'thread/queue/add') throw new Error('Must only enqueue');
+          return { queuedSubmission: { id: 'pending-input' } };
+        },
+        close: () => {},
+      }));
+      expect(await driver.send!(ref(id), 'next task', user)).toEqual({
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'pending-input' },
+      });
+      expect(calls).toEqual(['thread/queue/add']);
+      expect(spawned).toEqual([]);
+    }
+  );
+
   test('work.send steers a running Codex turn instead of queuing it', async () => {
     const calls: string[] = [];
     const driver = adapter(0, '', async () => ({
