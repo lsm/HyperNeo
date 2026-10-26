@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, waitFor, act, fireEvent } from '@testing-library/preact';
 import { TaskToolsModal } from '../TaskToolsModal';
+import { skillsStore } from '../../../lib/skills-store.ts';
 
 const mockInventoryRequest = vi.fn();
+const mockSessionRequest = vi.fn();
+const mockCatalogRequest = vi.fn();
 const inventoryEvents = new Map<string, (payload: unknown) => void>();
 let connectionListener: ((state: string) => void) | null = null;
 vi.mock('../../../lib/connection-manager.ts', () => ({
   connectionManager: {
     getHub: async () => ({
-      request: mockInventoryRequest,
+      request: (name: string, input: { sessionId: string }) =>
+        name === 'session.get'
+          ? mockSessionRequest(input)
+          : name === 'session.mcp.list'
+            ? mockCatalogRequest(input)
+            : mockInventoryRequest(name, input),
       onConnection: (callback: (state: string) => void) => {
         connectionListener = callback;
         return () => {
@@ -22,6 +30,20 @@ vi.mock('../../../lib/connection-manager.ts', () => ({
     }),
   },
 }));
+
+vi.mock('../../../lib/skills-store.ts', async () => {
+  const { signal } = await import('@preact/signals');
+  return { skillsStore: { skills: signal([]), subscribe: async () => {}, unsubscribe: () => {} } };
+});
+const saved = (id: string, selected = false) => ({
+  id,
+  config: {
+    toolSelection: {
+      version: 1,
+      choices: { 'mcp:browser': { selected, aliases: ['browser-alias'] } },
+    },
+  },
+});
 
 const observed = (names: string[] = []) => ({
   state: 'observed',
@@ -52,6 +74,50 @@ describe('TaskToolsModal', () => {
     inventoryEvents.clear();
     connectionListener = null;
     mockInventoryRequest.mockResolvedValue(observed());
+    mockSessionRequest.mockImplementation(({ sessionId }: { sessionId: string }) =>
+      Promise.resolve({ session: saved(sessionId) })
+    );
+    mockCatalogRequest.mockResolvedValue({ entries: [] });
+    skillsStore.skills.value = [];
+  });
+
+  it('uses one canonical choice for the task session and refreshes its attachment', async () => {
+    skillsStore.skills.value = [
+      {
+        id: 'wrapper',
+        name: 'browser-alias',
+        displayName: 'Browser',
+        enabled: false,
+        sourceType: 'mcp_server',
+        config: { type: 'mcp_server', appMcpServerId: 'browser' },
+      },
+    ] as typeof skillsStore.skills.value;
+    mockCatalogRequest.mockResolvedValue({
+      entries: [
+        { server: { id: 'browser', name: 'Browser registry', enabled: false }, enabled: false },
+      ],
+    });
+    mockInventoryRequest.mockImplementation(async (name: string, input: unknown) => {
+      if (name === 'operation.invoke') {
+        expect(input).toEqual({
+          name: 'session.tools.setChoice',
+          input: { sessionId: 'task-session', key: 'mcp:browser', selected: true },
+        });
+        mockSessionRequest.mockResolvedValue({ session: saved('task-session', true) });
+        return { ok: true, changed: true, application: 'live' };
+      }
+      return observed(['browser-alias']);
+    });
+    const view = render(
+      <TaskToolsModal isOpen onClose={() => {}} sessionId="task-session" agentLabel="Coder" />
+    );
+    fireEvent.click(await view.findByRole('button', { name: 'Use here: Browser', exact: true }));
+    await waitFor(() =>
+      expect(view.getByText('Saved · applied to the running session')).toBeTruthy()
+    );
+    expect(
+      view.getByRole('button', { name: 'Stop using here: Browser', exact: true })
+    ).toBeTruthy();
   });
 
   it('does not show configured-only servers as observed task tools', async () => {
