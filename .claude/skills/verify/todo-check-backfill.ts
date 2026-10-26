@@ -94,6 +94,8 @@ try {
       report: 'Synthetic PR result',
     },
     { id: 'issue', title: 'Issue example/project#9', report: null },
+    { id: 'observed', title: 'Finish example/project#50 and #51', report: null },
+    { id: 'unknown', title: 'Finish example/project#52', report: null },
     { id: 'decision', title: 'Choose the next destination', report: null },
   ].map((row) =>
     store.addTodo(
@@ -111,9 +113,11 @@ try {
   );
   const snapshot = join(run, 'todos.json');
   writeFileSync(snapshot, JSON.stringify(rows));
+  const kinds = join(run, 'ref-kinds.json');
+  writeFileSync(kinds, JSON.stringify({ 'example/project#50': 'pr', 'example/project#51': 'pr' }));
   const command = spawnSync(
     process.execPath,
-    [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot],
+    [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot, kinds],
     { encoding: 'utf8', env: process.env }
   );
   receipts.push({
@@ -126,11 +130,11 @@ try {
   };
   assert.deepEqual(
     plan.edits.map((edit) => edit.todoId),
-    ['pr', 'issue']
+    ['pr', 'issue', 'observed']
   );
   assert.deepEqual(
     plan.unresolved.map((row) => row.todoId),
-    ['decision']
+    ['unknown', 'decision']
   );
   for (const edit of plan.edits) {
     const result = await rpc('neo.todo.edit', edit);
@@ -142,7 +146,7 @@ try {
   writeFileSync(snapshot, JSON.stringify(store.listTodos('ask')));
   const repeated = spawnSync(
     process.execPath,
-    [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot],
+    [resolve('scripts/backfill-neo-todo-checks.ts'), snapshot, kinds],
     { encoding: 'utf8', env: process.env }
   );
   assert.equal(repeated.status, 0, repeated.stderr);
@@ -150,7 +154,7 @@ try {
   assert.deepEqual(second.edits, []);
   assert.deepEqual(
     second.unresolved.map((row: { todoId: string }) => row.todoId),
-    ['decision']
+    ['unknown', 'decision']
   );
   receipts.push({ final: store.listTodos('ask'), plan, repeated: second });
   console.log(

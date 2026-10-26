@@ -108,3 +108,68 @@ test('leaves checked and settled rows alone and plans unfinished rows', () => {
     )
   ).toEqual({ edits: [], unresolved: [] });
 });
+
+test('uses supplied ref kinds and the sole named repo for unlabelled shorthand', () => {
+  const kinds = {
+    'example/repo#101': 'pr' as const,
+    'example/repo#102': 'pr' as const,
+    'example/repo#103': 'pr' as const,
+    'example/repo#104': 'issue' as const,
+  };
+  const plan = planNeoTodoCheckBackfill(
+    [
+      todo('named', 'Finish example/repo#101'),
+      todo('many', 'Finish example/repo#101', 'Remaining references: #102 and #103'),
+      todo('issue', 'Resolve #104', null, 'github.com/example/repo'),
+      todo('unknown', 'Finish example/repo#105'),
+      todo('prose', 'Merged #106', null, 'github.com/example/repo'),
+    ],
+    kinds
+  );
+  expect(plan.edits).toEqual([
+    {
+      todoId: 'named',
+      check: {
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: { urls: ['https://github.com/example/repo/pull/101'] },
+      },
+    },
+    {
+      todoId: 'many',
+      check: {
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: {
+          urls: [
+            'https://github.com/example/repo/pull/101',
+            'https://github.com/example/repo/pull/102',
+            'https://github.com/example/repo/pull/103',
+          ],
+        },
+      },
+    },
+    {
+      todoId: 'issue',
+      check: { pack: 'coding', kind: 'issue_closed', params: { issue: 'example/repo#104' } },
+    },
+  ]);
+  expect(plan.unresolved.map((row) => row.todoId)).toEqual(['unknown', 'prose']);
+});
+
+test('missing ref kinds or multiple possible repos never produce a partial check', () => {
+  const rows = [
+    todo('partial', 'Finish example/repo#101 and #102'),
+    todo('repos', 'example/one#1 and example/two#2', 'Then #3'),
+    todo('invalid', 'example/repo#103'),
+  ];
+  const kinds = {
+    'example/repo#101': 'pr',
+    'example/one#1': 'pr',
+    'example/two#2': 'pr',
+    'example/repo#103': 'unknown',
+  } as never;
+  const plan = planNeoTodoCheckBackfill(rows, kinds);
+  expect(plan.edits).toEqual([]);
+  expect(plan.unresolved.map((row) => row.todoId)).toEqual(['partial', 'repos', 'invalid']);
+});
