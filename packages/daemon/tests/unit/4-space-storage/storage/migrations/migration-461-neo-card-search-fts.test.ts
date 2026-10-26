@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { runMigration461 } from '../../../../../src/storage/schema/m461-neo-card-search-fts.ts';
+import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
 function cardDb() {
   const db = new Database(':memory:');
@@ -51,16 +51,17 @@ function cardDb() {
   return db;
 }
 
-const matches = (db: Database, term: string): { source: string; entity_id: string; ask_id: string }[] =>
-  (
-    db
-      .prepare(
-        `SELECT c.source, c.entity_id, c.ask_id FROM neo_card_search_fts f
+const matches = (
+  db: Database,
+  term: string
+): { source: string; entity_id: string; ask_id: string }[] =>
+  db
+    .prepare(
+      `SELECT c.source, c.entity_id, c.ask_id FROM neo_card_search_fts f
          JOIN neo_card_search_content c ON c.id = f.rowid
          WHERE neo_card_search_fts MATCH ? ORDER BY c.id`
-      )
-      .all(term) as { source: string; entity_id: string; ask_id: string }[]
-  );
+    )
+    .all(term) as { source: string; entity_id: string; ask_id: string }[];
 
 test('card search migration backfills asks, todos and questions into the index', () => {
   const db = cardDb();
@@ -70,11 +71,14 @@ test('card search migration backfills asks, todos and questions into the index',
       { source: 'ask', entity_id: 'ask-1', ask_id: 'ask-1' },
       { source: 'question', entity_id: 'q-1', ask_id: 'ask-1' },
     ]);
-    expect(matches(db, 'upload')).toEqual([{ source: 'todo', entity_id: 'todo-1', ask_id: 'ask-1' }]);
-    expect(matches(db, '审核')).toEqual([{ source: 'todo', entity_id: 'todo-1', ask_id: 'ask-1' }]);
-    expect(matches(db, '构建')).toEqual([
-      { source: 'ask', entity_id: 'ask-1', ask_id: 'ask-1' },
+    expect(matches(db, 'upload')).toEqual([
       { source: 'todo', entity_id: 'todo-1', ask_id: 'ask-1' },
+    ]);
+    expect(matches(db, '等待审核')).toEqual([
+      { source: 'todo', entity_id: 'todo-1', ask_id: 'ask-1' },
+    ]);
+    expect(matches(db, '构建版本')).toEqual([
+      { source: 'ask', entity_id: 'ask-1', ask_id: 'ask-1' },
     ]);
   } finally {
     db.close();
@@ -93,15 +97,19 @@ test('card writes after the migration stay indexed through triggers', () => {
       `INSERT INTO neo_todos (id, ask_id, position, title, state, created_at, updated_at)
        VALUES ('todo-2', 'ask-2', 0, '导出现有数据', 'todo', 3, 3)`
     ).run();
-    expect(matches(db, '数据库')).toEqual([
+    expect(matches(db, '迁移数据库')).toEqual([
       { source: 'ask', entity_id: 'ask-2', ask_id: 'ask-2' },
     ]);
-    db.prepare(`UPDATE neo_asks SET title = '数据库迁移完成', updated_at = 4 WHERE id = 'ask-2'`).run();
-    expect(matches(db, '完成')).toEqual([{ source: 'ask', entity_id: 'ask-2', ask_id: 'ask-2' }]);
+    db.prepare(
+      `UPDATE neo_asks SET title = '数据库迁移完成', updated_at = 4 WHERE id = 'ask-2'`
+    ).run();
+    expect(matches(db, '数据库迁移完成')).toEqual([
+      { source: 'ask', entity_id: 'ask-2', ask_id: 'ask-2' },
+    ]);
     db.prepare(`DELETE FROM neo_todos WHERE id = 'todo-2'`).run();
-    expect(matches(db, '导出现有')).toEqual([]);
+    expect(matches(db, '导出现有数据')).toEqual([]);
     db.prepare(`DELETE FROM neo_asks WHERE id = 'ask-2'`).run();
-    expect(matches(db, '数据库')).toEqual([]);
+    expect(matches(db, '迁移数据库')).toEqual([]);
   } finally {
     db.close();
   }
@@ -118,7 +126,7 @@ test('card search migration is repeatable and skips databases without Neo tables
     runMigration461(plain);
     expect(
       plain.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'neo_card_search_fts'`).get()
-    ).toBeUndefined();
+    ).toBeNull();
   } finally {
     db.close();
     plain.close();
