@@ -18,6 +18,25 @@ function using(run: (db: Database, ledger: CodingPrLedgerRepository) => void) {
 }
 
 describe('durable repository cycle health', () => {
+  test('timestamps a changed cooldown error once and retains it after recovery', () =>
+    using((_db, ledger) => {
+      ledger.recordHealth(repo, { at: 100, outcome: 'failed', error: 'lookup_failed' });
+      for (const at of [200, 300])
+        expect(
+          ledger.recordHealth(repo, {
+            at,
+            outcome: 'cooldown',
+            retryAt: 1000,
+            error: 'rate_limited',
+          })
+        ).toMatchObject({ lastError: 'rate_limited', lastErrorAt: 200 });
+      expect(ledger.recordHealth(repo, { at: 1000, outcome: 'complete' })).toMatchObject({
+        lastError: 'rate_limited',
+        lastErrorAt: 200,
+        nextRetryAt: null,
+      });
+    }));
+
   test('missing health is unknown and an unreached repository has no invented attempt', () =>
     using((_db, ledger) => {
       expect(ledger.health).toBeDefined();
