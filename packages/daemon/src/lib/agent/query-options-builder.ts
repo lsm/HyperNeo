@@ -46,6 +46,7 @@ import { neoReadAccess } from '../neo/read-access.ts';
 import { neoReadSandbox, neoReadTools } from '../neo/session-config.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { projectSessionToolInputs, type SessionToolInputs } from '../tools/session-tool-inputs.ts';
 import {
   getProviderCatalogEpoch,
   getSessionModelCacheKey,
@@ -275,6 +276,8 @@ export interface QueryOptionsBuilderContext {
   readonly toolGuards?: DeclarativeToolGuard[];
 }
 
+type CanonicalToolInputs = Extract<SessionToolInputs, { ok: true }>;
+
 export interface BuiltFallbackIdentity {
   providerId: string;
   primaryModel: string | undefined;
@@ -351,10 +354,41 @@ export class QueryOptionsBuilder {
     return this.computeEffectiveMcpServers();
   }
 
-  private computeEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
+  private canonicalToolInputs(session = this.ctx.session): CanonicalToolInputs | null {
+    const selection = session.config.toolSelection;
+    if (!selection) return null;
+    const inputs = projectSessionToolInputs(
+      {
+        session,
+        skills: this.ctx.skillsManager?.listSkills() ?? [],
+        registry: this.ctx.appMcpServerRepo?.list() ?? [],
+        overrides: [],
+      },
+      selection
+    );
+    if (!inputs.ok) throw new Error(inputs.reason);
+    return inputs;
+  }
+
+  private canonicalMcpServers(inputs: CanonicalToolInputs): Record<string, McpServerConfig> {
+    const servers: Record<string, McpServerConfig> = {};
+    for (const { alias, server } of inputs.catalogServers) {
+      const validation = this.validateAppMcpServer(server);
+      if (!validation.valid) {
+        this.logger.warn(`Skipping selected MCP server "${alias}": ${validation.error}`);
+        continue;
+      }
+      servers[alias] = this.appMcpServerToSdkConfig(server);
+    }
+    return servers;
+  }
+
+  private computeEffectiveMcpServers(
+    inputs = this.canonicalToolInputs()
+  ): Record<string, SdkMcpServerConfig> | undefined {
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
-      registryServers: this.getMcpServersFromRegistry(),
-      skillServers: this.getMcpServersFromSkills(),
+      registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
+      skillServers: inputs ? {} : this.getMcpServersFromSkills(),
       runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
       operationServer: this.operationServer ?? this.ctx.getOperationMcpServer?.(),
     });
@@ -383,6 +417,7 @@ export class QueryOptionsBuilder {
   }): Promise<Options> {
     const session = overrides?.session ?? this.ctx.session;
     const config = this.admittedConfig(session);
+    const toolInputs = this.canonicalToolInputs(session);
     const workerSandbox = await readClaudeWorkerSandbox(this.getCwd());
 
     await this.ctx.settingsManager.prepareSDKOptions();
@@ -473,8 +508,8 @@ export class QueryOptionsBuilder {
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
-      ...this.buildPluginsFromSkills(),
-      ...this.buildPluginsFromBuiltinSkills(),
+      ...this.buildPluginsFromSkills(toolInputs),
+      ...this.buildPluginsFromBuiltinSkills(toolInputs),
     ];
     const providerSettings = buildProviderSettings(
       providerId,
@@ -501,7 +536,7 @@ export class QueryOptionsBuilder {
     const sdkCliPath = await this.getSDKCliPath();
 
     this.operationServer = this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
-    const mergedMcpServers = this.computeEffectiveMcpServers();
+    const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs);
 
     const queryOptions: Options = {
       model: sdkModelId,
@@ -1170,16 +1205,19 @@ export class QueryOptionsBuilder {
     return overrideDisabled.has(skillId) || sessionDisabled.has(skillId);
   }
 
-  private buildPluginsFromSkills(): Array<{ type: 'local'; path: string }> {
+  private buildPluginsFromSkills(
+    inputs = this.canonicalToolInputs()
+  ): Array<{ type: 'local'; path: string }> {
     if (!this.ctx.skillsManager) return [];
 
-    const skills = this.ctx.skillsManager.getEnabledSkills();
+    const skills = inputs?.instructionSkills ?? this.ctx.skillsManager.getEnabledSkills();
     const overrideDisabled = this.getOverrideDisabledSkillIds();
     const sessionDisabled = this.getSessionDisabledSkillIds();
     const plugins: Array<{ type: 'local'; path: string }> = [];
 
     for (const skill of skills) {
-      if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
+      if (!inputs && this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled))
+        continue;
       if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
         plugins.push({ type: 'local', path: skill.config.pluginPath });
       }
@@ -1188,19 +1226,23 @@ export class QueryOptionsBuilder {
     return plugins;
   }
 
-  private buildPluginsFromBuiltinSkills(): Array<{ type: 'local'; path: string }> {
+  private buildPluginsFromBuiltinSkills(
+    inputs = this.canonicalToolInputs()
+  ): Array<{ type: 'local'; path: string }> {
     if (!this.ctx.skillsManager) return [];
 
-    const skills = this.ctx.skillsManager.getEnabledSkills();
+    const skills = inputs?.instructionSkills ?? this.ctx.skillsManager.getEnabledSkills();
     const overrideDisabled = this.getOverrideDisabledSkillIds();
     const sessionDisabled = this.getSessionDisabledSkillIds();
     const plugins: Array<{ type: 'local'; path: string }> = [];
     const wrappersRoot = defaultBuiltinSkillPluginRoot();
 
     for (const skill of skills) {
-      if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
+      if (!inputs && this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled))
+        continue;
       if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
-        if (skill.config.spaceOnly === true && !this.ctx.session.context?.spaceId) continue;
+        if (!inputs && skill.config.spaceOnly === true && !this.ctx.session.context?.spaceId)
+          continue;
         const wrapperDir = builtinSkillPluginPath(wrappersRoot, skill.config.commandName);
         plugins.push({ type: 'local', path: wrapperDir });
       }

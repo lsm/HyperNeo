@@ -95,6 +95,7 @@ try {
     } while (true);
     assert.equal(queries.length, before + 1);
     const query = queries[before];
+    (evidence.cases as unknown[]).push({ name, selection, sdkAliases: query.aliases, sdkPlugins: query.plugins, nativeTools: query.tools, observed });
     const expectedAliases = name === 'reserved-runtime' ? ['hyperneo-operations-2', 'runtime-fixture'] : on ? ['frozen-browser'] : [];
     assert.deepEqual([...query.aliases].sort(), expectedAliases.sort());
     assert.deepEqual([...query.plugins].sort(), on ? ['fixture-guide', 'fixture-plugin'] : []);
@@ -102,7 +103,6 @@ try {
     assert(query.allNames.includes('hyperneo-operations'));
     assert.deepEqual(observed.mcpServers.map(entry => entry.name).sort(), [...query.aliases].sort());
     for (const entry of observed.mcpServers) assert.deepEqual(entry.tools, ['navigate']);
-    (evidence.cases as unknown[]).push({ name, selection, sdkAliases: query.aliases, sdkPlugins: query.plugins, nativeTools: query.tools, observed });
     query.finish();
   }
   evidence.pass = true; evidence.canonicalSdkConsumerWired = true;
