@@ -818,7 +818,7 @@ export async function queueCodexMessage(
     if (sandbox)
       await server.call('thread/settings/update', {
         threadId: detail.thread.id,
-        sandboxPolicy: sandbox.sandboxPolicy,
+        permissions: sandbox.permissions,
       });
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
@@ -1167,7 +1167,7 @@ export async function startCodexThread(
         projectId,
         cwd: workFolder.cwd,
         approvalPolicy: 'never',
-        sandbox: sandbox?.sandbox ?? 'danger-full-access',
+        ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
         ...(sandbox || configuration.value.effort ? { config } : {}),
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
       });
@@ -1190,7 +1190,9 @@ export async function startCodexThread(
       await deps.startDesktopTurn(threadId, {
         threadId,
         approvalPolicy: 'never',
-        sandboxPolicy: sandbox?.sandboxPolicy ?? { type: 'dangerFullAccess' },
+        ...(sandbox
+          ? { permissions: sandbox.permissions }
+          : { sandboxPolicy: { type: 'dangerFullAccess' } }),
         input: [{ type: 'text', text: message, text_elements: [] }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),

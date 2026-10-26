@@ -53,8 +53,7 @@ test.each([false, true])(
   }
 );
 
-test('both Codex policy shapes enable network access for local servers', () => {
+test('Codex named profile enables network access for local servers', () => {
   const policy = codexWorkerSandbox(root);
-  expect(policy.config.sandbox_workspace_write.network_access).toBe(true);
-  expect(policy.sandboxPolicy.networkAccess).toBe(true);
+  expect(policy.config.permissions['hyperneo-worker'].network.enabled).toBe(true);
 });

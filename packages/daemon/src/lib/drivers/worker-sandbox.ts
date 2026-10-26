@@ -1,7 +1,7 @@
 import { workerRuntimeCleanupCommand } from './worker-runtime-cleanup.ts';
 import { collectWithMaxBuffer } from '../utils/script-utils.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
@@ -80,24 +80,51 @@ export function codexWorkerSandbox(root: string) {
   const env = workerSandboxPaths(root);
   const writableRoots = [root, join(root, '.git'), ...new Set(Object.values(env))];
   return {
-    sandbox: 'workspace-write',
+    permissions: 'hyperneo-worker',
     config: {
-      sandbox_workspace_write: {
-        writable_roots: writableRoots,
-        exclude_slash_tmp: true,
-        exclude_tmpdir_env_var: true,
-        network_access: true,
+      permissions: {
+        'hyperneo-worker': {
+          filesystem: {
+            ':root': 'read',
+            ...Object.fromEntries(writableRoots.map((path) => [path, 'write'])),
+            ...Object.fromEntries(workerSecretPaths().map((path) => [path, 'deny'])),
+          },
+          network: { enabled: true },
+        },
       },
       shell_environment_policy: { set: env },
     },
-    sandboxPolicy: {
-      type: 'workspaceWrite',
-      writableRoots,
-      excludeSlashTmp: true,
-      excludeTmpdirEnvVar: true,
-      networkAccess: true,
-    },
   };
+}
+
+export function workerSecretPaths() {
+  const home = homedir();
+  return [
+    ...new Set([
+      ...[
+        '.config',
+        '.ssh',
+        '.docker',
+        '.kube',
+        '.aws',
+        '.npmrc',
+        '.netrc',
+        '.git-credentials',
+        '.zshrc',
+        '.zprofile',
+        '.bashrc',
+        '.bash_profile',
+        '.profile',
+        '.claude/.credentials.json',
+        '.claude/settings.json',
+        '.codex/auth.json',
+      ].map((path) => join(home, path)),
+      join(process.env.CODEX_HOME ?? join(home, '.codex'), 'auth.json'),
+      ...['.credentials.json', 'settings.json'].map((path) =>
+        join(process.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), path)
+      ),
+    ]),
+  ];
 }
 
 export async function resumeWorkerSandbox(root: string) {

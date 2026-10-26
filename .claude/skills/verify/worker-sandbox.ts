@@ -168,6 +168,12 @@ try {
   app.jobProcessor.start();
   await wait(() => existsSync(join(sdkWorker, 'network-sdk.txt')) && readFileSync(join(sdkWorker, 'network-sdk.txt'), 'utf8') === 'synthetic-network-ok');
   await wait(() => existsSync(join(run, 'evidence/sdk-requests.json')) && /Operation not permitted|Permission denied/.test(readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8')) && readFileSync(join(run, 'evidence/sdk-requests.json'), 'utf8').includes('outside-status=1'));
+  if (process.env.VERIFY_SECRET_READ === '1') {
+    await wait(() => existsSync(join(sdkWorker, 'repo-read-result-sdk.txt')));
+    assert.notEqual(readFileSync(join(sdkWorker, 'secret-read-status-sdk.txt'), 'utf8'), '0');
+    assert.equal(readFileSync(join(sdkWorker, 'repo-read-result-sdk.txt'), 'utf8'), 'synthetic-repo-readable');
+    writeFileSync(join(run, 'evidence/sdk-secret-read.json'), JSON.stringify({ secretRefused: true, repoReadable: true }));
+  }
   const sdkSettings = JSON.parse(readFileSync(join(sdkWorker, '.claude/settings.local.json'), 'utf8'));
   const sdkTemp = readFileSync(join(sdkWorker, 'observed-temp-sdk.txt'), 'utf8');
   const observed = {

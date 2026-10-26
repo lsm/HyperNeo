@@ -49,6 +49,14 @@ finally:
 ''')
     with probe.open('a') as script:
         script.write('/usr/bin/python3 ./loopback-probe.py\nprintf "loopback-status=%s\\n" "$?"\n')
+if os.environ.get('VERIFY_SECRET_READ') == '1':
+    secret = run / 'home/.ssh/hyperneo-synthetic-secret'
+    secret.parent.mkdir(parents=True, exist_ok=True)
+    secret.write_text('synthetic-secret-never-real')
+    (worker / 'readable-repo-fixture.txt').write_text('synthetic-repo-readable')
+    with probe.open('a') as script:
+        script.write(f"cat '{secret}' >/dev/null; printf '%s' \"$?\" > secret-read-status-{engine}.txt\n")
+        script.write(f"cat readable-repo-fixture.txt > repo-read-result-{engine}.txt\n")
 requests = []
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -115,18 +123,21 @@ else:
     expected_env = config['shell_environment_policy']['set']
     env['CODEX_HOME'] = str(home)
     args = [os.environ['VERIFY_CODEX'], '--no-daemon', '-a', 'never', '-c', 'model_provider="synthetic"', '-c', 'model_providers.synthetic.name="Synthetic"', '-c', f'model_providers.synthetic.base_url="http://127.0.0.1:{server.server_port}/v1"', '-c', 'model_providers.synthetic.wire_api="responses"', '-c', 'model_providers.synthetic.requires_openai_auth=false', '-c', 'features.shell_snapshot=false']
-    for key, value in config.items():
-        if isinstance(value, dict):
-            for subkey, subvalue in value.items():
-                if isinstance(subvalue, dict):
-                    for leaf, scalar in subvalue.items(): args += ['-c', key + '.' + subkey + '.' + leaf + '=' + json.dumps(scalar)]
-                else: args += ['-c', key + '.' + subkey + '=' + json.dumps(subvalue)]
-        else: args += ['-c', key + '=' + json.dumps(value)]
-    args += ['exec', '-s', launch['sandbox'], '-C', str(worker), '--json', '-m', 'synthetic', 'Run the synthetic probe.']
+    def overrides(value, path=()):
+        for key, child in value.items():
+            nested = (*path, key)
+            if isinstance(child, dict): yield from overrides(child, nested)
+            else: yield '.'.join(json.dumps(part) for part in nested) + '=' + json.dumps(child)
+    for override in overrides(config): args += ['-c', override]
+    args += ['-c', 'default_permissions=' + json.dumps(launch['permissions'])]
+    args += ['exec', '-C', str(worker), '--json', '-m', 'synthetic', 'Run the synthetic probe.']
 try:
     result = subprocess.run(args, cwd=worker, env=env, capture_output=True, text=True, timeout=90)
     (run / f'evidence/{engine}-stdout.jsonl').write_text(result.stdout)
     (run / f'evidence/{engine}-stderr.log').write_text(result.stderr)
+    if os.environ.get('VERIFY_SECRET_READ') == '1':
+        assert (worker / f'secret-read-status-{engine}.txt').read_text() != '0', 'BUG: synthetic secret readable'
+        assert (worker / f'repo-read-result-{engine}.txt').read_text() == 'synthetic-repo-readable', 'BUG: repository read denied'
     observed = {'engine': engine, 'exit': result.returncode, 'requests': len(requests), 'insideAllowed': (worker / f'inside-{engine}.txt').exists(), 'gitAllowed': (worker / f'.git/hyperneo-probe-{engine}').exists(), 'cacheAllowed': bool(expected_env.get('XDG_CACHE_HOME')) and (Path(expected_env['XDG_CACHE_HOME']) / f'probe-{engine}').exists(), 'outsideRefused': not (outside / 'escaped.txt').exists(), 'tempPath': (worker / f'observed-temp-{engine}.txt').read_text() if (worker / f'observed-temp-{engine}.txt').exists() else '', 'tempAllowed': bool(expected_env.get('TMPDIR')) and (worker / f'observed-temp-{engine}.txt').exists() and Path((worker / f'observed-temp-{engine}.txt').read_text()).is_relative_to(Path(expected_env['TMPDIR'])) and (Path((worker / f'observed-temp-{engine}.txt').read_text()) / f'probe-{engine}').exists()}
     observed['policyIntact'] = all(path.exists() and path.read_bytes() == contents for path, contents in policy_before.items())
     observed['networkAllowed'] = (worker / f'network-{engine}.txt').read_text() == 'synthetic-network-ok'

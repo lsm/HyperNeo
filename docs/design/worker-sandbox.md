@@ -105,3 +105,18 @@ Pre-upgrade prepared Claude sessions repair missing env/sandbox defaults before
 resume. Sibling permission refresh supplies defaults for absent/corrupt settings
 but preserves complete existing env/sandbox values and never provisions another
 worker's runtime. Policy replacements are atomic within the prepared clone.
+
+Slice 4 (#8630) selects the installed app-server's experimental named permission
+profiles at thread creation, opening turn and future-turn settings updates.
+`hyperneo-worker` defines explicit private write roots, normal filesystem reads,
+and secret-path read denials; no legacy sandbox selector may override it. This
+uses the engine's OS enforcement instead of a second daemon Seatbelt wrapper or
+removing host paths. Unknown/unsupported profiles fail closed. Pre-profile Codex
+threads may need recreation rather than a workspaceWrite fallback.
+Claude persists matching Bash `denyRead` and native `Read` denies, including on
+legacy resume and sibling refresh. Covered paths include section 3's tool-auth
+locations, engine auth files and shell profiles, with configured engine-home
+locations included. Keychain/1Password IPC and arbitrary MCP processes remain
+uncovered. Policy tests run inside prepared workers; the real OS denial/allowed
+repo-read proof is `worker-secret-read.md`, run by Neo after deployment on a host
+that can apply a fresh sandbox. Nested sandbox failure is not OS proof.

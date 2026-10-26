@@ -868,13 +868,7 @@ describe('codex-desktop adapter status and send', () => {
           if (method === 'thread/settings/update') {
             expect(params).toMatchObject({
               threadId: 'idle',
-              sandboxPolicy: {
-                type: 'workspaceWrite',
-                networkAccess: true,
-                writableRoots: expect.arrayContaining([root, join(root, '.git')]),
-                excludeSlashTmp: true,
-                excludeTmpdirEnvVar: true,
-              },
+              permissions: 'hyperneo-worker',
             });
             if (refused) throw new Error('sandbox settings refused');
             return {};

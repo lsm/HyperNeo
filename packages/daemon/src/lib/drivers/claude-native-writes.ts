@@ -1,7 +1,7 @@
 import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { prepareWorkerSandbox, workerSandboxPaths } from './worker-sandbox.ts';
+import { prepareWorkerSandbox, workerSandboxPaths, workerSecretPaths } from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
@@ -20,6 +20,7 @@ function policy(root: string, roots: string[], siblings: string[]) {
       allowUnsandboxedCommands: false,
       excludedCommands: [],
       filesystem: {
+        denyRead: workerSecretPaths(),
         allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
         denyWrite: [
           ...roots,
@@ -39,6 +40,10 @@ function policy(root: string, roots: string[], siblings: string[]) {
     permissions: {
       allow: [editRule(root, true)],
       deny: [
+        ...workerSecretPaths().flatMap((path) => [
+          editRule(path).replace(/^Edit\(/, 'Read('),
+          editRule(path, true).replace(/^Edit\(/, 'Read('),
+        ]),
         ...[...roots, ...siblings.filter((sibling) => sibling !== root)].map((path) =>
           editRule(path, true)
         ),
@@ -88,7 +93,7 @@ async function install(root: string, roots: string[]) {
     const existing = await readFile(settingsPath(worker.root), 'utf8')
       .then(JSON.parse)
       .catch(() => computed);
-    await writePolicy(worker.root, { ...computed, ...existing, permissions: computed.permissions });
+    await writePolicy(worker.root, withSecretDenials(computed, existing));
   }
 }
 
@@ -98,6 +103,35 @@ export function installClaudeNativeWrites(directory: string, roots: string[]): P
     .then(() => install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))]));
   pending = next;
   return next;
+}
+
+function withSecretDenials(
+  computed: ReturnType<typeof policy>,
+  existing: Partial<ReturnType<typeof policy>>
+) {
+  return {
+    ...computed,
+    ...existing,
+    permissions: {
+      ...computed.permissions,
+      ...existing?.permissions,
+      deny: [...new Set([...computed.permissions.deny, ...(existing?.permissions?.deny ?? [])])],
+    },
+    sandbox: {
+      ...computed.sandbox,
+      ...existing?.sandbox,
+      filesystem: {
+        ...computed.sandbox.filesystem,
+        ...existing?.sandbox?.filesystem,
+        denyRead: [
+          ...new Set([
+            ...computed.sandbox.filesystem.denyRead,
+            ...(existing?.sandbox?.filesystem?.denyRead ?? []),
+          ]),
+        ],
+      },
+    },
+  };
 }
 
 export async function readClaudeWorkerSandbox(directory: string | undefined) {
@@ -121,5 +155,7 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
     await writePolicy(directory, { ...computed, ...existing });
   }
-  return { ...computed, ...existing } as typeof computed;
+  const upgraded = withSecretDenials(computed, existing);
+  await writePolicy(directory, upgraded);
+  return upgraded;
 }

@@ -239,18 +239,16 @@ describe('codex-desktop start', () => {
       'thread/start',
       {
         cwd: dir,
-        sandbox: 'workspace-write',
+        permissions: 'hyperneo-worker',
         config: {
-          sandbox_workspace_write: {
-            writable_roots: expect.arrayContaining([dir, join(dir, '.git')]),
-            exclude_slash_tmp: true,
-            exclude_tmpdir_env_var: true,
+          permissions: {
+            'hyperneo-worker': { filesystem: { [dir]: 'write', [join(dir, '.git')]: 'write' } },
           },
         },
       },
     ]);
     expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
-      sandboxPolicy: { type: 'workspaceWrite', excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+      permissions: 'hyperneo-worker',
     });
     expect(spawned).toEqual([]);
     expect(released).toBe(false);
