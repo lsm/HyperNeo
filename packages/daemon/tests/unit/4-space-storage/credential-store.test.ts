@@ -1,18 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { vi, type MockInstance } from 'vitest';
+import * as dataDirectory from '../../../src/lib/data-dir';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { DatabaseCredentialStore } from '../../../src/lib/credentials/credential-store';
 
 describe('DatabaseCredentialStore', () => {
   let db: Database;
   let store: DatabaseCredentialStore;
+  let defaultCredentialPath: MockInstance<() => string>;
 
   beforeEach(() => {
+    defaultCredentialPath = vi.spyOn(dataDirectory, 'getDataDir').mockImplementation(() => {
+      throw new Error('Credential fixture must not resolve the default key path');
+    });
     db = new Database(':memory:');
-    store = new DatabaseCredentialStore(db);
+    store = new DatabaseCredentialStore(db, 'synthetic-test-encryption-key');
   });
 
   afterEach(() => {
     db.close();
+    const defaultPathCalls = defaultCredentialPath.mock.calls.length;
+    defaultCredentialPath.mockRestore();
+    expect(defaultPathCalls).toBe(0);
   });
 
   it('round-trips a credential', async () => {

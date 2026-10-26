@@ -149,7 +149,19 @@ export async function createNodeServer(options: ServerOptions): Promise<ServerHa
             const runtimeSocket: RuntimeSocket = {
               data: upgradeData,
               send(message: string) {
-                ws.send(message);
+                if (ws.readyState !== 1) return 0;
+                ws.send(message, (error) => {
+                  if (error) void websocket?.error?.(runtimeSocket, error);
+                  else
+                    queueMicrotask(() => {
+                      if (ws.bufferedAmount === 0 && ws.readyState === 1)
+                        websocket?.drain?.(runtimeSocket);
+                    });
+                });
+                return ws.bufferedAmount > 0 ? -1 : 1;
+              },
+              getBufferedAmount() {
+                return ws.bufferedAmount;
               },
               close(code?: number, reason?: string) {
                 ws.close(code, reason);

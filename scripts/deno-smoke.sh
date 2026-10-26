@@ -519,6 +519,12 @@ env -i HOME="$PROVIDER_RPC_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$PROVIDER_RPC_WRITES_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-provider-rpc-writes.ts" "$PROVIDER_RPC_WRITES_RUN"
 
+CREDENTIAL_STORE_WRITES_RUN="$WORK_DIR/credential-store-writes"
+mkdir -p "$CREDENTIAL_STORE_WRITES_RUN/home"
+env -i HOME="$CREDENTIAL_STORE_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$CREDENTIAL_STORE_WRITES_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-credential-store-writes.ts" "$CREDENTIAL_STORE_WRITES_RUN"
+
 SESSION_DELIVERY_ENQUEUE_RUN="$WORK_DIR/session-delivery-enqueue"
 mkdir -p "$SESSION_DELIVERY_ENQUEUE_RUN/home"
 env -i HOME="$SESSION_DELIVERY_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \

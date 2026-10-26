@@ -8,7 +8,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 829,
+    "uptime": 882,
     "sessions": {
       "active": 0,
       "total": 1
@@ -47,6 +47,11 @@
       "status": "pending"
     }
   ],
+  "rejectedFailures": 1,
+  "rejectedStatus": {
+    "status": "failed"
+  },
+  "rejectedJobPresent": false,
   "healthAfter": {
     "status": "ok",
     "dataMigration": {
@@ -56,7 +61,7 @@
       "total": 0
     },
     "version": "0.48.0",
-    "uptime": 850,
+    "uptime": 944,
     "sessions": {
       "active": 1,
       "total": 1

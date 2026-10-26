@@ -27,6 +27,31 @@ function createMockConnection(ws: MockWebSocket, id?: string): ClientConnection 
 }
 
 describe('MessageHubRouter', () => {
+  test('delivers the serialized UTF-8 size and envelope metadata through every send path', () => {
+    const router = new MessageHubRouter();
+    const frames: { data: string; info: unknown }[] = [];
+    router.registerConnection({
+      id: 'measured',
+      isOpen: () => true,
+      send: (data, info) => {
+        frames.push({ data, info });
+      },
+    });
+    const event = createEventMessage({ method: 'proof.burst', sessionId: 'global', data: '😀' });
+    router.sendToClient('measured', event);
+    router.broadcast(event);
+    router.routeEvent(event);
+    expect(frames).toHaveLength(3);
+    for (const frame of frames) {
+      expect(JSON.parse(frame.data)).toEqual(event);
+      expect(frame.info).toMatchObject({
+        bytes: new Blob([frame.data]).size,
+        type: event.type,
+        method: event.method,
+      });
+    }
+  });
+
   let router: MessageHubRouter;
   let mockWs1: MockWebSocket;
   let mockWs2: MockWebSocket;
