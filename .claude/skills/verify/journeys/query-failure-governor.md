@@ -37,6 +37,13 @@ checks this through the real governor. Repeat with large for oversized SDK error
 results: public persisted metadata and the terminal event retain at most 4096
 error characters. Keep both proof directories and their wrapper exit status.
 
+Repeat with scoped: after one real start failure, child error/success/auth results,
+a real handler-stamped compaction and a nonbilling recovery interception must
+leave that failure intact. The scripted recovery callback accepts interception;
+the actual handler stamps and persists its classification. Public session.get
+and synthetic result rows must agree. Only the following real parent success
+resets the episode. SDK handler unit tests also assert the outgoing flags.
+
 Keep query-failure-governor.json, proof.log and run-status.json. Require wrapper
 exit zero. The helper closes its scripted query, WebSocket and daemon in finally;
 the wrapper saves evidence and removes temporary HOME/data immediately.

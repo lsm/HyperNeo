@@ -1340,11 +1340,19 @@ export class QueryRunner {
             break;
           }
 
-          const message = this.retryPromptIdentity.incoming(result.value as SDKMessage);
+          const message = this.retryPromptIdentity.incoming(
+            result.value as SDKMessage
+          ) as SDKMessage & Record<string, unknown>;
+          const sessionResult = () =>
+            isSDKResultMessage(message) &&
+            message.parent_tool_use_id == null &&
+            !message.internal_compaction_turn &&
+            !(message.recovery_intercepted && !message.recovery_billing_terminal);
           if ((session.config.provider ?? 'anthropic') === 'anthropic') {
             const authRetry = isSDKAPIRetryMessage(message) && message.error_status === 401;
             const authResult =
               isSDKResultMessage(message) &&
+              sessionResult() &&
               message.is_error === true &&
               ((isSDKResultSuccess(message) && message.api_error_status === 401) ||
                 isClaudeAuthenticationError(
@@ -1353,15 +1361,6 @@ export class QueryRunner {
             if (authRetry || authResult) {
               if (authResult) await this.ctx.db.saveSDKMessage(session.id, message);
               throw new Error('401 Claude authentication failed');
-            }
-          }
-          if (isSDKResultMessage(message)) {
-            if (message.is_error === true) {
-              await this.failures.failure(JSON.stringify(message), episodeId);
-              this.failures.assertOpen();
-            } else if (!isTopLevelHollowTaskNotificationResult(message)) {
-              retryAttempt = 0;
-              await this.failures.success(episodeId);
             }
           }
           this.streamSilence = noteStreamMessage(this.streamSilence, message, Date.now());
@@ -1437,6 +1436,15 @@ export class QueryRunner {
             await this.handleSDKMessage(message, queryGeneration);
           } catch (error) {
             await this.handleStreamMessageError(message, error, queryGeneration, attemptToken);
+          }
+          if (live() && sessionResult() && isSDKResultMessage(message)) {
+            if (message.is_error === true) {
+              await this.failures.failure(JSON.stringify(message), episodeId);
+              this.failures.assertOpen();
+            } else if (!isTopLevelHollowTaskNotificationResult(message)) {
+              retryAttempt = 0;
+              await this.failures.success(episodeId);
+            }
           }
           nextPromise = sdkIterator.next();
         }

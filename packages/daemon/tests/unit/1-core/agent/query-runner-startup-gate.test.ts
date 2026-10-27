@@ -328,6 +328,7 @@ describe('QueryRunner startup gate', () => {
 
   it.each([
     ['subagent error', true, { parent_tool_use_id: 'synthetic-child' }],
+    ['subagent auth error', true, { parent_tool_use_id: 'synthetic-child' }],
     ['subagent success', false, { parent_tool_use_id: 'synthetic-child' }],
     ['internal compaction error', true, { internal_compaction_turn: 1 }],
     ['internal compaction success', false, { internal_compaction_turn: 1 }],
@@ -353,7 +354,9 @@ describe('QueryRunner startup gate', () => {
           type: 'result',
           subtype: 'success',
           is_error: isError,
-          result: 'Synthetic scoped result',
+          result: _label.includes('auth')
+            ? '401 Claude authentication failed'
+            : 'Synthetic scoped result',
           parent_tool_use_id: 'parent_tool_use_id' in flags ? flags.parent_tool_use_id : null,
           usage: { input_tokens: 1, output_tokens: 1 },
           uuid: `scoped-${turn}`,

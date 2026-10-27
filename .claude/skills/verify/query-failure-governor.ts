@@ -9,14 +9,23 @@ for(const name of ['workspace','bin','evidence'])mkdirSync(join(run,name),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const sdk=await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
 const failures:Record<string,string>={startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
-const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow'||phase==='large',finish=()=>{};
+const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow'||phase==='large'||phase==='scoped',finish=()=>{};
+let scopedCount=0,releaseParent=()=>{},armCompaction=()=>{};
 mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{prompt:AsyncIterable<unknown>|string})=>{
- if(typeof prompt!=='string'){attempts.push(Date.now());if(!healthy)throw new Error(failure);}
+ if(typeof prompt!=='string'){attempts.push(Date.now());if(phase==='scoped'&&attempts.length===1)throw new Error(failure);if(!healthy)throw new Error(failure);}
  const ended=new Promise<void>(resolve=>{finish=resolve;});
  return {async *[Symbol.asyncIterator](){
   if(typeof prompt==='string'){yield {type:'assistant',message:{role:'assistant',content:[{type:'text',text:'Synthetic title'}]}};return;}
   const feed=prompt[Symbol.asyncIterator]();await feed.next();let nextInput=feed.next();void nextInput.catch(()=>{});
   yield {type:'system',subtype:'init',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),cwd:join(run,'workspace'),model:'claude-haiku-4-5-20251001',permissionMode:'default',apiKeySource:'user',claude_code_version:'synthetic',tools:[],skills:[],plugins:[],mcp_servers:[],slash_commands:[],output_style:'default'};
+  if(phase==='scoped'){
+   const parentGate=new Promise<void>(resolve=>{releaseParent=resolve;});
+   for(const [isError,parent,text] of [[true,'child','Synthetic child failure'],[false,'child','Synthetic child success'],[true,'child','401 Claude authentication failed'],[false,null,'Synthetic compact'],[true,null,'API Error: 429 rate_limit_error: too many requests']] as const){
+    const compact=text==='Synthetic compact';if(compact)armCompaction();
+    yield {type:'result',subtype:'success',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),parent_tool_use_id:parent,is_error:isError,result:text,duration_ms:1,duration_api_ms:1,num_turns:compact?0:1,total_cost_usd:0,usage:{input_tokens:compact?0:1,output_tokens:compact?0:1},modelUsage:{},permission_denials:[],...(text.startsWith('API Error: 429')?{api_error_status:429,terminal_reason:'blocking_limit'}:{})};scopedCount++;
+   }
+   await parentGate;
+  }
   if(phase==='large'){
    for(let turn=0;turn<3;turn++)yield {type:'result',subtype:'error_during_execution',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),parent_tool_use_id:null,is_error:true,errors:['Synthetic huge error: '+ 'x'.repeat(100_000)],duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]};
    await ended;return;
@@ -49,6 +58,7 @@ try{
  const registry=await hub.request<{servers:{id:string}[]}>('mcp.registry.list',{});for(const server of registry.servers)await hub.request('mcp.registry.setEnabled',{id:server.id,enabled:false});
  const {sessionId}=await hub.request<{sessionId:string}>('session.create',{workspacePath:join(run,'workspace'),title:'Synthetic failure governor',config:{model:'haiku',provider:'anthropic'}});
  let releaseLate=()=>{};
+ if(phase==='scoped'){const agent=app.sessionManager.getSession(sessionId)!;agent.onResultLimitError=async()=>true;armCompaction=()=>agent.messageQueue.armInternalCompactionResultAttribution();}
  if(phase==='deadline'){
   const agent=app.sessionManager.getSession(sessionId)!;const options=await agent.optionsBuilder.build();
   agent.optionsBuilder.build=()=>new Promise(resolve=>{releaseLate=()=>resolve(options);});
@@ -56,7 +66,14 @@ try{
  }
  await hub.request('message.send',{sessionId,content:'Synthetic fake-start regression'});
  const read=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
- if(phase==='large'){
+ if(phase==='scoped'){
+  await until(()=>scopedCount===5,'scoped results incorrectly stopped the owning query');
+  const prior=(await read()).metadata.queryFailureEpisode!;assert.equal(prior.failures,1);assert.equal(prior.failed,false);assert(prior.error.includes(failure));
+  const rows=app.db.getDatabase().prepare("SELECT parent_tool_use_id,internal_compaction_turn,recovery_intercepted,recovery_billing_terminal FROM sdk_messages WHERE session_id=? AND message_type='result'").all(sessionId) as Record<string,unknown>[];
+  assert.equal(rows.filter(row=>row.parent_tool_use_id==='child').length,3);assert(rows.some(row=>row.internal_compaction_turn===1));assert(rows.some(row=>row.recovery_intercepted===1&&row.recovery_billing_terminal===0));
+  evidence.priorEpisode=prior;evidence.classifiedResults=rows;releaseParent();
+  await until(async()=>(await read()).metadata.queryFailureEpisode?.failures===0,'real parent success did not reset the episode');evidence.recovered=(await read()).metadata.queryFailureEpisode;assert.equal(attempts.length,2);
+ }else if(phase==='large'){
   await until(async()=>(await read()).metadata.queryFailureEpisode?.failed===true,'large result did not reach the cap');
   const episode=(await read()).metadata.queryFailureEpisode!;assert(episode.error.includes('Synthetic huge error'));assert(episode.error.length<=4096);
   await until(()=>errors.some(event=>(event.details as {metadata?:{queryFailureEpisode?:{failed:boolean}}})?.metadata?.queryFailureEpisode?.failed),'large result terminal event missing');
@@ -90,7 +107,7 @@ try{
  }
  evidence.passed=true;
 }finally{
- stopErrors();finish();await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
+ stopErrors();releaseParent();finish();await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
  writeFileSync(join(run,'evidence/query-failure-governor.json'),JSON.stringify(evidence,null,2).replaceAll(run,'<synthetic-run>'));
 }
 console.log(JSON.stringify(evidence).replaceAll(run,'<synthetic-run>'));
