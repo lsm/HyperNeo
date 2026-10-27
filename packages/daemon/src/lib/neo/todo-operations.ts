@@ -87,7 +87,16 @@ function refineNeoTodoDraft(
 
 export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
-const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
+const Add = TodoDraft.extend({
+  askId: Text,
+  after: z
+    .array(Text)
+    .max(20)
+    .optional()
+    .describe(
+      'Ids of todos in this ask this one waits for. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts it once everything it waits for is done.'
+    ),
+}).superRefine(refineNeoTodoDraft);
 
 export type NeoTodoPolicy = {
   id: string;
