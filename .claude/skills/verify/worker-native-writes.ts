@@ -7,7 +7,6 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { neoReadCheckoutPaths } from '../../../packages/daemon/src/lib/neo/read-access.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const run = resolve(process.argv[2]);
@@ -147,18 +146,15 @@ try {
   await exercise(first, protectedRoots, session, true, 'bypassPermissions');
   const plainMain = join(run, 'plain-source');
   git(run, 'clone', remote, plainMain);
-  const neoRead = join(run, 'data/worktrees/acme/demo/neo-read');
-  mkdirSync(neoRead, { recursive: true });
   const third = await start('Namespace trap worker', plainMain);
   assert(existsSync(join(third, 'neo-read/keep.txt')));
-  assert.deepEqual(neoReadCheckoutPaths(), [neoRead], 'tracked neo-read directory must not enter Neo writable roots');
   const handoffs = readFileSync(join(run, 'evidence/handoffs.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.equal(handoffs.length, 3);
   for (const [i, root] of [first, second, third].entries()) {
     assert.equal(handoffs[i].cwd, root);
     assert.equal(handoffs[i].args.slice(0, 6).join(' '), '-q /dev/null claude --desktop --resume ' + root.split('/').at(-1));
   }
-  evidence.push({ daemonRestarted: true, sessionResumed: session, desktopHandoffs: 3, neoReadNamespaceIsolated: true, protectedMainAndLaterSibling: true, caseAndUnicodeAliasesDenied: true, ownEditsAndWrites: true, unlistedOutsideAllowed: true, actualDesktopRendering: 'not tested; synthetic handoff', bashAndMcpContainment: 'not tested; next OS sandbox slice' });
+  evidence.push({ daemonRestarted: true, sessionResumed: session, desktopHandoffs: 3, protectedMainAndLaterSibling: true, caseAndUnicodeAliasesDenied: true, ownEditsAndWrites: true, unlistedOutsideAllowed: true, actualDesktopRendering: 'not tested; synthetic handoff', bashAndMcpContainment: 'not tested; next OS sandbox slice' });
   console.log(`PASS: persistent native denials, own edits/writes, later sibling after daemon restart, same CLI session resumed; unlisted outside remains allowed. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();

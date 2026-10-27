@@ -1,5 +1,3 @@
-import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
-import { sessionListReads } from '../../storage/repositories/session-list-read.ts';
 import type {
   CreateSessionRequest,
   GetSessionToolInventoryRequest,
@@ -24,15 +22,16 @@ import {
   normalizeThinkingLevel,
 } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+import { sessionListReads } from '../../storage/repositories/session-list-read.ts';
 import { activatePrompts, retryPrompt } from '../agent/message-delivery-outbox.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import {
   hasRefreshBeenAttemptedFor,
   isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
   type CloneCascadeDependencies,
@@ -46,9 +45,10 @@ import {
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
+import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
 
 const log = new Logger('session-handlers');
 
@@ -726,11 +726,11 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    if (!sandboxEnabled && neoCoordinatorBinding(sessionManager.getDatabase(), targetSessionId))
+    if (neoCoordinatorBinding(sessionManager.getDatabase(), targetSessionId))
       return {
         success: false,
-        sandboxEnabled: true,
-        error: 'Neo requires its Bash sandbox to remain enabled.',
+        sandboxEnabled: false,
+        error: 'Neo runs without its own OS sandbox; the sandbox toggle does not apply.',
       };
 
     const session = agentSession.getSessionData();
