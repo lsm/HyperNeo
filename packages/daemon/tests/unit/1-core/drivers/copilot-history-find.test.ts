@@ -59,7 +59,6 @@ function setup(projectFolder?: string) {
   });
   const deps = {
     cliPath,
-    timeoutMs: 1500,
     directory: join(run, 'owned'),
     machine: 'test',
     projectFolder: () => projectFolder ?? run,
@@ -144,11 +143,14 @@ describe('Copilot owned history and discovery', () => {
       expect(await find('seed')).toMatchObject({ messageId: 'user:seed' });
       appendFileSync(file, event('late'));
       expect(await find('late')).toMatchObject({ messageId: 'user:late' });
+      fs.utimesSync(file, 1000, 1000);
       expect(await find('next')).toBeNull();
       const stamp = fs.statSync(file);
       const text = readFileSync(file, 'utf8');
       writeFileSync(file, text.replaceAll('late', 'next'));
       fs.utimesSync(file, stamp.atime, stamp.mtime);
+      expect(fs.statSync(file).mtimeMs).toBe(stamp.mtimeMs);
+      expect(fs.statSync(file).size).toBe(stamp.size);
       expect(await find('next')).toMatchObject({ messageId: 'user:next' });
       expect(await find('last')).toBeNull();
       renameSync(file, file + '.preserved');

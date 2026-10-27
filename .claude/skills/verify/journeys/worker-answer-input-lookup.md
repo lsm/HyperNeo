@@ -27,6 +27,10 @@ work on that exact CLI session. The helper also starts one synthetic
 pinned Copilot SDK peer and adds past/future-dated inputs followed by 160 later
 entries exceeding its 256-KiB history page. Both exact markers must remain
 readable after restart without resuming the peer; an unowned ID must not match.
+Repeat an absent Copilot marker against unchanged history, then append that input
+and observe it through RPC immediately. Unit I/O controls require no history
+bytes on repeated misses and fresh reads after append, same-size rewrite,
+replacement or adapter restart. A missing match always stays uncertain.
 
 Keep receipts.json, observed.json, proof.log and cleanup.json. Both daemons stop
 and their synthetic native files, HOME and DB data are removed after evidence is
