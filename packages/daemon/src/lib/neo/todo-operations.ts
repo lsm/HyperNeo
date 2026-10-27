@@ -228,6 +228,7 @@ const Edit = z.object({
   done: z.enum(['met', 'reported']).optional(),
   evidence: Text.optional(),
   artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
+  hold: Text.nullable().optional(),
 });
 
 const Remove = z.object({
@@ -251,7 +252,7 @@ export const NeoTodoSchema = z.object({
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
-  blockedBy: z.enum(['check', 'worker', 'failure', 'question', 'needs-human']).nullable(),
+  blockedBy: z.enum(['check', 'worker', 'failure', 'question', 'needs-human', 'held']).nullable(),
   replacedBy: z.string().nullable(),
   addedAfterStart: z.boolean(),
   report: z.string().nullable(),
@@ -295,6 +296,12 @@ export function planNeoTodoEdit(
     return fail('evidence_missing: ticking a todo needs evidence.');
   if (input.artifacts && !input.done)
     return fail('evidence_missing: artifacts are evidence; pass them with done.');
+  const held = todo.state === 'blocked' && todo.blockedBy === 'held';
+  if (input.hold && todo.state !== 'todo' && !held)
+    return fail(
+      `not_holdable: only a todo that has not started can be held; this one is ${todo.state}.`
+    );
+  if (input.hold === null && !held) return fail('not_held: this todo is not held.');
   return {
     value: {
       todo,
@@ -305,6 +312,15 @@ export function planNeoTodoEdit(
         ...(input.done === 'met' ? { evidence: input.evidence } : {}),
         ...(input.done === 'reported' ? { report: input.evidence } : {}),
         ...(input.artifacts ? { artifacts: input.artifacts } : {}),
+        ...(input.hold
+          ? {
+              state: 'blocked',
+              blockedBy: 'held',
+              blockedReason: input.hold,
+              nextAction: 'The human releases it.',
+            }
+          : {}),
+        ...(input.hold === null ? { state: 'todo' } : {}),
       },
     },
   };
@@ -630,7 +646,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
