@@ -20,6 +20,7 @@ import {
   voiceStreamRoute,
   voiceStreamTls,
 } from '../../../../src/lib/voice/stream-relay';
+import { createInThreadAsrRelay } from '../../../../src/lib/voice/asr-relay';
 import type { VoiceTranscribeOutcome } from '../../../../src/lib/voice/transcribe-pipeline';
 import recorded from './fixtures/wlk-deepgram.json';
 
@@ -234,6 +235,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
       return { action: 'transcribed', text: 'batch text' };
     },
     push: (text: VoiceStreamText) => pushed.push(text),
+    createRelay: createInThreadAsrRelay,
   });
 
   const start = async (overrides: Partial<VoiceSettings> = {}) => {
@@ -255,6 +257,34 @@ describe('VoiceStream against a stub Deepgram server', () => {
       }
     }
   );
+
+  test('streams the ASR socket through the relay it was given, not the daemon thread', async () => {
+    const opened: { url: string; opening: never[] }[] = [];
+    const posted: unknown[] = [];
+    const started = await VoiceStream.start('relay-seam', {
+      ...deps(),
+      createRelay: (open: { url: string }) => {
+        opened.push(open as { url: string; opening: never[] });
+        return {
+          post: (message: unknown) => posted.push(message),
+          onMessage: (handler: (message: { type: string }) => void) => {
+            handler({ type: 'opened' });
+          },
+          close: () => {},
+        };
+      },
+    });
+    if ('error' in started) throw new Error(started.error);
+    try {
+      expect(started.via).toBe('streaming');
+      expect(opened).toHaveLength(1);
+      expect(opened[0].url).toContain('/v1/listen');
+      started.stream.write(new Uint8Array(2));
+      expect(posted.some((message) => (message as { type: string }).type === 'audio')).toBe(true);
+    } finally {
+      started.stream.close();
+    }
+  });
 
   test('relays chunks, pushes interim text, and returns the finals the server flushes on CloseStream', async () => {
     const { stream, via } = await start();
@@ -384,6 +414,45 @@ describe('VoiceStream against a stub Deepgram server', () => {
     await stream.stop();
   });
 
+  test('a start that times out aborts its late relay and retires it', async () => {
+    const created: { posted: string[]; closed: number }[] = [];
+    let release: (value: null) => void = () => {};
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const starting = VoiceStream.start('leak', {
+      ...deps(),
+      credentialManager: {
+        getCredentials: () =>
+          new Promise<null>((resolve) => {
+            release = resolve;
+          }),
+      },
+      createRelay: (open) => {
+        const inner = createInThreadAsrRelay(open);
+        const record = { posted: [] as string[], closed: 0 };
+        created.push(record);
+        return {
+          post: (command) => {
+            record.posted.push(command.type);
+            inner.post(command);
+          },
+          onMessage: (handler) => inner.onMessage(handler),
+          close: () => {
+            record.closed += 1;
+            inner.close();
+          },
+        };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(8_001);
+    expect(await starting).toMatchObject({ via: 'batch' });
+    vi.useRealTimers();
+    release(null);
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(created).toHaveLength(1);
+    expect(created[0].posted).toContain('abort-late-open');
+    expect(created[0].closed).toBe(1);
+  });
+
   test('auto falls back to batch with the whole buffered audio when the ASR is unreachable', async () => {
     const { stream, via } = await start({ streamEndpoint: 'ws://127.0.0.1:1/v1/listen' });
     expect(via).toBe('batch');
@@ -481,6 +550,36 @@ describe('VoiceStream against a stub Deepgram server', () => {
     expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
     expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);
   });
+
+  test('a stop still resolves when the relay is retired mid close handshake', async () => {
+    onCloseStream = () => {};
+    const relayDeps = {
+      ...deps(),
+      createRelay: (open: { url: string }) => {
+        const inner = createInThreadAsrRelay(open as never);
+        return {
+          post: (command: { type: string }) => {
+            if (command.type === 'close') inner.close();
+            else inner.post(command as never);
+          },
+          onMessage: inner.onMessage,
+          close: () => inner.close(),
+        };
+      },
+    };
+    const started = await VoiceStream.start('retired', relayDeps);
+    if ('error' in started) throw new Error(started.error);
+    const { stream } = started;
+    stream.write(new Uint8Array([1, 0, 2, 0]));
+    const stopping = stream.stop();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    (stream as unknown as { close: (reason: string) => void }).close('replaced');
+    const settled = await Promise.race([
+      stopping,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 4_000)),
+    ]);
+    expect(settled).not.toBe('timeout');
+  }, 10_000);
 
   test('a cancel during a stop drops the finals the server flushes and skips the batch fallback', async () => {
     onAudio = () => {};
