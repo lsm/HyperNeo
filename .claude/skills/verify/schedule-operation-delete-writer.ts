@@ -55,6 +55,16 @@ try {
   measuring = true;
   const missing = await remove(space.id, 'missing-schedule'); assert.equal(missing.ok, false); assert.equal(missing.reason, 'schedule_not_found');
   measuring = false;
+  const concurrent = (await rpc('taskSchedule.create', { spaceId: space.id, title: 'Concurrent deletion', triggerType: 'at', runAt: Date.now() + 86400000 })).schedule;
+  assert(concurrent.pendingJobId);
+  measuring = true;
+  const outcomes = await Promise.all([remove(space.id, concurrent.id), remove(space.id, concurrent.id)]);
+  measuring = false;
+  assert.equal(outcomes.filter(outcome => outcome.ok).length, 1);
+  const loser = outcomes.find(outcome => !outcome.ok);
+  assert(loser && ['modified_concurrently', 'schedule_not_found'].includes(loser.reason ?? ''), JSON.stringify(outcomes));
+  assert.equal(app.jobQueue.getJob(concurrent.pendingJobId), null);
+  assert.equal((await rpc<{ schedule: TaskSchedule | null }>('taskSchedule.get', { scheduleId: concurrent.id, spaceId: space.id })).schedule, null);
   const rollback = (await rpc('taskSchedule.create', { spaceId: space.id, title: 'Rollback fixture', triggerType: 'at', runAt: Date.now() + 86400000 })).schedule;
   assert(rollback.pendingJobId);
   raw.exec(`CREATE TRIGGER verify_delete_failure BEFORE DELETE ON task_schedules WHEN OLD.id = '${rollback.id}' BEGIN SELECT RAISE(ABORT, 'synthetic delete failure'); END`);

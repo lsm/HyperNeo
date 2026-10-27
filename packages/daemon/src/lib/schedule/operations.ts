@@ -31,7 +31,7 @@ export interface ScheduleOperationDependencies {
     | 'getSchedule'
     | 'pauseSchedule'
     | 'resumeSchedule'
-    | 'deleteSchedule'
+    | 'deleteScheduleAsync'
   >;
   readonly getSession: (sessionId: string) => Session | null;
   readonly sessionSpaceId: (session: Session) => string | undefined;
@@ -277,14 +277,14 @@ export function applyScheduleTransition(
   return { ok: true, schedule: updated };
 }
 
-export function deleteScheduleRecord(
+export async function deleteScheduleRecord(
   schedule: TaskSchedule,
   caller: OperationCaller,
   deps: ScheduleOperationDependencies
-): ScheduleDeleteResult {
+): Promise<ScheduleDeleteResult> {
   let deleted: boolean;
   try {
-    deleted = deps.schedules.deleteSchedule(schedule.id);
+    deleted = await deps.schedules.deleteScheduleAsync(schedule.id);
   } catch (err) {
     return reject('rejected', failureMessage(err));
   }
