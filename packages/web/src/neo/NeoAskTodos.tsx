@@ -639,7 +639,13 @@ export function NeoAskTodos({
       key={todo.id}
       todo={todo}
       anchorPrefix={anchorPrefix}
-      onOpen={onOpen}
+      onOpen={
+        onOpen &&
+        ((link, title) => {
+          setOpen(false);
+          onOpen(link, title);
+        })
+      }
       expanded={expanded.includes(todo.id)}
       onToggle={
         entry.summary || neoTodoHasMore(todo)
@@ -694,7 +700,7 @@ export function NeoAskTodos({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
-      {detailError && (
+      {detailError && !open && (
         <p role="alert" class="mt-2 text-sm text-danger">
           {detailError}
         </p>

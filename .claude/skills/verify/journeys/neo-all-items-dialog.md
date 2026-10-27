@@ -24,6 +24,14 @@ question. Its dialog copy uses a distinct anchor while both surfaces retain it. 
 loaded pages. The settled-preview helper also checks nested Read all and literal
 versions dialogs, links, final text, bounded previews and unchanged open answers.
 
+Import verifyAllReadError and verifyAllSession from neo-all-read-error-web.mjs
+and run each in separate contexts at both widths, with phase after. A refused
+full-card read must show one error in the dialog and restore the card error
+after closing. Opening the last completed todo's session must dismiss All,
+show its session pane, and allow Back. Preserve separate before evidence for
+the duplicate error and dialog remaining over the session. Completed-todo
+artifact and worker navigation tests must open All first.
+
 Exploratory checks: repeatedly open/close using keyboard and touch; open a nested
 question dialog after scrolling to the outcome, then close it and confirm the All
 dialog remains. Component tests cover failed/refused/stalled pages, refreshed
