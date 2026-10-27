@@ -1,0 +1,60 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:
+(pass) manual merge receipt records and validates on the writer with guarded main [6.90ms]
+(pass) manual merge receipt records and validates on the writer with read-only main [2.65ms]
+
+tests/unit/1-core/operations/neo-coding-merge-gates.test.ts:
+(pass) coding manual merge preparation > records matching gates, rereads head, and returns only a pinned manual command [150.69ms]
+(pass) coding manual merge preparation > missing merge prerequisites never record authorization [111.57ms]
+(pass) coding manual merge preparation > bot rejection has no fallback to a passing reviewer session fact [107.98ms]
+(pass) coding manual merge preparation > QA must pass for this PR, head, contract and independent assigned actor [105.45ms]
+(pass) coding manual merge preparation > a concurrent head push refuses authorization [108.52ms]
+(pass) coding manual merge preparation > a non-bot review uses its matching-head passing stage fact [132.35ms]
+(pass) unbound or colliding local identities cannot supply QA approval [134.18ms]
+(pass) a conflicting existing receipt never authorizes a different assignment [140.69ms]
+(pass) bot approval without a durable review evidence reference is insufficient [110.03ms]
+(pass) repeated preparation keeps the latest evidence while preserving assignment identity [107.02ms]
+(pass) an approved different bot cannot satisfy the configured review assignment [106.52ms]
+(pass) a configured bot cannot fall back to a passing reviewer session [106.72ms]
+
+tests/unit/1-core/operations/neo-coding-merge-operation.test.ts:
+(pass) coding merge operation > does not accept author assertions [138.16ms]
+(pass) coding merge operation > requires Verify evidence then returns only a persisted pinned command [381.96ms]
+(pass) coding merge operation > reuses the assigned no-bot reviewer without starting another session [379.46ms]
+(pass) coding merge operation > cannot inherit old-head assignments [345.63ms]
+(pass) coding merge operation > a latched failed Verify cannot be overwritten to open admission [303.64ms]
+(pass) coding merge operation > required CI pending refuses admission [314.20ms]
+(pass) coding merge operation > required CI fail refuses admission [326.80ms]
+(pass) coding merge operation > required CI cancel refuses admission [322.79ms]
+(pass) coding merge operation > unreadable checks refuses admission [323.21ms]
+(pass) coding merge operation > unreadable graphql refuses admission [320.39ms]
+(pass) coding merge operation > unreadable repos/synthetic/merge/pulls/7/reviews refuses admission [328.64ms]
+(pass) coding merge operation > historical null-user reviews cannot block a current bot approval or supply sign-off [399.90ms]
+(pass) coding merge operation > later bot changes requested overrides the approval [321.68ms]
+(pass) coding merge operation > another bot approval cannot substitute for the configured bot [337.64ms]
+(pass) coding merge operation > unresolved findings or a mismatched findings head refuse [344.68ms]
+(pass) coding merge operation > merge status DIRTY refuses [311.10ms]
+(pass) coding merge operation > merge status BEHIND refuses [297.09ms]
+(pass) coding merge operation > merge status UNKNOWN refuses [293.80ms]
+(pass) coding merge operation > head changes at the final reread refuse without storing a receipt [349.15ms]
+(pass) coding merge operation > live author and policy changes cannot reuse assigned actors [363.56ms]
+(pass) coding merge operation > applicable paths require a current non-author human approval [480.92ms]
+(pass) coding merge operation > label rules apply only to matching labels; truncated files stay closed [414.08ms]
+(pass) coding merge operation > a bot policy without a configured bot cannot fall back to a session [318.31ms]
+(pass) coding merge operation > human merge policy needs GitHub human approval alongside recorded Review [387.64ms]
+
+tests/unit/1-core/operations/neo-coding-delivery.test.ts:
+(pass) coding delivery evidence > requires a matching-head merge gate before recording smoke [112.77ms]
+(pass) coding delivery evidence > checks the exact target build and merge ancestry [114.30ms]
+(pass) coding delivery evidence > only the assigned independent QA actor can record smoke [112.88ms]
+(pass) coding delivery evidence > records failure after a pass, and an explicit non-deployable reason [116.03ms]
+(pass) coding delivery evidence > preserves the accepted gate and historical heads [116.60ms]
+(pass) a containing build for an ungated merged head cannot record smoke [137.47ms]
+(pass) stage facts preserve full refs while accepting historical unbound facts [0.10ms]
+(pass) a removed gate cannot acknowledge a smoke write [126.05ms]
+
+ 46 pass
+ 0 fail
+ 199 expect() calls
+Ran 46 tests across 4 files. [10.47s]

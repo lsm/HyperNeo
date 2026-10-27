@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
 import type { WorkRef } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
@@ -117,9 +116,7 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
   )
   .pipe(
     async (repo: CodingDeliveryFactsRepository, todoId: string, gate: CodingMergeGate) => {
-      await repo.write('recordGate', todoId, gate);
-      const stored = repo.read(todoId, gate.url, gate.head)?.gate;
-      if (!stored || !isDeepStrictEqual(stored, gate))
+      if (!(await repo.recordGateCurrent(todoId, gate)))
         return { accepted: false, reason: 'merge_receipt_changed' };
       return {
         accepted: true,
