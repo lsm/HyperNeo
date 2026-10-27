@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
-export function installRecordingWait(run: string, thread: string): void {
+export function installRecordingWait(run: string, thread: string, waitTarget: 'reserve' | 'dispatch' = 'reserve'): void {
   const prepare = Database.prototype.prepare;
   let first = true;
   Database.prototype.prepare = function(sql, options) {
@@ -11,9 +11,11 @@ export function installRecordingWait(run: string, thread: string): void {
       const value=Reflect.get(target,property,target);
       if(property!=='run' && property!=='get') return typeof value==='function' ? value.bind(target) : value;
       return (...args: unknown[])=>{
-        if(first && sql.startsWith('INSERT')) { first=false; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1200); }
+        const matches = waitTarget === 'reserve' ? sql.trimStart().startsWith('INSERT') : sql.trimStart().startsWith('UPDATE voice_recordings SET dispatched_at =');
+        const modeledWaitMs = first && matches ? 1200 : 0;
+        if(modeledWaitMs) { first=false; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,modeledWaitMs); }
         const result=Reflect.apply(value,target,args);
-        appendFileSync(joinPath(run),JSON.stringify({thread,sql,operation:property})+'\n');
+        appendFileSync(joinPath(run),JSON.stringify({thread,sql,operation:property,modeledWaitMs})+'\n');
         return result;
       };
     }});
