@@ -14,7 +14,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
-function world(limits = { running: 6, perGroup: 3 }) {
+function world(limits = { running: 6, perGroup: 3 }, broken = false) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -50,7 +50,10 @@ function world(limits = { running: 6, perGroup: 3 }) {
     packs: () => [],
     tell: async () => {},
     changed: () => {},
-    limits: () => limits,
+    limits: () => {
+      if (broken) throw new Error('synthetic queue failure');
+      return limits;
+    },
   });
   let asks = 0;
   const ask = (projectId: string | null = 'p') => {
@@ -257,5 +260,15 @@ describe('queued todos start themselves', () => {
     await w.tick();
     expect(w.started).toEqual([urgent]);
     expect(w.state(older)).toBe('todo');
+  });
+
+  test('a failing queue fill does not undo the completion that triggered it', async () => {
+    const w = (current = world(undefined, true));
+    const ask = w.approved();
+    const first = w.add(ask);
+    w.add(ask);
+    w.store.updateTodo(w.store.getTodo(first)!, { state: 'doing', startedAt: 3 }, 3);
+    await w.finish(first);
+    expect(w.state(first)).toBe('done');
   });
 });
