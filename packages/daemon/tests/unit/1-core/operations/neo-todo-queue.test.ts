@@ -227,4 +227,25 @@ describe('queued todos start themselves', () => {
     await w.tick();
     expect(w.state(unticked)).toBe('blocked');
   });
+
+  test('a withdrawn start question leaves its todos held, not queued', async () => {
+    const w = (current = world());
+    const ask = w.approved();
+    const todo = w.add(ask);
+    w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
+    w.store.updateTodo(
+      w.store.getTodo(todo)!,
+      { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human.' },
+      2
+    );
+    const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
+    w.store.retireQuestion(question, 'Neo withdrew it', null, 3);
+    expect(w.store.getTodo(todo)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'held',
+      blockedReason: 'Start question withdrawn.',
+    });
+    await w.tick();
+    expect(w.started).toEqual([]);
+  });
 });
