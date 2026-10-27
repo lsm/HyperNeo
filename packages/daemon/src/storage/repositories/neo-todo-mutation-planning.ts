@@ -1,3 +1,7 @@
+import {
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from '../../lib/neo/todo-dependencies.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
@@ -122,6 +126,22 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
+      .pipe(
+        (plan: Plan) => {
+          const after = plan.patch.dependsOn;
+          if (!after) return { value: plan };
+          const dependsOn = planNeoTodoDependencies(
+            todos.listFamilyTodos(plan.todo.askId),
+            plan.todo.id,
+            after
+          );
+          return typeof dependsOn === 'string'
+            ? { reason: { ok: false as const, reason: neoTodoDependencyRefusal(dependsOn) } }
+            : { value: { ...plan, patch: { ...plan.patch, dependsOn } } };
+        },
+        'outcome',
+        'result:outcome'
+      )
       .pipe(
         (plan: Plan, input: Input) => this.withCheck(plan, input),
         ['outcome', 'input'],

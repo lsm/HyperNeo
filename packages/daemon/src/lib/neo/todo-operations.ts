@@ -1,3 +1,8 @@
+import {
+  neoTodoAfterRefusal,
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from './todo-dependencies.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -58,6 +63,13 @@ const TodoDraft = z.object({
   named: z.record(z.string(), z.unknown()).nullable().default(null),
   start: z.boolean().default(false),
   priority: TodoPriority.default('normal'),
+  after: z
+    .array(z.union([Text, z.number().int().min(0)]))
+    .max(20)
+    .optional()
+    .describe(
+      'Earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts each step once everything it waits for is done.'
+    ),
 });
 
 function refineNeoTodoDraft(
@@ -75,7 +87,16 @@ function refineNeoTodoDraft(
 
 export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
-const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
+const Add = TodoDraft.extend({
+  askId: Text,
+  after: z
+    .array(Text)
+    .max(20)
+    .optional()
+    .describe(
+      'Ids of todos in this ask this one waits for. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts it once everything it waits for is done.'
+    ),
+}).superRefine(refineNeoTodoDraft);
 
 export type NeoTodoPolicy = {
   id: string;
@@ -156,7 +177,20 @@ export async function recordNeoTodo(
   const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
-  const added = todos.addTodo(crypto.randomUUID(), home.id, draft, Date.now(), repo);
+  const refused = neoTodoAfterRefusal(
+    todos.listFamilyTodos(home.id),
+    null,
+    draft.after,
+    draft.start
+  );
+  if (refused) return { ok: false, reason: refused };
+  const id = crypto.randomUUID();
+  const dependsOn = draft.after
+    ? planNeoTodoDependencies(todos.listFamilyTodos(home.id), id, draft.after.map(String))
+    : null;
+  if (typeof dependsOn === 'string')
+    return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
+  const added = todos.addTodo(id, home.id, { ...draft, dependsOn }, Date.now(), repo);
   if (draft.target?.verb === 'bind')
     return { ...bindNeoTodo(todos, sessions, added, draft.target.ref), ...records };
   if (draft.target) sessions.create(added.id, draft.target);
@@ -235,6 +269,11 @@ const Edit = z.object({
   artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
   priority: TodoPriority.optional(),
   hold: Text.nullable().optional(),
+  after: z
+    .array(Text)
+    .max(20)
+    .optional()
+    .describe('Replace the todo ids this todo waits for; [] lets it run alongside the others.'),
 });
 
 const Remove = z.object({
@@ -262,6 +301,7 @@ export const NeoTodoSchema = z.object({
     .enum(['check', 'worker', 'failure', 'question', 'needs-human', 'stalled', 'held'])
     .nullable(),
   priority: TodoPriority,
+  dependsOn: z.array(z.string()).nullable(),
   replacedBy: z.string().nullable(),
   addedAfterStart: z.boolean(),
   report: z.string().nullable(),
@@ -305,6 +345,10 @@ export function planNeoTodoEdit(
     return fail('evidence_missing: ticking a todo needs evidence.');
   if (input.artifacts && !input.done)
     return fail('evidence_missing: artifacts are evidence; pass them with done.');
+  if (input.after && todo.startedAt !== null)
+    return fail(
+      'already_started: what a started todo waits for cannot change; its worker is already running.'
+    );
   const held = todo.state === 'blocked' && todo.blockedBy === 'held';
   if (input.hold !== undefined && (input.done || input.artifacts))
     return fail('hold_with_done: hold or release a todo separately from ticking it done.');
@@ -333,6 +377,7 @@ export function planNeoTodoEdit(
             }
           : {}),
         ...(input.hold === null ? { state: 'todo' } : {}),
+        ...(input.after ? { dependsOn: input.after } : {}),
       },
     },
   };
