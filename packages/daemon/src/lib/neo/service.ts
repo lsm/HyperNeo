@@ -909,6 +909,7 @@ export class NeoService {
         parent_tool_use_id: null,
         message: { role: 'user' as const, content },
         inputKind: 'system' as const,
+        isSynthetic: true,
       };
       await this.db.saveUserMessage(sessionId, message, 'consumed');
       return;
