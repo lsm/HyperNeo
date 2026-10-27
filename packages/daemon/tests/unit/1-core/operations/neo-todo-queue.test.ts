@@ -30,6 +30,7 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
   const sessions = new NeoTodoSessionRepository(db);
   const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
   const started: string[] = [];
+  const idle = new Set<string>();
   let workers = 0;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -45,7 +46,15 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
         started.push(String((input.ref as { id: string }).id));
         return completed({ ok: true, value: { delivered: true } });
       }
-      return completed({ ok: true, value: { status: 'running', lastActivityAt: Date.now() } });
+      return completed({
+        ok: true,
+        value: {
+          status: idle.has(String((input.ref as { id?: string } | undefined)?.id))
+            ? 'done'
+            : 'running',
+          lastActivityAt: Date.now(),
+        },
+      });
     },
     packs: () => [],
     tell: async () => {},
@@ -108,7 +117,21 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
     await runner.recompute(store.getTodo(id)!, { state: 'done', finishedAt: Date.now() });
   };
   const tick = () => runner.refresh(() => {});
-  return { db, store, sessions, runner, clock, started, ask, approved, add, state, finish, tick };
+  return {
+    db,
+    store,
+    sessions,
+    idle,
+    runner,
+    clock,
+    started,
+    ask,
+    approved,
+    add,
+    state,
+    finish,
+    tick,
+  };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -276,7 +299,11 @@ describe('queued todos start themselves', () => {
     const w = (current = world({ running: 2, perGroup: 2 }));
     const idle = [w.add(w.approved()), w.add(w.approved())];
     await w.tick();
-    for (const id of idle) w.sessions.recordLive(id, 'done', undefined);
+    expect(idle.map(w.state)).toEqual(['doing', 'doing']);
+    w.idle.add('worker-1');
+    w.idle.add('worker-2');
+    await w.tick();
+    expect(idle.map((id) => w.sessions.readLiveStatus(id))).toEqual(['done', 'done']);
     const waiting = w.add(w.approved());
     await w.tick();
     expect(w.state(waiting)).toBe('doing');

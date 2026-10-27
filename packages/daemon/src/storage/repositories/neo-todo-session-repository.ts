@@ -170,6 +170,9 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
             {
               group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
               worker: worker(this.readRef(todo.id)),
+              idle: ['done', 'stopped', 'failed', 'needs_you'].includes(
+                this.readLiveStatus(todo.id) ?? ''
+              ),
             },
           ]
         : []

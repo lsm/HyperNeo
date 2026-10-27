@@ -308,14 +308,14 @@ test('20/40 reminders persist across reopen and ignore metadata edits; 60 moves 
   expect(f.store.getTodo('first')?.state).toBe('doing');
 });
 
-test('unreachable reminder delivery escalates without turning time into a block fact', async () => {
+test('a reminder that does not reach the worker stalls the todo instead of waiting it out', async () => {
   const f = fixture();
   f.add('first', true);
   f.issue('OPEN', []);
   f.unreachable();
   await f.at(20);
-  expect(f.store.getTodo('first')?.state).toBe('doing');
-  expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(true);
+  expect(f.store.getTodo('first')?.blockedBy).toBe('stalled');
+  expect(f.notes.some((text) => text.includes('did not reach its worker'))).toBe(true);
 });
 
 test('a reminder sent but not yet confirmed counts as delivered: no resend and no unreachable', async () => {

@@ -202,9 +202,6 @@ const neoTodoStallNote = (todo: Pick<NeoTodo, 'title'>, reason: string) =>
 const neoTodoMovedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
   `Todo "${todo.title}" sat idle ${minutes} min with no progress, so the daemon moved it to a fresh worker.`;
 
-const neoTodoUnreachedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
-  `Todo "${todo.title}" has made no progress for ${minutes} min, and its worker could not be reached.`;
-
 export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, minutes: number) {
   return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
 }
@@ -835,27 +832,27 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'sent'
     )
     .pipe(
-      (sent: OperationOutcome | null) =>
-        sent && sent.kind === 'completed' && (sent.value as { ok?: boolean } | null)?.ok
-          ? { reason: null }
-          : { value: null },
+      (sent: OperationOutcome | null) => {
+        const value =
+          sent?.kind === 'completed'
+            ? (sent.value as { ok?: boolean; detail?: string; reason?: string } | null)
+            : null;
+        return value?.ok ? { reason: null } : { value: value?.detail ?? value?.reason ?? null };
+      },
       'sent',
       'result:unreached'
     )
     .pipe(
-      (claim: NudgeClaim, now: number) =>
-        deps
-          .tell(
-            claim.ask,
-            claim.todo,
-            neoTodoUnreachedNote(claim.todo, idleMinutes(claim.incident, now)),
-            `neo-todo-remind:${claim.todo.id}:${claim.incident.since}:${claim.plan.nudges}`
-          )
-          .catch((error: unknown) => releaseNudge(claim, error)),
-      ['claim', 'now'],
-      'unreached'
+      (claim: NudgeClaim, unreached: string | null, now: number) =>
+        stallTodo(
+          claim,
+          `${neoTodoIdleReason(idleMinutes(claim.incident, now))} The reminder did not reach its worker${unreached ? ` (${unreached})` : ''}.`,
+          now
+        ),
+      ['claim', 'unreached', 'now'],
+      'stalled'
     )
-    .endAsync('unreached') as (claim: NudgeClaim, now: number) => Promise<void | null>;
+    .endAsync('stalled') as (claim: NudgeClaim, now: number) => Promise<unknown>;
 
   const act = async (claim: NudgeClaim, now: number) => {
     const idle = neoTodoIdleReason(idleMinutes(claim.incident, now));
@@ -865,21 +862,42 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (moved && 'stall' in moved) await stallTodo(claim, `${idle} ${moved.stall}`, now);
   };
 
+  type NudgeContext = NonNullable<ReturnType<typeof sessions.nudgeContext>>;
   const nudge = (superpipe({})('neo.todo.nudge') as PipelineAPI)
     .input(['todoId', 'now'])
     .pipe((todoId: string) => sessions.read('nudgeContext', todoId), 'todoId', 'snapshot')
     .pipe(
-      async (snapshot: Awaited<ReturnType<typeof sessions.nudgeContext>>) => {
-        if (snapshot)
-          for (const pack of deps.packs())
-            if (
-              (!snapshot.todo.check || pack.id === snapshot.todo.check.pack) &&
-              (await pack.todos?.waiting?.(snapshot.todo))
-            )
-              return { reason: null };
-        return snapshot ? { value: snapshot } : { reason: null };
-      },
+      (snapshot: NudgeContext | null) => (snapshot ? { value: snapshot } : { reason: null }),
       'snapshot',
+      'result:admission'
+    )
+    .pipe(
+      async (context: NudgeContext, now: number) => {
+        const live = readDriverLive(
+          await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
+        );
+        await sessions.write(
+          'recordProgress',
+          context.todo.id,
+          { landed: null, live, cardStatus: live?.status ?? null },
+          now
+        );
+        return live;
+      },
+      ['admission', 'now'],
+      'live'
+    )
+    .pipe(
+      async (context: NudgeContext) => {
+        for (const pack of deps.packs())
+          if (
+            (!context.todo.check || pack.id === context.todo.check.pack) &&
+            (await pack.todos?.waiting?.(context.todo))
+          )
+            return { reason: null };
+        return { value: context };
+      },
+      'admission',
       'result:admission'
     )
     .pipe(
@@ -900,13 +918,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (
-        context: NonNullable<ReturnType<typeof sessions.nudgeContext>>,
+        context: NudgeContext,
+        live: ReturnType<typeof readDriverLive>,
         now: number,
         move: boolean
       ) => {
-        const live = readDriverLive(
-          await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
-        );
         const claim =
           live &&
           (await sessions.write(
@@ -920,7 +936,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ));
         return claim ? { value: claim } : { reason: null };
       },
-      ['admission', 'now', 'move'],
+      ['admission', 'live', 'now', 'move'],
       'result:admission'
     )
     .pipe(act, ['admission', 'now'], 'admission')

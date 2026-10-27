@@ -322,13 +322,13 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.sessions.readNudge(idle.id)).toEqual(before);
   });
 
-  test('a reminder the worker never receives stalls the todo so a fresh worker takes it', async () => {
+  test('a reminder the worker never receives stalls the todo at once', async () => {
     const w = (current = world());
     const todo = w.adopt(null);
     w.knobs.sendRefused = true;
     await w.at(20);
+    await w.at(40);
     expect(w.named('work.send')).toHaveLength(1);
-    expect(w.named('work.start')).toHaveLength(1);
-    expect(w.todo(todo.id).state).toBe('doing');
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
   });
 });
