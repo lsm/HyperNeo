@@ -1,0 +1,39 @@
+{
+  "verified": true,
+  "productionLines": 155,
+  "redRegressionCommit": "8cba2eec8b56129ddac6f9c77c2e79c721948918",
+  "startupFailureRegressionCommit": "1da08f672e",
+  "baselineMainSql": {
+    "bun": 23,
+    "deno": 23
+  },
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "gatewayCommands": {
+    "bun": 19,
+    "deno": 19
+  },
+  "largeEvidenceBytes": 60009,
+  "checks": "Full checks and 35 focused Bun/Vitest tests passed, including immutable merge receipt one-winner regression.",
+  "limitations": "Actual smoke RPC with synthetic GitHub merge/ancestry and QA fixtures; no actual deployment, native harness, model, GUI or latency claim. Failed startup attempt is retained separately and not counted as passing.",
+  "proofBinding": {
+    "testedCodeCommit": "ee6ab7a67a16cd6404b050283e98bcf4e3bdeba9",
+    "testedGitTree": "52ed48948e46f712bf24d462c19b3b3a78ed8af9",
+    "applicationTrees": {
+      "packages": "f7f0bd4cd69c1dc7aa19e4605c9f0b81e4ed37d8",
+      "scripts": "dfc2d0176322d22de138a1165075b63fbba171f3"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/coding-smoke-admission-db.ts": "0ab8360278e463f3b1e7496fd3500c8655fc1a3c",
+      ".claude/skills/verify/coding-smoke-admission-db-run.py": "d8f45bb7afcb06cddb29297b03fefe36912498b5",
+      ".claude/skills/verify/coding-smoke-admission-proof-binding.ts": "dc68b857c3837e9127314e57c5c2b33825ba3e5a"
+    },
+    "runs": {
+      "bun": "bun-verify-1",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}
