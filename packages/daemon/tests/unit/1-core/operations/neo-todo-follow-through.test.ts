@@ -413,4 +413,17 @@ describe('a doing todo never sits idle without someone on it', () => {
       w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)
     ).toHaveLength(1);
   });
+
+  test('no place lookup runs while the worker cap blocks a rescue', async () => {
+    const w = (current = world());
+    for (let index = 0; index < 6; index++) {
+      const busy = w.add();
+      await w.runner.start(busy.id);
+      w.sessions.recordLive(busy.id, 'running', undefined);
+      w.workers.get(`worker-${index + 1}`)!.status = 'running';
+    }
+    w.adopt(null);
+    for (const minutes of [20, 40, 60, 62]) await w.at(minutes);
+    expect(w.named('work.find')).toEqual([]);
+  });
 });

@@ -967,14 +967,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:rescue'
     )
     .pipe(
-      async (stalled: Stalled, now: number): Promise<{ value: Rescue } | { reason: null }> => {
+      (stalled: Stalled, now: number): { value: Stalled } | { reason: null } => {
         if (carded(stalled)) return { reason: null };
-        const place =
-          stalled.ask.originMessageId?.startsWith('neo-track:') ||
-          sessions.readNudge(stalled.todo.id)?.redispatched
-            ? undefined
-            : await findPlace(stalled);
-        if (place) return { value: { ...stalled, place } };
+        if (
+          !stalled.ask.originMessageId?.startsWith('neo-track:') &&
+          !sessions.readNudge(stalled.todo.id)?.redispatched
+        )
+          return { value: stalled };
         cardTodo(stalled, now);
         return { reason: null };
       },
@@ -982,7 +981,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:rescue'
     )
     .pipe(
-      async (rescue: Rescue, now: number) =>
+      async (stalled: Stalled, now: number) =>
         mayRedispatch(
           (await store.read('listCheckable')).filter(
             (other) =>
@@ -994,8 +993,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           sweep.movedAt,
           now
         )
-          ? { value: rescue }
+          ? { value: stalled }
           : { reason: null },
+      ['rescue', 'now'],
+      'result:rescue'
+    )
+    .pipe(
+      async (stalled: Stalled, now: number): Promise<{ value: Rescue } | { reason: null }> => {
+        const place = await findPlace(stalled);
+        if (place) return { value: { ...stalled, place } };
+        cardTodo(stalled, now);
+        return { reason: null };
+      },
       ['rescue', 'now'],
       'result:rescue'
     )
