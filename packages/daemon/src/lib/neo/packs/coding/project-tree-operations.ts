@@ -57,7 +57,11 @@ export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRef
   const section = (superpipe({})('neo.project.section') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(authorize, 'caller', 'result:outcome')
-    .pipe((input: z.infer<typeof Section>) => repo.getProject(input.parentId), 'input', 'parent')
+    .pipe(
+      (input: z.infer<typeof Section>) => repo.getSectionParentLater(input.parentId),
+      'input',
+      'parent'
+    )
     .pipe(requireNeoSectionParent, 'parent', 'result:outcome')
     .pipe(
       (input: z.infer<typeof Section>) => normalizeNeoEpicUrl(input.epicUrl),
@@ -82,7 +86,7 @@ export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRef
     .pipe(requireNeoEpic, ['states', 'epicUrl'], 'result:outcome')
     .pipe(
       (epic: { url: string; title: string }, input: z.infer<typeof Section>) =>
-        repo.createSection(input.parentId, epic.url, epic.title),
+        repo.createSectionLater(input.parentId, epic.url, epic.title),
       ['outcome', 'input'],
       'outcome'
     )

@@ -6,6 +6,14 @@ import { NeoRepository } from './neo-repository.ts';
 class NeoProjectMoveCommands {
   constructor(private readonly db: Database) {}
 
+  getProject(id: string) {
+    return new NeoRepository(this.db).getProject(id);
+  }
+
+  createSection(...args: Parameters<NeoRepository['createSection']>) {
+    return new NeoRepository(this.db).createSection(...args);
+  }
+
   move(id: string, parentId: string | null, expectedRevision: number) {
     const repo = new NeoRepository(this.db);
     const reason = neoProjectMoveReason(repo.listProjects(), id, parentId);
@@ -19,5 +27,5 @@ export const neoProjectMoveWrites = defineRepositoryOp(
   'neo.project.move',
   'write',
   NeoProjectMoveCommands,
-  ['move']
+  ['move', 'getProject', 'createSection']
 );

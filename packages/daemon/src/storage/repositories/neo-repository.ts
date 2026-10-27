@@ -290,6 +290,22 @@ export class NeoRepository {
     return result;
   }
 
+  getSectionParentLater(id: string) {
+    return gatewayFor(this.db).call(neoProjectMoveWrites, 'getProject', id);
+  }
+
+  async createSectionLater(parentId: string, epicUrl: string, title: string) {
+    const result = await gatewayFor(this.db).call(
+      neoProjectMoveWrites,
+      'createSection',
+      parentId,
+      epicUrl,
+      title
+    );
+    if (result.ok) this.notify();
+    return result;
+  }
+
   createSection(
     parentId: string,
     epicUrl: string,

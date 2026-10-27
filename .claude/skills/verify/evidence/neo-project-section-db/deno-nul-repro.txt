@@ -1,0 +1,11 @@
+{"expected":"repo:synthetic/project\u0000a","actual":{"alias":"repo:synthetic/project","bytes":"7265706F3A73796E7468657469632F70726F6A6563740061"}}
+[0m[1m[31merror[0m: Uncaught (in promise) AssertionError: Workspace identity must survive SQLite text reads
++ actual - expected
+
++ 'repo:synthetic/project'
+- 'repo:synthetic/project\x00a'
+                         ^
+
+  assert.equal(actual.alias, expected, 'Workspace identity must survive SQLite text reads');
+[0m[31m         ^[0m
+    at [0m[2m[38;5;245mfile:///Users/lsm/.codex/worktrees/lane-a-project-section/neokai/[0m[0m[36m.claude/skills/verify/neo-section-nul-text.ts[0m:[0m[33m14[0m:[0m[33m10[0m
