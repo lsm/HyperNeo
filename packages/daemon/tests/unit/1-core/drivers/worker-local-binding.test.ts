@@ -161,9 +161,45 @@ test('disabled persisted sandbox does not prepare or recreate its runtime', asyn
   persisted.sandbox.enabled = false;
   writeFileSync(settingsPath, JSON.stringify(persisted));
   rmSync(persisted.env.TMPDIR, { recursive: true, force: true });
-  const before = readFileSync(settingsPath, 'utf8');
   const resumed = await readClaudeWorkerSandbox(root);
   expect(resumed?.sandbox.enabled).toBe(false);
   expect(existsSync(persisted.env.TMPDIR)).toBe(false);
-  expect(readFileSync(settingsPath, 'utf8')).toBe(before);
+  expect(resumed?.env).toEqual({});
+  expect(settings().env).toEqual({});
+  const normalized = readFileSync(settingsPath, 'utf8');
+  await readClaudeWorkerSandbox(root);
+  expect(readFileSync(settingsPath, 'utf8')).toBe(normalized);
+});
+
+test('disabled sparse settings normalize SDK fields and remove obsolete runtime env', async () => {
+  const settingsPath = join(root, '.claude/settings.local.json');
+  mkdirSync(join(root, '.claude'));
+  writeFileSync(
+    join(root, '.git/hyperneo-native-writes.json'),
+    JSON.stringify({ roots: [join(fixture, 'source')] })
+  );
+  writeFileSync(
+    settingsPath,
+    JSON.stringify({
+      sandbox: { enabled: false },
+      env: {
+        TMPDIR: '/synthetic/obsolete-temp',
+        TMP: '/synthetic/obsolete-temp',
+        TEMP: '/synthetic/obsolete-temp',
+        CLAUDE_CODE_TMPDIR: '/synthetic/obsolete-temp',
+        XDG_CACHE_HOME: '/synthetic/obsolete-cache',
+        HYPERNEO_WORKTREES: '/synthetic/obsolete-worktrees',
+        HYPERNEO_EVIDENCE: '/synthetic/obsolete-evidence',
+        HYPERNEO_BUILDS: '/synthetic/obsolete-builds',
+        CUSTOM_WORKER_VALUE: 'retain',
+      },
+    })
+  );
+  const result = await readClaudeWorkerSandbox(root);
+  expect(result?.sandbox.enabled).toBe(false);
+  expect(result?.env).toEqual({ CUSTOM_WORKER_VALUE: 'retain' });
+  expect(result?.permissions.disableBypassPermissionsMode).toBe('disable');
+  expect(result?.sandbox.filesystem.allowWrite).toContain(root);
+  expect(settings()).toEqual(result);
+  expect(existsSync(workerSandboxPaths(root).TMPDIR)).toBe(false);
 });
