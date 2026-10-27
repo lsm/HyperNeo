@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { codingConnectorIdentityReads } from '../../../packages/daemon/src/lib/neo/packs/coding/connector-identity-db.ts';
 import { CodingPollFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/poll-facts.ts';
 
 const [mode, directory] = process.argv.slice(2), run = resolve(directory);
@@ -76,6 +77,10 @@ try{
  const retained=rows();measuring=false;ws!.close();await app!.cleanup();app=undefined;await open();assert.deepEqual(rows(),retained);
  measuring=true;control('reopen');await rpc();assert.equal(rows()[0].observation_revision,retained[0].observation_revision+1);
  if(mode==='verify'){
+  const aliasIdentity=await app!.db.gateway.call(codingConnectorIdentityReads,'canonical','OLD/REPO');
+  const fallbackIdentity=await app!.db.gateway.call(codingConnectorIdentityReads,'canonical','NEW/REPO');
+  assert.equal(aliasIdentity,'synthetic/threads');assert.equal(fallbackIdentity,'new/repo');
+  evidence.canonicalIdentity={alias:aliasIdentity,fallback:fallbackIdentity};
   const facts=new CodingPollFactsRepository(app!.db.getDatabase()),before=rows()[0];control('late');outstanding=rpc();
   for(let i=0;!existsSync(join(run,'late-start'));i++){assert(i<500,'late acquisition did not start');await new Promise(done=>setTimeout(done,10));}
   const winner=await facts.observeCurrent(subject,{value:{headOid:head,unresolvedThreadUrls:['winner']},etag:null,next:null},Date.now(),before.observation_revision);assert(winner.accepted);

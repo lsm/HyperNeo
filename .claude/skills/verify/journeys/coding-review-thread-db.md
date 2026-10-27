@@ -80,3 +80,6 @@ The review regression calls that gateway command directly with a mixed-case
 known alias and a mixed-case unknown repository; both must return lowercase
 canonical identity without fragmenting subjects. Existing RPC pagination,
 coalescing and fencing proofs still run after the committed review fix.
+
+The fixed daemon proof also sends these mixed-case alias and fallback cases
+through its actual gateway worker and retains canonicalIdentity in the JSON.
