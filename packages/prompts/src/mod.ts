@@ -36,6 +36,17 @@ import mdcoordinatorVcs from './coordinator/vcs.md' with { type: 'text' };
 import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text' };
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
+import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
+import mdneoSystemFocusedDiscussion from './neo/system/focused-discussion.md' with { type: 'text' };
+import mdneoSystemGoalCycle from './neo/system/goal-cycle.md' with { type: 'text' };
+import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
+import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
+import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
+import mdneoPacksCodingWorkerRules from './neo/packs/coding/worker-rules.md' with { type: 'text' };
+import mdneoWorkFiles from './neo/work/files.md' with { type: 'text' };
+import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
+import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
+import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
 import mdneoWorkGoalMerge from './neo/packs/coding/goal-merge.md' with { type: 'text' };
 import mdneoPacksCodingGoalPrEvents from './neo/packs/coding/goal-pr-events.md' with {
   type: 'text',
@@ -43,76 +54,39 @@ import mdneoPacksCodingGoalPrEvents from './neo/packs/coding/goal-pr-events.md' 
 import mdneoPacksCodingGoalPrSubscribe from './neo/packs/coding/goal-pr-subscribe.md' with {
   type: 'text',
 };
-import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
-import mdneoPacksCodingWorkerRules from './neo/packs/coding/worker-rules.md' with { type: 'text' };
 import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions.md' with {
   type: 'text',
 };
-import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
-import mdneoSystemFocusedDiscussion from './neo/system/focused-discussion.md' with { type: 'text' };
-import mdneoSystemGoalCycle from './neo/system/goal-cycle.md' with { type: 'text' };
-import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
-import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
-import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
-import mdneoWorkFiles from './neo/work/files.md' with { type: 'text' };
-import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
-import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
-import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
+import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
 
 export { fillPrompt } from './loader.ts';
 
-import mdagentBashLoopRecovery from './agent/bash-loop-recovery.md' with { type: 'text' };
-import mdagentLimitErrorClassifier from './agent/limit-error-classifier.md' with { type: 'text' };
-import mdagentLoopRecovery from './agent/loop-recovery.md' with { type: 'text' };
-import mdagentQuestionCancelled from './agent/question-cancelled.md' with { type: 'text' };
-import mdagentRepeatedToolError from './agent/repeated-tool-error.md' with { type: 'text' };
-import mdagentTaskNotificationContinue from './agent/task-notification-continue.md' with {
-  type: 'text',
-};
 import mdagentsDefaultInstructions from './agents/default-instructions.md' with { type: 'text' };
-import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
-import mddriversClaudeDesktopPrepare from './drivers/claude-desktop-prepare.md' with {
-  type: 'text',
-};
-import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
-import mddriversClaudeDesktopWakeBrief from './drivers/claude-desktop-wake-brief.md' with {
-  type: 'text',
-};
-import mddriversClaudeDesktopWakeRequest from './drivers/claude-desktop-wake-request.md' with {
-  type: 'text',
-};
-import mddriversClaudeRcToggleRequest from './drivers/claude-rc-toggle-request.md' with {
-  type: 'text',
-};
-import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
-import mdevolutionConversationFriction from './evolution/conversation-friction.md' with {
-  type: 'text',
-};
 import mdevolutionEpisodeJudge from './evolution/episode-judge.md' with { type: 'text' };
-import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
-import { buildPromptRegistry } from './loader.ts';
-import mdmailboxDeliveryFailed from './mailbox/delivery-failed.md' with { type: 'text' };
-import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type: 'text' };
-import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
-import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: 'text' };
 import mdprovidersCodexProbeInstructions from './providers/codex-probe-instructions.md' with {
   type: 'text',
 };
-import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
-  type: 'text',
-};
-import mdruntimePromptTooLongContinueNag from './runtime/prompt-too-long-continue-nag.md' with {
-  type: 'text',
-};
-import mdruntimeWorkflowSelectorInstructions from './runtime/workflow-selector-instructions.md' with {
-  type: 'text',
-};
 import mdsessionCloneBrief from './session/clone-brief.md' with { type: 'text' };
+import mdspaceScopeBriefing from './space/scope/briefing.md' with { type: 'text' };
+import mdspaceScopeRoleAgent from './space/scope/role-agent.md' with { type: 'text' };
+import mdspaceScopeRoleDirectWorker from './space/scope/role-direct-worker.md' with {
+  type: 'text',
+};
+import mdspaceScopeRoleNamedAgent from './space/scope/role-named-agent.md' with { type: 'text' };
+import mdspaceScopeRoleWorkflowWorker from './space/scope/role-workflow-worker.md' with {
+  type: 'text',
+};
+import mdspaceScopeStandingInstructions from './space/scope/standing-instructions.md' with {
+  type: 'text',
+};
+import mdworkflowsSelectionPrompt from './workflows/selection-prompt.md' with { type: 'text' };
+import mdagentLimitErrorClassifier from './agent/limit-error-classifier.md' with { type: 'text' };
+import mdevolutionConversationFriction from './evolution/conversation-friction.md' with {
+  type: 'text',
+};
 import mdsessionMinimalWorktree from './session/minimal-worktree.md' with { type: 'text' };
-import mdsessionTitleGeneration from './session/title-generation.md' with { type: 'text' };
 import mdsessionWorktreeIsolation from './session/worktree-isolation.md' with { type: 'text' };
-import mdspaceAgentMemory from './space/agent-memory.md' with { type: 'text' };
 import mdspaceContractBlocker from './space/contract/blocker.md' with { type: 'text' };
 import mdspaceContractCompleteHuman from './space/contract/complete-human.md' with { type: 'text' };
 import mdspaceContractCompleteUnlocked from './space/contract/complete-unlocked.md' with {
@@ -126,9 +100,6 @@ import mdspaceContractToolCatalog from './space/contract/tool-catalog.md' with {
 import mdspaceContractToolDoor from './space/contract/tool-door.md' with { type: 'text' };
 import mdspaceContractToolSuggested from './space/contract/tool-suggested.md' with { type: 'text' };
 import mdspaceContractWorkerHeader from './space/contract/worker-header.md' with { type: 'text' };
-import mdspaceDbQuery from './space/db-query.md' with { type: 'text' };
-import mdspaceOperationsDoor from './space/operations-door.md' with { type: 'text' };
-import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
 import mdspaceRuntimeHandoffNoTranscript from './space/runtime/handoff-no-transcript.md' with {
   type: 'text',
 };
@@ -146,18 +117,6 @@ import mdspaceRuntimeRestartNodeEnded from './space/runtime/restart-node-ended.m
 import mdspaceRuntimeRestartNotice from './space/runtime/restart-notice.md' with { type: 'text' };
 import mdspaceRuntimeStallNag from './space/runtime/stall-nag.md' with { type: 'text' };
 import mdspaceRuntimeTerminalError from './space/runtime/terminal-error.md' with { type: 'text' };
-import mdspaceScopeBriefing from './space/scope/briefing.md' with { type: 'text' };
-import mdspaceScopeRoleAgent from './space/scope/role-agent.md' with { type: 'text' };
-import mdspaceScopeRoleDirectWorker from './space/scope/role-direct-worker.md' with {
-  type: 'text',
-};
-import mdspaceScopeRoleNamedAgent from './space/scope/role-named-agent.md' with { type: 'text' };
-import mdspaceScopeRoleWorkflowWorker from './space/scope/role-workflow-worker.md' with {
-  type: 'text',
-};
-import mdspaceScopeStandingInstructions from './space/scope/standing-instructions.md' with {
-  type: 'text',
-};
 import mdspaceTaskMessageGatedHandoff from './space/task-message/gated-handoff.md' with {
   type: 'text',
 };
@@ -167,6 +126,48 @@ import mdspaceTaskMessageGoalOutcome from './space/task-message/goal-outcome.md'
 import mdspaceTaskMessageVerificationLabel from './space/task-message/verification-label.md' with {
   type: 'text',
 };
+import mdagentBashLoopRecovery from './agent/bash-loop-recovery.md' with { type: 'text' };
+import mdagentLoopRecovery from './agent/loop-recovery.md' with { type: 'text' };
+import mdagentQuestionCancelled from './agent/question-cancelled.md' with { type: 'text' };
+import mdagentRepeatedToolError from './agent/repeated-tool-error.md' with { type: 'text' };
+import mdagentTaskNotificationContinue from './agent/task-notification-continue.md' with {
+  type: 'text',
+};
+import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
+import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
+import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
+import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
+import mddriversClaudeDesktopPrepare from './drivers/claude-desktop-prepare.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopWakeBrief from './drivers/claude-desktop-wake-brief.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopWakeRequest from './drivers/claude-desktop-wake-request.md' with {
+  type: 'text',
+};
+import mddriversClaudeRcToggleRequest from './drivers/claude-rc-toggle-request.md' with {
+  type: 'text',
+};
+import mdmailboxDeliveryFailed from './mailbox/delivery-failed.md' with { type: 'text' };
+import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type: 'text' };
+import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
+import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: 'text' };
+import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
+import { buildPromptRegistry } from './loader.ts';
+import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
+  type: 'text',
+};
+import mdruntimePromptTooLongContinueNag from './runtime/prompt-too-long-continue-nag.md' with {
+  type: 'text',
+};
+import mdruntimeWorkflowSelectorInstructions from './runtime/workflow-selector-instructions.md' with {
+  type: 'text',
+};
+import mdsessionTitleGeneration from './session/title-generation.md' with { type: 'text' };
+import mdspaceAgentMemory from './space/agent-memory.md' with { type: 'text' };
+import mdspaceDbQuery from './space/db-query.md' with { type: 'text' };
+import mdspaceOperationsDoor from './space/operations-door.md' with { type: 'text' };
 import mdworkflowsCoderOnlyMergeInstructions from './workflows/coder-only/merge-instructions.md' with {
   type: 'text',
 };
@@ -243,7 +244,6 @@ import mdworkflowsResearchReviewPrompt from './workflows/research/review-prompt.
 import mdworkflowsReviewOnlyReviewPrompt from './workflows/review-only/review-prompt.md' with {
   type: 'text',
 };
-import mdworkflowsSelectionPrompt from './workflows/selection-prompt.md' with { type: 'text' };
 
 const registry: Record<string, string> = {
   'agents/long-horizon-scheduling-guardrail.md': mdagentsLongHorizonSchedulingGuardrail,
