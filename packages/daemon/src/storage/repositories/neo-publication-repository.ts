@@ -227,14 +227,11 @@ const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
 export class NeoPublicationRepository {
   constructor(private readonly db: Database) {}
 
-  reviseCurrent(input: unknown, caller: OperationCaller, at: string) {
-    return gatewayFor(this.db).call(
-      neoPublicationEditWrites,
-      'revise',
-      input,
-      { source: caller.source, sessionId: caller.sessionId },
-      at
-    );
+  reviseCurrent(input: unknown, caller: OperationCaller) {
+    return gatewayFor(this.db).call(neoPublicationEditWrites, 'revise', input, {
+      source: caller.source,
+      sessionId: caller.sessionId,
+    });
   }
 
   append(input: unknown): NeoPublicationAppendResult {

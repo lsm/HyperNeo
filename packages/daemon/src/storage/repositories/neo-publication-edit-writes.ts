@@ -8,17 +8,14 @@ import { NeoPublicationRepository } from './neo-publication-repository.ts';
 class NeoPublicationEditCommands {
   constructor(private readonly db: Database) {}
 
-  revise(input: unknown, caller: OperationCaller, at: string) {
+  revise(input: unknown, caller: OperationCaller) {
     const repo = new NeoRepository(this.db);
-    const admit = publicationChange.createNeoPublicationChangeAdmission(
-      {
-        getBinding: (id) => repo.getBindingBySession(id),
-        getRootBinding: () => repo.defaultBinding(),
-        publications: new NeoPublicationRepository(this.db),
-        notify: () => {},
-      },
-      () => new Date(at)
-    );
+    const admit = publicationChange.createNeoPublicationChangeAdmission({
+      getBinding: (id) => repo.getBindingBySession(id),
+      getRootBinding: () => repo.defaultBinding(),
+      publications: new NeoPublicationRepository(this.db),
+      notify: () => {},
+    });
     return admit(input, caller);
   }
 }

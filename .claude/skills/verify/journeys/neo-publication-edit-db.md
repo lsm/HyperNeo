@@ -46,7 +46,12 @@ the synthetic fixture, then releases it. Worker admission must refuse the stale
 caller and leave public content unchanged. Fixture mutations and public reader
 SQL are excluded from edit-path instrumentation; verify mode requires zero main
 SQL for publication/binding access during edit. No whole-daemon or public-reader
-SQL absence, latency target or rollout claim is made. Command elapsed times and
+SQL absence, latency target or rollout claim is made. A second queued command
+is held and then released without revoking its binding. The MCP receipt and
+public reader must expose editedAt at or after that release: the writer creates
+the timestamp when the admission executes, with no clock value supplied from
+main. The review regression is committed before the fix and the pre-fix daemon
+run retains its failing timestamp assertion. Command elapsed times and
 argument/reply sizes are retained without separate clone/queue/SQL attribution.
 
 Run writer regression, existing publication edit and repository suites in the

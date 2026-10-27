@@ -57,15 +57,12 @@ beforeEach(() => {
   publications.append(input);
   notified = 0;
   registry = createOperationRegistry(
-    createNeoPublicationChangeOperations(
-      {
-        getBinding: (id) => [root, holder].find((item) => item.sessionId === id) ?? null,
-        getRootBinding: () => root,
-        publications,
-        notify: () => notified++,
-      },
-      () => new Date('2026-10-16T10:00:00.000Z')
-    )
+    createNeoPublicationChangeOperations({
+      getBinding: (id) => [root, holder].find((item) => item.sessionId === id) ?? null,
+      getRootBinding: () => root,
+      publications,
+      notify: () => notified++,
+    })
   );
 });
 afterEach(() => db.close());

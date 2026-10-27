@@ -148,10 +148,7 @@ export function createNeoPublicationChangeAdmission(
   return revise('neo.publication.edit', EditInput);
 }
 
-export function createNeoPublicationChangeOperations(
-  runtime: NeoPublicationChangeRuntime,
-  now: () => Date = () => new Date()
-) {
+export function createNeoPublicationChangeOperations(runtime: NeoPublicationChangeRuntime) {
   return [
     defineOperation({
       name: 'neo.publication.edit',
@@ -161,7 +158,7 @@ export function createNeoPublicationChangeOperations(
       inputSchema: EditInput,
       resultSchema: NeoPublicationResultSchema,
       execute: async (input, caller) => {
-        const result = await runtime.publications.reviseCurrent(input, caller, now().toISOString());
+        const result = await runtime.publications.reviseCurrent(input, caller);
         if (result.accepted) runtime.notify(result.publication.conversationId);
         return result;
       },
