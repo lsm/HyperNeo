@@ -1,5 +1,6 @@
 import { constants, existsSync } from 'node:fs';
 import {
+  chmod,
   copyFile,
   lstat,
   mkdir,
@@ -105,9 +106,9 @@ export async function prepareWorkerSandbox(root: string) {
     if (path !== runtime && path !== env.XDG_CACHE_HOME && path !== env.GH_CONFIG_DIR) continue;
     const entry = await lstat(path);
     const owner = process.platform === 'win32' ? entry.uid : (process.getuid?.() ?? entry.uid);
-    const mode = process.platform === 'win32' ? 0 : entry.mode;
-    if (!entry.isDirectory() || (mode & 0o077) !== 0 || entry.uid !== owner)
+    if (!entry.isDirectory() || entry.uid !== owner)
       throw new Error('Worker runtime roots must be owned private directories');
+    if (process.platform !== 'win32') await chmod(path, 0o700);
   }
   await copyFile(
     join(homedir(), '.config/gh/config.yml'),

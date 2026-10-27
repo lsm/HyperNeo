@@ -1,6 +1,14 @@
 import { afterEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, type Stats } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  type Stats,
+} from 'node:fs';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,6 +124,21 @@ test('runtime preparation tolerates shared work locations with ordinary modes', 
   expect(env.TMPDIR.startsWith(join(data, 'work', 'scratch'))).toBe(true);
 });
 
+test('repairs existing owned scratch and cache modes without losing their contents', async () => {
+  fixture('darwin', false);
+  const paths = workerSandboxPaths(root);
+  for (const path of [paths.TMPDIR, paths.XDG_CACHE_HOME]) {
+    mkdirSync(path, { recursive: true, mode: 0o755 });
+    chmodSync(path, 0o755);
+    await writeFile(join(path, 'retained'), 'worker bytes');
+  }
+  await prepareWorkerSandbox(root);
+  for (const path of [paths.TMPDIR, paths.XDG_CACHE_HOME]) {
+    expect(statSync(path).mode & 0o777).toBe(0o700);
+    expect(await readFile(join(path, 'retained'), 'utf8')).toBe('worker bytes');
+  }
+});
+
 test('Windows workers accept synthesized NTFS modes under the data root', async () => {
   const data = fixture('win32');
   const paths = workerSandboxPaths(root) as Record<string, string>;
@@ -130,7 +153,8 @@ test('Windows runtime preparation does not reject synthesized group and other bi
   await expect(prepareWorkerSandbox(root)).resolves.toHaveProperty('TMPDIR');
 });
 
-test('POSIX workers still refuse shared directory modes', async () => {
+test('POSIX workers still refuse directories owned by another user', async () => {
   fixture('linux');
+  vi.mocked(lstat).mockResolvedValue({ uid: 502, isDirectory: () => true } as Stats);
   await expect(prepareWorkerSandbox(root)).rejects.toThrow('owned private directories');
 });

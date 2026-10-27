@@ -180,19 +180,20 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   });
   if (marker === null) return null;
   const { roots } = Marker.parse(JSON.parse(marker));
-  await prepareWorkerSandbox(directory);
-  const computed = policy(directory, roots, []);
   const existing = await readFile(settingsPath(directory), 'utf8')
     .then(JSON.parse)
     .catch(() => ({}));
+  if (existing?.sandbox?.enabled !== false) await prepareWorkerSandbox(directory);
+  const computed = policy(directory, roots, []);
   const before = JSON.stringify(existing);
-  if (!existing?.env || !existing?.sandbox) {
-    Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
-  }
-  if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
-    existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
-  }
   const upgraded = withSecretDenials(computed, existing, true);
-  if (before !== JSON.stringify(upgraded)) await writeAtomic(settingsPath(directory), upgraded);
-  return upgraded;
+  const env: Record<string, string> = { ...upgraded.env };
+  if (upgraded.sandbox.enabled === false) {
+    for (const key of RUNTIME_MANAGED_ENV_KEYS) {
+      if (!key.startsWith('HYPERNEO_')) delete env[key];
+    }
+  }
+  const normalized = { ...upgraded, env };
+  if (before !== JSON.stringify(normalized)) await writeAtomic(settingsPath(directory), normalized);
+  return normalized;
 }

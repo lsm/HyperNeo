@@ -170,6 +170,34 @@ describe('QueryOptionsBuilder', () => {
       await releaseWorkerSandbox(root);
     });
 
+    it('starts with sparse disabled settings without forwarding obsolete temp paths', async () => {
+      const root = join(handoffDataDir, 'disabled-sparse');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      mkdirSync(join(root, '.claude'));
+      writeFileSync(
+        join(root, '.git/hyperneo-native-writes.json'),
+        JSON.stringify({ roots: [join(handoffDataDir, 'source')] })
+      );
+      writeFileSync(
+        join(root, '.claude/settings.local.json'),
+        JSON.stringify({
+          sandbox: { enabled: false },
+          env: {
+            TMPDIR: '/synthetic/obsolete-temp',
+            XDG_CACHE_HOME: '/synthetic/obsolete-cache',
+            CUSTOM_WORKER_VALUE: 'retain',
+          },
+        })
+      );
+      mockSession.workspacePath = root;
+      const options = await builder.build();
+      expect(options.sandbox?.enabled).toBe(false);
+      expect(options.env?.TMPDIR).not.toBe('/synthetic/obsolete-temp');
+      expect(options.env?.XDG_CACHE_HOME).not.toBe('/synthetic/obsolete-cache');
+      expect(options.env?.CUSTOM_WORKER_VALUE).toBe('retain');
+      expect(options.sandbox?.filesystem?.allowWrite).toContain(root);
+    });
+
     it('should build basic query options', async () => {
       const options = await builder.build();
 

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -143,4 +151,66 @@ test('reinstall uses the current protected roots for policy and marker', async (
   );
   expect(persisted.roots).toEqual([source]);
   expect(await readClaudeWorkerSandbox(root)).toEqual(settings());
+});
+
+test('disabled persisted sandbox does not prepare or recreate its runtime', async () => {
+  const source = join(fixture, 'source');
+  const settingsPath = join(root, '.claude/settings.local.json');
+  await installClaudeNativeWrites(root, [source]);
+  const persisted = settings();
+  persisted.sandbox.enabled = false;
+  writeFileSync(settingsPath, JSON.stringify(persisted));
+  rmSync(persisted.env.TMPDIR, { recursive: true, force: true });
+  const resumed = await readClaudeWorkerSandbox(root);
+  expect(resumed?.sandbox.enabled).toBe(false);
+  expect(existsSync(persisted.env.TMPDIR)).toBe(false);
+  const current = workerSandboxPaths(root);
+  expect(resumed?.env).toEqual({
+    HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
+    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
+    HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
+  });
+  expect(settings().env).toEqual(resumed?.env);
+  const normalized = readFileSync(settingsPath, 'utf8');
+  await readClaudeWorkerSandbox(root);
+  expect(readFileSync(settingsPath, 'utf8')).toBe(normalized);
+});
+
+test('disabled sparse settings normalize SDK fields and remove obsolete runtime env', async () => {
+  const settingsPath = join(root, '.claude/settings.local.json');
+  mkdirSync(join(root, '.claude'));
+  writeFileSync(
+    join(root, '.git/hyperneo-native-writes.json'),
+    JSON.stringify({ roots: [join(fixture, 'source')] })
+  );
+  writeFileSync(
+    settingsPath,
+    JSON.stringify({
+      sandbox: { enabled: false },
+      env: {
+        TMPDIR: '/synthetic/obsolete-temp',
+        TMP: '/synthetic/obsolete-temp',
+        TEMP: '/synthetic/obsolete-temp',
+        CLAUDE_CODE_TMPDIR: '/synthetic/obsolete-temp',
+        XDG_CACHE_HOME: '/synthetic/obsolete-cache',
+        HYPERNEO_WORKTREES: '/synthetic/obsolete-worktrees',
+        HYPERNEO_EVIDENCE: '/synthetic/obsolete-evidence',
+        HYPERNEO_BUILDS: '/synthetic/obsolete-builds',
+        CUSTOM_WORKER_VALUE: 'retain',
+      },
+    })
+  );
+  const result = await readClaudeWorkerSandbox(root);
+  expect(result?.sandbox.enabled).toBe(false);
+  const current = workerSandboxPaths(root);
+  expect(result?.env).toEqual({
+    CUSTOM_WORKER_VALUE: 'retain',
+    HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
+    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
+    HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
+  });
+  expect(result?.permissions.disableBypassPermissionsMode).toBe('disable');
+  expect(result?.sandbox.filesystem.allowWrite).toContain(root);
+  expect(settings()).toEqual(result);
+  expect(existsSync(workerSandboxPaths(root).TMPDIR)).toBe(false);
 });
