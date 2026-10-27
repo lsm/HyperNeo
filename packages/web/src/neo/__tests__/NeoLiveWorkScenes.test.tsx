@@ -407,7 +407,7 @@ describe('card reply notice navigation', () => {
     await screen.findByText('No matching work');
     fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Sign-off card' });
-    expect(within(dialog).getByText('Choose a sign-off')).toBeTruthy();
+    expect(await within(dialog).findByText('Choose a sign-off')).toBeTruthy();
     expect(screen.getByRole('searchbox')).toHaveProperty('value', '');
   });
 

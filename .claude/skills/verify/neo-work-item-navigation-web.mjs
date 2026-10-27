@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
+async function settle(page) {
+  await page.waitForFunction(() => document.getAnimations().every(a => a.effect?.getComputedTiming().iterations === Infinity || a.playState !== 'running'), null, { timeout: 10000 });
+}
+
 export async function verifyFilteredWorkReference(page, fixture, { phase, evidence, touch = false }) {
   const use = control => touch ? control.tap() : control.click();
   await page.goto(fixture.url);
@@ -21,7 +25,7 @@ export async function verifyFilteredWorkReference(page, fixture, { phase, eviden
     await page.waitForFunction(() => document.activeElement?.id === 'neo-ref-question-nav-answered');
     assert.equal(await input.inputValue(), '');
   }
-  await page.evaluate(async () => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished)));
+  await settle(page);
   await page.screenshot({ path: `${evidence}/${touch ? 'mobile' : 'desktop'}-filtered-reference-${phase}.png`, scale: 'css' });
   return { touch, filterCleared: phase === 'after', openedAtTarget: phase === 'after' };
 }
@@ -72,7 +76,7 @@ export async function verifyWorkReferenceRecovery(page, fixture, { evidence, tou
   await use(link);
   await dialog.waitFor();
   await page.waitForFunction(() => document.activeElement?.id === 'neo-ref-question-nav-answered');
-  await page.evaluate(async () => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished)));
+  await settle(page);
   await page.screenshot({ path: `${evidence}/${touch ? 'mobile' : 'desktop'}-reference-retry.png`, scale: 'css' });
   return { touch, refusalVisible: true, cancelledReadStayedClosed: true, retryOpenedTarget: true, repeatedActivation: true };
 }
@@ -108,7 +112,7 @@ export async function verifyWorkItemNavigation(page, fixture, { phase, evidence,
       assert(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width + 1 && box.y + box.height <= viewport.height + 1);
       if (item.kind === 'todo') assert.equal(await dialog.locator('[data-todo-state="done"]').count(), 25);
     }
-    await page.evaluate(async () => Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished)));
+    await settle(page);
     await page.screenshot({ path: `${evidence}/${touch ? 'mobile' : 'desktop'}-${item.id}-${phase}.png`, scale: 'css' });
     observed.push({ ...item, openedAtTarget: phase === 'after' });
   }

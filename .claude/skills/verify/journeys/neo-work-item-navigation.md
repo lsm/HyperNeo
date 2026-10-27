@@ -31,3 +31,11 @@ true only after functional and visual review. Close owned contexts, signal the
 helper PID with SIGUSR1 and require wrapper exit zero. Run Work-scene, card and
 public-conversation suites, build and full checks. Deployment smoke requires an
 automatically served containing build and the explicit read-only browser allowance.
+
+After merging Work search, also run verifyFilteredWorkReference at both widths.
+It applies a nonmatching query, closes the mobile Work sheet when needed, then
+activates the older answered-question link. Preserve the separate before proof
+where the query hides the target. After must clear the query and focus the exact
+row inside All. This uses the real search index and daemon reader.
+The browser helper waits for currently running finite animations with a bounded
+deadline; it does not hold old animation promises across sheet replacement.

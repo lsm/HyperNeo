@@ -719,6 +719,7 @@ export function NeoLive() {
                 nearBottom.current = false;
                 const ticket = {};
                 referenceRequest.current = ticket;
+                setWorkQuery('');
                 setCardTarget(null);
                 setCardUnavailable(false);
                 setCardOpening(true);
