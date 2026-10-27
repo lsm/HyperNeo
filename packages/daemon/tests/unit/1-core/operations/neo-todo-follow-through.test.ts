@@ -223,7 +223,7 @@ describe('a doing todo never sits idle without someone on it', () => {
     for (const minutes of [20, 40, 60]) await w.at(minutes);
     expect(w.named('work.start')).toHaveLength(1);
     expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
-    expect(w.told.some((note) => note.includes('fresh worker'))).toBe(false);
+    expect(w.told.some((note) => note.includes('moved it to a fresh worker'))).toBe(false);
   });
 
   test('a stalled todo goes back to doing when its worker runs again, on a fresh ladder', async () => {
