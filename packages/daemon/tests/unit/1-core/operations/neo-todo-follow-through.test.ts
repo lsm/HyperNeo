@@ -80,6 +80,7 @@ function world() {
             ok: false,
             reason: 'not_delivered',
             detail: 'thread-follower-steer-turn-timeout',
+            notSent: true,
           });
         if (worker?.replies) worker.lastActivityAt = Date.now();
         return completed({ ok: true, value: { delivered: true } });

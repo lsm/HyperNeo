@@ -1751,7 +1751,7 @@ describe('stopped worker ladder', () => {
       if (refused) throw new Error('synthetic notification refusal');
     });
     try {
-      h.setSend({ ok: false, reason: 'not_open' });
+      h.setSend({ ok: false, reason: 'not_open', notSent: true });
       await h.at(20);
       expect(h.told).toEqual([]);
       expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(0);
@@ -1784,23 +1784,29 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('a reminder whose delivery is uncertain keeps the todo going and tells Neo', async () => {
-    const h = await stopped(null);
-    try {
-      h.setSend({ ok: false, reason: 'unreachable', detail: 'remote send timed out' });
-      await h.at(20);
-      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      expect(h.told.filter((note) => note.includes('could not be reached'))).toHaveLength(1);
-    } finally {
-      h.clock.mockRestore();
-      h.db.close();
+  test.each([
+    ['unreachable', 'remote send timed out'],
+    ['not_delivered', 'thread-follower-steer-turn-timeout'],
+  ])(
+    'a reminder whose delivery is uncertain (%s) keeps the todo going and tells Neo',
+    async (reason, detail) => {
+      const h = await stopped(null);
+      try {
+        h.setSend({ ok: false, reason, detail });
+        await h.at(20);
+        expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+        expect(h.told.filter((note) => note.includes('could not be reached'))).toHaveLength(1);
+      } finally {
+        h.clock.mockRestore();
+        h.db.close();
+      }
     }
-  });
+  );
 
   test('an unreachable worker is reminded once, then the todo stalls instead of being reminded again', async () => {
     const h = await stopped(null);
     try {
-      h.setSend({ ok: false, reason: 'not_open' });
+      h.setSend({ ok: false, reason: 'not_open', notSent: true });
       await h.at(20);
       await h.at(40);
       expect(h.sends()).toHaveLength(1);

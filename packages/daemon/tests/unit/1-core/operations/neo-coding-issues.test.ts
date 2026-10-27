@@ -111,7 +111,7 @@ function fixture() {
                     }
                   : reachable
                     ? { ok: true }
-                    : { ok: false, reason: 'not_delivered' }
+                    : { ok: false, reason: 'not_delivered', notSent: true }
                 : {
                     ok: true,
                     value: { status: 'stopped', lastActivityAt: progress, lastReplyAt: progress },

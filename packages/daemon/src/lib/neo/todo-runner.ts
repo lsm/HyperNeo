@@ -864,9 +864,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (value?.ok) return { reason: null };
         return {
           value: {
-            bounced:
-              value?.notSent === true ||
-              ['not_delivered', 'not_open', 'not_found'].includes(value?.reason ?? ''),
+            bounced: value?.notSent === true,
             detail: value?.detail ?? value?.reason ?? null,
           },
         };
