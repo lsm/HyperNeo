@@ -161,15 +161,13 @@ export function createCodingPack(deps: {
       await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },
-    stats: (now) => ({
-      'ready to merge >1h': deps.prLedger
-        .list()
-        .filter(
-          (row) =>
-            row.state === 'approved_green' &&
-            row.closedAt === null &&
-            row.stateSince < now - 60 * 60 * 1000
-        ).length,
+    stats: async (now) => ({
+      'ready to merge >1h': (await deps.prLedger.read('list')).filter(
+        (row) =>
+          row.state === 'approved_green' &&
+          row.closedAt === null &&
+          row.stateSince < now - 60 * 60 * 1000
+      ).length,
     }),
     snapshotRows: (repos, now, openTodoIds) =>
       deps.prLedger.snapshot(

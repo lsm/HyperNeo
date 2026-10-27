@@ -1,3 +1,4 @@
+import { CodingPrSweepRepository, sweepCodingPrs } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -58,14 +59,28 @@ try {
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','mergePolicy','\"review_bot\"','human',0)").run();
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','reviewBot','\"bot\"','human',0)").run();
   await ledger.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: String(root.sessionId) }, status: { state: 'running' }, lastActivityAt: Date.now(), remotes: ['git@github.com:synthetic/active.git'], branches: ['b1'], openedPrs: ['https://github.com/synthetic/active/pull/1'] }], Date.now());
+  const mainSql: string[] = [];
+  evidence.mainSql = mainSql;
+  const prepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    if (sql.includes('SELECT repo, MAX(readAt)') || sql.includes('state_since AS stateSince, read_at AS readAt') || sql.includes('nudges, owner FROM pack_coding_pr_ledger')) {
+      mainSql.push(sql);
+      if (mode === 'off-main') throw new Error('Ledger inventory SQL forbidden on main');
+    }
+    return prepare(sql);
+  }) as typeof db.prepare;
   const base = Date.now(), clock = Date.now;
   configureLogger({ level: LogLevel.INFO });
   app.db.updateGlobalSettings({ neo: { packs: ['coding'] } });
   const snapshots: unknown[] = [];
+  const nudgeDeliveries: string[] = [];
+  evidence.nudgeDeliveries = nudgeDeliveries;
   for (let tick = 0; tick < 12; tick++) {
     writeFileSync(join(run, 'tick'), String(tick));
     Date.now = () => base + tick * 300_000;
-    try { await reconcileCodingPrLedger(ledger, ['synthetic/active', 'synthetic/idle'], readCodingLedgerRepo, Date.now()); }
+    try { await reconcileCodingPrLedger(ledger, ['synthetic/active', 'synthetic/idle'], readCodingLedgerRepo, Date.now());
+      await sweepCodingPrs(new CodingPrSweepRepository(db), { tell: async (_ref, _key, text) => { nudgeDeliveries.push(text); return true; }, wake: async (_key, text) => { nudgeDeliveries.push(text); return true; } }, Date.now());
+    }
     finally { Date.now = clock; }
     const rows = ledger.snapshot(null, base + tick * 300_000);
     assert.equal(rows.length, 20);
@@ -87,6 +102,7 @@ try {
   assert(coding, 'Snapshot RPC must expose the coding ledger');
   assert.equal(coding.rows.find(row => row.pr === 'synthetic/active#1')?.state, 'approved_green');
   assert.equal(coding.rows.find(row => row.pr === 'synthetic/active#2')?.state, 'merged');
+  assert(nudgeDeliveries.length > 0, 'No owned-PR reminders were delivered');
   evidence.snapshot = snapshot;
   evidence.result = { graphqlReads: graphql.length, costPerHour: cost, restReads: requests.length - graphql.length, snapshots };
   if (mode !== 'baseline') {
