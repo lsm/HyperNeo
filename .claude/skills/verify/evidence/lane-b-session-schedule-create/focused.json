@@ -28,11 +28,12 @@
   "repositoryCheck": "passed",
   "hermeticProof": "Fresh HOME/data, refusing GitHub stub, direct HTTP refused; temporary daemon data removed after evidence saved.",
   "baseSync": {
-    "dev": "095948d5f7e9f159312596fc32d82720ca944018",
-    "previousPrHead": "a717c21aa6b4298e67f6fd8cb8916d2b345a11b4",
-    "conflict": "Append-only PR event reader and session-schedule registrations; retain both and upstream Track registration",
-    "productionChangedLines": 54,
-    "vitestPassed": 77,
+    "dev": "f954bc93d135cdad034ebdf5c12c7432019bc684",
+    "previousPrHead": "050cabec03799940740a1c2bb2efa6455a6385d0",
+    "conflict": "Append-only merge-receipt and session-schedule command registrations; retain both",
+    "productionChangedLines": 79,
+    "sharedSmokeRegistrationLines": 1,
+    "vitestPassed": 80,
     "repositoryCheck": "passed",
     "bunDenoMainSql": 0,
     "unknownOutcomeNotReplayed": true

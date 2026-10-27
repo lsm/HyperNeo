@@ -1,0 +1,38 @@
+{
+  "verified": true,
+  "productionLines": 32,
+  "redRegressionCommit": "8dbfe5e05f701eae63c9811070d4932786a699b1",
+  "baselineMainSql": {
+    "bun": 6,
+    "deno": 6
+  },
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "fixedWriterCommands": {
+    "bun": 6,
+    "deno": 6
+  },
+  "largeEvidenceBytes": 50009,
+  "checks": "Full checks and 46 focused Bun/Vitest tests passed.",
+  "limitations": "Target receipt persistence/readback only. Synthetic GitHub, assignments and QA; no real merge, native harness, GUI, deployment or latency claim. Other local merge admission reads and smoke admission remain separate.",
+  "proofBinding": {
+    "testedCodeCommit": "58f9cb1920ef5de86fd7789966a4d323e3dad377",
+    "testedGitTree": "5657e456b06e2a973b0749b5140092982876e2d6",
+    "applicationTrees": {
+      "packages": "5d40fd258053498e37fb8d316836fb4c23617849",
+      "scripts": "dfc2d0176322d22de138a1165075b63fbba171f3"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/coding-merge-receipt-db.ts": "bba16370805d57ccbb3433818244ed6aa5ed40c3",
+      ".claude/skills/verify/coding-merge-receipt-db-run.py": "4acaeee4378162d52a9e8a248d785eb350d9787e",
+      ".claude/skills/verify/coding-merge-receipt-proof-binding.ts": "40b9d3f2f943c2290e158769d5dd1f70724757ba"
+    },
+    "runs": {
+      "bun": "bun-verify",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}

@@ -29,6 +29,7 @@ import { writeSdkMessageBody } from './sdk-message-body-write.ts';
 import { hydrateSdkMessageBodies } from './sdk-message-body-read.ts';
 import {
   buildFtsQuery,
+  buildShortSearchPattern,
   extractVisibleSearchText,
   isBroadMessageSearchQuery,
   type MessageSearchParams,
@@ -2749,7 +2750,8 @@ export class SDKMessageRepository {
     const ftsQuery = buildFtsQuery(params.query);
     const limit = Math.min(Math.max(params.limit ?? 25, 1), 50);
     const offset = Math.max(params.offset ?? 0, 0);
-    if (!ftsQuery) return { results: [], limit, offset };
+    const short = !ftsQuery && buildShortSearchPattern(params.query);
+    if (!ftsQuery && !short) return { results: [], limit, offset };
 
     const broadQuery = isBroadMessageSearchQuery(params.query);
     const policy = messageSearchPolicy({
@@ -2762,10 +2764,10 @@ export class SDKMessageRepository {
 				${broadQuery ? '0' : 'bm25(message_search_fts)'} AS rank,
 				msc.timestamp,
 				msc.source_id
-			FROM message_search_fts
-			JOIN message_search_content msc ON msc.id = message_search_fts.rowid
+			FROM message_search_content msc
+			${short ? '' : 'JOIN message_search_fts ON msc.id = message_search_fts.rowid'}
 			${policy.joins}
-			WHERE message_search_fts MATCH ?
+			WHERE ${short ? `msc.title LIKE ? ESCAPE '\\'` : 'message_search_fts MATCH ?'}
 			  AND (
 				msc.kind = 'task'
 				OR (
@@ -2773,7 +2775,7 @@ export class SDKMessageRepository {
 					${policy.where}
 				)
 			  )`;
-    const values: SQLiteValue[] = [ftsQuery];
+    const values: SQLiteValue[] = [short || ftsQuery];
 
     if (params.sessionId) {
       candidateSql += ` AND msc.session_id = ?`;
@@ -2812,14 +2814,14 @@ export class SDKMessageRepository {
 				SELECT
 					msc.id, msc.kind, msc.source_id, msc.message_id, msc.session_id, msc.task_id,
 					msc.space_id, msc.task_number, msc.message_type, msc.title,
-					snippet(message_search_fts, 1, '<mark>', '</mark>', '…', 16) AS snippet,
+					${short ? 'substr(msc.title, 1, 240)' : `snippet(message_search_fts, 1, '<mark>', '</mark>', '…', 64)`} AS snippet,
 					msc.timestamp
-				FROM message_search_fts
-				JOIN message_search_content msc ON msc.id = message_search_fts.rowid
-				WHERE message_search_fts.rowid IN (${placeholders})
-				  AND message_search_fts MATCH ?`
+				FROM message_search_content msc
+				${short ? '' : 'JOIN message_search_fts ON msc.id = message_search_fts.rowid'}
+				WHERE msc.id IN (${placeholders})
+				  AND ${short ? `msc.title LIKE ? ESCAPE '\\'` : 'message_search_fts MATCH ?'}`
       )
-      .all(...candidates.map((row) => row.id), ftsQuery) as Array<{
+      .all(...candidates.map((row) => row.id), short || ftsQuery) as Array<{
       id: number;
       kind: 'message' | 'task';
       source_id: string;

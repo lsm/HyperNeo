@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoCardSearchPage } from '../../storage/neo-card-search.ts';
-import { buildFtsQuery } from '../../storage/message-search.ts';
+import { buildFtsQuery, buildShortSearchPattern } from '../../storage/message-search.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -13,7 +13,10 @@ const CardSearchInput = z.object({
     .trim()
     .min(1)
     .max(200)
-    .refine((query) => buildFtsQuery(query).length > 0, 'query_too_short'),
+    .refine(
+      (query) => !!(buildFtsQuery(query) || buildShortSearchPattern(query)),
+      'query_too_short'
+    ),
   limit: z.number().int().min(1).max(50).optional(),
   cursor: z.string().min(1).max(32).optional(),
 });
@@ -38,7 +41,7 @@ export function createNeoCardSearchOperation(
   return defineOperation({
     name: 'neo.ask.search',
     description:
-      'Search work cards by text across ask titles, requests, outcomes, todo titles, states, next actions, reports, evidence and question text and answers. Returns pointer rows (askId, todoId or questionId, matched field, score, snippet) ranked with titles above status and next actions above reports; open them with neo.ask.read. Include at least one term of three or more characters.',
+      'Search work cards by text across ask titles, requests, outcomes, todo titles, states, next actions, reports, evidence and question text and answers. Returns pointer rows (askId, todoId or questionId, matched field, score, snippet); open them with neo.ask.read. Terms of three or more characters use substring matching, with titles ranked above status and next actions above reports. A single one- or two-character query uses literal matching across all fields, ordered by recency then id with fixed scores. Mixed queries search only terms of three or more characters.',
     inputSchema: CardSearchInput,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),
