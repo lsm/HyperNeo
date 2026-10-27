@@ -101,6 +101,8 @@ if (mode === 'ignore-edits') {
     }
   }
   console.log('PASS: real RPC publishes only requested documents, preserving staged ignore bytes, outside targets and unreadable/dangling entries.');
+  process.exit(0);
+}
 if (mode === 'inherited-filters') {
   const config = `${run}/home/.gitconfig`;
   const original = await readFile(config, 'utf8');
