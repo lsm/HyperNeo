@@ -1,4 +1,4 @@
-Pageouts: 11898605 
+Pageouts: 11898605
 
 System-wide memory free percentage: 55%
 Filesystem      Size    Used   Avail Capacity iused ifree %iused  Mounted on
@@ -14,4 +14,3 @@ Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
       Tests  56 passed (56)
    Start at  15:36:50
    Duration  1.03s (transform 56%, import 28%, tests 9%, setup 6%, worker 1%)
-
