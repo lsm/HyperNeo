@@ -2,77 +2,77 @@
   "firstReceipt": {
     "ok": true
   },
-  "coldMs": 44.54675000000043,
+  "coldMs": 7.753167000000303,
   "approvedCodeRedeems": true,
-  "concurrentMs": 26.797749999999724,
+  "concurrentMs": 1.2105000000001382,
   "concurrentWinnerCount": 1,
   "unpairedRefused": true,
   "expiredRefused": true,
   "staleApproverRefused": true,
-  "healthWhileHeldMs": 16.171291999999994,
+  "healthWhileHeldMs": 4.356917000000067,
   "writerIsolation": {
     "outside": 0,
     "inside": 1
   },
-  "heldMs": 65.69675000000007,
+  "heldMs": 51.78062500000033,
   "rollbackFailure": "MessageHubResponseError: synthetic approval trigger failure",
   "beforeCommitFailure": "MessageHubResponseError: synthetic approval admission rejected before commit",
   "lostReceiptFailure": "MessageHubResponseError: synthetic committed approval reply lost; outcome unknown",
   "unknownOutcomeNotReplayed": true,
   "writerRecovered": true,
-  "maxLoopLagMs": 35.73333300000013,
+  "maxLoopLagMs": 3.635541000000103,
   "latencyUnder250ms": true,
-  "rssBytes": 543277056,
+  "rssBytes": 547733504,
   "walBytes": 4128272,
   "mainSqlAttempts": 0,
   "timings": [
     {
-      "roundTripMs": 8.698875000000044,
+      "roundTripMs": 0.353874999999789,
       "requestBytes": 119,
       "replyBytes": 10,
-      "encodeMs": 0.058624999999665306
+      "encodeMs": 0.01212500000019645
     },
     {
-      "roundTripMs": 14.237916000000041,
+      "roundTripMs": 0.19549999999981083,
       "requestBytes": 119,
       "replyBytes": 10,
-      "encodeMs": 0.05204200000025594
+      "encodeMs": 0.010041000000001077
     },
     {
-      "roundTripMs": 14.375541999999768,
+      "roundTripMs": 0.20370899999988978,
       "requestBytes": 119,
       "replyBytes": 13,
-      "encodeMs": 0.0032499999997526174
+      "encodeMs": 0.0010410000004412723
     },
     {
-      "roundTripMs": 11.456583000000137,
+      "roundTripMs": 0.1511249999998654,
       "requestBytes": 119,
       "replyBytes": 13,
-      "encodeMs": 0.016208000000005995
+      "encodeMs": 0.0014580000001842564
     },
     {
-      "roundTripMs": 4.21545900000001,
+      "roundTripMs": 0.2722920000001068,
       "requestBytes": 119,
       "replyBytes": 12,
-      "encodeMs": 0.33129099999950995
+      "encodeMs": 0.0014160000000629225
     },
     {
-      "roundTripMs": 61.699666000000434,
+      "roundTripMs": 51.07916599999999,
       "requestBytes": 119,
       "replyBytes": 10,
-      "encodeMs": 0.015583999999762455
+      "encodeMs": 0.005916999999953987
     },
     {
-      "roundTripMs": 10.31512500000008,
+      "roundTripMs": 4.526875000000018,
       "requestBytes": 119,
       "replyBytes": 10,
-      "encodeMs": 0.0154579999998532
+      "encodeMs": 0.005458000000089669
     },
     {
-      "roundTripMs": 9.806040999999823,
+      "roundTripMs": 4.8119580000002316,
       "requestBytes": 119,
       "replyBytes": 10,
-      "encodeMs": 0.01766700000007404
+      "encodeMs": 0.008124999999381544
     }
   ]
 }

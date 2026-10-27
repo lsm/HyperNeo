@@ -64,8 +64,27 @@ try {
   assert.deepEqual(cleared.nodes, retained);
   const read = (await rpc('spaceWorkflow.get', { id: workflow.id, spaceId: space.id })).workflow;
   assert.deepEqual(read, cleared);
-  console.log('ok: real workflow create/update/get RPC preserves node order, insertion/removal, full slot config, post-approval/transitions and immutable definition payload/hash');
+  const legacyConfig = {
+    agents: [{ agentId: 'legacy-slot', name: '  ' }, { agentId: 'named-slot', name: ' Named slot ' }],
+    postApproval: { targetAgent: 'legacy-slot', instructions: 'Legacy result' },
+    transitions: [{ id: 'legacy-next', target: 'Start', label: 'Legacy edge' }],
+    completionActions: [{ type: 'legacy' }],
+  };
+  raw.prepare('UPDATE space_workflow_nodes SET config = ? WHERE workflow_id = ? AND id = ?').run(JSON.stringify(legacyConfig), workflow.id, 'finish');
+  raw.prepare('UPDATE space_workflow_nodes SET config = NULL WHERE workflow_id = ? AND id = ?').run(workflow.id, 'start');
+  measuring = true;
+  const legacy = (await rpc('spaceWorkflow.get', { id: workflow.id, spaceId: space.id })).workflow;
+  measuring = false;
+  assert.deepEqual(legacy.nodes[0], { id: 'finish', name: 'Finish', agents: [{ agentId: 'legacy-slot', name: 'legacy-slot' }, { agentId: 'named-slot', name: ' Named slot ' }], postApproval: legacyConfig.postApproval, transitions: legacyConfig.transitions });
+  assert.deepEqual(legacy.nodes[1], { id: 'start', name: 'Start', agents: [] });
+  assert.equal('completionActions' in legacy.nodes[0], false);
+  raw.prepare('UPDATE space_workflow_nodes SET config = ? WHERE workflow_id = ? AND id = ?').run('{', workflow.id, 'finish');
+  measuring = true;
+  const malformed = (await rpc('spaceWorkflow.get', { id: workflow.id, spaceId: space.id })).workflow;
+  measuring = false;
+  assert.deepEqual(malformed.nodes, retained.map(node => ({ id: node.id, name: node.name, agents: [] })));
+  console.log('ok: real workflow create/update/get RPC preserves node structure/config/hash plus legacy name fallback, omitted retired fields and malformed/null config readers');
 } finally {
   measuring = false; ws?.close(); await app.cleanup(); globalThis.fetch = originalFetch;
-  writeFileSync(join(run, 'evidence/workflow-node-config-contract.json'), JSON.stringify({ mode, replies, mainSql, sqlHash: createHash('sha256').update(mainSql.join('\n')).digest('hex'), limitation: 'Neutral node-config extraction; node writes remain on main until a later writer slice.' }, null, 2));
+  writeFileSync(join(run, 'evidence/workflow-node-config-contract.json'), JSON.stringify({ mode, replies, mainSql, sqlHash: createHash('sha256').update(mainSql.join('\n')).digest('hex'), limitation: 'Neutral node configuration/view extraction; node SQL remains on main until a later writer slice.' }, null, 2));
 }

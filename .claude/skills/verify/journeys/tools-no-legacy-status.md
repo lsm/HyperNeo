@@ -7,8 +7,8 @@ evidence directory. It owns its daemon and synthetic MCP server, no fixed port,
 external registry commands or real provider. The log prints the session URL and
 exact helper PID. Open Tools in an attended browser; no unattended GUI.
 
-Expand Advanced settings. Legacy Skills and MCP selectors remain for later
-removal slices, but must have no second attachment/status claim: no legacy
+Expand Advanced settings. The duplicate Skills selector was removed in 8b.
+Remaining legacy MCP selectors must have no second attachment/status claim: no legacy
 Off / skill-disabled / not-injected labels, dots or duplicate tool counts.
 The canonical Use here rows and Observed MCP section retain the real status.
 The prompt preset and settings-source controls remain available.

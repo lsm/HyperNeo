@@ -5,8 +5,6 @@ import {
   computeSkillGroupState,
   getMcpServerEffectiveEnabled,
   getMcpServerProvenanceBadge,
-  getSkillSourceBadge,
-  isSkillEnabledForSession,
 } from '../ToolsModal.utils.ts';
 
 describe('computeSkillGroupState', () => {
@@ -110,24 +108,6 @@ function makeEntry(overrides: Partial<SessionMcpServerEntry> = {}): SessionMcpSe
   };
 }
 
-describe('isSkillEnabledForSession', () => {
-  it('returns false when the skill is globally disabled, regardless of session state', () => {
-    const skill = makeBuiltinSkill({ enabled: false });
-    expect(isSkillEnabledForSession(skill, new Set())).toBe(false);
-    expect(isSkillEnabledForSession(skill, new Set([skill.id]))).toBe(false);
-  });
-
-  it('returns true for a globally-enabled skill that is not in the session disable list', () => {
-    const skill = makeBuiltinSkill({ enabled: true });
-    expect(isSkillEnabledForSession(skill, new Set())).toBe(true);
-  });
-
-  it('returns false for a globally-enabled skill that the session has opted out of', () => {
-    const skill = makeBuiltinSkill({ id: 'opt-out', enabled: true });
-    expect(isSkillEnabledForSession(skill, new Set(['opt-out']))).toBe(false);
-  });
-});
-
 describe('buildDisabledSkillsList', () => {
   it('returns the IDs of skills currently in the pending set', () => {
     const skills = [
@@ -148,26 +128,6 @@ describe('buildDisabledSkillsList', () => {
   it('returns an empty array when nothing is pending', () => {
     const skills = [makeBuiltinSkill({ id: 'a' })];
     expect(buildDisabledSkillsList(skills, new Set())).toEqual([]);
-  });
-});
-
-describe('getSkillSourceBadge', () => {
-  it('gives builtin skills a "Built-in" badge', () => {
-    const badge = getSkillSourceBadge(makeBuiltinSkill());
-    expect(badge.label).toBe('Built-in');
-    expect(badge.className).toMatch(/accent/);
-  });
-
-  it('gives plugin skills a "Plugin" badge', () => {
-    const badge = getSkillSourceBadge(makePluginSkill());
-    expect(badge.label).toBe('Plugin');
-    expect(badge.className).toMatch(/violet/);
-  });
-
-  it('gives mcp_server skills an "MCP" badge', () => {
-    const badge = getSkillSourceBadge(makeMcpSkill());
-    expect(badge.label).toBe('MCP');
-    expect(badge.className).toMatch(/warning/);
   });
 });
 

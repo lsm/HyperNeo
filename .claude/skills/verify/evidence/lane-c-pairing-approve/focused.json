@@ -10,11 +10,20 @@
   "repositoryCheck": "passed",
   "callGraph": "Approval operation -> async repository adapter -> one write command -> existing active-device read and conditional approval UPDATE. Only codeId/deviceId/time cross the worker boundary. Existing shared gateway supplies the transaction.",
   "scope": "Pairing code approval only; other pairing operations and their SQL remain separate.",
-  "syntheticFaultObservation": "The Deno lost-receipt worker failure also rejected an in-flight background search flush; its expected injected-fault log is retained. Later independent approval recovers the writer. No closed-database shutdown error occurred.",
   "unverified": [
     "Browser layout and deployed build",
     "Other pairing operations DB ownership",
     "Large-volume performance",
     "Separate SQL, queue and clone timings"
-  ]
+  ],
+  "initialDenoFaultObservation": "The Deno lost-receipt worker failure also rejected an in-flight background search flush; its expected injected-fault log is retained. Later independent approval recovers the writer. No closed-database shutdown error occurred.",
+  "baseSync": {
+    "dev": "4ad4e0b1578a307f067f235c72ba48a4988ad50e",
+    "previousHead": "2413a3b790e0e478dfde0a9899f3c1e2b7cf0c9c",
+    "conflicts": 0,
+    "focusedVitestPassed": 50,
+    "repositoryCheck": "passed",
+    "bunDenoMainSql": 0,
+    "unknownOutcomeNotReplayed": true
+  }
 }

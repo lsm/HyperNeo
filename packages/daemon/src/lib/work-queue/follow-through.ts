@@ -5,10 +5,11 @@ export type FollowThroughIncident = {
   nudges: number;
   at?: number;
   redispatched?: boolean;
+  live?: string;
 };
 
-export function mayRedispatch(running: number, lastMovedAt: number, now: number) {
-  return running < 6 && now - lastMovedAt >= 60_000;
+export function mayRedispatch(running: number, lastMovedAt: number, now: number, limit: number) {
+  return running < limit && now - lastMovedAt >= 60_000;
 }
 
 export function continuesIncident(prior: FollowThroughIncident, since: number) {

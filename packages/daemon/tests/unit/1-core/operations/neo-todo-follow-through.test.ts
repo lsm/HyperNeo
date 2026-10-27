@@ -42,12 +42,20 @@ function world() {
   const base = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(base);
   const workers = new Map<string, { lastActivityAt: number; replies: boolean; status?: string }>();
-  const knobs = { stopRefused: false, tellRefused: false, placeKnown: true, startRefused: false };
+  const knobs = {
+    stopRefused: false,
+    tellRefused: false,
+    placeKnown: true,
+    startRefused: false,
+    sendRefused: false,
+    onSend: null as null | (() => void),
+    onTell: null as null | (() => void),
+  };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   let started = 0;
   const runner = createNeoTodoRunner({
-    limits: () => ({ running: 99, perGroup: 99 }),
+    limits: () => ({ running: 6, perGroup: 3 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -66,6 +74,14 @@ function world() {
       }
       if (name === 'work.send') {
         const worker = workers.get(id);
+        knobs.onSend?.();
+        if (knobs.sendRefused)
+          return completed({
+            ok: false,
+            reason: 'not_delivered',
+            detail: 'thread-follower-steer-turn-timeout',
+            notSent: true,
+          });
         if (worker?.replies) worker.lastActivityAt = Date.now();
         return completed({ ok: true, value: { delivered: true } });
       }
@@ -105,6 +121,7 @@ function world() {
     packs: () => [],
     tell: async (_ask, _todo, note) => {
       if (knobs.tellRefused) throw new Error('synthetic notification refusal');
+      knobs.onTell?.();
       told.push(note);
     },
     changed: () => {},
@@ -337,6 +354,28 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.sessions.readNudge(idle.id)).toEqual(before);
   });
 
+  test('a reminder the worker never receives moves the todo to a fresh worker at once', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null);
+    w.knobs.sendRefused = true;
+    await w.at(20);
+    expect(w.named('work.send')).toHaveLength(1);
+    expect(w.named('work.start')).toHaveLength(1);
+    expect(w.todo(todo.id).state).toBe('doing');
+  });
+
+  test('a todo finished while its reminder bounced is not reopened as stalled', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null);
+    w.knobs.sendRefused = true;
+    w.knobs.onSend = () => {
+      w.store.updateTodo(w.todo(todo.id), { state: 'done', evidence: 'Merged.' }, Date.now());
+    };
+    await w.at(20);
+    expect(w.todo(todo.id).state).toBe('done');
+    expect(w.told.filter((note) => note.includes('stalled'))).toEqual([]);
+  });
+
   test('a stalled todo whose worker place is known gets a fresh worker there', async () => {
     const w = (current = world());
     const todo = w.adopt(null);
@@ -427,5 +466,14 @@ describe('a doing todo never sits idle without someone on it', () => {
     w.adopt(null);
     for (const minutes of [20, 40, 60, 62]) await w.at(minutes);
     expect(w.named('work.find')).toEqual([]);
+  });
+
+  test('a todo finished while the stall note is being sent stays finished', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    w.knobs.onTell = () =>
+      w.store.updateTodo(w.todo(todo.id), { state: 'done', evidence: 'Merged.' }, Date.now());
+    await w.at(60);
+    expect(w.todo(todo.id).state).toBe('done');
   });
 });

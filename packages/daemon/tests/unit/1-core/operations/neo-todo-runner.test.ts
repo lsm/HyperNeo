@@ -1745,21 +1745,21 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('a refused unreachable notice releases its reservation so notification can retry', async () => {
+  test('a refused stall notice for an unreachable worker releases its reservation so it can retry', async () => {
     let refused = true;
     const h = await stopped(null, 'Build the rows.', undefined, () => {
       if (refused) throw new Error('synthetic notification refusal');
     });
     try {
-      h.setSend({ ok: false, reason: 'not_open' });
+      h.setSend({ ok: false, reason: 'not_open', notSent: true });
       await h.at(20);
       expect(h.told).toEqual([]);
       expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(0);
+      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
       refused = false;
       await h.at(20);
-      await h.at(20);
-      expect(h.told).toEqual([expect.stringContaining('could not be reached')]);
-      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
+      expect(h.told).toEqual([expect.stringContaining('did not reach its worker')]);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1784,17 +1784,36 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('an unreachable worker is not reminded or reported twice for one step', async () => {
+  test.each([
+    ['unreachable', 'remote send timed out'],
+    ['not_delivered', 'thread-follower-steer-turn-timeout'],
+  ])(
+    'a reminder whose delivery is uncertain (%s) keeps the todo going and tells Neo',
+    async (reason, detail) => {
+      const h = await stopped(null);
+      try {
+        h.setSend({ ok: false, reason, detail });
+        await h.at(20);
+        expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+        expect(h.told.filter((note) => note.includes('could not be reached'))).toHaveLength(1);
+      } finally {
+        h.clock.mockRestore();
+        h.db.close();
+      }
+    }
+  );
+
+  test('an unreachable worker is reminded once, then the todo stalls instead of being reminded again', async () => {
     const h = await stopped(null);
     try {
-      h.setSend({ ok: false, reason: 'not_open' });
+      h.setSend({ ok: false, reason: 'not_open', notSent: true });
       await h.at(20);
-      await h.at(20);
+      await h.at(40);
       expect(h.sends()).toHaveLength(1);
-      expect(h.told.filter((note) => note.includes('has made no progress'))).toEqual([
-        expect.stringContaining('its worker could not be reached'),
+      expect(h.told.filter((note) => note.includes('stalled'))).toEqual([
+        expect.stringContaining('did not reach its worker (not_open)'),
       ]);
-      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
+      expect(h.store.getTodo(h.todo.id)?.blockedBy).toBe('stalled');
       expect(h.warnings).toEqual([]);
     } finally {
       h.clock.mockRestore();
