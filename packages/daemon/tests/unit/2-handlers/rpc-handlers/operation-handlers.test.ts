@@ -254,7 +254,7 @@ describe('operation.invoke RPC registration', () => {
     {},
     { title: ' ' },
     { priority: 'invalid' },
-    { labels: [1] },
+    { labels: [true] },
     { status: 'done' },
     { spaceId: 'space' },
     { dependsOn: [''] },
@@ -350,7 +350,7 @@ describe('operation.invoke RPC registration', () => {
     for (const patch of [
       { status: 'approved' },
       { status: 'rate_limited' },
-      { status: 'done', result: 1 },
+      { status: 'done', result: true },
       { status: 'done', title: 'Changed' },
     ]) {
       await expect(
@@ -361,6 +361,31 @@ describe('operation.invoke RPC registration', () => {
       ).rejects.toThrow();
     }
     expect(readTaskCore(taskDb, task.id)).toEqual(task);
+  });
+
+  test('stores normalized numeric labels and lifecycle results through RPC', async () => {
+    const task = createStandaloneTask.run(
+      taskDb,
+      { input: { title: 'Numeric variants' } },
+      fixtureChanges()
+    );
+    expect(
+      await client.request('operation.invoke', {
+        name: 'task.update',
+        input: { taskId: task.id, labels: [1] },
+      })
+    ).toMatchObject({ labels: ['1'] });
+    expect(
+      await client.request('operation.invoke', {
+        name: 'task.transition',
+        input: { taskId: task.id, status: 'done', result: 2 },
+      })
+    ).toMatchObject({ status: 'done', result: '2' });
+    expect(readTaskCore(taskDb, task.id)).toMatchObject({
+      labels: ['1'],
+      result: '2',
+      status: 'done',
+    });
   });
 
   test('lists standalone pages and explicit Space/status scopes through RPC', async () => {

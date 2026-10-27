@@ -109,6 +109,10 @@ describe.each(streams)('$name tail pages', ({ name, seed, key }) => {
     expect(page(await read(7, { before: 5, limit: 3 })).ids).toEqual([id(2), id(3), id(4)]);
   });
 
+  test('numeric-string cursors and limits return the same backward page', async () => {
+    expect(page(await read(7, { before: '5', limit: '3' })).ids).toEqual([id(2), id(3), id(4)]);
+  });
+
   test('the first page backward is short and ends at the oldest entry', async () => {
     const { ids, value } = page(await read(7, { before: 3, limit: 3 }));
     expect(ids).toEqual([id(1), id(2)]);
@@ -153,7 +157,7 @@ describe.each(streams)('$name tail pages', ({ name, seed, key }) => {
     { before: 0 },
     { before: -1 },
     { before: 1.5 },
-    { before: '9' },
+    { before: true },
     { before: newest + 1 },
     { after: 2, before: 9 },
   ])('rejects invalid or combined cursors %o', async (input) => {

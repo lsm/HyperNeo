@@ -755,7 +755,7 @@ describe('work verb operations', () => {
         return { ok: true, value: summary('hyperneo', 's1') };
       },
     };
-    for (const effort of [' ', 'x'.repeat(101), 42]) {
+    for (const effort of [' ', 'x'.repeat(101), true]) {
       await expect(
         call(
           'work.start',
@@ -773,6 +773,26 @@ describe('work verb operations', () => {
       ).rejects.toThrow();
     }
     expect(starts).toBe(0);
+  });
+
+  test('normalizes numeric effort before invoking the driver', async () => {
+    const capable: WorkAdapter = {
+      ...hyperneo,
+      supportsStartEffort: true,
+      start: async (request) => ({
+        ok: true,
+        value: { ...summary('hyperneo', 's1'), effort: request.effort },
+      }),
+    };
+    expect(
+      await call(
+        'work.start',
+        { adapter: capable.id, place, title: 't', message: 'm', effort: 42 },
+        undefined,
+        undefined,
+        [capable]
+      )
+    ).toMatchObject({ ok: true, value: { effort: '42' } });
   });
 
   test('tells the adapter who is sending', async () => {
