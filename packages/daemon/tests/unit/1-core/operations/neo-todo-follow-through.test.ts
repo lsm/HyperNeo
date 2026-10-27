@@ -41,7 +41,8 @@ function world() {
     });
   const base = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(base);
-  const workers = new Map<string, { lastActivityAt: number; replies: boolean }>();
+  const workers = new Map<string, { lastActivityAt: number; replies: boolean; status?: string }>();
+  const knobs = { stopRefused: false, tellRefused: false };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   let started = 0;
@@ -65,12 +66,17 @@ function world() {
         if (worker?.replies) worker.lastActivityAt = Date.now();
         return completed({ ok: true, value: { delivered: true } });
       }
-      if (name === 'work.stop') return completed({ ok: true, value: {} });
+      if (name === 'work.stop')
+        return completed(
+          knobs.stopRefused
+            ? { ok: false, reason: 'refused', detail: 'synthetic stop refusal' }
+            : { ok: true, value: {} }
+        );
       const worker = workers.get(id);
       return completed({
         ok: true,
         value: {
-          status: 'done',
+          status: worker?.status ?? 'done',
           lastActivityAt: worker?.lastActivityAt ?? base,
           lastReplyAt: worker?.lastActivityAt ?? base,
         },
@@ -78,6 +84,7 @@ function world() {
     },
     packs: () => [],
     tell: async (_ask, _todo, note) => {
+      if (knobs.tellRefused) throw new Error('synthetic notification refusal');
       told.push(note);
     },
     changed: () => {},
@@ -116,7 +123,7 @@ function world() {
   };
   const named = (name: string) => calls.filter((call) => call.name === name);
   const todo = (id: string) => store.getTodo(id) as NeoTodo;
-  return { db, store, runner, workers, told, add, adopt, at, named, todo, clock };
+  return { db, store, runner, workers, knobs, told, add, adopt, at, named, todo, clock };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -194,5 +201,46 @@ describe('a doing todo never sits idle without someone on it', () => {
     for (const minutes of [20, 40, 60]) await w.at(minutes);
     expect(w.named('work.start')).toHaveLength(1);
     expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+  });
+
+  test('a refused stall note leaves the todo doing so the next pass tells Neo again', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    w.knobs.tellRefused = true;
+    await w.at(60);
+    expect(w.todo(todo.id).state).toBe('doing');
+    w.knobs.tellRefused = false;
+    await w.at(61);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+    expect(w.told.filter((note) => note.includes('stalled'))).toHaveLength(1);
+  });
+
+  test('an idle worker that cannot be stopped is not doubled; the todo stalls instead', async () => {
+    const w = (current = world());
+    const todo = w.add();
+    await w.runner.start(todo.id);
+    w.knobs.stopRefused = true;
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    expect(w.named('work.start')).toHaveLength(1);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+    expect(w.told.some((note) => note.includes('fresh worker'))).toBe(false);
+  });
+
+  test('a stalled todo goes back to doing when its worker runs again, on a fresh ladder', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    await w.at(60);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    Object.assign(w.workers.get('adopted-session')!, { status: 'running' });
+    await w.at(65);
+    expect(w.todo(todo.id).state).toBe('doing');
+    Object.assign(w.workers.get('adopted-session')!, {
+      status: 'done',
+      lastActivityAt: Date.now(),
+    });
+    await w.at(100);
+    expect(w.todo(todo.id).state).toBe('doing');
+    await w.at(126);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
   });
 });
