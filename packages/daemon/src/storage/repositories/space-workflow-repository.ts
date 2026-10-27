@@ -14,6 +14,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger.ts';
+import { buildWorkflowIdentityPatch } from './workflow-identity-patch.ts';
 import {
   computeDefinitionVersion,
   stableVersionTimestamp,
@@ -348,29 +349,7 @@ export class SpaceWorkflowRepository {
     if (!row) return null;
 
     const now = Math.max(Date.now(), row.updated_at + 1);
-    const fields: string[] = [];
-    const values: (string | number | null)[] = [];
-
-    if (params.name !== undefined) {
-      fields.push('name = ?');
-      values.push(params.name.trim());
-    }
-    if (params.description !== undefined) {
-      fields.push('description = ?');
-      values.push(params.description ?? '');
-    }
-    if (params.startNodeId !== undefined) {
-      fields.push('start_node_id = ?');
-      values.push(params.startNodeId ?? null);
-    }
-    if (params.endNodeId !== undefined) {
-      fields.push('end_node_id = ?');
-      values.push(params.endNodeId ?? null);
-    }
-    if (params.tags !== undefined) {
-      fields.push('tags = ?');
-      values.push(JSON.stringify(params.tags ?? []));
-    }
+    const { fields, values } = buildWorkflowIdentityPatch(params);
 
     if (params.channels !== undefined) {
       fields.push('channels = ?');

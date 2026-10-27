@@ -533,7 +533,11 @@ export function NeoAskTodos({
   };
   const { ask, todos } = entry;
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
-  const readingDetails = open || expanded.length > 0;
+  const readingDetails =
+    open ||
+    expanded.length > 0 ||
+    (received.summary?.openQuestionCount ?? 0) > 0 ||
+    !!details?.questions.some((question) => question.state === 'open');
   useEffect(() => {
     setReadRevision(null);
     return () => {
