@@ -1,5 +1,6 @@
 import type { NeoQuestionAnswer, NeoQuestionSource } from '@hyperneo/shared/types/neo-ask';
 import type { Database } from '../sqlite-compat.ts';
+import { isAgentResolvedQuestion } from '@hyperneo/shared/types/neo-ask';
 
 type StoredRoute = {
   id: string;
@@ -10,6 +11,7 @@ type StoredRoute = {
   attemptedAt?: number | null;
 };
 type AnswerRow = {
+  state: 'open' | 'answered' | 'retired';
   id: string;
   answer: string | null;
   answeredBy: 'button' | 'chat' | null;
@@ -108,7 +110,7 @@ export class NeoQuestionAnswerRepository {
 
   private rows(id?: string): AnswerRow[] {
     return this.db
-      .prepare(`SELECT id, answer, answered_by AS answeredBy,
+      .prepare(`SELECT id, state, answer, answered_by AS answeredBy,
       answered_at AS answeredAt, worker_answers_json AS routes FROM neo_questions
       WHERE ${id ? 'id = ?' : 'worker_answers_json IS NOT NULL'} ORDER BY rowid DESC`)
       .all(...(id ? [id] : [])) as AnswerRow[];
@@ -120,7 +122,7 @@ export class NeoQuestionAnswerRepository {
         ...route,
         questionId: row.id,
         answer: row.answer === null ? null : (JSON.parse(row.answer) as NeoQuestionAnswer),
-        answeredBy: row.answeredBy,
+        answeredBy: isAgentResolvedQuestion(row) ? ('agent' as const) : row.answeredBy,
         answeredAt: row.answeredAt,
         state:
           route.acceptedAt !== null

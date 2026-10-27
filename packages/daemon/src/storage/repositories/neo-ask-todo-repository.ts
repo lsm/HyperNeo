@@ -929,6 +929,30 @@ export class NeoAskTodoRepository {
     return this.getQuestion(question.id);
   }
 
+  resolveQuestion(
+    question: NeoQuestion,
+    answer: NeoQuestionAnswer,
+    citation: string,
+    now: number
+  ): NeoQuestion | null {
+    if (
+      !this.changeQuestion(
+        question.id,
+        {
+          state: 'retired',
+          answer: JSON.stringify(answer),
+          answered_by: null,
+          answered_at: now,
+          retired_reason: citation,
+        },
+        'open'
+      )
+    )
+      return null;
+    this.touchAsk(question.askId, now);
+    return this.getQuestion(question.id);
+  }
+
   retireQuestion(
     question: NeoQuestion,
     reason: string,
