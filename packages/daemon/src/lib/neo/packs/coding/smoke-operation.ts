@@ -3,11 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../../../operations/registry.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
-import {
-  CodingSmoke,
-  recordCodingSmoke,
-  type CodingDeliveryFactsRepository,
-} from './delivery-facts.ts';
+import { CodingSmoke, type CodingDeliveryFactsRepository } from './delivery-facts.ts';
 import type { CodingAssignmentsRepository } from './assignments.ts';
 import type { NeoDeployReader } from './deploy-checks.ts';
 
@@ -20,8 +16,26 @@ const Input = z.object({
   head: z.string().min(1),
   smoke: CodingSmoke,
 });
-type Input = z.infer<typeof Input>;
+export type CodingSmokeRequest = z.infer<typeof Input>;
+type Input = CodingSmokeRequest;
 type Result = { accepted: true } | { accepted: false; reason: string };
+
+export function requireCodingSmokeAssignment(
+  input: Input,
+  assignments: CodingAssignmentsRepository,
+  repo: CodingDeliveryFactsRepository
+): { value: true } | { reason: Extract<Result, { accepted: false }> } {
+  const assignment = assignments.read(input.todoId, input.url, input.head).qa;
+  const gate = repo.read(input.todoId, input.url, input.head)?.gate;
+  return assignment &&
+    isDeepStrictEqual(assignment.actor, input.smoke.actor) &&
+    isDeepStrictEqual(assignment.ref, input.smoke.ref) &&
+    (!gate ||
+      (gate.acceptanceContract === assignment.acceptanceContract &&
+        isDeepStrictEqual(gate.write, assignment.write)))
+    ? { value: true }
+    : { reason: { accepted: false, reason: 'stage_assignment_mismatch' } };
+}
 
 export function createCodingSmokeOperation(
   repo: CodingDeliveryFactsRepository,
@@ -30,32 +44,10 @@ export function createCodingSmokeOperation(
 ) {
   const record = (superpipe({})('coding.record-assigned-smoke') as PipelineAPI)
     .input(['input'])
-    .pipe(
-      (input: Input) => {
-        const assignment = assignments.read(input.todoId, input.url, input.head).qa;
-        const gate = repo.read(input.todoId, input.url, input.head)?.gate;
-        return assignment &&
-          isDeepStrictEqual(assignment.actor, input.smoke.actor) &&
-          isDeepStrictEqual(assignment.ref, input.smoke.ref) &&
-          (!gate ||
-            (gate.acceptanceContract === assignment.acceptanceContract &&
-              isDeepStrictEqual(gate.write, assignment.write)))
-          ? { value: input }
-          : { reason: { accepted: false, reason: 'stage_assignment_mismatch' } };
-      },
-      'input',
-      'result:result'
-    )
+    .pipe((input: Input) => assignments.smokeAssignmentCurrent(input), 'input', 'result:result')
     .pipe(
       async (input: Input) =>
-        recordCodingSmoke(
-          repo,
-          input.todoId,
-          input.url,
-          input.head,
-          input.smoke,
-          await readDeploys([input.url])
-        ),
+        repo.recordAssignedSmokeCurrent(input, await readDeploys([input.url])),
       'input',
       'result'
     )
