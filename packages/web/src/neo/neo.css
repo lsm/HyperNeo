@@ -830,3 +830,25 @@
   background: var(--accent);
   opacity: 1;
 }
+
+@media (pointer: coarse) {
+  .neo-shell :is(.copy-button, .neo-message-action) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    min-width: 44px;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .neo-shell :is(.copy-button, .neo-message-action):active:not(:disabled) {
+    background: var(--fill-strong);
+    transform: scale(0.94);
+  }
+
+  .neo-shell .code-block-wrapper pre {
+    padding-right: 60px !important;
+    min-height: 60px;
+  }
+}

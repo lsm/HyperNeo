@@ -697,7 +697,7 @@ function PublicEntry({
               setRestoring(true);
               void result.then(settle, () => settle(false));
             }}
-            class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
+            class="neo-message-action rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             <NeoIcon name="edit" class="!h-4 !w-4" />
           </button>
@@ -713,7 +713,7 @@ function PublicEntry({
             type="button"
             aria-label={t(ask ? 'chat.replyYours' : 'chat.replyNeo')}
             title={t('chat.reply')}
-            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            class="neo-message-action rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() =>
               onQuote({
                 author: ask ? 'You' : 'Neo',
@@ -859,7 +859,7 @@ export function PendingAsk({
             aria-label={t('chat.retry')}
             title={t('chat.retry')}
             onClick={() => onRetry?.(ask.requestId)}
-            class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
+            class="neo-message-action rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             <NeoIcon name="retry" class="!h-4 !w-4" />
           </button>
@@ -868,7 +868,7 @@ export function PendingAsk({
             aria-label={t('chat.edit')}
             title={t('chat.edit')}
             onClick={() => onEdit?.(ask.requestId)}
-            class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
+            class="neo-message-action rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             <NeoIcon name="edit" class="!h-4 !w-4" />
           </button>

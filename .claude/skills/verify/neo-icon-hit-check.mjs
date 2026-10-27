@@ -45,17 +45,18 @@ export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch
   await page.screenshot({ path: `${evidence}/${phase}-${touch ? 'mobile' : 'desktop'}-expanded.png`, scale: 'css' });
   if (phase === 'after' && touch) {
     await footer.scrollIntoViewIfNeeded();
-    const box = await footer.boundingBox(), cdp = await page.context().newCDPSession(page);
+    const box = await footer.boundingBox();
     const normal = await footer.evaluate(button => getComputedStyle(button).backgroundColor);
     try {
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2 }] });
-      const pressed = await footer.evaluate(button => ({ background: getComputedStyle(button).backgroundColor, transform: getComputedStyle(button).transform }));
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(120);
+      const pressed = await footer.evaluate(async button => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); return { background: getComputedStyle(button).backgroundColor, transform: getComputedStyle(button).transform }; });
       assert.notEqual(pressed.background, normal);
       assert.notEqual(pressed.transform, 'none');
       await page.screenshot({ path: `${evidence}/mobile-pressed.png`, scale: 'css' });
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      observations.push({ pressed });
-    } finally { await cdp.detach(); }
+      observations.push({ pressed, heldPointerInTouchLayout: true });
+    } finally { await page.mouse.up(); }
   }
   await page.getByRole('textbox', { name: 'Message Neo', exact: true }).fill('Synthetic retry hit area');
   await use(page.getByRole('button', { name: 'Send message', exact: true }));
