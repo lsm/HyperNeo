@@ -4,14 +4,21 @@ PORT=${1:?usage: launch.sh <port> [run-dir]}
 RUN=${2:-$(mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX")}
 REPO=${VERIFY_REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}
 [ "$PORT" = 8399 ] && { echo "refusing 8399: that is the real daemon's port"; exit 1; }
-for p in "$PORT" 8000; do
+MOCK_PORT=${VERIFY_MOCK_PORT:-8000}
+if ! [[ "$MOCK_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$MOCK_PORT" -gt 65535 ] ||
+  [ "$MOCK_PORT" = 8399 ] || [ "$MOCK_PORT" = "$PORT" ]; then
+  echo "invalid mock port: choose 1-65535, excluding 8399 and the daemon port"
+  exit 1
+fi
+for p in "$PORT" "$MOCK_PORT"; do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $p is busy"; exit 1; fi
 done
 mkdir -p "$RUN/home" "$RUN/data" "$RUN/bin" "$RUN/evidence"
 cp "$REPO/.claude/skills/verify/${VERIFY_GH_STUB:-gh-stub.sh}" "$RUN/bin/gh"
 clean_env=(env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin"
   TMPDIR="${TMPDIR:-/tmp}" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1
-  ${VERIFY_LOG_LEVEL:+LOG_LEVEL=$VERIFY_LOG_LEVEL})
+  ${VERIFY_LOG_LEVEL:+LOG_LEVEL=$VERIFY_LOG_LEVEL}
+  ${VERIFY_MOCK_PORT:+VERIFY_MOCK_PORT=$VERIFY_MOCK_PORT})
 cd "$REPO"
 "${clean_env[@]}" bun ".claude/skills/verify/${VERIFY_MOCK:-mock-api.ts}" < /dev/null > "$RUN/mock-api.log" 2>&1 &
 echo $! > "$RUN/mock-api.pid"

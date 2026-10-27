@@ -1,3 +1,4 @@
+import { searchNeoCards } from './neo-card-search.ts';
 import { readHyperneoTurnEnds } from './hyperneo-turn-ends-read.ts';
 import { readCodexSnapshot } from './codex-desktop-read.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
@@ -35,21 +36,23 @@ worker.onmessage = ({ data }) => {
     started = performance.now(),
     queueMs = Date.now() - data.sentAt;
   workerOperation = args
-    ? 'query' in args
-      ? 'work-search'
-      : 'hyperneoTurnEnds' in args
-        ? 'hyperneo-turn-ends'
-        : 'codexSnapshot' in args
-          ? 'codex-snapshot'
-          : 'turnVectors' in args
-            ? 'turn-vectors'
-            : 'neoMessageStatus' in args
-              ? 'neo-message-status'
-              : 'feed' in args
-                ? 'message-feed'
-                : 'page' in args
-                  ? 'sdk-page'
-                  : 'sdk-status'
+    ? 'cardQuery' in args
+      ? 'card-search'
+      : 'query' in args
+        ? 'work-search'
+        : 'hyperneoTurnEnds' in args
+          ? 'hyperneo-turn-ends'
+          : 'codexSnapshot' in args
+            ? 'codex-snapshot'
+            : 'turnVectors' in args
+              ? 'turn-vectors'
+              : 'neoMessageStatus' in args
+                ? 'neo-message-status'
+                : 'feed' in args
+                  ? 'message-feed'
+                  : 'page' in args
+                    ? 'sdk-page'
+                    : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -73,6 +76,14 @@ worker.onmessage = ({ data }) => {
         repository = new SDKMessageRepository(db);
       }
       result = db.transaction(() => {
+        if ('cardQuery' in args) {
+          return searchNeoCards(
+            (sql, bindings) => db!.prepare(sql).all(...bindings),
+            args.cardQuery.query,
+            args.cardQuery.cursor,
+            args.cardQuery.limit
+          );
+        }
         if ('query' in args) {
           const semantic = args.semantic
             ? { model: args.semantic.model, vector: Float32Array.from(args.semantic.vector) }

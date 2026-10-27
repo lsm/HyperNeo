@@ -16,6 +16,10 @@ import {
 } from './providers/session-provider-env-pipeline.js';
 import { selectTitleGenerationModel } from './title-model-selection.js';
 
+export function devProxyBaseUrl(): string {
+  return `http://127.0.0.1:${process.env.VERIFY_MOCK_PORT ?? '8000'}`;
+}
+
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
   return {
     id: newInfo.id as Provider,
@@ -372,7 +376,7 @@ export class ProviderService {
     if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
       sdkConfig.envVars = {
         ...sdkConfig.envVars,
-        ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+        ANTHROPIC_BASE_URL: devProxyBaseUrl(),
       };
     }
     const envVars = sdkConfigToEnvVars(sdkConfig);
@@ -433,7 +437,7 @@ export class ProviderService {
     if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
       sdkConfig.envVars = {
         ...sdkConfig.envVars,
-        ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+        ANTHROPIC_BASE_URL: devProxyBaseUrl(),
       };
     }
     return shieldProviderKey(provider.id, sdkConfigToEnvVars(sdkConfig), sessionConfig.sessionId);

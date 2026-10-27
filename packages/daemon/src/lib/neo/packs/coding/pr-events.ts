@@ -2,6 +2,9 @@ import { codingRepoWatched } from './watched-repos.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { callCodingBranchDb } from './branch-facts-db.ts';
+import { codingUnownedWrites } from './unowned-db.ts';
 import { CodingPrLedgerRepository, type CodingPrTransition } from './pr-ledger.ts';
 import { CODING_MANUAL_MERGE_NEXT_STEP, type CodingSweepDeps } from './pr-sweep.ts';
 import {
@@ -120,6 +123,20 @@ export class CodingPrEventRepository {
         .run(notice.key, notice.text, JSON.stringify(watchedRows));
       return notice;
     })();
+  }
+
+  pendingUnownedLater(now: number): Promise<CodingUnownedNotice | null> {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingUnownedWrites, 'pending', now),
+      'coding.unowned.db'
+    );
+  }
+
+  unownedDeliveredLater(key: string): Promise<void> {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingUnownedWrites, 'acknowledge', key),
+      'coding.unowned.db'
+    );
   }
 
   unownedDelivered(key: string): void {

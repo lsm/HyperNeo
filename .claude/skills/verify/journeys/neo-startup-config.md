@@ -5,13 +5,7 @@ no real keys or credential reads, loopback scripted model and ephemeral non-8399
 This is the existing real-SDK publication journey extended to cover an old stored root.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-neo-startup-proof-XXXXXX)
-mkdir -p "$RUN/home" "$RUN/evidence"
-cd packages/daemon
-env -i HOME="$RUN/home" PATH="$PATH" TERM=dumb NODE_ENV=test \
-  HYPERNEO_USE_DEV_PROXY=0 VERIFY_EVIDENCE_DIR="$RUN/evidence" \
-  node_modules/.bin/vitest run --config vitest.online.config.ts \
-  tests/online/convo/neo-publication-sdk.test.ts
+TMPDIR=/private/tmp bash .claude/skills/verify/neo-unsandboxed-sdk.sh /absolute/fresh/evidence-directory
 ```
 
 The test first creates a real SDK transcript containing a random marker at a synthetic
@@ -23,14 +17,13 @@ Through session.get and Neo message/publication RPC, verify the stored and model
 prompt is neoPrompt(packBriefs), native Read/Bash tools are present, the prior marker still
 reaches the model, SDK session identity is unchanged, the shared lifecycle copied the
 transcript to the new cwd, and the human-visible publication is readable. The resumed fixture uses dontAsk with
-Read/Grep/Glob/web/Bash approved and native mutation tools unavailable. Follow
-[Neo read sandbox](neo-read-sandbox.md) for its actual OS write-denial and explicit
-tool-error checks. The scripted reply proves transport/config/publication
+Read/Grep/Glob/web/Bash approved and native mutation tools unavailable. The scripted reply proves transport/config/publication
 plumbing; it is not evidence of a real model's spontaneous decision to publish.
 Missing transcript data cannot be reconstructed by this
 config refresh and is not claimed recovered.
 
-Save `$RUN/evidence/neo-goal-cycle-sdk.json` outside the worktree; it contains startup
+The wrapper saves `neo-goal-cycle-sdk.json` outside the worktree and removes
+its fresh HOME/data/temp directory on success or failure; it contains startup
 config, tools seen by the model, historySeen, both paths, SDK id, publication and web-reader
 receipt. The test closes SDK turns, WebSocket, daemon and mock in finally. Focused startup
 unit tests also cover new/existing roots, no-root recovery, idempotency, changing pack
@@ -42,3 +35,13 @@ stored root config read-only: current prompt including root-turn-end and goal-cy
 Read/Bash in sdkToolsPreset and publication invoke in allowedTools. Do not deploy/restart
 or edit the live DB from this journey. Keep rollout/live-config confirmation pending until
 those actual readbacks exist.
+
+The sandbox-toggle RPC must refuse both ON and OFF for a bound Neo, reporting
+sandboxEnabled false with the explicit reason that the control does not apply.
+It must neither persist a misleading enabled flag nor reset a running query.
+The focused handler test covers the running-query case; this real SDK journey
+covers both wire receipts and retained startup/history/publication behavior.
+JSON omits undefined properties, so successful replies elsewhere must not be
+required to contain an `error: undefined` key. This journey exercises both
+synthetic credential sources through the real SDK, not an OS sandbox. Evidence
+contains no vacuous OS-containment fields or disabled proof branches.

@@ -58,7 +58,10 @@ const PROCESSING = `CASE WHEN json_valid(processing_state) THEN CASE
     AND json_extract(processing_state, '$.reason') = 'restart' THEN 'interrupted_by_restart'
   ELSE json_extract(processing_state, '$.status') END END`;
 const SESSION_COLUMNS = `id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-  ${PROCESSING} AS processing`;
+  ${PROCESSING} AS processing,
+  CASE WHEN json_extract(metadata, '$.queryFailureEpisode.failed') = 1
+    THEN json_extract(metadata, '$.queryFailureEpisode.id') END AS queryFailureId,
+  json_extract(metadata, '$.queryFailureEpisode.error') AS queryFailureError`;
 const SESSIONS_PER_PLACE = 20;
 const CLOSED_SESSIONS = 500;
 const REPLY_LIMIT = 4_000;
@@ -86,6 +89,8 @@ export interface HyperneoSessionRow {
   lastActiveAt: string | null;
   branch?: string | null;
   directory?: string | null;
+  queryFailureId?: string | null;
+  queryFailureError?: string | null;
 }
 
 export interface HyperneoSessionControl {
@@ -206,11 +211,12 @@ export function withSessionLoad(work: WorkSummary): WorkSummary {
 }
 
 function toWork(row: HyperneoSessionRow, machine: string): WorkSummary {
+  const status = hyperneoWorkStatus(row.status, row.processing);
   return {
     ref: { adapter: 'hyperneo', id: row.id },
     title: row.title,
     place: { machine, ...(row.folder ? { folder: row.folder } : {}), name: placeName(row.folder) },
-    status: hyperneoWorkStatus(row.status, row.processing),
+    status: row.queryFailureId && status !== 'stopped' ? 'failed' : status,
     lastActivityAt: timestamp(row.lastActiveAt),
     link: `/session/${row.id}`,
   };
@@ -365,8 +371,7 @@ export function hyperneoSessionBusy(row: HyperneoSessionRow): boolean {
 export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessionRow | null {
   const row = db
     .prepare(
-      `SELECT id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-         ${PROCESSING} AS processing, COALESCE(worktree_branch, git_branch) AS branch,
+      `SELECT ${SESSION_COLUMNS}, COALESCE(worktree_branch, git_branch) AS branch,
          COALESCE(worktree_path, workspace_path) AS directory
          FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
     )
@@ -485,7 +490,9 @@ export async function describeHyperneoWork(
 ): Promise<Result<WorkDetail>> {
   const work = toWork(row, deps.machine);
   const turnEnds = since === undefined ? [] : await deps.readTurnEnds(row.id, since);
-  const last = readHyperneoLastResult(deps.db(), row.id);
+  const last = row.queryFailureId
+    ? { reply: row.queryFailureError, failed: 1, at: row.lastActiveAt }
+    : readHyperneoLastResult(deps.db(), row.id);
   return {
     ok: true,
     value: {

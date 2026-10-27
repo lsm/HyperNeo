@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Session } from '@hyperneo/shared';
+import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
@@ -95,6 +96,8 @@ try {
   raw.prepare("UPDATE sdk_messages SET sdk_message='' WHERE session_id IN ('stale','tail','double','queued','consumed','failed','nested','other')").run();
   const newerRowid = (raw.prepare('SELECT rowid AS rowid FROM sdk_messages WHERE sdk_uuid=?').get('stale-a-newer') as { rowid: number }).rowid;
   assert(Number.isInteger(newerRowid) && newerRowid > 0);
+  await waitForSdkBodyCopy(raw);
+  evidence.startupBodyCopyComplete = true;
   const bodies = () => createHash('sha256').update(JSON.stringify(raw.prepare('SELECT seq,sdk_message FROM sdk_message_bodies ORDER BY seq').all())).digest('hex');
   const beforeHash = bodies(); evidence.storedBodyHashBefore = beforeHash;
   raw.exec('CREATE TABLE synthetic_shutdown_writer(value INTEGER); INSERT INTO synthetic_shutdown_writer VALUES(0)');
