@@ -147,6 +147,7 @@ import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
 import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
 import { neoPublicationPageWrites } from '../repositories/neo-publication-page-db.ts';
+import { pairingApproveWrite } from '../repositories/pairing-approve-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -271,5 +272,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingStageTargetReads,
     codingLedgerPollReads,
     neoPublicationPageWrites,
+    pairingApproveWrite,
   ].map((op) => [op.name, op])
 );

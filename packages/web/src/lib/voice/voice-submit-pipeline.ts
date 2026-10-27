@@ -24,6 +24,7 @@ export interface VoiceSubmitInput {
   retrySilent?: boolean;
   intent?: 'draft' | 'send';
   sendDraft?: string;
+  sendContext?: VoiceRecordEntry['sendContext'];
   door?: 'session';
   previewContext?: NeoPreviewReference;
 }
@@ -140,6 +141,7 @@ async function persistVoiceAudio(ctx: VoiceSubmitGatedCtx): Promise<VoiceSubmitP
     createdAt: ctx.startedAt,
     intent: ctx.intent === 'send' ? 'send' : 'draft',
     sendDraft: ctx.intent === 'send' ? (ctx.sendDraft ?? '') : undefined,
+    ...(ctx.intent === 'send' && ctx.sendContext ? { sendContext: ctx.sendContext } : {}),
     ...(ctx.door ? { door: ctx.door } : {}),
     ...(ctx.previewContext && ctx.door !== 'session' ? { previewContext: ctx.previewContext } : {}),
   };
