@@ -1,0 +1,7 @@
+[0m[1m[31merror[0m: Uncaught (in promise) AssertionError: The expression evaluated to a falsy value:
+
+  assert(section.ok)
+
+  const section = repo.createSection('group', 'https://github.com/synthetic/project/issues/7', 'Synthetic epic'); assert(section.ok);
+[0m[31m                                                                                                                  ^[0m
+    at [0m[36mfile:///Users/lsm/.codex/worktrees/dea1f09f/neokai/.claude/skills/verify/neo-project-move-db.ts[0m:[0m[33m54[0m:[0m[33m115[0m

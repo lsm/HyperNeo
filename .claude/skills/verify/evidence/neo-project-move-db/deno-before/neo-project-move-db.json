@@ -1,0 +1,8 @@
+{
+  "mode": "before",
+  "verified": false,
+  "consumer": "Real daemon public WebSocket neo.project.move and neo.snapshot",
+  "limitation": "Synthetic fixtures; no GUI, model, live daemon or GitHub. No held-writer latency claim.",
+  "mainSql": [],
+  "commands": []
+}

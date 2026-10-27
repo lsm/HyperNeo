@@ -1,3 +1,4 @@
+import { neoProjectMoveWrites } from './neo-project-move-writes.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { neoProjectForgetWrites } from './neo-project-forget-writes.ts';
 import { neoProjectCleanupWrites } from './neo-project-cleanup-writes.ts';
@@ -239,6 +240,18 @@ export class NeoRepository {
         alias.startsWith(`repo:${repository}\u0000`)
       )
     );
+  }
+
+  async moveProjectLater(id: string, parentId: string | null, expectedRevision: number) {
+    const result = await gatewayFor(this.db).call(
+      neoProjectMoveWrites,
+      'move',
+      id,
+      parentId,
+      expectedRevision
+    );
+    if (result.ok) this.notify();
+    return result;
   }
 
   moveProject(
