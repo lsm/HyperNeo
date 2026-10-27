@@ -4,7 +4,7 @@ export async function verifySettledPreview(page, fixture, { touch = false, evide
   const use = control => touch ? control.tap() : control.click();
   await page.goto(fixture.url);
   if (touch) await use(page.getByRole('button', { name: /^Your work/ }));
-  const card = page.locator('[data-ask="settled-preview"]:visible');
+  const card = page.locator(`[data-ask="${fixture.askId ?? 'settled-preview'}"]:visible`);
   await card.waitFor();
   const settle = async () => page.evaluate(async () => {
     await Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished));
@@ -12,18 +12,19 @@ export async function verifySettledPreview(page, fixture, { touch = false, evide
   await settle();
   await page.screenshot({path:`${evidence}/${touch?'mobile':'desktop'}-initial.png`,scale:'css'});
   await use(card.locator('[data-ask-details-toggle]'));
-  const first = card.locator('#neo-ref-question-answered-long');
+  const history = page.getByTestId(`neo-ask-all-${fixture.askId ?? 'settled-preview'}`);
+  const first = history.locator('#neo-ref-question-answered-long');
   await first.getByRole('button', {name:'Read all',exact:true}).waitFor();
   const result = {touch, previewLengths:[], completeText:false, documentsSeparate:false, closed:false};
   for (const id of ['answered-long','retired-long']) {
-    const row = card.locator(`#neo-ref-question-${id}`);
+    const row = history.locator(`#neo-ref-question-${id}`);
     await row.getByText('important choices', {exact:true}).first().waitFor();
     const preview = await row.innerText();
     assert(preview.length < 450 && !preview.includes('Final detail 9098'));
     assert(preview.includes(id === 'answered-long' ? 'Keep the decision' : 'No longer needed'));
     result.previewLengths.push(preview.length);
     await use(row.getByRole('button',{name:'Read all',exact:true}));
-    const dialog=page.getByRole('dialog');
+    const dialog=page.getByRole('dialog',{name:'Read all',exact:true});
     await dialog.getByRole('table').waitFor();
     assert.equal(await dialog.getByText('important choices',{exact:true}).count(),60);
     assert.equal(await dialog.getByRole('link',{name:'Safe source'}).getAttribute('href'),'https://example.test/decision');
@@ -38,9 +39,9 @@ export async function verifySettledPreview(page, fixture, { touch = false, evide
     assert(!(await row.innerText()).includes('Final detail 9098'));
   }
   result.completeText=true;result.closed=true;
-  assert.equal(await card.locator('#neo-ref-question-answered-short').getByRole('button',{name:'Read all',exact:true}).count(),0);
+  assert.equal(await history.locator('#neo-ref-question-answered-short').getByRole('button',{name:'Read all',exact:true}).count(),0);
   await use(first.getByRole('button',{name:'View full versions',exact:true}));
-  const versions=page.getByRole('dialog');assert.equal(await versions.locator('pre').innerText(),'Literal original versions');
+  const versions=page.getByRole('dialog',{name:'View full versions',exact:true});assert.equal(await versions.locator('pre').innerText(),'Literal original versions');
   await use(versions.getByRole('button',{name:'Close modal'}));result.documentsSeparate=true;
   await first.scrollIntoViewIfNeeded();await settle();
   await page.screenshot({path:`${evidence}/${touch?'mobile':'desktop'}-preview.png`,scale:'css'});
