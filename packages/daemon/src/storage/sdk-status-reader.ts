@@ -1,4 +1,5 @@
 import type { NeoCardSearchPage } from './neo-card-search.ts';
+import type { WorkDetail } from '../lib/drivers/types.ts';
 import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
 import type { PendingTurn } from './turn-vectors.ts';
@@ -42,6 +43,7 @@ export type CardSearchArgs = {
 };
 type SDKReadArgs =
   | SDKStatusArgs
+  | { hyperneoTurnEnds: { sessionId: string; since: number } }
   | SDKPageArgs
   | WorkSearchArgs
   | MessageFeedArgs
@@ -51,6 +53,7 @@ type SDKReadArgs =
   | CardSearchArgs;
 export type SDKReadResult =
   | SDKStatusPage
+  | NonNullable<WorkDetail['turnEnds']>
   | SDKMessagePage
   | NeoCardSearchPage
   | WorkChatMatch[]
@@ -208,6 +211,12 @@ export class SDKStatusReader {
     return this.enqueue({ turnVectors: { model, dimensions, limit: null } }) as Promise<number>;
   }
 
+  readHyperneoTurnEnds(sessionId: string, since: number) {
+    return this.enqueue({ hyperneoTurnEnds: { sessionId, since } }) as Promise<
+      NonNullable<WorkDetail['turnEnds']>
+    >;
+  }
+
   readCodexSnapshot(statePath: string, includeClosed: boolean): Promise<CodexSnapshot> {
     return this.enqueue({ codexSnapshot: { statePath, includeClosed } }) as Promise<CodexSnapshot>;
   }
@@ -294,17 +303,19 @@ export class SDKStatusReader {
                 ? 'card-search'
                 : 'query' in args
                   ? 'work-search'
-                  : 'codexSnapshot' in args
-                    ? 'codex-snapshot'
-                    : 'turnVectors' in args
-                      ? 'turn-vectors'
-                      : 'neoMessageStatus' in args
-                        ? 'neo-message-status'
-                        : 'feed' in args
-                          ? 'message-feed'
-                          : 'page' in args
-                            ? 'sdk-page'
-                            : 'sdk-status'
+                  : 'hyperneoTurnEnds' in args
+                    ? 'hyperneo-turn-ends'
+                    : 'codexSnapshot' in args
+                      ? 'codex-snapshot'
+                      : 'turnVectors' in args
+                        ? 'turn-vectors'
+                        : 'neoMessageStatus' in args
+                          ? 'neo-message-status'
+                          : 'feed' in args
+                            ? 'message-feed'
+                            : 'page' in args
+                              ? 'sdk-page'
+                              : 'sdk-status'
               : 'close',
             id,
             epoch,

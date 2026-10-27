@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
@@ -60,6 +61,7 @@ describe('space adapter start, status and stop', () => {
   function adapter(refuse?: string) {
     fillSdkMessageFixtureColumns(db);
     return createSpaceAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -308,6 +310,7 @@ describe('space adapter send', () => {
   function adapter() {
     fillSdkMessageFixtureColumns(db);
     return createSpaceAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -636,6 +639,7 @@ describe('space adapter send', () => {
         },
       } as never);
       const actual = createSpaceAdapter({
+        readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
         db: () => db,
         machine: 'imac',
         searchChats: async () => [],

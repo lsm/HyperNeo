@@ -1,4 +1,5 @@
 import { searchNeoCards } from './neo-card-search.ts';
+import { readHyperneoTurnEnds } from './hyperneo-turn-ends-read.ts';
 import { readCodexSnapshot } from './codex-desktop-read.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts } from '../lib/neo/message-status.ts';
@@ -39,17 +40,19 @@ worker.onmessage = ({ data }) => {
       ? 'card-search'
       : 'query' in args
         ? 'work-search'
-        : 'codexSnapshot' in args
-          ? 'codex-snapshot'
-          : 'turnVectors' in args
-            ? 'turn-vectors'
-            : 'neoMessageStatus' in args
-              ? 'neo-message-status'
-              : 'feed' in args
-                ? 'message-feed'
-                : 'page' in args
-                  ? 'sdk-page'
-                  : 'sdk-status'
+        : 'hyperneoTurnEnds' in args
+          ? 'hyperneo-turn-ends'
+          : 'codexSnapshot' in args
+            ? 'codex-snapshot'
+            : 'turnVectors' in args
+              ? 'turn-vectors'
+              : 'neoMessageStatus' in args
+                ? 'neo-message-status'
+                : 'feed' in args
+                  ? 'message-feed'
+                  : 'page' in args
+                    ? 'sdk-page'
+                    : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -82,6 +85,13 @@ worker.onmessage = ({ data }) => {
             ? { model: args.semantic.model, vector: Float32Array.from(args.semantic.vector) }
             : undefined;
           return repository!.searchWorkChats(args.query, args.limit, semantic, args.kinds);
+        }
+        if ('hyperneoTurnEnds' in args) {
+          return readHyperneoTurnEnds(
+            db!,
+            args.hyperneoTurnEnds.sessionId,
+            args.hyperneoTurnEnds.since
+          );
         }
         if ('turnVectors' in args) {
           const { model, dimensions, limit } = args.turnVectors;

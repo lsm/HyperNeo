@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { createClaudeCodeAdapter } from '../../../../src/lib/drivers/claude-code-adapter';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -303,6 +304,9 @@ describe('skipSpaceQuery', () => {
       reason: [],
     });
     const adapter = createHyperneoAdapter({
+      readTurnEnds: async () => {
+        throw new Error('read turn reports');
+      },
       db: () => {
         throw new Error('read the database');
       },
@@ -399,6 +403,7 @@ describe('hyperneo adapter against the sessions table', () => {
     for (let n = 0; n < 600; n++)
       closed.run(`x${n}`, `2026-10-05T00:00:${String(n % 60).padStart(2, '0')}.${n}Z`);
     const adapter = createHyperneoAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -410,6 +415,7 @@ describe('hyperneo adapter against the sessions table', () => {
 
   test('groups its own sessions by project root and adds folders from workspace history', async () => {
     const adapter = createHyperneoAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
