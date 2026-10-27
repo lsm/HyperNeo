@@ -1,0 +1,21 @@
+{
+  "base": "4c6be2a5dae003cf19f624a3f99d40e331a05ef9",
+  "redCommit": "d9302253ab",
+  "productionChangedLines": 36,
+  "sharedSmokeRegistrationLines": 1,
+  "localCallGraphLines": 180,
+  "focusedVitest": {
+    "passed": 58,
+    "files": 7
+  },
+  "repositoryCheck": "passed",
+  "registrationCorrection": "An initial generic gateway .run adapter added one lexical run site and failed the ratchet. Switched to the existing typed repository-command .call interface; all counters remain at baseline, no baseline or checker changes. Both runtime proofs and focused/full checks were rerun afterward.",
+  "scope": "Public POST /pair redemption, its pending-approval read and existing recovery transaction only. HTTP body parsing, cookies and limiter stay on main; no callback or network effect crosses the worker boundary.",
+  "unverified": [
+    "Browser layout, TLS transport and deployed build",
+    "Remaining pairing operations DB ownership",
+    "Large-volume latency",
+    "Separate SQL, queue and cloning time"
+  ],
+  "checkoutException": "Coordinator authorized a new branch from freshly fetched dev in the sole protected clean checkout; no second checkout or install."
+}

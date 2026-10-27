@@ -3,6 +3,7 @@ import type { Database } from '../sqlite-compat.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { pairingApproveWrite } from './pairing-approve-write.ts';
+import { pairingRedeemWrite } from './pairing-redeem-write.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon';
 
@@ -266,6 +267,10 @@ export class DevicePairingRepository {
         'SELECT 1 FROM (SELECT recovered_at FROM human_device_resets ORDER BY rowid DESC LIMIT 1) WHERE recovered_at IS NULL'
       )
       .get();
+  }
+
+  redeemAsync(code: string, name: string, now: number) {
+    return gatewayFor(this.db).call(pairingRedeemWrite, 'redeem', code, name, now);
   }
 
   redeem(
