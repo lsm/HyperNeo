@@ -767,6 +767,7 @@ export class NeoService {
       now,
     });
     if (!receipt.ok) return receipt;
+    this.notifyChanged();
     const content = fillPrompt(NEO_SESSION_TRACK, {
       title: JSON.stringify(receipt.ask.title),
       ref: JSON.stringify(receipt.ref),

@@ -18,6 +18,11 @@ The fixed journey must prove the real local-human neo.session.track operation:
   worker ref/link and follow anchor. Compare the 324000-byte title and hash through
   public neo.ask.read. Observe an actual immediate mailbox kickoff with matching
   committed root/message/ask/todo identifiers and full notice-derived prompt text.
+- Emits exactly one `neo.changed` to the connected WebSocket client after commit,
+  before attempting kickoff. A synthetic kickoff failure must still refresh the
+  client to its committed public Work card. Repeating the tap is refused without
+  another refresh; rollback stays silent. The notification regression on the old
+  head fails because the client receives no event despite the committed card.
 - Blocks receipt, change publication and kickoff under an imposed 1200ms WAL
   writer; public health stays responsive. Record the missed 250ms receipt target
   honestly, with no early-success or replay workaround.
