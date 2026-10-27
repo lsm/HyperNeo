@@ -2,6 +2,7 @@ import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-pr
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   existsSync,
+  lstatSync,
   appendFileSync,
   mkdirSync,
   mkdtempSync,
@@ -410,6 +411,39 @@ describe('claude-desktop start', () => {
     expect(opening[opening.indexOf('--append-system-prompt') + 1]).toContain('HYPERNEO_WORKTREES');
   });
 
+  test.each(['directory', 'settings'])(
+    'an unsandboxed worker persists locations through a %s symlink',
+    async (kind) => {
+      configureWorkerSandbox(() => 'off');
+      const directory = join(dir, 'prepared');
+      const target = join(dir, 'dotfiles');
+      mkdirSync(target);
+      const settings = join(target, 'settings.local.json');
+      writeFileSync(
+        settings,
+        JSON.stringify({ env: { CUSTOM: 'retained' }, permissions: { deny: ['Bash(rm *)'] } })
+      );
+      const link =
+        kind === 'directory'
+          ? join(directory, '.claude')
+          : join(directory, '.claude/settings.local.json');
+      if (kind === 'settings') mkdirSync(join(directory, '.claude'));
+      symlinkSync(kind === 'directory' ? target : settings, link);
+      const driver = adapter({
+        prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
+      });
+      expect(
+        await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user)
+      ).toMatchObject({ ok: true });
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      const persisted = JSON.parse(readFileSync(settings, 'utf8'));
+      expect(persisted.env.CUSTOM).toBe('retained');
+      expect(persisted.env.HYPERNEO_WORKTREES).toBe(join(dir, 'data/worktrees'));
+      expect(persisted.permissions).toEqual({ deny: ['Bash(rm *)'] });
+      expect(persisted.sandbox).toBeUndefined();
+    }
+  );
+
   test.each(['missing', 'existing'])(
     'failed in-place launch leaves %s project settings unchanged',
     async (state) => {
@@ -428,7 +462,7 @@ describe('claude-desktop start', () => {
     }
   );
 
-  test.each(['symlinked-claude', 'file-claude', 'symlinked-settings', 'invalid-json'])(
+  test.each(['file-claude', 'invalid-json'])(
     'location settings failure %s is typed before launch and releases preparation',
     async (layout) => {
       configureWorkerSandbox(() => 'off');
