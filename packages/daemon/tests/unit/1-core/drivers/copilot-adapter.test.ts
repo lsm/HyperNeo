@@ -70,6 +70,12 @@ describe('owned Copilot lifecycle', () => {
       .map((line) => JSON.parse(line));
     expect(calls[0].worktrees).toMatch(/worktrees$/);
     expect(
+      calls.find((call) => call.method === 'session.create').params.systemMessage.sections
+    ).toEqual({ environment_context: { action: 'remove' } });
+    expect(calls.find((call) => call.method === 'session.create').params.systemMessage.mode).toBe(
+      'customize'
+    );
+    expect(
       calls.find((call) => call.method === 'session.create').params.systemMessage.content
     ).toContain('HYPERNEO_WORKTREES');
   });

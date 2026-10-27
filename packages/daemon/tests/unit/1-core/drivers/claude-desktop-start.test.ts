@@ -410,6 +410,24 @@ describe('claude-desktop start', () => {
     expect(opening[opening.indexOf('--append-system-prompt') + 1]).toContain('HYPERNEO_WORKTREES');
   });
 
+  test.each(['missing', 'existing'])(
+    'failed in-place launch leaves %s project settings unchanged',
+    async (state) => {
+      configureWorkerSandbox(() => 'off');
+      const path = join(place.folder, '.claude/settings.local.json');
+      const original = '{ "env": { "CUSTOM": "retained" }, "permissions": { "deny": [] } }\n';
+      if (state === 'existing') {
+        mkdirSync(join(place.folder, '.claude'));
+        writeFileSync(path, original);
+      }
+      const failed = await adapter({ exit: 1 }).start!({ ...request, inPlace: true }, user);
+      expect(failed).toMatchObject({ ok: false, reason: 'not_delivered' });
+      if (state === 'existing') expect(readFileSync(path, 'utf8')).toBe(original);
+      else expect(existsSync(join(place.folder, '.claude'))).toBe(false);
+      expect(spawned).toHaveLength(1);
+    }
+  );
+
   test.each(['symlinked-claude', 'file-claude', 'symlinked-settings', 'invalid-json'])(
     'location settings failure %s is typed before launch and releases preparation',
     async (layout) => {
