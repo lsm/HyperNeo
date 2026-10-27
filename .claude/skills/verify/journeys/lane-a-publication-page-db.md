@@ -52,3 +52,11 @@ interface and merging dev with the stage-target reader. The shared registry keep
 both append-only entries; operations.ts did not conflict and retains only its
 granted call-site change. No SQL baseline change was made. Previous passing
 bindings remain historical; only proofBinding identifies the final candidate.
+
+The latest binding was refreshed after merging dev with the inventory readers
+and turn-vector writer. Only the first registry import conflicted; both imports
+are retained, with this slice's import at the end of the import block. Against
+dev, the registry diff remains exactly the granted import and appended entry.
+operations.ts merged cleanly and retains only the granted factory-call change.
+Both fresh runtime proofs identify the merged application commit; historical
+passing pairs are not evidence for the new candidate.
