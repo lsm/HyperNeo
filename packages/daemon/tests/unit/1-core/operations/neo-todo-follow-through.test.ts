@@ -49,6 +49,7 @@ function world() {
     startRefused: false,
     sendRefused: false,
     onSend: null as null | (() => void),
+    onTell: null as null | (() => void),
   };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
@@ -119,6 +120,7 @@ function world() {
     packs: () => [],
     tell: async (_ask, _todo, note) => {
       if (knobs.tellRefused) throw new Error('synthetic notification refusal');
+      knobs.onTell?.();
       told.push(note);
     },
     changed: () => {},
@@ -463,5 +465,14 @@ describe('a doing todo never sits idle without someone on it', () => {
     w.adopt(null);
     for (const minutes of [20, 40, 60, 62]) await w.at(minutes);
     expect(w.named('work.find')).toEqual([]);
+  });
+
+  test('a todo finished while the stall note is being sent stays finished', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    w.knobs.onTell = () =>
+      w.store.updateTodo(w.todo(todo.id), { state: 'done', evidence: 'Merged.' }, Date.now());
+    await w.at(60);
+    expect(w.todo(todo.id).state).toBe('done');
   });
 });

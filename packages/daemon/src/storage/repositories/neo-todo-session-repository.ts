@@ -270,7 +270,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   noteWorkerStatus(todoId: string, status: string): void {
     const prior = this.readNudge(todoId);
-    if (prior && prior.live !== status) this.recordNudge(todoId, { ...prior, live: status });
+    if (prior?.live !== status)
+      this.recordNudge(
+        todoId,
+        prior ? { ...prior, live: status } : { since: 0, nudges: 0, live: status }
+      );
   }
 
   workerIdle(todoId: string): boolean {
