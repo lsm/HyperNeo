@@ -508,6 +508,9 @@ env -i HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$DELIVERY_PARKING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-delivery-parking.ts" "$DELIVERY_PARKING_RUN"
 
+AGENT_REMINDER_DELETE_RUN="$WORK_DIR/agent-reminder-delete-writer"
+mkdir -p "$AGENT_REMINDER_DELETE_RUN/home"
+env -i HOME="$AGENT_REMINDER_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$AGENT_REMINDER_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/agent-reminder-delete-writer.ts" verify "$AGENT_REMINDER_DELETE_RUN"
 WORKFLOW_DELETE_WRITER_RUN="$WORK_DIR/workflow-delete-writer"
 mkdir -p "$WORKFLOW_DELETE_WRITER_RUN/home"
 env -i HOME="$WORKFLOW_DELETE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_DELETE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-delete-writer.ts" verify "$WORKFLOW_DELETE_WRITER_RUN"
