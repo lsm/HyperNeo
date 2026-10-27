@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
 import {
   installClaudeNativeWrites,
-  persistClaudeWorkEnvironment,
+  prepareClaudeWorkEnvironment,
   readClaudeWorkerSandbox,
 } from './claude-native-writes.ts';
 import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
@@ -1598,9 +1598,10 @@ export async function startClaudeSession(
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
       : (prepared?.value.directory ?? folder);
+  let writeEnvironment: (() => Promise<void>) | null = null;
   if (!worktree) {
     try {
-      await persistClaudeWorkEnvironment(cwd);
+      writeEnvironment = await prepareClaudeWorkEnvironment(cwd);
     } catch (error) {
       await prepared?.value.release();
       if (prepared) await releaseWorkerSandbox(prepared.value.directory);
@@ -1664,7 +1665,10 @@ export async function startClaudeSession(
     permissionMode,
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
-  const imported = await (worktree ? persistClaudeWorkEnvironment(cwd) : Promise.resolve())
+  const imported = await (writeEnvironment
+    ? writeEnvironment()
+    : prepareClaudeWorkEnvironment(cwd).then((write) => write())
+  )
     .then(() => importClaudeDesktopSession(cliSessionId, cwd, deps))
     .catch((error: unknown) =>
       reject('not_delivered', `Could not open prepared worker: ${String(error)}`)

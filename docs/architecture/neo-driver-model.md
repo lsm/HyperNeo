@@ -258,6 +258,17 @@ environment without location flags. The worker-standalone-clone journey verifies
 this with an isolated daemon and real CLI shell; actual Desktop app adoption and
 rendering remain unverified.
 
+Claude validates local settings before preparing a session and writes the
+location environment only after the first CLI turn succeeds. Failed in-place
+preparation preserves absent settings or existing bytes. Unsupported layouts
+return a typed refusal before launch; an unused private clone is released.
+
+Copilot work-location evidence (SDK 1.0.13): SystemMessageAppendConfig makes
+append the default. The owned worker uses empty mode; the real SDK converts
+an omitted/append mode into customize with environment_context removed and
+content retained. The owned lifecycle test captures this real SDK wire payload
+against a scripted CLI peer. Native model/tool behavior remains unverified.
+
 ### Creation permission defaults
 
 New work started through HyperNeo requests Full Access through the supported permission parameters:

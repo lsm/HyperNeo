@@ -193,19 +193,31 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   return normalized;
 }
 
-export async function persistClaudeWorkEnvironment(directory: string) {
+async function readClaudeWorkSettings(directory: string) {
   const folder = join(directory, '.claude');
-  await mkdir(folder, { recursive: true });
-  if (!(await lstat(folder)).isDirectory()) throw new Error('Claude settings require a directory');
+  const directoryEntry = await lstat(folder).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (directoryEntry && !directoryEntry.isDirectory())
+    throw new Error('Claude settings require a directory');
   const path = settingsPath(directory);
   const entry = await lstat(path).catch((error) => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
   if (entry && !entry.isFile()) throw new Error('Claude settings must be a regular file');
-  const existing = entry ? JSON.parse(await readFile(path, 'utf8')) : {};
-  await writeAtomic(path, {
-    ...existing,
-    env: { ...existing.env, ...workerWorkEnvironment(directory) },
-  });
+  return { folder, path, existing: entry ? JSON.parse(await readFile(path, 'utf8')) : {} };
+}
+
+export async function prepareClaudeWorkEnvironment(directory: string) {
+  await readClaudeWorkSettings(directory);
+  return async () => {
+    const { folder, path, existing } = await readClaudeWorkSettings(directory);
+    await mkdir(folder, { recursive: true });
+    await writeAtomic(path, {
+      ...existing,
+      env: { ...existing.env, ...workerWorkEnvironment(directory) },
+    });
+  };
 }

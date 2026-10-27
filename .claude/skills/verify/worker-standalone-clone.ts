@@ -142,6 +142,24 @@ try {
   assert.notEqual(failedDirectory, worker);
   assert.equal(existsSync(failedDirectory), false, 'unconfirmed start releases its private clone');
   assert.equal(existsSync(worker), true, 'confirmed worker clone is retained');
+  const inPlaceDirectory = join(run, 'in-place-workspace');
+  mkdirSync(inPlaceDirectory);
+  for (const existing of [false, true]) {
+    const settings = join(inPlaceDirectory, '.claude/settings.local.json');
+    const original = '{ "env": { "CUSTOM": "retained" } }\n';
+    if (existing) {
+      mkdirSync(join(inPlaceDirectory, '.claude'));
+      writeFileSync(settings, original);
+    }
+    const inPlaceFailed = await rpc('work.start', { adapter: 'claude-desktop', place: { machine: hostname(), folder: inPlaceDirectory, name: 'Synthetic in-place folder' }, title: 'Synthetic failed in-place worker', message: 'Never dispatched', inPlace: true }) as { ok: boolean; reason?: string };
+    assert.equal(inPlaceFailed.ok, false);
+    assert.equal(inPlaceFailed.reason, 'not_delivered');
+    assert.equal(readFileSync(join(run, 'evidence/worker-cwd'), 'utf8'), inPlaceDirectory);
+    if (existing) assert.equal(readFileSync(settings, 'utf8'), original);
+    else assert.equal(existsSync(join(inPlaceDirectory, '.claude')), false);
+    evidence.push({ inPlaceFailed, existingSettings: existing, projectSettingsUnchanged: true });
+  }
+  const launchBeforeSettingsRefusal = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
   rmSync(join(run, 'fail-cli'));
   const clonesBefore = readdirSync(dirname(worker)).sort();
   mkdirSync(join(remote, '.claude'));
@@ -151,7 +169,7 @@ try {
   const settingsRefused = await rpc('work.start', request) as { ok: boolean; reason?: string; detail?: string };
   assert.equal(settingsRefused.ok, false);
   assert.equal(settingsRefused.reason, 'preparation_failed');
-  assert.equal(readFileSync(join(run, 'evidence/worker-cwd'), 'utf8'), failedDirectory, 'no child was launched');
+  assert.equal(readFileSync(join(run, 'evidence/worker-cwd'), 'utf8'), launchBeforeSettingsRefusal, 'no child was launched');
   assert.deepEqual(readdirSync(dirname(worker)).sort(), clonesBefore, 'unlaunched prepared clone was released');
   assert.equal(readFileSync(join(remote, '.claude/settings.local.json'), 'utf8'), 'synthetic invalid JSON');
   evidence.push({ settingsRefused, noChildLaunched: true, preparedCloneReleased: true, sourceUnchanged: true });
@@ -162,7 +180,7 @@ try {
   const lfsRefused = await rpc('work.start', request) as { ok: boolean; detail?: string };
   assert.equal(lfsRefused.ok, false);
   assert.match(lfsRefused.detail ?? '', /LFS.*smudge filter lfs failed/s);
-  assert.equal(readFileSync(join(run, 'evidence/worker-cwd'), 'utf8'), failedDirectory);
+  assert.equal(readFileSync(join(run, 'evidence/worker-cwd'), 'utf8'), launchBeforeSettingsRefusal);
   git(source, 'remote', 'set-url', 'origin', join(run, 'absent-remote'));
   const refused = await rpc('work.start', request) as { ok: boolean; detail?: string };
   assert.equal(refused.ok, false);

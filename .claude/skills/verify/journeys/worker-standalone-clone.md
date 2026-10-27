@@ -92,3 +92,10 @@ bytes. Unit cases also cover symlinked settings, a symlinked .claude directory a
 a regular file in its place. These layouts receive a typed pre-launch refusal;
 the proof does not claim they can be adopted. A confirmed CLI-created worktree is
 retained with a typed not_delivered if later settings/import work fails.
+
+Validation reads supported project settings before the preparation turn, without
+creating or changing them. The location environment is persisted after the CLI
+confirms that first turn and before Desktop import. The failed-in-place legs
+check both absent and existing local settings: no directory is created and
+existing file bytes remain identical when CLI preparation fails. The successful
+native resume leg still verifies the persisted environment.
