@@ -59,7 +59,7 @@ try {
   evidence.maxHealthMs = Math.max(...samples);
   evidence.mainWrites = mainWrites;
   evidence.workerSql = sql.filter(row => row.workerOperation === 'neo.publications.write');
-  evidence.completeBytes = input.fullText.length;
+  evidence.completeBytes = Buffer.byteLength(input.fullText);
   assert.equal(mainWrites, 0, 'Publication persistence ran on daemon main');
   assert(samples.length > 5 && Math.max(...samples) < 250, 'Health unavailable during native writer contention');
   evidence.passed = true;

@@ -1,3 +1,4 @@
+import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
   neoAskSettlementWrites,
@@ -120,6 +121,7 @@ import { codingUnownedWrites } from '../../lib/neo/packs/coding/unowned-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    neoPublicationWrites,
     neoAskSettlementReads,
     neoAskSettlementWrites,
     neoTodoMutationReads,
