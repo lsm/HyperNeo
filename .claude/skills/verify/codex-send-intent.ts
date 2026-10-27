@@ -11,7 +11,7 @@ import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logg
 import { startCodexDesktopTurn, steerCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 import { mock } from 'bun:test';
-import { codexWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
+const sandboxExports = { ...await import('../../../packages/daemon/src/lib/drivers/worker-sandbox.ts') };
 
 const [action, portText, runText] = process.argv.slice(2);
 const port = Number(portText);
@@ -49,7 +49,8 @@ const worker = join(run, 'worker');
 mkdirSync(join(worker, '.git'), { recursive: true });
 let prepared = true;
 mock.module('../../../packages/daemon/src/lib/drivers/worker-sandbox.ts', () => ({
-  resumeWorkerSandbox: async () => prepared ? codexWorkerSandbox(worker) : null,
+  ...sandboxExports,
+  resumeWorkerSandbox: async () => prepared ? sandboxExports.codexWorkerSandbox(worker) : null,
 }));
 const workerDb = new Database(join(home, 'state_5.sqlite'));
 workerDb.prepare('UPDATE threads SET cwd=?').run(worker);
@@ -121,6 +122,10 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
     socket.close();
     return;
   }
+  if (request.method === 'permissionProfile/list') {
+    socket.send(JSON.stringify({ id: request.id, result: { data: [{ id: 'hyperneo-worker', allowed: true }] } }));
+    return;
+  }
   if (request.method === 'thread/loaded/list') {
     socket.send(JSON.stringify({ id: request.id, result: { data: loaded ? ['synthetic'] : [], nextCursor: null } }));
     return;
@@ -148,6 +153,10 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
     else if (queueFault === 'unsupported') socket.send(JSON.stringify({ id: request.id, error: { code: -32601, message: 'method not found' } }));
     else socket.close();
     return;
+  }
+  if (prepared && ['thread/resume', 'thread/settings/update'].includes(request.method)) {
+    assert.equal(request.params.permissions, 'hyperneo-worker');
+    assert.equal(request.params.sandboxPolicy, undefined);
   }
   if (request.method === 'thread/resume' && !resumeError) loaded = true;
   if (request.method === 'thread/queue/add') pendingText = request.params.input[0].text;
@@ -233,7 +242,7 @@ try {
     assert.equal(calls.slice(marked).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
-  for (const step of ['thread/loaded/list', 'thread/resume', 'thread/settings/update']) {
+  for (const step of ['permissionProfile/list', 'thread/loaded/list', 'thread/resume', 'thread/settings/update']) {
     loaded = false; failedStep = step;
     const before = calls.length;
     const failure = await send();

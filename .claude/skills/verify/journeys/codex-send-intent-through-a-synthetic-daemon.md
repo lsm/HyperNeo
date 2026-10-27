@@ -24,6 +24,10 @@ Desktop ownership request, open, steer or turn/start call. The app-server
 loaded list is checked before settings or queue calls; only a saved, unloaded
 thread is resumed.
 The stateful peer rejects settings and enqueue requests until that resume succeeds.
+Prepared sends first require an allowed named profile from `permissionProfile/list`;
+resume and settings requests must select it without a legacy sandbox override.
+The sandbox mock preserves the module's other production exports. Disconnecting
+the profile catalog must report that failed admission step without enqueueing.
 The proof supplies a synthetic prepared-worker policy at the sandbox seam, so it
 does not require or prove OS runtime-directory permissions. The synthetic receiver
 then becomes idle and consumes that same queued input exactly once. work.status

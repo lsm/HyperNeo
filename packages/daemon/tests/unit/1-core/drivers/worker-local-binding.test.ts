@@ -58,10 +58,9 @@ test.each([false, true])(
   }
 );
 
-test('both Codex policy shapes enable network access for local servers', () => {
+test('Codex named profile enables network access for local servers', () => {
   const policy = codexWorkerSandbox(root);
-  expect(policy.config.sandbox_workspace_write.network_access).toBe(true);
-  expect(policy.sandboxPolicy.networkAccess).toBe(true);
+  expect(policy.config.permissions['hyperneo-worker'].network.enabled).toBe(true);
 });
 
 test('installed Claude worker settings export the data-root work locations', async () => {
@@ -76,14 +75,35 @@ test('installed Claude worker settings export the data-root work locations', asy
 test('the Codex worker sandbox keeps the shared worktrees root read-only', () => {
   const policy = codexWorkerSandbox(root);
   const set = policy.config.shell_environment_policy.set as Record<string, string>;
+  const profile = (
+    policy.config.permissions as Record<string, { filesystem: Record<string, string> }>
+  )['hyperneo-worker'].filesystem;
   expect(set.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
   expect(set.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
   expect(set.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(set.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
   for (const path of [set.HYPERNEO_EVIDENCE, set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
-    expect(policy.sandboxPolicy.writableRoots).toContain(path);
+    expect(profile[path]).toBe('write');
   }
-  expect(policy.sandboxPolicy.writableRoots).not.toContain(set.HYPERNEO_WORKTREES);
+  expect(profile[set.HYPERNEO_WORKTREES]).not.toBe('write');
+});
+
+test('resuming recomputes filesystem roots from the current policy', async () => {
+  await installClaudeNativeWrites(root, [join(root, 'source')]);
+  const stale = settings();
+  stale.sandbox = {
+    ...stale.sandbox,
+    filesystem: {
+      ...stale.sandbox.filesystem,
+      allowWrite: ['/tmp/hn-legacy/stale-root'],
+      denyRead: [...stale.sandbox.filesystem.denyRead],
+    },
+  };
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify(stale));
+  const resumed = await readClaudeWorkerSandbox(root);
+  expect(resumed?.sandbox.filesystem.allowWrite).toContain(root);
+  expect(resumed?.sandbox.filesystem.allowWrite).not.toContain('/tmp/hn-legacy/stale-root');
+  expect(settings().sandbox.filesystem.allowWrite).toEqual(resumed?.sandbox.filesystem.allowWrite);
 });
 
 test('resuming a pre-upgrade worker adopts the data-root runtime env', async () => {

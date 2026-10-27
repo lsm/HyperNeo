@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
+import { vi } from 'vitest';
+import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
   codexStartReceipt,
   createCodexDesktopAdapter,
@@ -211,7 +213,12 @@ describe('codex-desktop start', () => {
     const prepared: unknown[] = [];
     let released = false;
     const { instance, calls, spawned } = adapter(
-      { call: async () => ({ thread: { id: 'fresh' } }) },
+      {
+        call: async () => ({
+          thread: { id: 'fresh' },
+          activePermissionProfile: { id: 'hyperneo-worker' },
+        }),
+      },
       undefined,
       {
         root: '/focus/dolmen',
@@ -242,21 +249,65 @@ describe('codex-desktop start', () => {
       'thread/start',
       {
         cwd: dir,
-        sandbox: 'workspace-write',
+        permissions: 'hyperneo-worker',
         config: {
-          sandbox_workspace_write: {
-            writable_roots: expect.arrayContaining([dir, join(dir, '.git')]),
-            exclude_slash_tmp: true,
-            exclude_tmpdir_env_var: true,
+          permissions: {
+            'hyperneo-worker': { filesystem: { [dir]: 'write', [join(dir, '.git')]: 'write' } },
           },
         },
       },
     ]);
     expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
-      sandboxPolicy: { type: 'workspaceWrite', excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+      permissions: 'hyperneo-worker',
     });
     expect(spawned).toEqual([]);
     expect(released).toBe(false);
+  });
+
+  test('an unconfirmed prepared profile releases its clone and runtime without opening a turn', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-unconfirmed-'));
+    mkdirSync(join(dir, '.git'));
+    const prepare = vi
+      .spyOn(sandbox, 'prepareWorkerSandbox')
+      .mockResolvedValue(sandbox.workerSandboxPaths(dir));
+    const release = vi.spyOn(sandbox, 'releaseWorkerSandbox').mockResolvedValue();
+    const persist = vi.spyOn(sandbox, 'persistCodexWorkerProfile').mockResolvedValue();
+    let released = false;
+    const { instance, calls, closed } = adapter(
+      { call: async () => ({ thread: { id: 'unconfirmed' } }) },
+      undefined,
+      {
+        prepareExecution: async () => ({
+          ok: true,
+          value: {
+            directory: dir,
+            release: async () => {
+              released = true;
+            },
+          },
+        }),
+      }
+    );
+    try {
+      expect(
+        await instance.start!(
+          { ...request, preparation: { pack: 'coding', parameters: { target: 'dev' } } },
+          user
+        )
+      ).toMatchObject({
+        ok: false,
+        detail: 'Codex did not confirm the prepared worker permission profile.',
+      });
+      expect(calls.some(([method]) => method === 'thread/start')).toBe(true);
+      expect(calls.some(([method]) => method === 'desktop/start-turn')).toBe(false);
+      expect(released).toBe(true);
+      expect(release).toHaveBeenCalledWith(dir);
+      expect(closed()).toBe(true);
+    } finally {
+      prepare.mockRestore();
+      release.mockRestore();
+      persist.mockRestore();
+    }
   });
 
   test('with the default worker sandbox preference a prepared Codex start has full access', async () => {
