@@ -34,6 +34,7 @@ function fixture(target: string, sharedModes = true) {
   mkdirSync(join(root, '.git'));
   dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
   vi.stubEnv('HYPERNEO_DATA_DIR', dataDir);
+  vi.stubEnv('HOME', join(dataDir, 'home'));
   Object.defineProperty(process, 'platform', { value: target, configurable: true });
   if (sharedModes) {
     Object.defineProperty(process, 'getuid', {

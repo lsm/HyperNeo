@@ -80,13 +80,13 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 ```
 
 No credentials, real home, live daemon, provider, model reasoning or GitHub
-request is used. The disposable home contains only `git_protocol: https` in
+request is used. The disposable home contains only `git_protocol: ssh` in
 `.config/gh/config.yml`, plus synthetic Keychains and Git-credential fixtures.
 The actual Codex native sandbox loads production worker permissions and runs
 `gh config get git_protocol`. The actual SDK Bash tool runs the same command
 against a production Claude policy refreshed from obsolete gh read denials,
 using a scripted loopback model with a literal synthetic key only in the SDK
-child. Both must return https with status zero. Both protected-file cats must
+child. Both must return ssh with status zero. All protected-file cats must
 return nonzero with empty output; ordinary repository output must remain writable.
 
 Before the fix, both engines record `failed to read configuration: operation
@@ -103,3 +103,14 @@ This proves native configuration reads and file denials on the running host;
 it does not prove live GitHub authentication, a push/merge, Linux enforcement,
 or that an already-running turn has reloaded its policy. Existing workers need
 the normal policy refresh on a subsequent turn; do not restart the live daemon.
+
+
+Review follow-up: the fixture now also creates a valid gh `hosts.yml` containing
+only a synthetic OAuth-token marker. Before the fix, both engines can read that
+marker (test-first commit 71bd582d7). The real home hosts.yml is now a denied
+credential file. Each worker receives GH_CONFIG_DIR pointing to daemon-managed,
+read-only metadata outside its writable roots; preparation snapshots only public
+config.yml, never hosts.yml. Codex filesystem rules and Claude denyWrite protect
+this directory. The native proof must still read the configured non-default ssh
+value, deny all three secret-file reads, and refuse writes to its private gh
+config. No live OAuth token is read, copied or passed to this fixture.

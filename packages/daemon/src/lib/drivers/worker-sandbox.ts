@@ -1,5 +1,15 @@
 import { constants, existsSync } from 'node:fs';
-import { lstat, mkdir, open, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  open,
+  rename,
+  rm,
+  rmdir,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkerSandboxMode } from '@hyperneo/shared';
@@ -39,6 +49,7 @@ export function workerSandboxPaths(root: string) {
     TEMP: locations.scratch,
     CLAUDE_CODE_TMPDIR: locations.scratch,
     XDG_CACHE_HOME: locations.cache,
+    GH_CONFIG_DIR: locations.ghConfig,
   };
 }
 
@@ -91,13 +102,20 @@ export async function prepareWorkerSandbox(root: string) {
   const runtime = workerWorkLocations(root).scratch;
   for (const path of new Set([runtime, ...Object.values(env)])) {
     await mkdir(path, { recursive: true, mode: 0o700 });
-    if (path !== runtime && path !== env.XDG_CACHE_HOME) continue;
+    if (path !== runtime && path !== env.XDG_CACHE_HOME && path !== env.GH_CONFIG_DIR) continue;
     const entry = await lstat(path);
     const owner = process.platform === 'win32' ? entry.uid : (process.getuid?.() ?? entry.uid);
     const mode = process.platform === 'win32' ? 0 : entry.mode;
     if (!entry.isDirectory() || (mode & 0o077) !== 0 || entry.uid !== owner)
       throw new Error('Worker runtime roots must be owned private directories');
   }
+  await copyFile(
+    join(homedir(), '.config/gh/config.yml'),
+    join(env.GH_CONFIG_DIR, 'config.yml'),
+    constants.COPYFILE_EXCL
+  ).catch((error) => {
+    if (!['ENOENT', 'EEXIST'].includes(error.code)) throw error;
+  });
   await writeFile(join(root, '.git/hyperneo-worker-sandbox'), 'restricted');
   return env;
 }
@@ -151,6 +169,7 @@ export function workerSecretPaths() {
         '.zlogin',
         '.bash_login',
         '.codex/auth.json',
+        '.config/gh/hosts.yml',
         'Library/Keychains',
         'Library/Application Support/1Password',
       ].map((path) => join(home, path)),

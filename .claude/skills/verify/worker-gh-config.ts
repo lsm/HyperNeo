@@ -31,6 +31,7 @@ for (const root of roots) {
   writeFileSync(join(root, 'probe.sh'), [
     `${quote(gh)} config get git_protocol > gh.out 2> gh.err; printf '%s' "$?" > gh.status`,
     ...protectedFiles.map((path, index) => `/bin/cat ${quote(path)} > secret-${index}.out 2> secret-${index}.err; printf '%s' "$?" > secret-${index}.status`),
+    '/bin/sh -c \'printf changed > "$GH_CONFIG_DIR/config.yml"\' 2> gh-write.err; printf \'%s\' "$?" > gh-write.status',
     'printf repo-readable > repo.out',
   ].join('\n'));
 }
@@ -82,7 +83,7 @@ try {
   for await (const event of stream) writeFileSync(join(run, 'evidence/claude-events.jsonl'), `${JSON.stringify(event)}\n`, { flag: 'a' });
   for (const [index, engine] of ['codex', 'claude'].entries()) {
     const root = roots[index];
-    const files = ['gh.out', 'gh.err', 'gh.status', 'secret-0.out', 'secret-0.err', 'secret-0.status', 'secret-1.out', 'secret-1.err', 'secret-1.status', 'secret-2.out', 'secret-2.err', 'secret-2.status', 'repo.out'];
+    const files = ['gh.out', 'gh.err', 'gh.status', 'secret-0.out', 'secret-0.err', 'secret-0.status', 'secret-1.out', 'secret-1.err', 'secret-1.status', 'secret-2.out', 'secret-2.err', 'secret-2.status', 'gh-write.status', 'gh-write.err', 'repo.out'];
     results[engine] = Object.fromEntries(files.map(file => [file, readFileSync(join(root, file), 'utf8')]));
   }
   writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(results, null, 2));
@@ -95,8 +96,9 @@ try {
       assert.equal(observed[`secret-${index}.out`], '');
     }
     assert.equal(observed['repo.out'], 'repo-readable');
+    assert.notEqual(observed['gh-write.status'], '0', `${engine} private gh metadata was writable`);
   }
-  console.log('PASS: real Codex sandbox and HyperNeo/Claude SDK Bash read synthetic gh config; Keychains and git credential reads remain OS-denied.');
+  console.log('PASS: real Codex sandbox and HyperNeo/Claude SDK Bash read synthetic gh config; Keychains, git credentials and gh hosts.yml reads remain OS-denied; private gh metadata stays read-only.');
 } finally {
   writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(results, null, 2));
   stream?.close(); await server?.stop(true);
