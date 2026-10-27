@@ -1,3 +1,4 @@
+import { buildWorkflowOptionsPatch } from './workflow-options-patch.ts';
 import type {
   CreateSpaceWorkflowParams,
   HandoffTransition,
@@ -351,52 +352,9 @@ export class SpaceWorkflowRepository {
     const now = Math.max(Date.now(), row.updated_at + 1);
     const { fields, values } = buildWorkflowIdentityPatch(params);
 
-    if (params.channels !== undefined) {
-      fields.push('channels = ?');
-      values.push(
-        params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null
-      );
-    }
-
-    if (params.hooks !== undefined) {
-      fields.push('hooks = ?');
-      values.push(params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null);
-    }
-
-    if (params.layout !== undefined) {
-      fields.push('layout = ?');
-      values.push(params.layout ? JSON.stringify(params.layout) : null);
-    }
-
-    if (params.templateName !== undefined) {
-      fields.push('template_name = ?');
-      values.push(params.templateName ?? null);
-    }
-    if (params.templateHash !== undefined) {
-      fields.push('template_hash = ?');
-      values.push(params.templateHash ?? null);
-    }
-    if (params.instructions !== undefined) {
-      fields.push('instructions = ?');
-      values.push(params.instructions ?? null);
-    }
-    if (params.completionAutonomyLevel !== undefined) {
-      fields.push('completion_autonomy_level = ?');
-      values.push(params.completionAutonomyLevel);
-    }
-
-    if (params.postApproval !== undefined) {
-      fields.push('post_approval = ?');
-      values.push(params.postApproval ? JSON.stringify(params.postApproval) : null);
-    }
-    if (params.disabled !== undefined && params.disabled !== null) {
-      fields.push('disabled = ?');
-      values.push(params.disabled ? 1 : 0);
-    }
-    if (params.handle !== undefined) {
-      fields.push('handle = ?');
-      values.push(params.handle ?? null);
-    }
+    const options = buildWorkflowOptionsPatch(params);
+    fields.push(...options.fields);
+    values.push(...options.values);
 
     const hasNodeReplacement = params.nodes !== undefined;
 
