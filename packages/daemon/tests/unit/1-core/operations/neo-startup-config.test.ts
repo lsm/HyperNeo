@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import { vi } from 'vitest';
 import {
-  InternalEventBus,
   type DaemonInternalEventMap,
+  InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
+import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:synthetic-startup';

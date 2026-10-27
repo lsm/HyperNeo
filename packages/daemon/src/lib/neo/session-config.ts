@@ -3,18 +3,6 @@ import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import type { NeoPackBrief } from './pack-contract.ts';
 import { neoPrompt } from './prompt.ts';
 
-export function neoReadSandbox() {
-  return {
-    enabled: true,
-    failIfUnavailable: true,
-    autoAllowBashIfSandboxed: true,
-    allowUnsandboxedCommands: false,
-    excludedCommands: [],
-    enableWeakerNetworkIsolation: true,
-    network: { allowedDomains: ['*'] },
-  };
-}
-
 export function neoReadTools() {
   const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
   return {
@@ -25,7 +13,6 @@ export function neoReadTools() {
     settingSources: [],
     agent: undefined,
     agents: undefined,
-    sandbox: neoReadSandbox(),
   };
 }
 
@@ -40,6 +27,6 @@ export function planNeoSessionConfig(
   if (!session?.config) return null;
   const config = session.config;
   const defaults = neoPromptTools(packs);
-  const current = { ...config, ...defaults };
+  const current = { ...config, ...defaults, sandbox: undefined };
   return JSON.stringify(config) === JSON.stringify(current) ? null : current;
 }

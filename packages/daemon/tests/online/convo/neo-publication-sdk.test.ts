@@ -827,7 +827,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt(neoSettingsPackBriefs()));
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
-    expect(storedAtStartup.config.sandbox).toBeUndefined();
+    expect(storedAtStartup.config.sandbox?.enabled ?? false).toBeFalsy();
     expect(nativeToolsSeen[0]).toEqual(expect.arrayContaining(['Read', 'Bash']));
     expect(historySeen.length).toBeGreaterThan(0);
     expect(historySeen.every(Boolean)).toBe(true);

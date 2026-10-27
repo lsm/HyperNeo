@@ -1,25 +1,19 @@
-import { handoffDraftDirectory } from '../../../../src/lib/handoffs/outbox';
-import { installClaudeNativeWrites } from '../../../../src/lib/drivers/claude-native-writes';
-import {
-  workerSandboxPaths,
-  releaseWorkerSandbox,
-} from '../../../../src/lib/drivers/worker-sandbox';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { vi } from 'vitest';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { AppMcpServer, AppSkill, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir, tmpdir } from 'os';
-import {
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  statSync,
-  realpathSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
+import { vi } from 'vitest';
 import {
   buildProviderSettings,
   ensureAgentTools,
@@ -31,6 +25,12 @@ import {
   SDK_TRANSCRIPT_RETENTION_DAYS,
   withSdkTranscriptRetention,
 } from '../../../../src/lib/agent/sdk-transcript-retention';
+import { installClaudeNativeWrites } from '../../../../src/lib/drivers/claude-native-writes';
+import {
+  releaseWorkerSandbox,
+  workerSandboxPaths,
+} from '../../../../src/lib/drivers/worker-sandbox';
+import { handoffDraftDirectory } from '../../../../src/lib/handoffs/outbox';
 import {
   bumpProviderCatalogEpoch,
   clearModelsCache,
@@ -41,8 +41,8 @@ import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import { SkillsManager } from '../../../../src/lib/skills-manager';
-import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
+import type { SkillsManager } from '../../../../src/lib/skills-manager';
+import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { createTables } from '../../../../src/storage/schema';
 import { createNeoTables } from '../../../../src/storage/schema/neo';
@@ -2235,7 +2235,6 @@ describe('QueryOptionsBuilder', () => {
             expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
             expect(options.additionalDirectories).toEqual([]);
             expect(options.sandbox).toBeUndefined();
-            expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
             expect(options.env?.GH_TOKEN).toBe('synthetic-poller-query-token');
             expect(options.env?.GITHUB_TOKEN).toBe('');
