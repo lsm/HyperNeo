@@ -1,0 +1,85 @@
+{
+  "mode": "before",
+  "verified": false,
+  "consumer": "Real daemon public WebSocket neo.project.move and neo.snapshot",
+  "limitation": "Synthetic fixtures; no GUI, model, live daemon or GitHub. No held-writer latency claim.",
+  "race": [
+    {
+      "ok": true
+    },
+    {
+      "ok": false,
+      "reason": "superseded"
+    }
+  ],
+  "snapshot": [
+    {
+      "id": "child",
+      "title": "child",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": "a",
+      "epicUrl": null,
+      "homePath": null,
+      "revision": 2,
+      "createdAt": 1793091697669,
+      "updatedAt": 1793091697674
+    }
+  ],
+  "noop": {
+    "ok": true
+  },
+  "stale": {
+    "ok": false,
+    "reason": "superseded"
+  },
+  "cycle": {
+    "ok": false,
+    "reason": "project_cycle"
+  },
+  "workspace": {
+    "ok": false,
+    "reason": "section_workspace_mismatch"
+  },
+  "orphan": {
+    "ok": false,
+    "reason": "section_needs_parent"
+  },
+  "missing": {
+    "ok": false,
+    "reason": "unknown_project"
+  },
+  "rollback": "Error: \"database is locked\"",
+  "mainSql": [
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "UPDATE neo_concerns SET parent_id = ?, revision = revision + 1,\n        updated_at = ? WHERE id = ? AND revision = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT alias FROM neo_project_workspaces WHERE project_id = ?",
+    "SELECT alias FROM neo_project_workspaces WHERE project_id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns\n        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id",
+    "UPDATE neo_concerns SET parent_id = ?, revision = revision + 1,\n        updated_at = ? WHERE id = ? AND revision = ?"
+  ],
+  "commands": []
+}
