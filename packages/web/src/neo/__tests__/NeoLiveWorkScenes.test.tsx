@@ -400,6 +400,17 @@ function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = fals
 }
 
 describe('card reply notice navigation', () => {
+  it('clears a Work filter when opening a linked settled question', async () => {
+    mountCard('answered');
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'missingword999' } });
+    await screen.findByText('No matching work');
+    fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Sign-off card' });
+    expect(within(dialog).getByText('Choose a sign-off')).toBeTruthy();
+    expect(screen.getByRole('searchbox')).toHaveProperty('value', '');
+  });
+
   it.each([true, false])('opens the exact paged done todo with owner loaded=%s', async (loaded) => {
     const { model } = mount();
     const todos = Array.from({ length: 25 }, (_, index) =>

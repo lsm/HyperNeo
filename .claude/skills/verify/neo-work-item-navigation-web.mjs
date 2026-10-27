@@ -1,6 +1,31 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
+export async function verifyFilteredWorkReference(page, fixture, { phase, evidence, touch = false }) {
+  const use = control => touch ? control.tap() : control.click();
+  await page.goto(fixture.url);
+  if (touch) await use(page.getByRole('button', { name: /^Your work/ }));
+  await use(page.getByRole('button', { name: 'Search work', exact: true }));
+  const input = page.getByRole('searchbox', { name: 'Search work', exact: true });
+  await input.fill('navigationmissingword999');
+  await page.getByText('No matching work', { exact: true }).waitFor();
+  if (touch) await use(page.getByRole('button', { name: 'Close work list', exact: true }));
+  await use(page.getByRole('button', { name: /I replied · View card.*Saved answered reference/ }));
+  const dialog = page.getByRole('dialog', { name: 'Stored navigation card', exact: true });
+  if (phase === 'before') {
+    await page.getByText('Opening work…', { exact: true }).waitFor({ state: 'detached' });
+    await page.getByText('No matching work', { exact: true }).waitFor();
+    assert.equal(await dialog.count(), 0);
+  } else {
+    await dialog.waitFor();
+    await page.waitForFunction(() => document.activeElement?.id === 'neo-ref-question-nav-answered');
+    assert.equal(await input.inputValue(), '');
+  }
+  await page.evaluate(async () => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished)));
+  await page.screenshot({ path: `${evidence}/${touch ? 'mobile' : 'desktop'}-filtered-reference-${phase}.png`, scale: 'css' });
+  return { touch, filterCleared: phase === 'after', openedAtTarget: phase === 'after' };
+}
+
 export async function verifyWorkReferenceRecovery(page, fixture, { evidence, touch = false }) {
   let fail = true, hold = false;
   const held = [];
