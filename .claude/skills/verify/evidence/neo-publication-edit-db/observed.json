@@ -1,0 +1,35 @@
+{
+  "verified": true,
+  "redRegressionCommit": "f2d9fa522502799dae1cad5960405acf761a4d92",
+  "baselineFolders": {
+    "bun": "bun-before-3",
+    "deno": "deno-before-1"
+  },
+  "baselineMainSql": {
+    "bun": 75,
+    "deno": 75
+  },
+  "productionLines": 64,
+  "targetEditMainSql": 0,
+  "consumer": "Actual daemon registered MCP edit + public WebSocket publication read",
+  "limitation": "Public reader SQL excluded from admission instrumentation; no GUI, model, card-reply append or live daemon",
+  "initialHarnessAttempts": "First two Bun baseline probes had incorrect expectations for existing conflict precedence and MCP explanatory refusal text; retained as failed harness evidence, not passing proof. Corrected baselines named above pass.",
+  "proofBinding": {
+    "testedCodeCommit": "008589158df13cb6cea127863d6645507d1124b0",
+    "testedGitTree": "d19abea5e35e7c531afddf270b26f30e2ffc105f",
+    "applicationTrees": {
+      "packages": "105c4ebf7e97adec10ac58f4845e662dada0e5bc",
+      "scripts": "c90800da0ae5374df140064f18ccc5bfbec47d75"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/neo-publication-edit-db.ts": "53055500315b018dea2ece4b6782724f13a10ab2",
+      ".claude/skills/verify/neo-publication-edit-db-run.py": "f560c2f4ef0c4eda586e5ca9d5055b61b807b378",
+      ".claude/skills/verify/neo-publication-edit-proof-binding.ts": "79edddbbaefa497231cbf7463299cb1425f89383"
+    },
+    "runs": {
+      "bun": "bun-verify",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}
