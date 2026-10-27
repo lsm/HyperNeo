@@ -45,8 +45,9 @@ const tap=(key:string)=>hub.request<{ok:boolean;reason?:string}>('operation.invo
 const visible=(id:string)=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:id}});
 const servicePrototype=NeoService.prototype as unknown as {deliver:(root:string,id:string,text:string,origin:string)=>Promise<void>};
 const deliver=servicePrototype.deliver;const deliveries:{root:string;id:string;text:string}[]=[];
-servicePrototype.deliver=async function(root,id,text,origin){const was=record;record=false;deliveryPhase=true;try{const askId=id.slice(id.lastIndexOf(':')+1);const card=await visible(askId);assert(card.ok,'kickoff preceded committed Work card');assert.equal(card.entry.ask.sessionId,root);deliveries.push({root,id,text});await deliver.call(this,root,id,text,origin);}finally{deliveryPhase=false;record=was;}};
+servicePrototype.deliver=async function(root,id,text,origin){deliveryPhase=true;try{const askId=id.slice(id.lastIndexOf(':')+1);const card=await visible(askId);assert(card.ok,'kickoff preceded committed Work card');assert.equal(card.entry.ask.sessionId,root);deliveries.push({root,id,text});await deliver.call(this,root,id,text,origin);}finally{deliveryPhase=false;}};
 const result:Record<string,unknown>={runtimeCallersMoved:true};
+let driverEffects=0;const restoreDrivers:(()=>void)[]=[];
 const changes:string[]=[];const onChanges=app.db.gateway.onChanges;app.db.gateway.onChanges=events=>{if(record)changes.push(...events.map(e=>e.table));onChanges(events);};
 let replaceRoot=false,deleteRoot=false,fault:'before'|'after'|null=null;
 const ghosts:DbGateway[]=[];let nativeSends=0;
@@ -55,6 +56,8 @@ const ghost=(phase:'before'|'after')=>{const gateway=new DbGateway(path,null,und
 let lastTick=performance.now(),maxLagMs=0;const lag=setInterval(()=>{const now=performance.now();maxLagMs=Math.max(maxLagMs,now-lastTick-10);lastTick=now;},10);
 try{
  await app.spaceRuntimeService.ready();await app.jobProcessor.stop();await transport.initialize();
+ const registry=app.sessionManager.getOperationRegistry();
+ app.sessionManager.setOperationRegistryProvider(()=>({...registry,get(name:string){const operation=registry.get(name);return operation&&['work.start','work.send','work.stop'].includes(name)?{...operation,execute:async()=>{driverEffects++;throw new Error('Track touched adopted worker');}}:operation;}}));restoreDrivers.push(()=>app.sessionManager.setOperationRegistryProvider(()=>registry));
  for(const id of ['neo:root','neo:replacement'])await app.db.createSession({id,title:'Synthetic Track activation',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  repo.reserveBinding({sessionId:'neo:root',kind:'neo',projectId:null});
  const cached=db.prepare('SELECT COUNT(*) AS count FROM neo_session_bindings');cached.get();record=true;assert.throws(()=>cached.get(),/SQL executed on main/);record=false;assert.equal(mainSql,1);mainSql=0;result.cachedSqlGuardVerified=true;
@@ -75,9 +78,9 @@ try{
  notices=[];record=true;assert.deepEqual(await tap('missing'),{ok:false,reason:'Neo has not started yet; open Neo once, then tap Track.'});record=false;repo.reserveBinding({sessionId:'neo:root',kind:'neo',projectId:null});record=true;assert.deepEqual(await tap('missing'),{ok:false,reason:'No notice for this session; track it from its notice.'});record=false;result.refusalsPreserved=true;
  const faultsBefore=deliveries.length;notices=[notice('worker-before')];fault='before';record=true;await assert.rejects(tap(notices[0].key),/synthetic worker failed before dispatch/);record=false;assert.equal(store.followedRefs().some(r=>r.id===notices[0].ref.id),false);assert.equal(deliveries.length,faultsBefore);result.workerFailureNoFallback=true;
  notices=[notice('lost')];fault='after';record=true;await assert.rejects(tap(notices[0].key),/outcome unknown/);record=false;assert.equal(nativeSends,1);assert.equal(store.followedRefs().filter(r=>r.id===notices[0].ref.id).length,1);assert.equal(deliveries.length,faultsBefore);record=true;assert.deepEqual(await tap(notices[0].key),{ok:false,reason:'A Neo card already follows this session.'});record=false;result.lostReply={unknownOutcome:true,nativeSends,automaticReplay:false,noKickoff:true};
- assert.equal(mainSql,0);result.mainSql=mainSql;result.postCommitDeliveryTargetSql=mainDeliverySql;result.maxMainLoopLagMs=maxLagMs;result.rssBytes=process.memoryUsage().rss;result.walBytes=statSync(`${path}-wal`).size;result.verified=true;
+ assert.equal(driverEffects,0);result.driverEffects=driverEffects;assert.equal(mainSql,0);result.mainSql=mainSql;result.postCommitDeliveryTargetSql=mainDeliverySql;result.maxMainLoopLagMs=maxLagMs;result.rssBytes=process.memoryUsage().rss;result.walBytes=statSync(`${path}-wal`).size;result.verified=true;
 }finally{
- record=false;if(held)db.exec('ROLLBACK');clearInterval(lag);gatewayPrototype.run=originalRun;servicePrototype.deliver=deliver;Object.defineProperty(NeoService.prototype,'trackableNotices',descriptor);SQLite.prototype.prepare=prepare;SQLite.prototype.exec=exec;app.db.gateway.onChanges=onChanges;
+ record=false;for(const restore of restoreDrivers)restore();if(held)db.exec('ROLLBACK');clearInterval(lag);gatewayPrototype.run=originalRun;servicePrototype.deliver=deliver;Object.defineProperty(NeoService.prototype,'trackableNotices',descriptor);SQLite.prototype.prepare=prepare;SQLite.prototype.exec=exec;app.db.gateway.onChanges=onChanges;
  await Promise.all(ghosts.map(g=>g.close()));await transport.close();await app.cleanup();globalThis.fetch=fetchBefore;result.resourcesStopped=true;writeFileSync(join(run,'evidence/neo-track-admission-activation.json'),JSON.stringify(result,null,2).replaceAll(run,'<synthetic-run>'));
 }
 console.log(JSON.stringify(result).replaceAll(run,'<synthetic-run>'));

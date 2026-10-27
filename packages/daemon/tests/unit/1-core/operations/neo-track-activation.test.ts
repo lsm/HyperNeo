@@ -107,3 +107,16 @@ test('missing root keeps its refusal precedence over missing notice', async () =
   });
   expect(told).toEqual([]);
 });
+
+test('a Neo MCP caller cannot Track on the human behalf', async () => {
+  expect(
+    await invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'neo.session.track',
+      { key },
+      { source: 'mcp', sessionId: 'neo:root' }
+    )
+  ).toEqual({ kind: 'completed', value: { ok: false, reason: 'This action needs the user.' } });
+  expect(service.todos.listOpenAsks()).toEqual([]);
+  expect(told).toEqual([]);
+});
