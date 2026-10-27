@@ -182,6 +182,7 @@ export function NeoVoice({
           retrySilent: !!entry,
           intent,
           sendDraft: captured.sendDraft ?? '',
+          ...(entry?.sendContext ? { sendContext: entry.sendContext } : {}),
           door,
           ...(captured.previewContext ? { previewContext: captured.previewContext } : {}),
         },

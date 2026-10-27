@@ -17,7 +17,12 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
 import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
-import { attachmentMessage, NEO_FILE_ACCEPT, useNeoAttachments } from './neo-attachments.ts';
+import {
+  attachmentDocuments,
+  attachmentMessage,
+  NEO_FILE_ACCEPT,
+  useNeoAttachments,
+} from './neo-attachments.ts';
 import { type createNeoIntakeClient, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
 import { useCoarsePointer } from './useCoarsePointer.ts';
 import { VoiceDraftPreview } from '../components/voice/VoiceDraftPreview.tsx';
@@ -483,9 +488,7 @@ export function NeoComposer({
               const snapshot = {
                 sendDraft: draft,
                 sendContext: {
-                  suffix: files.some((file) => file.kind === 'text')
-                    ? attachmentMessage('', files)
-                    : '',
+                  suffix: attachmentDocuments(files).join('\n\n'),
                   images: files.flatMap((file) => (file.kind === 'image' ? [file.image] : [])),
                   attachmentIds: files.map((file) => file.id),
                   ...(quote ? { quote: structuredClone(quote) } : {}),

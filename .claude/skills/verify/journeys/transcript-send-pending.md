@@ -26,3 +26,11 @@ partial send. Recovery contracts use the stored context after the interactive
 submit exits. Retain browser screenshots, operation payloads, doctor output and
 test logs outside temporary daemon data. Close the browser, stop the owned ASR,
 daemon and mock, then remove only their synthetic data.
+
+For tray recovery, seed an accepted synthetic voice record in this isolated
+browser's IndexedDB with intent send, sendContext (photo, file suffix and reply),
+and no sendText. Keep a file staged in the composer, reload and use the visible
+Resend control. Hold final ASR and inspect the re-persisted record: all accepted
+context must remain. Release ASR and observe exactly one operation carrying the
+original recording ID, photo bytes, reply target and file words. File text must
+match the ordinary typed-send format without an extra `Attached files` line.
