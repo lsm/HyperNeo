@@ -23,7 +23,7 @@ export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean
   const states = new Map(todos.map((todo) => [todo.id, todo.state]));
   const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
   return (node?.dependsOn ?? []).every((id) =>
-    ['done', 'closed_unverified', 'removed', undefined].includes(states.get(id))
+    ['done', 'closed_unverified', 'removed'].includes(states.get(id) ?? '')
   );
 }
 

@@ -194,13 +194,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       )
         return [];
       const questions = asked.filter((question) => question.state === 'open');
+      const family = store.listFamilyTodos(ask.id);
       return neoTodoDependencyNodes(plan).flatMap((node) => {
         const next = plan.find((todo) => todo.id === node.id)!;
         const target = this.get(next.id);
         return next.state === 'todo' &&
           next.startedAt === null &&
           next.instruction &&
-          neoTodoReady(todos, next.id) &&
+          neoTodoReady(family, next.id) &&
           !questions.some(
             (question) =>
               (!question.todoId || question.todoId === next.id) &&
