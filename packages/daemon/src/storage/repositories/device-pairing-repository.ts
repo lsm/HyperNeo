@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { pairingApproveWrite } from './pairing-approve-write.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon';
 
@@ -232,6 +234,10 @@ export class DevicePairingRepository {
          WHERE approved_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at`
       )
       .all(now) as { id: string; kind: DeviceKind; name: string | null; expiresAt: number }[];
+  }
+
+  approveAsync(codeId: string, deviceId: string, now: number) {
+    return gatewayFor(this.db).run(pairingApproveWrite, { codeId, deviceId, now });
   }
 
   approve(id: string, now: number): boolean {

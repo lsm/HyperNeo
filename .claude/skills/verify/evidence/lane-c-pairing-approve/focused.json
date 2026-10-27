@@ -1,0 +1,20 @@
+{
+  "base": "6b98935d7caa93e3ab5ea627b3170fc48ec8af9e",
+  "redCommit": "43c23b536306f45e781342277a38a5d778f02d00",
+  "productionChangedLines": 33,
+  "sharedSmokeRegistrationLines": 1,
+  "focusedVitest": {
+    "passed": 50,
+    "files": 6
+  },
+  "repositoryCheck": "passed",
+  "callGraph": "Approval operation -> async repository adapter -> one write command -> existing active-device read and conditional approval UPDATE. Only codeId/deviceId/time cross the worker boundary. Existing shared gateway supplies the transaction.",
+  "scope": "Pairing code approval only; other pairing operations and their SQL remain separate.",
+  "syntheticFaultObservation": "The Deno lost-receipt worker failure also rejected an in-flight background search flush; its expected injected-fault log is retained. Later independent approval recovers the writer. No closed-database shutdown error occurred.",
+  "unverified": [
+    "Browser layout and deployed build",
+    "Other pairing operations DB ownership",
+    "Large-volume performance",
+    "Separate SQL, queue and clone timings"
+  ]
+}
