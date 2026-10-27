@@ -19,6 +19,8 @@ import {
 } from './finalize-direct-attempt.ts';
 import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
 import { verifyDirectAttemptStop } from './stop-direct-attempt.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';
 
 interface DirectOutcomeDependencies extends DirectTaskFinalizerDependencies {
   jobQueue: Pick<JobQueueRepository, 'requeueParked'>;
@@ -159,7 +161,15 @@ export function createDirectOutcomeHandler(deps: DirectOutcomeDependencies) {
       if ('reason' in admission) {
         throw new Error(`Direct outcome shutdown remains unverified: ${admission.reason}`);
       }
-      if (deps.jobQueue.requeueParked(job.id, now + 30_000, job.claimToken))
+      if (
+        await gatewayFor(deps.db).call(
+          parkDeliveryJob,
+          'park',
+          job.id,
+          now + 30_000,
+          job.claimToken
+        )
+      )
         return { ...result, parked: 'direct_stop_unverified' };
     }
     if (result.finalized) {
