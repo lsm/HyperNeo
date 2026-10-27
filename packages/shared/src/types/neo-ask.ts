@@ -44,7 +44,8 @@ export type NeoTodoBlocker =
   | 'failure'
   | 'question'
   | 'needs-human'
-  | 'stalled';
+  | 'stalled'
+  | 'held';
 
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;
