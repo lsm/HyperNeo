@@ -723,9 +723,7 @@ export class AgentSession
       const restarted = appliedConfig || restartedForSettings || switched;
       this.flushPendingTaskNotificationRequery();
       const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
-      void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {
-        this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
-      });
+      void this.reconcileStrandedDeliveries(reconcileOwner);
     });
 
     if (session.metadata?.lastContextInfo) {
@@ -743,19 +741,13 @@ export class AgentSession
 
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
-      void this.reconcileStrandedDeliveries().catch((error) => {
-        this.logger.warn('Startup reconcileStrandedDeliveries failed:', error);
-      });
+      void this.reconcileStrandedDeliveries();
     }
 
     this.reconcilerProvisioned = this.runtimeOptions.autoReplayPendingMessages ?? true;
     this.reconcileTimer = setInterval(() => {
       if (!this.reconcilerProvisioned) return;
-      void runLagPhase('timer:stranded_deliveries', () => this.reconcileStrandedDeliveries()).catch(
-        (error) => {
-          this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
-        }
-      );
+      void runLagPhase('timer:stranded_deliveries', () => this.reconcileStrandedDeliveries());
     }, SESSION_RECONCILE_INTERVAL_MS);
     if (typeof this.reconcileTimer.unref === 'function') {
       this.reconcileTimer.unref();
@@ -3073,6 +3065,23 @@ export class AgentSession
   }
 
   async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
+    try {
+      return await this.runReconcileStrandedDeliveries(owner);
+    } catch (error) {
+      this.logger.warn('reconcileStrandedDeliveries failed:', error);
+      await this.errorManager
+        .handleError(
+          this.session.id,
+          error instanceof Error ? error : new Error(String(error)),
+          ErrorCategory.SYSTEM,
+          'Background delivery recovery failed; a message may be stuck. Try resending it.'
+        )
+        .catch(() => {});
+      return 0;
+    }
+  }
+
+  private async runReconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
     const status = this.stateManager.getState().status;
