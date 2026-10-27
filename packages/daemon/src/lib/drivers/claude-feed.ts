@@ -98,8 +98,8 @@ function spokenText(content: unknown, role: 'user' | 'assistant'): string {
     .map((text) => {
       const peer =
         role === 'user' &&
-        /^<cross-session-message\b[^>]*>\n(\[worker-answer:[\s\S]*)\n<\/cross-session-message>$/.exec(
-          text
+        text.match(
+          /^<cross-session-message\b[^>]*>\n(\[worker-answer:[\s\S]*)\n<\/cross-session-message>$/
         );
       return peer ? peer[1] : text;
     })
