@@ -61,3 +61,9 @@ three attempts, public work.status=failed with the original error, one durable
 Neo input, exactly one recipient SDK start, and no second wake after recovery.
 This combines the consumed-input producer with the real landed consumer. It
 keeps the native silent-process proof separate from the scripted model proof.
+
+The scripted helper joins its owned query and already-scheduled deferred replay
+promise before closing the synthetic DB; it does not change production replay
+policy. Audit the complete proof.log after the wrapper exits. A closed-database
+error invalidates the run even if its assertions or wrapper exit report success.
+Keep that failed log, fix fixture resource ordering, and rerun before reporting PASS.

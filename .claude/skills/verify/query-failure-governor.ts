@@ -151,7 +151,21 @@ try{
  }
  evidence.passed=true;
 }finally{
- stopErrors();releaseParent();finish();await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
- writeFileSync(join(run,'evidence/query-failure-governor.json'),JSON.stringify(evidence,null,2).replaceAll(run,'<synthetic-run>'));
+ stopErrors();releaseParent();finish();
+ const sessions=app.sessionManager.getCachedSessions();
+ let drainTimer:ReturnType<typeof setTimeout>|undefined;
+ try{
+  await Promise.race([
+   Promise.all(sessions.map(async agent=>{
+    const query=agent.queryPromise;agent.queryObject?.close();await query?.catch(()=>{});
+    const replay=(agent as unknown as {queryModeHandler:{postSettlementFlush:Promise<boolean>|null}}).queryModeHandler.postSettlementFlush;
+    if(replay){await replay;return true;}return false;
+   })).then(drained=>{evidence.deferredFlushesDrained=drained.filter(Boolean).length;}),
+   new Promise<never>((_,reject)=>{drainTimer=setTimeout(()=>reject(new Error('Owned replay cleanup did not settle')),5000);})
+  ]);
+ }finally{
+  clearTimeout(drainTimer);await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
+  writeFileSync(join(run,'evidence/query-failure-governor.json'),JSON.stringify(evidence,null,2).replaceAll(run,'<synthetic-run>'));
+ }
 }
 console.log(JSON.stringify(evidence).replaceAll(run,'<synthetic-run>'));
