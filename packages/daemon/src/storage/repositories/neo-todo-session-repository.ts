@@ -179,7 +179,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const prior = this.readNudge(todoId);
     const incident =
       prior && continuesIncident(prior, since)
-        ? prior
+        ? { ...prior, nudges: Math.min(prior.nudges, 2) }
         : { since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
     const plan = ['done', 'stopped'].includes(live.status)
       ? planFollowThrough(incident, now, context.follow)

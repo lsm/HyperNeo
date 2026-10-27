@@ -1,3 +1,4 @@
+import { mayRedispatch } from '../work-queue/follow-through.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -607,6 +608,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
   };
 
+  const sweep = { moved: 0 };
   const restartLadder = (todoId: string, now: number) => {
     const prior = sessions.readNudge(todoId);
     sessions.recordNudge(todoId, {
@@ -752,6 +754,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const idle = `its worker has been idle with no progress for ${minutes} min.`;
         if (plan.kind === 'stall') return stall(idle);
         if (plan.kind === 'redispatch') {
+          const running = (await store.read('listCheckable')).filter(
+            (other) => other.state === 'doing' && sessions.readLiveStatus(other.id) === 'running'
+          ).length;
+          if (!mayRedispatch(running, sweep.moved)) return sessions.recordNudge(todo.id, incident);
+          sweep.moved += 1;
           const refused = await stop(todo);
           if (refused)
             return stall(
@@ -921,6 +928,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       }
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
+      sweep.moved = 0;
       for (const todoId of await sessions.read('unrecordedStarts')) {
         if (starting.has(todoId)) continue;
         await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));

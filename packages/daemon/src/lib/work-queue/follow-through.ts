@@ -7,6 +7,10 @@ export type FollowThroughIncident = {
   redispatched?: boolean;
 };
 
+export function mayRedispatch(running: number, movedThisSweep: number) {
+  return running < 6 && movedThisSweep < 1;
+}
+
 export function continuesIncident(prior: FollowThroughIncident, since: number) {
   return since <= prior.since || (prior.at !== undefined && since - prior.at < STEP / 2);
 }
