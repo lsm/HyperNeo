@@ -138,4 +138,40 @@ describe('todo dependencies', () => {
       db.close();
     }
   });
+
+  test('a bad reference anywhere in a plan refuses the whole plan before anything is saved', async () => {
+    const { db, store, invoke, step } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Plan',
+        request: 'Plan with a forward reference',
+        todos: [step('A'), step('B', [2]), step('C')],
+      });
+      expect(opened).toMatchObject({ ok: false, reason: expect.stringContaining('dependency') });
+      expect(store.listOpenAsks()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('start is refused for a step that still waits for unfinished steps', async () => {
+    const { db, invoke, step } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Plan',
+        request: 'Plan',
+        todos: [step('A')],
+      });
+      const added = await invoke('neo.todo.add', {
+        askId: opened.todos[0].askId,
+        ...step('B', [opened.todos[0].id]),
+        instruction: 'Do B.',
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
+        start: true,
+      });
+      expect(added).toMatchObject({ ok: false, reason: expect.stringContaining('not_ready') });
+    } finally {
+      db.close();
+    }
+  });
 });
