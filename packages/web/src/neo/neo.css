@@ -830,3 +830,7 @@
   background: var(--accent);
   opacity: 1;
 }
+
+.neo-message [data-clamped] {
+  mask-image: linear-gradient(to bottom, black calc(100% - 44px), transparent);
+}

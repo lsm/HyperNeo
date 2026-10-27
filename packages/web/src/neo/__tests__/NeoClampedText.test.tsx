@@ -56,6 +56,36 @@ describe('NeoClampedText', () => {
     expect(container.querySelector('[data-clamped]')).toBeTruthy();
   });
 
+  it.each([
+    [7, 164, false],
+    [6, 236, true],
+  ] as const)(
+    'cuts under word-bearing row %i only when it is within three rows',
+    (wordRow, height, marked) => {
+      sized(500, 272);
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400);
+      vi.spyOn(Range.prototype, 'getClientRects').mockReturnValue(
+        Array.from({ length: 12 }, (_, index) => ({
+          top: index * 24,
+          bottom: index * 24 + 20,
+          height: 20,
+          left: 0,
+          right: index === wordRow - 1 ? 200 : 5,
+          width: index === wordRow - 1 ? 200 : 5,
+        })) as unknown as DOMRectList
+      );
+      const { container } = render(
+        <NeoClampedText text="words">
+          <p>words</p>
+        </NeoClampedText>
+      );
+      expect(container.querySelector<HTMLElement>('[data-clamped]')?.style.maxHeight).toBe(
+        `${height}px`
+      );
+      expect(container.textContent?.includes('⋯')).toBe(marked);
+    }
+  );
+
   it('shows text that fits without a toggle, however many newlines it has', () => {
     sized(272, 272);
     const text = Array.from({ length: 14 }, (_, n) => `line ${n}`).join('\n');

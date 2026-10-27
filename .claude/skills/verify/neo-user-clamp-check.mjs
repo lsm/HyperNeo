@@ -28,12 +28,17 @@ export async function verifyMessageFade(page, fixture, { phase, evidence, touch 
       assert.equal(await article.getByText(/^(more|less)$/i, { exact: true }).count(), 0);
       if (item.name === 'fallback') assert(cut.marker);
       if (item.name === 'words' || item.name === 'cjk') assert(!cut.marker);
-      const body = article.locator('.neo-markdown');
-      await body.scrollIntoViewIfNeeded();
-      const point = { x: 150, y: 12 };
-      if (touch) await body.tap({ position: point }); else await body.click({ position: point });
+      const tapText = async () => {
+        const body = article.locator('[role="button"][aria-expanded]');
+        await body.evaluate(async element => { element.scrollIntoView({block:'start'}); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); });
+        const box = await body.boundingBox();
+        assert(box);
+        const x = box.x + Math.min(150, box.width - 16), y = Math.max(80, box.y + 12);
+        if(touch) await page.touchscreen.tap(x,y); else await page.mouse.click(x,y);
+      };
+      await tapText();
       assert.equal(await article.locator('[data-clamped]').count(), 0);
-      if (touch) await body.tap({ position: point }); else await body.click({ position: point });
+      await tapText();
       await article.locator('[data-clamped]').waitFor();
       const links = article.getByRole('link', { name: 'Safe link', exact: true });
       if (await links.count()) {
@@ -43,6 +48,7 @@ export async function verifyMessageFade(page, fixture, { phase, evidence, touch 
       }
       const toggle = article.getByRole('button', { name: 'Show more', exact: true });
       await toggle.focus(); await page.keyboard.press('Enter');
+      await page.evaluate(async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); });
       assert.equal(await article.locator('[data-clamped]').count(), 0);
       await page.keyboard.press('Space');
       await article.locator('[data-clamped]').waitFor();
