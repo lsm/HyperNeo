@@ -226,3 +226,96 @@ test.each(['unknown', 'deleted'] as const)(
     }
   }
 );
+
+test('a needs-human block does not outlive its retired card', async () => {
+  const f = fixture('blocked', true);
+  try {
+    f.store.retireQuestion(f.store.getQuestion('stale-start')!, 'superseded', null, 4);
+    f.store.askQuestion(
+      'card',
+      'ask',
+      {
+        text: 'Decide the next step',
+        kind: 'choice',
+        options: ['Go', 'Stop'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        confirm: null,
+        document: null,
+        replyTo: null,
+        todoId: 'first',
+        artifacts: null,
+        sourceSession: null,
+      },
+      5
+    );
+    const held = await f.store.recompute(
+      f.store.getTodo('first')!,
+      {},
+      10,
+      { state: 'no_opinion' },
+      async () => {}
+    );
+    expect(held?.state).toBe('blocked');
+    expect(held?.blockedBy).toBe('needs-human');
+    f.store.retireQuestion(f.store.getQuestion('card')!, 'Neo decided per the human', null, 12);
+    const released = await f.store.recompute(
+      f.store.getTodo('first')!,
+      {},
+      20,
+      { state: 'no_opinion' },
+      async () => {}
+    );
+    expect(released?.blockedBy).not.toBe('needs-human');
+    expect(['todo', 'doing']).toContain(released?.state);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a needs-human block waits out an undelivered answer', async () => {
+  const f = fixture('blocked', true);
+  try {
+    f.store.retireQuestion(f.store.getQuestion('stale-start')!, 'superseded', null, 4);
+    f.store.askQuestion(
+      'card',
+      'ask',
+      {
+        text: 'Decide the next step',
+        kind: 'choice',
+        options: ['Go', 'Stop'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        confirm: null,
+        document: null,
+        replyTo: null,
+        todoId: 'first',
+        artifacts: null,
+        sourceSession: null,
+      },
+      5
+    );
+    const card = f.store.getQuestion('card')!;
+    f.store.questionAnswers.bind(card.id, 'first', {
+      adapter: 'codex-desktop',
+      id: 'thread-1',
+      daemon: null,
+    });
+    f.store.answerQuestion(card, { picked: ['Go'] } as never, 'button', 6);
+    const held = await f.store.recompute(
+      f.store.getTodo('first')!,
+      {},
+      10,
+      { state: 'no_opinion' },
+      async () => {}
+    );
+    expect(held?.state).toBe('blocked');
+    expect(held?.blockedBy).toBe('needs-human');
+  } finally {
+    await f.close();
+  }
+});
