@@ -148,10 +148,15 @@ describe('coding actor assignments', () => {
       }));
       const gateway = new DbGateway(':memory:', f.db);
       const run = gateway.run.bind(gateway);
-      gateway.run = (async (op, args) =>
-        structuredClone(await run(op, args))) as typeof gateway.run;
+      gateway.run = (async (op, args) => {
+        f.db.exec('PRAGMA query_only=ON');
+        try {
+          return structuredClone(await run(op, args));
+        } finally {
+          f.db.exec('PRAGMA query_only=OFF');
+        }
+      }) as typeof gateway.run;
       bindGateway(f.db, gateway);
-      f.db.exec('PRAGMA query_only=ON');
       try {
         expect(await f.assign({ candidates: [reviewer] })).toMatchObject({
           ok: false,

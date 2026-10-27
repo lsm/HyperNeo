@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { Database as SQLiteDatabase } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 
 const [mode,directory]=process.argv.slice(2),run=resolve(directory);
@@ -31,7 +32,7 @@ try {
       await app.spaceRuntimeService.ready();await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
       const raw=app.db.getDatabase(),prepare=raw.prepare.bind(raw),send=app.db.gateway.run.bind(app.db.gateway);
       raw.prepare=((sql:string)=>{if(measuring&&/neo_pack_preferences|pack_coding_repo_aliases/.test(sql))mainSql.push(sql);return prepare(sql);}) as typeof raw.prepare;
-      app.db.gateway.run=(async(op,args)=>{const start=performance.now(),value=await send(op,args);if(measuring)commands.push({name:op.name,method:(args as {method:string}).method,durationMs:performance.now()-start,argsBytes:Buffer.byteLength(JSON.stringify(args)),replyBytes:Buffer.byteLength(JSON.stringify(value)??'null')});return value;}) as typeof app.db.gateway.run;
+      app.db.gateway.run=(async(op,args)=>{const start=performance.now(),value=await send(op,args);if(measuring)commands.push({name:op.name,method:(args as {method:string}).method,mode:op.mode,durationMs:performance.now()-start,argsBytes:Buffer.byteLength(JSON.stringify(args)),replyBytes:Buffer.byteLength(JSON.stringify(value)??'null')});return value;}) as typeof app.db.gateway.run;
       ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
       const rpc = async (name: string, input: unknown) => {if(name==='neo.coding.write.plan')measuring=true;try{return await new Promise<unknown>((done, fail) => {
@@ -61,6 +62,12 @@ try {
         assert.deepEqual(await rpc('pack.preferences.set', { ...address('write.model'), value: preferred.model }), { ok: true });
       } else {
         assert.deepEqual(await plan(), { ok: true, target: preferred, fallback: [] });
+        const held = new SQLiteDatabase(join(run,'data/daemon.db'));
+        try {
+          held.exec('BEGIN IMMEDIATE');
+          assert.deepEqual(await plan(), { ok: true, target: preferred, fallback: [] });
+          evidence.push({readerWhileWriterLocked:true});
+        } finally { held.exec('ROLLBACK'); held.close(); }
         const settings = await rpc('pack.preferences.list', { pack: 'coding' }) as { preferences: { key: string; setBy: string; value: unknown }[] };
         settings.preferences=stagePreferences(settings.preferences);
         assert.equal(settings.preferences.length, 9);
@@ -75,7 +82,7 @@ try {
       }
     } finally { ws?.close(); await app.cleanup(); }
   }
-  if(mode==='verify'){assert.deepEqual(mainSql,[],'Stage target preference reads must leave main');assert(commands.length>=6);}else assert(mainSql.length>0);verified=true;
+  if(mode==='verify'){assert.deepEqual(mainSql,[],'Stage target preference reads must leave main');assert(commands.filter((command:any)=>command.name==='coding.stageTarget.reads'&&command.mode==='read').length>=6);}else assert(mainSql.length>0);verified=true;
   console.log(`PASS: real RPC plans preferred/default Write targets, explains unavailable settings, rejects invalid values and preserves all nine human preferences across restart. Evidence: ${run}/evidence/lane-a-stage-target-db.json`);
 } finally {
   writeFileSync(join(run, 'evidence/lane-a-stage-target-db.json'), JSON.stringify({mode,verified,events:evidence,mainSql,commands}, null, 2));
