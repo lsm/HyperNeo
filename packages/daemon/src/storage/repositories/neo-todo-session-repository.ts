@@ -1,16 +1,16 @@
-import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
+import { planNudge } from '../../lib/neo/nudge.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { DriverSent, NeoDriverTarget } from '../../lib/neo/driver-work.ts';
-import { planNudge } from '../../lib/neo/nudge.ts';
 import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
-import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
-import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
-import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 import { WorkDeliveryInputRepository } from './work-delivery-input-repository.ts';
+import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
 export function neoSafeSessionLink(
   link: string | null | undefined,
@@ -55,6 +55,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'nudgeContext',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['nudgeContext']>>;
+  read(
+    method: 'stopContext',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['stopContext']>>;
   read(method: (typeof neoTodoSessionReads.methods)[number], todoId?: string) {
     return gatewayFor(this.db).call(
       neoTodoSessionReads,
@@ -245,6 +249,20 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return new Map(rows.map((row) => [row.todoId, sessionLinks(row)]));
   }
 
+  stopContext(id: string) {
+    const store = new NeoAskTodoRepository(this.db);
+    const todo = store.getTodo(id);
+    return todo
+      ? {
+          todo,
+          ask: store.getAsk(todo.askId),
+          ref: this.readRef(id),
+          live: this.readLiveStatus(id),
+          adopted: this.get(id)?.verb === 'adopt',
+        }
+      : null;
+  }
+
   unrecordedStarts(): string[] {
     return (
       this.db
@@ -274,7 +292,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'neo.todoSessionReads',
   'read',
   NeoTodoSessionRepository,
-  ['unrecordedStarts', 'awaitingReports', 'nudgeContext']
+  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext']
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
