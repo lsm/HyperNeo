@@ -61,17 +61,18 @@ try {
   )));
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket failed')); });
-  for (const [index, kind, chat, answer] of [
-    [0, 'yesno', false, 'yes'],
-    [1, 'choice', false, ['Delete the approved synthetic leftovers']],
-    [2, 'reply', true, 'The synthetic plan is approved.'],
-    [3, 'yesno', true, 'Yes, go ahead with this plan.'],
-    [4, 'yesno', false, 'no'],
+  for (const [index, kind, chat, answer, state] of [
+    [0, 'yesno', false, 'yes', 'todo'],
+    [1, 'choice', false, ['Delete the approved synthetic leftovers'], 'blocked'],
+    [2, 'reply', true, 'The synthetic plan is approved.', 'doing'],
+    [3, 'yesno', true, 'Yes, go ahead with this plan.', 'failed'],
+    [4, 'yesno', false, 'no', 'closed_unverified'],
+    [5, 'yesno', true, 'no', 'todo'],
   ] as const) {
     const askId = `ask-${index}`, id = `approval-${index}`, questionId = `question-${index}`, next = `next-${index}`;
     store.openAsk({ id: askId, sessionId: owner, projectId: null, originMessageId: null,
       title: 'Synthetic approval', request: 'Confirm and advance', createdAt: 1 });
-    store.addTodo(id, askId, { title: 'Human decides', doneWhen: 'Human confirms', instruction: null, named: null,
+    const approval = store.addTodo(id, askId, { title: 'Human decides', doneWhen: 'Human confirms', instruction: null, named: null,
       check: { pack: 'core', kind: 'human_confirmed', params: { questionId } } }, 1);
     store.askQuestion(questionId, askId, { text: 'Approve synthetic work?', kind,
       options: kind === 'choice' ? ['Keep everything', 'Delete the approved synthetic leftovers'] : null,
@@ -80,7 +81,8 @@ try {
       instruction: 'Record a synthetic successor dispatch; delete nothing.', named: null,
       check: { pack: 'core', kind: 'evidence', params: { path: join(run, next) } } }, 3);
     sessions.create(next, { verb: 'send', ref: { adapter: 'hyperneo', id: next } });
-    assert.equal(store.getTodo(id)?.state, 'todo');
+    store.updateTodo(approval, { state }, 4);
+    assert.equal(store.getTodo(id)?.state, state);
     const receipt = chat
       ? await rpc('neo.message.send', { sessionId: owner, requestId: crypto.randomUUID(), content: answer,
           replyTo: { kind: 'question', id: questionId } })
@@ -90,17 +92,17 @@ try {
     let view: { todos: NeoTodo[] };
     do {
       view = (await rpc('neo.ask.read', { askId })).entry as { todos: NeoTodo[] };
-      if (index === 4 || view.todos.find(todo => todo.id === next)?.state === 'doing') break;
+      if (view.todos.find(todo => todo.id === next)?.state === 'doing') break;
       assert(Date.now() < deadline, 'Answer must finish the queued todo and start its successor without a scheduled refresh');
       await new Promise(done => setTimeout(done, 10));
     } while (true);
-    assert.equal(view.todos.find(todo => todo.id === id)?.state, index === 4 ? 'todo' : 'done');
-    assert.equal(view.todos.find(todo => todo.id === next)?.state, index === 4 ? 'todo' : 'doing');
-    assert.equal(dispatches.filter(value => value === next).length, index === 4 ? 0 : 1);
-    evidence.push({ kind, chat, answer, view });
+    assert.equal(view.todos.find(todo => todo.id === id)?.state, 'done');
+    assert.equal(view.todos.find(todo => todo.id === next)?.state, 'doing');
+    assert.equal(dispatches.filter(value => value === next).length, 1);
+    evidence.push({ kind, chat, answer, state, view });
   }
   evidence.push({ dispatches, verified: true });
-  console.log('PASS: real answer and chat RPCs complete queued confirmations and dispatch successors once; no remains pending.');
+  console.log('PASS: real answer and chat RPCs complete recorded decisions across all checkable states and dispatch successors once.');
 } finally {
   ws?.close();
   await app?.cleanup();
