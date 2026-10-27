@@ -37,3 +37,12 @@ SQL on main; before mode requires target SQL. This is not whole-daemon SQL absen
 a latency result, actual GitHub transport, a native actor run or a real merge.
 Gateway duration and argument/reply sizes do not separately attribute SQL, queue
 or cloning costs. Retain failed attempts as failures rather than partial passes.
+
+Bind both successful runtime runs to the committed application/helper tree:
+
+```sh
+bun --no-install --no-env-file .claude/skills/verify/lane-a-merge-local-proof-binding.ts HEAD
+```
+
+Only this journey and its evidence directory may change after the bound proof
+commit. Source, test or helper changes require new committed runtime proofs.

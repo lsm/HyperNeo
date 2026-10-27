@@ -1,0 +1,31 @@
+{
+  "verified": true,
+  "productionLines": 103,
+  "redRegressionCommit": "766639142540a05cc222a3661c2ec20276b787af",
+  "baselineMainSql": 330,
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "checks": "Full bun run check passed. 36 focused manual-merge operation and gate tests passed.",
+  "observableRegression": "A todo closed after the final head/local-state check was admitted; fixed writer admission refuses it and stores no receipt.",
+  "limitations": "Real RPC and persisted receipt race job with synthetic GitHub/assignment/QA facts. No real merge, model, actor harness, GUI, deployment, whole-daemon SQL absence or latency proof.",
+  "proofBinding": {
+    "testedCodeCommit": "17b48282558a941ea8fe8c99ab0434a2f2bdd7cd",
+    "testedGitTree": "90a502e490cbf79a448b6d8f8dd625ebca82f7cb",
+    "applicationTrees": {
+      "packages": "294386dc7ac1c4427b7af150befa6698c95398e6",
+      "scripts": "b6047bc712b3726c2f338147a1860e6052883883"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/lane-a-merge-local-db.ts": "9bbebc16bace6b9f3c5c5dae740bbe968729a723",
+      ".claude/skills/verify/lane-a-merge-local-db-run.py": "52a831cbac81fe3d806035fe84b120416abab0e0",
+      ".claude/skills/verify/lane-a-merge-local-proof-binding.ts": "653f109e08c250f1ded6761ea0f9ba3fb0e58647"
+    },
+    "runs": {
+      "bun": "bun-verify-2",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}
