@@ -772,6 +772,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         defaultModel: config.defaultModel,
         maxTokens: config.maxTokens,
         temperature: config.temperature,
+        disableWorktrees: config.disableWorktrees,
       },
       jobQueue,
       jobProcessor,

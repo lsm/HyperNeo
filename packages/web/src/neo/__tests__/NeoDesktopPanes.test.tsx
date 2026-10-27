@@ -254,7 +254,10 @@ describe('Neo desktop panes', () => {
     expect(desktop).toMatch(/\.neo-scene-list \{[^}]*grid-column: 2;/);
     expect(desktop).toMatch(/\.neo-composer-dock \{[^}]*width: var\(--neo-chat-width\);/);
     expect(css).toContain('@media (min-width: 1120px) and (prefers-reduced-motion: no-preference)');
-    expect(css).not.toContain('pointer: coarse');
+    const desktopQueries = [...css.matchAll(/@media([^{}]*)/g)]
+      .map((match) => match[1])
+      .filter((query) => query.includes('1120px'));
+    expect(desktopQueries.every((query) => !query.includes('pointer:'))).toBe(true);
   });
 
   it('retains composer clearance for the narrow scene list', () => {

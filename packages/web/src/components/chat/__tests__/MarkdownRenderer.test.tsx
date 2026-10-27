@@ -2300,27 +2300,4 @@ describe('MarkdownRenderer', () => {
       expect(result).toBe('<p>a &lt; b<br>line 2</p>');
     });
   });
-
-  describe('trailing', () => {
-    it('runs on after the last paragraph word', async () => {
-      const { container } = render(
-        <MarkdownRenderer content={'First.\n\nLast words.'} trailing={<b>tail</b>} />
-      );
-      await waitFor(() => expect(container.querySelector('b')).toBeTruthy());
-      expect(container.querySelector('b')?.closest('p')?.textContent).toBe('Last words.tail');
-    });
-
-    it('takes its own line after a code block and leaves no slot when absent', async () => {
-      const { container } = render(
-        <MarkdownRenderer content={'```\nx = 1\n```'} trailing={<b>tail</b>} />
-      );
-      await waitFor(() => expect(container.querySelector('b')).toBeTruthy());
-      expect(container.querySelector('b')?.closest('pre')).toBeNull();
-      expect(container.querySelector('.prose')?.lastElementChild?.tagName).toBe('P');
-      const plain = render(<MarkdownRenderer content="Only text." />);
-      await waitFor(() => expect(plain.container.textContent).toContain('Only text.'));
-      expect(plain.container.querySelectorAll('p')).toHaveLength(1);
-      expect(plain.container.querySelector('p span')).toBeNull();
-    });
-  });
 });

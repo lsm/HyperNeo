@@ -1,5 +1,10 @@
+import {
+  voiceRecordingReads,
+  voiceRecordingWrites,
+} from '../repositories/voice-recording-repository.ts';
 import { turnVectorWrites } from '../turn-vectors.ts';
 import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
+import { taskScheduleDeleteWrites } from '../repositories/task-schedule-delete-write.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
@@ -8,7 +13,10 @@ import {
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
 import { neoTodoRunnerWrites } from '../repositories/neo-todo-runner-state.ts';
-import { neoSessionTrackWrites } from '../repositories/neo-session-track-write.ts';
+import {
+  neoSessionTrackWrites,
+  neoSessionTrackRootRead,
+} from '../repositories/neo-session-track-write.ts';
 import { neoTodoAddWrites } from '../repositories/neo-todo-add-write.ts';
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
@@ -135,9 +143,12 @@ import { sessionScheduleCreateWrites } from '../repositories/session-schedule-cr
 import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
 import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
+import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    voiceRecordingReads,
+    voiceRecordingWrites,
     turnVectorWrites,
     neoPublicationWrites,
     neoAskSettlementReads,
@@ -146,6 +157,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoMutations,
     neoTodoRunnerWrites,
     neoSessionTrackWrites,
+    neoSessionTrackRootRead,
     neoTodoAddWrites,
     codingPollPageReads,
     codingPollPageWrites,
@@ -250,6 +262,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workflowRunPinWrites,
     workflowDeleteWrites,
     taskSchedulePauseWrites,
+    taskScheduleDeleteWrites,
     codingStageTargetReads,
+    codingLedgerPollReads,
   ].map((op) => [op.name, op])
 );

@@ -406,6 +406,262 @@ describe('withCodexDesktopIpc', () => {
     });
   });
 
+  describe('Desktop-owned concurrent work.send', () => {
+    async function operations(path: string, reportUncertain = async (_report: unknown) => {}) {
+      const statePath = join(directory, 'overlap-state.sqlite');
+      const db = new Database(statePath);
+      db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+        CREATE TABLE projects (id TEXT, name TEXT);
+        CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+      for (const id of ['one', 'two']) {
+        db.prepare(
+          `INSERT INTO threads VALUES (?, 'Worker', '', '', '/synthetic', 'desktop', 0, 1, ?)`
+        ).run(id, join(directory, 'rollout.jsonl'));
+      }
+      writeFileSync(
+        join(directory, 'rollout.jsonl'),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-10-26T22:49:22.453Z',
+          payload: { type: 'task_complete', turn_id: 'completed', last_agent_message: 'Done' },
+        }) + '\n'
+      );
+      db.close();
+      let nextId = 0;
+      const driver = createCodexDesktopAdapter({
+        statePath,
+        desktopSocketPath: path,
+        desktopRunning: async () => true,
+        worktreesDir: directory,
+        machine: 'test',
+        now: Date.now,
+        spawn: noDesktopOpen,
+        appServer: async () => {
+          throw new Error('Alternate writer forbidden');
+        },
+        bootstrapServer: async () => {
+          throw new Error('Bootstrap forbidden');
+        },
+        prepareDesktopProject: async () => {
+          throw new Error('Project creation forbidden');
+        },
+        startDesktopTurn: async () => {
+          throw new Error('New-thread route forbidden');
+        },
+        folderExists: () => true,
+        makeFolder: () => {},
+        homeDir: directory,
+        gitCheckout: async () => null,
+        newId: () => `input-${++nextId}`,
+      });
+      const registry = createOperationRegistry(
+        createWorkVerbOperations({
+          adapters: () => [driver],
+          daemonName: 'test',
+          reportUncertain,
+          remote: { list: () => [], invoke: async () => ({}) },
+        })
+      );
+      return (id = 'one') =>
+        invokeOperation(
+          registry,
+          'work.send',
+          {
+            ref: { adapter: driver.id, id },
+            message: 'Identical input',
+          },
+          { source: 'mcp', role: 'neo', sessionId: 'neo' }
+        );
+    }
+
+    test.each([false, true])(
+      'serializes only the same thread (separate threads: %s)',
+      async (separate) => {
+        let active = 0;
+        let maximum = 0;
+        const f = await fixture((message, _socket, send) => {
+          const reply = (result: object) =>
+            send({ type: 'response', requestId: message.requestId, ...result });
+          if (message.method === 'thread-owner-discovery')
+            return reply({ resultType: 'success', handledByClientId: 'owner' });
+          if (message.method === 'thread-follower-steer-turn')
+            return reply({ resultType: 'error', error: 'active turn already ended' });
+          if (message.method === 'thread-follower-start-turn') {
+            active++;
+            maximum = Math.max(maximum, active);
+            const start = message.params?.turnStart as { clientUserMessageId?: string };
+            setTimeout(() => {
+              active--;
+              reply({
+                resultType: 'success',
+                result: { result: { turn: { id: start.clientUserMessageId ?? 'missing-id' } } },
+              });
+            }, 40);
+          }
+        });
+        const send = await operations(f.path);
+        const results = await Promise.all([send(), send(separate ? 'two' : 'one')]);
+        expect(maximum).toBe(separate ? 2 : 1);
+        const inputs = f.seen
+          .filter((m) => m.method === 'thread-follower-steer-turn')
+          .map((m) => m.params?.clientUserMessageId);
+        const starts = f.seen
+          .filter((m) => m.method === 'thread-follower-start-turn')
+          .map(
+            (m) => (m.params?.turnStart as { clientUserMessageId?: string }).clientUserMessageId
+          );
+        expect(starts).toEqual(inputs);
+        expect(new Set(starts).size).toBe(2);
+        expect(results.map((r) => (r.kind === 'completed' ? r.value : null))).toMatchObject(
+          inputs.map((id) => ({ ok: true, value: { delivered: true, startedTurnId: id } }))
+        );
+      }
+    );
+
+    test.each([
+      'thread-follower-steer-turn-timeout',
+      'Cannot steer conversation one without an active turn id',
+    ])('reports one uncertainty without replay: %s', async (error) => {
+      const reports: unknown[] = [];
+      const f = await fixture((message, _socket, send) => {
+        const result =
+          message.method === 'thread-owner-discovery'
+            ? { resultType: 'success', handledByClientId: 'owner' }
+            : { resultType: 'error', error };
+        send({ type: 'response', requestId: message.requestId, ...result });
+      });
+      const send = await operations(f.path, async (report) => {
+        reports.push(report);
+      });
+      const result = await send();
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'not_delivered' },
+      });
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        ref: { adapter: 'codex-desktop', id: 'one' },
+        from: 'session:neo',
+        lastCompletion: Date.parse('2026-10-26T22:49:22.453Z'),
+      });
+      expect(f.seen.filter((m) => m.method === 'thread-follower-steer-turn')).toHaveLength(1);
+      expect(f.seen.some((m) => m.method === 'thread-follower-start-turn')).toBe(false);
+    });
+    test('keeps delivery uncertain if reporting persistence fails', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          ...(message.method === 'thread-owner-discovery'
+            ? { resultType: 'success', handledByClientId: 'owner' }
+            : { resultType: 'error', error: 'thread-follower-steer-turn-timeout' }),
+        })
+      );
+      const send = await operations(f.path, async () => {
+        throw new Error('synthetic storage unavailable');
+      });
+      const result = await send();
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: {
+          ok: false,
+          reason: 'not_delivered',
+          uncertainDesktopInputId: 'input-1',
+          detail: expect.stringContaining('Uncertainty report could not be persisted'),
+        },
+      });
+      expect(f.seen.filter((m) => m.method === 'thread-follower-steer-turn')).toHaveLength(1);
+    });
+  });
+
+  describe('Desktop handoff deadline', () => {
+    test('an expired waiter never dispatches later or releases another active handoff', async () => {
+      let started = () => {};
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let finish = () => {};
+      const f = await fixture((message, _socket, send) => {
+        const reply = (result: object) =>
+          send({ type: 'response', requestId: message.requestId, ...result });
+        if (message.method === 'thread-owner-discovery')
+          return reply({ resultType: 'success', handledByClientId: 'owner' });
+        if (message.method === 'thread-follower-steer-turn') {
+          const respond = () =>
+            reply({
+              resultType: 'success',
+              result: { result: { turnId: message.params?.clientUserMessageId } },
+            });
+          if (message.params?.clientUserMessageId === 'first') {
+            finish = respond;
+            started();
+          } else respond();
+        }
+      });
+      const send = (id: string, deadline?: number) =>
+        steerCodexDesktopTurn(
+          f.path,
+          noDesktopOpen,
+          'deadline',
+          'same',
+          id,
+          'auto',
+          async () => true,
+          process.platform,
+          deadline
+        );
+      const first = send('first');
+      await entered;
+      const expired = await send('expired', Date.now() + 20);
+      expect(expired).toMatchObject({ reason: { ok: false, reason: 'busy', notSent: true } });
+      const third = send('third');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(f.seen.filter((m) => m.method === 'thread-follower-steer-turn')).toHaveLength(1);
+      finish();
+      await Promise.all([first, third]);
+      expect(
+        f.seen
+          .filter((m) => m.method === 'thread-follower-steer-turn')
+          .map((m) => m.params?.clientUserMessageId)
+      ).toEqual(['first', 'third']);
+    });
+  });
+
+  describe('Desktop partial acceptance', () => {
+    test.each(['steer', 'start'] as const)(
+      'never replays a lost %s acknowledgment',
+      async (stage) => {
+        const f = await fixture((message, socket, send) => {
+          const reply = (result: object) =>
+            send({ type: 'response', requestId: message.requestId, ...result });
+          if (message.method === 'thread-owner-discovery')
+            return reply({ resultType: 'success', handledByClientId: 'owner' });
+          if (message.method === 'thread-follower-steer-turn' && stage === 'start')
+            return reply({ resultType: 'error', error: 'NoActiveTurn' });
+          socket.destroy();
+        });
+        const result = await steerCodexDesktopTurn(
+          f.path,
+          noDesktopOpen,
+          'partial',
+          'input',
+          'partial-input',
+          'auto',
+          async () => true
+        );
+        expect(result).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+        expect('reason' in result && !result.reason.ok && result.reason.notSent).toBeUndefined();
+        expect(f.seen.filter((m) => m.method === 'thread-follower-steer-turn')).toHaveLength(1);
+        const starts = f.seen.filter((m) => m.method === 'thread-follower-start-turn');
+        expect(starts).toHaveLength(stage === 'start' ? 1 : 0);
+        if (stage === 'start')
+          expect(starts[0].params?.turnStart).toMatchObject({
+            clientUserMessageId: 'partial-input',
+          });
+      }
+    );
+  });
+
   describe('existing-thread work.send without a Desktop owner', () => {
     const buildDriver = async (options: {
       desktopSocketPath: string;

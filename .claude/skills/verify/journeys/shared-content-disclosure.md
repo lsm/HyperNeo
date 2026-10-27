@@ -1,39 +1,23 @@
-# Shared bottom-right content disclosure
+# Shared content disclosure verification
 
-Use the shared setup with a fresh synthetic run, never port 8399 or a live DB.
-Build `packages/web`, create `$RUN/home`, then seed before daemon startup:
+Use SKILL.md's resources, isolation and cleanup. The current publication footer
+has its own journey, neo-reply-fold-row.md: more/less sits on a separate
+right-aligned row. Use that journey
+for the current proof scope and required screenshots. Do not use the former
+inline-position expectation as a pass.
 
-```sh
-env -i PATH="$PATH" HOME="$RUN/home" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun .claude/skills/verify/shared-disclosure-seed.ts "$RUN"
-.claude/skills/verify/launch.sh "$PORT" "$RUN"
-```
+The shared-disclosure-seed.ts and shared-disclosure-web.mjs helpers preserve the
+historical #8092 characterization, including inline final-line placement. They
+are baseline evidence tools, not an after-pass for the current publication UI.
+Never label that legacy expectation as current browser proof.
 
-Keep the launch terminal alive. The seed reuses the synthetic todo fixture and
-adds two publications with short/long final lines, a long human message and an
-answered question. No model, credentials, real transcript or remote fetch is used.
+For todo-row disclosure use neo-todo-disclosure.md, checking the controls and
+labels actually served by the current build. For settled-question previews use
+neo-settled-question-preview.md. Each surface requires its real user-visible
+state and screenshots; a passing shared component test is insufficient.
 
-Use persistent headless Playwright and import `shared-disclosure-web.mjs` from
-`.claude/skills/verify/`. Call its exported
-`verifySharedDisclosure(page, {port, run, width, phase})` with widths 1280 and 390.
-Use phase `before` on the failing reproduction, then `after` after rebuilding.
-Every browser context must start with fresh session storage for the first run.
-
-The helper records real `/neo` button and paragraph bounds, screenshots and JSON
-under `$RUN/evidence/{before,after}/`. Both short and long publication endings
-must keep more/less at the right edge in both states, sharing the final line when
-space remains and moving to the next right-aligned line when it does not. Inspect
-these screenshots separately from the assertions. Tables/code/list endings can
-use their own right-aligned final line. Clamped human messages keep a visible
-explicit control. The todo title/body must never toggle on click; only its
-explicit control does. Historical question Details remain readable and closable.
-Check body-text dragging selects text without collapsing, Enter/Space work on the
-control, and no horizontal overflow occurs at either width. Every contextual accessible name must include the visible more/less word so voice commands can find it. Shared component contracts cover English and Chinese in both states.
-
-This slice covers primary Neo publication, clamped message, todo and card-history
-controls. Other existing content disclosures are inventoried in issue #8092 for
-follow-up replacements using the same shared control. Menus, navigation trees,
-model pickers and bulk Expand all/Collapse all are separate structural actions.
-
-Close the browser and stop only this run with `stop.sh "$RUN"`. Retain before and
-after evidence for review. Native iOS is handled separately and is not verified.
+Human-message clamping has separate behavior from publication Details. Until
+its migration, the existing explicit Show more/Show less must open and fold the
+same message without disrupting links or selection. A change to that behavior
+must supply its own current browser journey and replace this paragraph in the
+same PR. The historical shared helper is not proof of a later clamp design.
