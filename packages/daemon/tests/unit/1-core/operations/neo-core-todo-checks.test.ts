@@ -101,8 +101,8 @@ test('deployed compares the requested commit to the daemon build, never the work
 });
 
 test.each([
-  { kind: 'yesno' as const, answer: 'no', via: 'button' as const, done: false },
-  { kind: 'yesno' as const, answer: 'no', via: 'chat' as const, done: false },
+  { kind: 'yesno' as const, answer: 'no', via: 'button' as const, done: true },
+  { kind: 'yesno' as const, answer: 'no', via: 'chat' as const, done: true },
   { kind: 'choice' as const, answer: [], via: 'button' as const, done: false },
   { kind: 'reply' as const, answer: '', via: 'chat' as const, done: false },
   { kind: 'reply' as const, answer: 'no', via: 'chat' as const, done: true },
@@ -146,5 +146,5 @@ test('core checks reject malformed inputs and derive their completion sentence',
   }
   const todo = checked('human_confirmed', { questionId: 'card' });
   expect(pack.todos!.refuse!(todo)).toBeNull();
-  expect(pack.todos!.doneWhen!(todo.check)).toBe('The human confirms card card.');
+  expect(pack.todos!.doneWhen!(todo.check)).toBe('The human answers card card.');
 });

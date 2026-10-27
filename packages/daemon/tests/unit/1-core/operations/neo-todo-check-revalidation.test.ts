@@ -97,6 +97,28 @@ describe('a todo check revalidates the one todo it checked', () => {
     expect(performance.now() - started).toBeLessThan(250);
   });
 
+  test.each(['todo', 'doing', 'blocked', 'failed', 'closed_unverified'] as const)(
+    'a passing custom check completes a %s todo on refresh',
+    async (state) => {
+      const { store, runner, add } = setup();
+      const todo = add();
+      store.updateTodo(todo, { state }, 2);
+      await runner.refresh(() => {});
+      expect(store.getTodo(todo.id)).toMatchObject({ state: 'done', evidence: '#1 merged' });
+    }
+  );
+
+  test.each(['failed', 'closed_unverified'] as const)(
+    'an unmet custom check preserves the %s state',
+    async (state) => {
+      const { store, runner, add } = setup({ done: false, evidence: null });
+      const todo = add();
+      store.updateTodo(todo, { state }, 2);
+      await runner.refresh(() => {});
+      expect(store.getTodo(todo.id)?.state).toBe(state);
+    }
+  );
+
   test('an unchanged todo takes the result of its check', async () => {
     const { store, runner, add } = setup();
     const todo = add();

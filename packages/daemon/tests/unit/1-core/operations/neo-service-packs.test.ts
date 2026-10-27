@@ -70,7 +70,7 @@ test('core checks stay installed with only life-admin enabled and read actual ou
   );
   expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
   service.todos.answerQuestion(question, 'no', 'button', 2);
-  expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
+  expect(await core!.todos!.check(todo)).toMatchObject({ done: true });
   const yes = service.todos.askQuestion('yes', 'ask', question, 3);
   service.todos.answerQuestion(yes, 'yes', 'chat', 4);
   const confirmed = { ...todo, check: { ...todo.check!, params: { questionId: yes.id } } };
@@ -144,18 +144,24 @@ test('installed builtins keep identity and settings select without rebuilding th
   ).not.toContain(NEO_WORK_GOAL_MERGE);
 });
 
-test.each([
-  { kind: 'yesno' as const, answer: 'yes', via: 'button' as const },
-  { kind: 'yesno' as const, answer: 'Yes, go ahead with this plan.', via: 'chat' as const },
-  { kind: 'reply' as const, answer: 'The synthetic plan is approved.', via: 'chat' as const },
-  {
-    kind: 'choice' as const,
-    answer: ['Delete the approved synthetic leftovers'],
-    via: 'button' as const,
-  },
-])(
-  'an approved $kind card completes its still-queued todo ($via: $answer)',
-  async ({ kind, answer, via }) => {
+test.each(
+  (['todo', 'doing', 'blocked', 'failed', 'closed_unverified'] as const).flatMap((state) =>
+    [
+      { kind: 'yesno' as const, answer: 'no', via: 'button' as const },
+      { kind: 'yesno' as const, answer: 'no', via: 'chat' as const },
+      { kind: 'yesno' as const, answer: 'yes', via: 'button' as const },
+      { kind: 'yesno' as const, answer: 'Yes, go ahead with this plan.', via: 'chat' as const },
+      { kind: 'reply' as const, answer: 'The synthetic plan is approved.', via: 'chat' as const },
+      {
+        kind: 'choice' as const,
+        answer: ['Delete the approved synthetic leftovers'],
+        via: 'button' as const,
+      },
+    ].map((answer) => ({ ...answer, state }))
+  )
+)(
+  'a recorded $kind answer completes its $state todo ($via: $answer)',
+  async ({ kind, answer, via, state }) => {
     service.todos.openAsk({
       id: 'ask',
       title: 'Confirm synthetic plan',
@@ -192,7 +198,8 @@ test.each([
       },
       1
     );
-    expect(todo.state).toBe('todo');
+    service.todos.updateTodo(todo, { state }, 2);
+    expect(service.todos.getTodo(todo.id)?.state).toBe(state);
     service.todos.answerQuestion(
       question,
       typeof answer === 'string' ? answer : [...answer],
