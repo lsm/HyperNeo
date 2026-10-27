@@ -907,13 +907,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .endAsync('admission') as (todoId: string, now: number) => Promise<void | null>;
 
   type Stalled = { todo: NeoTodo; ask: NeoAsk; ref: WorkRef };
-  const cardTodo = ({ todo, ask }: Stalled, now: number) => {
-    if (
-      store
-        .listQuestions(ask.id)
-        .some((q) => q.todoId === todo.id && (q.state === 'open' || q.createdAt >= todo.updatedAt))
-    )
-      return;
+  const carded = ({ todo, ask }: Stalled) =>
+    store
+      .listQuestions(ask.id)
+      .some((q) => q.todoId === todo.id && (q.state === 'open' || q.createdAt >= todo.updatedAt));
+
+  const cardTodo = (stalled: Stalled, now: number) => {
+    if (carded(stalled)) return;
+    const { todo, ask } = stalled;
     store.askQuestion(
       crypto.randomUUID(),
       ask.id,
@@ -967,6 +968,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (stalled: Stalled, now: number): Promise<{ value: Rescue } | { reason: null }> => {
+        if (carded(stalled)) return { reason: null };
         const place =
           stalled.ask.originMessageId?.startsWith('neo-track:') ||
           sessions.readNudge(stalled.todo.id)?.redispatched

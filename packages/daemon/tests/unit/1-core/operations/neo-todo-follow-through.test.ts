@@ -350,6 +350,7 @@ describe('a doing todo never sits idle without someone on it', () => {
     const todo = w.adopt(null);
     for (const minutes of [20, 40, 60, 62, 64]) await w.at(minutes);
     expect(w.named('work.start')).toEqual([]);
+    expect(w.named('work.find')).toHaveLength(1);
     expect(w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)).toEqual([
       expect.objectContaining({ state: 'open', kind: 'reply' }),
     ]);
