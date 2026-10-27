@@ -48,6 +48,28 @@ describe('Query failure episode', () => {
     }
   });
 
+  it('does not admit an old waiting attempt after explicit recovery', async () => {
+    const session = { id: 'recovery-wait', metadata: {} } as Session;
+    const db = {
+      getSession: () => session,
+      updateSession: vi.fn(async (_id, patch) => Object.assign(session.metadata, patch.metadata)),
+    } as unknown as Database;
+    const governor = new QueryFailureGovernor(session, db);
+    vi.useFakeTimers();
+    try {
+      const old = await governor.admit(() => true);
+      await governor.failure('Fake error', old);
+      const waiting = governor.admit(() => true);
+      const rejected = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+      await governor.reset();
+      await vi.advanceTimersByTimeAsync(1000);
+      await rejected;
+      expect(await governor.admit(() => true)).not.toBe(old);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('bounds a preparation dependency that never resolves and rejects late superseded completion', async () => {
     const governor = new QueryFailureGovernor(
       { id: 'deadline', metadata: {} } as Session,

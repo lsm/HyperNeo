@@ -25,10 +25,10 @@ not the isolated retry-routing fixture used in the existing QueryRunner suite.
 
 The focused query-failure-episode tests check restore across governor instances,
 changed error messages within one budget, stale failure after explicit reset,
-and a preparation promise that never resolves. The query-runner characterization
+admission waiting across explicit recovery, and a preparation promise that never resolves. The query-runner characterization
 suite isolates the new governor while preserving existing retry-route decisions;
 it does not independently prove the new budget. Run both plus the repository
-check. Follow up with a real options-build timeout and late-completion check.
+check. Repeat the helper with deadline for an actual hung options build, zero SDK starts, late completion and recovery. Repeat with startup, auth, transient, provider and resume to check the common budget across known retry routes.
 
 Keep query-failure-governor.json, proof.log and run-status.json. Require wrapper
 exit zero. The helper closes its scripted query, WebSocket and daemon in finally;
