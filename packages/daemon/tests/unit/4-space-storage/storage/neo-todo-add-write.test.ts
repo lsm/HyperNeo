@@ -7,6 +7,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 
 type Receipt =
   | { ok: false; reason: string }
@@ -29,6 +30,7 @@ describe('Whole todo-add writer', () => {
     db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     store = new NeoAskTodoRepository(db);
     store.openAsk({
       id: 'ask',
@@ -112,6 +114,43 @@ describe('Whole todo-add writer', () => {
       await add('one', { ...draft(), check: { pack: 'missing', kind: 'unknown', params: {} } })
     ).toMatchObject({ ok: false });
     expect(store.listTodos('ask')).toEqual([]);
+    expect(changes).toEqual([]);
+  });
+  test('records current PR peers while concurrent additions stay nonblocking', async () => {
+    const coding = {
+      ...draft(),
+      instruction: null,
+      target: undefined,
+      check: {
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: { urls: ['https://github.com/synthetic/work/pull/1'] },
+      },
+    };
+    const results = await Promise.all([add('one', coding), add('two', coding)]);
+    expect(results[0]).toMatchObject({ ok: true });
+    expect(results[1]).toMatchObject({
+      ok: true,
+      records: [expect.stringContaining('pr_already_tracked:')],
+    });
+    expect(store.listTodos('ask')).toHaveLength(2);
+  });
+  test('a late question failure also rolls back a newly routed child ask', async () => {
+    db.exec("UPDATE neo_asks SET repo='synthetic/original' WHERE id='ask'");
+    db.exec(
+      "CREATE TRIGGER refuse_child_start BEFORE INSERT ON neo_questions BEGIN SELECT RAISE(ABORT, 'child start failure'); END"
+    );
+    const coding = {
+      ...draft(),
+      check: {
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: { urls: ['https://github.com/synthetic/other/pull/1'] },
+      },
+    };
+    await expect(add('one', coding)).rejects.toThrow('child start failure');
+    expect(store.listChildAsks('ask')).toEqual([]);
+    expect(store.getTodo('one')).toBeNull();
     expect(changes).toEqual([]);
   });
 });
