@@ -66,3 +66,10 @@ The ledger reader and publication writer entries are both retained. operations.t
 merged cleanly; its net diff remains the granted factory call. The final pair was
 rerun on the merged application commit. The old publication head's approval/CI
 cannot authorize this changed head; fresh gates are required.
+
+The review correction changes only the admission-order test: its defaultBinding
+spy observes the repository prototype, including fresh writer command instances.
+An allowed-reader positive control first failed in all four caller cases with the
+old instance spy, then passed with the prototype spy. The failing test was
+committed before the correction. Fresh Bun/Deno proofs were bound again because
+the complete packages tree includes tests; production behavior is unchanged.

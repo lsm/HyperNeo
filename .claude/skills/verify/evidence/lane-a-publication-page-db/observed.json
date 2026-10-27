@@ -20,7 +20,7 @@
   ],
   "proofs": {
     "bun": {
-      "run": "bun-verify-6",
+      "run": "bun-verify-7",
       "targetMainSql": 0,
       "failedReadInitializationRolledBack": true,
       "singleIdentityAfterConcurrentReads": true,
@@ -28,13 +28,13 @@
       "bindingRecheckedBeforeAdmission": true,
       "reopenedPageMatches": true,
       "fullTextSha256": "24bd9390e3de5b4b1a1d9c060b46ac1548ab0e394bf5c11374b1c829fb7a38b1",
-      "maxCommandMs": 16.45495799999935,
+      "maxCommandMs": 5.376416000000063,
       "maxArgsBytes": 190,
       "maxReplyBytes": 37683,
       "temporaryDaemonDataRemoved": true
     },
     "deno": {
-      "run": "deno-verify-3",
+      "run": "deno-verify-4",
       "targetMainSql": 0,
       "failedReadInitializationRolledBack": true,
       "singleIdentityAfterConcurrentReads": true,
@@ -42,7 +42,7 @@
       "bindingRecheckedBeforeAdmission": true,
       "reopenedPageMatches": true,
       "fullTextSha256": "24bd9390e3de5b4b1a1d9c060b46ac1548ab0e394bf5c11374b1c829fb7a38b1",
-      "maxCommandMs": 7.976959000000534,
+      "maxCommandMs": 6.676832999999533,
       "maxArgsBytes": 190,
       "maxReplyBytes": 37683,
       "temporaryDaemonDataRemoved": true
@@ -63,7 +63,8 @@
     }
   },
   "ci": {
-    "focusedVitest": "56 passed, three suites"
+    "focusedVitest": "56 passed, three suites",
+    "reviewCorrection": "22 focused publication cases pass; bun run check passes"
   },
   "limitations": [
     "Synthetic WebSocket and registered MCP daemon paths; no SDK/model turn, GUI, card-reply/core ask mutation, real GitHub or live daemon.",
@@ -72,10 +73,10 @@
     "Gateway durations and JSON byte sizes do not separate queue, SQL and clone costs."
   ],
   "proofBinding": {
-    "testedCodeCommit": "b9168bf58311c0ba0ab12bd43cf5998e69711dee",
-    "testedGitTree": "b263d1256f1474d00cfcc7031c72dfcc5839e110",
+    "testedCodeCommit": "7a4d5c5ac089527f859eebc22200792f1fac3991",
+    "testedGitTree": "a96e9b2af6aa965e4bb6b080214b383a49474394",
     "applicationTrees": {
-      "packages": "b922f8ee1c39e5b3e12f43ed2a8923b2bd30364a",
+      "packages": "9eb0d2275c8c3864e907778e679cf33ee2384e9d",
       "scripts": "c08e833c958e9b7fe26cfe8ae22b6febdc33b934"
     },
     "proofBlobs": {
@@ -84,8 +85,8 @@
       ".claude/skills/verify/lane-a-publication-page-proof-binding.ts": "a944bdb616891693c808fe2f53272d150e6f050f"
     },
     "runs": {
-      "bun": "bun-verify-6",
-      "deno": "deno-verify-3"
+      "bun": "bun-verify-7",
+      "deno": "deno-verify-4"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
   },
@@ -143,6 +144,24 @@
         "deno": "deno-verify-2"
       },
       "postProofChangePolicy": "evidence-and-journey-only"
+    },
+    {
+      "testedCodeCommit": "b9168bf58311c0ba0ab12bd43cf5998e69711dee",
+      "testedGitTree": "b263d1256f1474d00cfcc7031c72dfcc5839e110",
+      "applicationTrees": {
+        "packages": "b922f8ee1c39e5b3e12f43ed2a8923b2bd30364a",
+        "scripts": "c08e833c958e9b7fe26cfe8ae22b6febdc33b934"
+      },
+      "proofBlobs": {
+        ".claude/skills/verify/lane-a-publication-page-db.ts": "e2b2963416af4420b2a7e2a638fc7c2fdabed423",
+        ".claude/skills/verify/lane-a-publication-page-db-run.py": "b9de98e890a2006c919c4e4321733ed0c140517c",
+        ".claude/skills/verify/lane-a-publication-page-proof-binding.ts": "a944bdb616891693c808fe2f53272d150e6f050f"
+      },
+      "runs": {
+        "bun": "bun-verify-6",
+        "deno": "deno-verify-3"
+      },
+      "postProofChangePolicy": "evidence-and-journey-only"
     }
   ],
   "baseMerge": {
@@ -163,5 +182,11 @@
       "base": "ea86c3348eab1241b67e84d45e77f69b4d304165",
       "conflict": "Only the first registry import conflicted. Retained incoming turnVectorWrites and inventory readers; own granted import follows the import block and own entry remains appended. operations.ts merged cleanly; against base its sole diff is exactly the granted factory call."
     }
-  ]
+  ],
+  "reviewSpy": {
+    "regressionCommit": "400fead68a75b89d362a7b113da929946cd5e8ac",
+    "fixCommit": "7a4d5c5ac089527f859eebc22200792f1fac3991",
+    "failure": "All four allowed-reader positive controls failed with the instance spy; the prototype spy observes fresh writer repositories.",
+    "result": "22 focused cases pass; no production changes."
+  }
 }
