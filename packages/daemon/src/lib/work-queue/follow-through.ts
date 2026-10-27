@@ -5,6 +5,7 @@ export type FollowThroughIncident = {
   nudges: number;
   at?: number;
   redispatched?: boolean;
+  live?: string;
 };
 
 export function mayRedispatch(running: number, lastMovedAt: number, now: number) {

@@ -303,7 +303,7 @@ describe('queued todos start themselves', () => {
     w.idle.add('worker-1');
     w.idle.add('worker-2');
     await w.tick();
-    expect(idle.map((id) => w.sessions.readLiveStatus(id))).toEqual(['done', 'done']);
+    expect(idle.map((id) => w.sessions.workerIdle(id))).toEqual([true, true]);
     const waiting = w.add(w.approved());
     await w.tick();
     expect(w.state(waiting)).toBe('doing');

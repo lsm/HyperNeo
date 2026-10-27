@@ -326,7 +326,7 @@ test('a reminder sent but not yet confirmed counts as delivered: no resend and n
   await f.at(20);
   await f.at(21);
   expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(1);
-  expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(false);
+  expect(f.notes.some((text) => text.includes('did not reach its worker'))).toBe(false);
 });
 
 test('a first refresh after 60 minutes moves it to a fresh worker without inventing sent reminders', async () => {

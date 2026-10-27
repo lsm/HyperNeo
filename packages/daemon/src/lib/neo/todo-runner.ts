@@ -882,19 +882,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:admission'
     )
     .pipe(
-      async (context: NudgeContext, now: number) => {
+      async (context: NudgeContext) => {
         const live = readDriverLive(
           await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
         );
-        await sessions.write(
-          'recordProgress',
-          context.todo.id,
-          { landed: null, live, cardStatus: live?.status ?? null },
-          now
-        );
+        if (live) await sessions.write('noteWorkerStatus', context.todo.id, live.status);
         return live;
       },
-      ['admission', 'now'],
+      ['admission'],
       'live'
     )
     .pipe(
@@ -914,11 +909,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       async (now: number) =>
         mayRedispatch(
           (await store.read('listCheckable')).filter(
-            (other) =>
-              other.state === 'doing' &&
-              !['done', 'stopped', 'failed', 'needs_you'].includes(
-                sessions.readLiveStatus(other.id) ?? ''
-              )
+            (other) => other.state === 'doing' && !sessions.workerIdle(other.id)
           ).length,
           sweep.movedAt,
           now
