@@ -85,12 +85,20 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
   let created = 0;
   const add = (
     askId: string,
-    target: { verb: 'send'; ref: { adapter: string; id: string } } | null = null
+    target: { verb: 'send'; ref: { adapter: string; id: string } } | null = null,
+    dependsOn: string[] | null = null
   ) => {
     const todo = store.addTodo(
       `t${++created}`,
       askId,
-      { title: `t${created}`, doneWhen: 'done', check: null, instruction: 'Do it.', named: null },
+      {
+        title: `t${created}`,
+        doneWhen: 'done',
+        check: null,
+        instruction: 'Do it.',
+        named: null,
+        dependsOn,
+      },
       created
     );
     sessions.create(
@@ -270,5 +278,21 @@ describe('queued todos start themselves', () => {
     w.store.updateTodo(w.store.getTodo(first)!, { state: 'doing', startedAt: 3 }, 3);
     await w.finish(first);
     expect(w.state(first)).toBe('done');
+  });
+
+  test('independent steps start together and a join waits for all of its prerequisites', async () => {
+    const w = (current = world());
+    const ask = w.approved();
+    const left = w.add(ask, null, []);
+    const right = w.add(ask, null, []);
+    const join = w.add(ask, null, [left, right]);
+    await w.tick();
+    expect([w.state(left), w.state(right), w.state(join)]).toEqual(['doing', 'doing', 'todo']);
+    await w.finish(left);
+    await w.tick();
+    expect(w.state(join)).toBe('todo');
+    await w.finish(right);
+    await w.tick();
+    expect(w.state(join)).toBe('doing');
   });
 });
