@@ -3143,6 +3143,47 @@ describe('Session RPC Handlers — session.sandbox.switch', () => {
     );
   });
 
+  it.each([true, false])(
+    'refuses Neo sandbox toggle %s without changing or restarting its query',
+    async (enabled) => {
+      const db = new Database(':memory:');
+      const resetQuery = mock(async () => ({ success: true }));
+      const neoConfig = { model: 'sonnet', sandbox: { enabled: false } };
+      db.exec(`CREATE TABLE neo_session_bindings(session_id TEXT,concern_id TEXT,kind TEXT);
+      INSERT INTO neo_session_bindings VALUES ('neo:synthetic',NULL,'neo')`);
+      try {
+        const manager = {
+          getSessionForControl: async () => ({
+            getSessionData: () => ({ id: 'neo:synthetic', config: neoConfig }),
+            isQueryActiveOrStarting: () => true,
+            resetQuery,
+          }),
+          updateSession,
+          getDatabase: () => ({ getDatabase: () => db, getGlobalSettings: () => ({}) }),
+        } as unknown as SessionManager;
+        const hub = createMockMessageHub();
+        const { setupSessionHandlers } = await import(
+          '../../../../src/lib/rpc-handlers/session-handlers'
+        );
+        setupSessionHandlers(hub.hub, manager, createMockInternalEventBus(), {} as SpaceManager);
+        const result = await hub.handlers.get('session.sandbox.switch')!(
+          { sessionId: 'neo:synthetic', sandboxEnabled: enabled },
+          {}
+        );
+        expect(result).toEqual({
+          success: false,
+          sandboxEnabled: false,
+          error: expect.stringContaining('does not apply'),
+        });
+        expect(updateSession).not.toHaveBeenCalled();
+        expect(resetQuery).not.toHaveBeenCalled();
+        expect(neoConfig.sandbox.enabled).toBe(false);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   it('turns the sandbox on for a chat created without one, using the global policy', async () => {
     const handler = messageHubData.handlers.get('session.sandbox.switch');
     const result = await handler!({ sessionId: 's1', sandboxEnabled: true }, {});
