@@ -286,7 +286,7 @@ describe('QueryRunner stream silence watchdog', () => {
     } as unknown as SDKMessage;
   }
 
-  it('cuts a request that goes silent, retries it once, then fails the turn with the reason', async () => {
+  it('cuts silent requests through the shared budget and fails after three attempts', async () => {
     const { runner, ctx } = createRunner('s1');
     runner.start();
 
@@ -297,11 +297,18 @@ describe('QueryRunner stream silence watchdog', () => {
     expect(handleErrorSpy.mock.calls.length).toBe(0);
 
     spawnNexts[1][0].resolve({ value: sdkMessage(), done: false });
+    await waitFor(() => events.includes('close1'));
+    await waitFor(() => (spawnNexts[2]?.length ?? 0) >= 1);
+    expect(handleErrorSpy.mock.calls.length).toBe(0);
+    spawnNexts[2][0].resolve({ value: sdkMessage(), done: false });
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
     await ctx.queryPromise;
-    expect(spawnNexts.length).toBe(2);
+    expect(spawnNexts.length).toBe(3);
+    expect(ctx.session.metadata.queryFailureEpisode?.failures).toBe(3);
+    expect(ctx.session.metadata.queryFailureEpisode?.failed).toBe(true);
     expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
-    expect(String(handleErrorSpy.mock.calls[0][3])).toContain('stopped sending anything');
+    expect(String(handleErrorSpy.mock.calls[0][3])).toContain('Query stopped after 3 failures');
+    expect(String(handleErrorSpy.mock.calls[0][3])).toContain('Model stream stalled');
   });
 
   it('never cuts a slow request that keeps streaming', async () => {
