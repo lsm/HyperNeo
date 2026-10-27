@@ -111,7 +111,7 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
         ),
       })),
     })),
-    questions: [],
+    questions: entry.questions.filter((question) => question.state === 'open'),
   };
 }
 
