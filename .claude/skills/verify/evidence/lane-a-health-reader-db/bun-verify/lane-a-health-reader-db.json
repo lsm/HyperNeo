@@ -1,0 +1,22 @@
+{
+  "mode": "verify",
+  "verified": false,
+  "consumer": "Persisted daemon jobs invoke production health delivery with a synthetic keyed receiver",
+  "limitation": "No actual Neo mailbox, recipient consumption, full coding sweep, model, GitHub, GUI, whole-daemon SQL absence or latency claim.",
+  "offeredWhileWriterHeld": false,
+  "writerLock": {
+    "forcedRelease": true,
+    "offeredWhileHeld": false
+  },
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.ledgerWrites",
+      "mode": "write",
+      "method": "readHealth",
+      "durationMs": 1292.191583,
+      "argsBytes": 50,
+      "replyBytes": 403
+    }
+  ]
+}
