@@ -9,7 +9,7 @@ assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run
 for(const name of ['workspace','bin','evidence'])mkdirSync(join(run,name),{recursive:true});
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const sdk=await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
-const failures:Record<string,string>={'consumed-handoff':'API Error: 429 rate_limit_error: too many requests',startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
+const failures:Record<string,string>={'consumed-validation':'400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}','consumed-handoff':'API Error: 429 rate_limit_error: too many requests',startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
 const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow'||phase==='large'||phase==='scoped',finish=()=>{};
 let scopedCount=0,releaseParent=()=>{},armCompaction=()=>{};const recipientStarts:number[]=[];
 mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt,options}:{prompt:AsyncIterable<unknown>|string;options?:{cwd?:string}})=>{
@@ -88,7 +88,15 @@ try{
  }
  await hub.request('message.send',{sessionId,content:'Synthetic fake-start regression'});
  const read=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
- if(phase==='consumed-handoff'){await until(async()=>(await read()).metadata.queryFailureEpisode?.failures===1,'handoff did not observe the failure');await new Promise(done=>setTimeout(done,2300));assert.equal(attempts.length,1);assert.equal((await read()).metadata.queryFailureEpisode?.failed,false);evidence.acceptedHandoffPreserved=true;
+ if(phase==='consumed-validation'){
+  const rows=async()=>await hub.request<{sdkMessages:{type:string;is_error?:boolean;result?:string;message?:{content?:{type:string;text?:string}[]}}[]}>('message.sdkMessages',{sessionId});
+  await until(async()=>(await rows()).sdkMessages.some(row=>row.type==='assistant'&&row.message?.content?.some(block=>block.text?.includes('**API Error (400)**')&&block.text.includes('prompt is too long'))),'validation finalizer did not preserve its actionable message');
+  await new Promise(done=>setTimeout(done,2300));assert.equal(attempts.length,1);
+  const prior=(await read()).metadata.queryFailureEpisode!;assert.equal(prior.failures,1);assert.equal(prior.failed,false);evidence.validationFinalizerPreserved=true;
+  healthy=true;await hub.request('message.send',{sessionId,content:'Corrected synthetic valid request'});
+  await until(async()=>(await rows()).sdkMessages.some(row=>row.type==='result'&&row.is_error===false&&row.result==='Recovered synthetic reply'),'corrected request did not recover without reset');
+  await until(async()=>(await read()).metadata.queryFailureEpisode?.failures===0,'corrected request did not clear the episode');assert.equal((await read()).metadata.queryFailureEpisode?.id,prior.id);assert.equal(attempts.length,2);evidence.correctedWithoutReset=true;
+ }else if(phase==='consumed-handoff'){await until(async()=>(await read()).metadata.queryFailureEpisode?.failures===1,'handoff did not observe the failure');await new Promise(done=>setTimeout(done,2300));assert.equal(attempts.length,1);assert.equal((await read()).metadata.queryFailureEpisode?.failed,false);evidence.acceptedHandoffPreserved=true;
  }else if(phase==='scoped'){
   await until(()=>scopedCount===5,'scoped results incorrectly stopped the owning query');
   const prior=(await read()).metadata.queryFailureEpisode!;assert.equal(prior.failures,1);assert.equal(prior.failed,false);assert(prior.error.includes(failure));

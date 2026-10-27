@@ -65,6 +65,10 @@ try {
   agent.session.metadata.titleGenerated = true;
   agent.session.metadata.titleSetBy = 'user';
   const read = async () => (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
+  if (mode === 'health') {
+    const { ErrorCategory } = await import('../../../packages/daemon/src/lib/error-manager.ts');
+    await agent.errorManager.handleError(sessionId, new Error('Synthetic prior timeout'), ErrorCategory.TIMEOUT);
+  }
   await hub.request('message.send', { sessionId, content: 'Synthetic consumed prompt must reach the shared cap' });
   try {
     if (mode === 'interrupt' || mode === 'reset') {
@@ -90,6 +94,15 @@ try {
     const messages = await hub.request<{ sdkMessages: { type: string; deliveryStatus?: string }[] }>('message.sdkMessages', { sessionId });
     assert(messages.sdkMessages.some(message => message.type === 'user' && message.deliveryStatus === 'delivered'));
     evidence.delivered = true;
+    if (mode === 'health') {
+      const terminal = errors.find(event => event.error.includes('Query stopped after 3 failures'))!;
+      assert.equal((terminal.details as { category: string }).category, 'timeout');
+      let health: { system: { apiConnection: { status: string; errorCount: number } } } | undefined;
+      await until(async () => { health = await hub.request('state.global.snapshot', { includeSessions: false }); return health!.system.apiConnection.status === 'degraded'; }, 'capped timeout did not update public API health');
+      assert.equal(health!.system.apiConnection.errorCount, 2);
+      evidence.apiHealth = health!.system.apiConnection;
+    }
+
     await new Promise(done => setTimeout(done, 2300));
     assert.equal(starts.length, 3);
     evidence.passed = true;
