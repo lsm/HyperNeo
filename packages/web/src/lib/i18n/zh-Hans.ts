@@ -180,6 +180,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.copied': '已复制',
   'chat.foldLess': '收起',
   'chat.cardReply': '我给你回了 · 查看卡片',
+  'chat.cardOpening': '正在打开工作项…',
   'chat.cardUnavailable': '这张卡片已无法查看。',
   'chat.backToChat': '返回聊天',
   'chat.scenes': '相关的 Neo 场景',

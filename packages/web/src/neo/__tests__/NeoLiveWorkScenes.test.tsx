@@ -433,6 +433,34 @@ describe('card reply notice navigation', () => {
     }
   );
 
+  it('does not open a late reference after returning to chat', async () => {
+    const { model } = mountCard('answered');
+    const full = model.value.snapshot.todoAsks[0];
+    let finish!: (value: unknown) => void;
+    const request = vi.fn((_method: string, params: { name: string }) =>
+      params.name === 'neo.ask.read'
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : Promise.resolve({ schedules: [] })
+    );
+    const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      act(() => {
+        model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: [] } };
+      });
+      fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+      await screen.findByText('Opening work…');
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      fireEvent.click(screen.getByRole('button', { name: 'Back to chat' }));
+      await act(async () => finish({ ok: true, entry: full }));
+      expect(screen.queryByRole('dialog', { name: 'Sign-off card' })).toBeNull();
+      expect(screen.queryByRole('article', { name: 'Sign-off card' })).toBeNull();
+    } finally {
+      hub.mockRestore();
+    }
+  });
+
   it.each(['pending', 'failed'])(
     'keeps a %s card read stable while editing the draft',
     async (state) => {

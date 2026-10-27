@@ -1,4 +1,56 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+
+export async function verifyWorkReferenceRecovery(page, fixture, { evidence, touch = false }) {
+  let fail = true, hold = false;
+  const held = [];
+  const received = new Set();
+  let heldId;
+  await page.routeWebSocket(`ws://127.0.0.1:${fixture.port}/ws`, ws => {
+    const server = ws.connectToServer();
+    server.onMessage(raw => { received.add(JSON.parse(String(raw)).requestId); ws.send(raw); });
+    ws.onMessage(raw => {
+      const request = JSON.parse(String(raw));
+      if (request.type === 'REQ' && request.data?.name === 'neo.ask.read' && request.data.input.questionId) {
+        if (fail) { fail = false; ws.send(JSON.stringify({ ...request, id: randomUUID(), requestId: request.id, type: 'RSP', data: undefined, error: 'Synthetic reference refusal' })); return; }
+        if (hold) { heldId = request.id; held.push(() => server.send(raw)); return; }
+      }
+      server.send(raw);
+    });
+  });
+  const use = control => touch ? control.tap() : control.click();
+  const link = page.getByRole('button', { name: /I replied · View card.*Saved answered reference/ });
+  const dialog = page.getByRole('dialog', { name: 'Stored navigation card', exact: true });
+  const back = page.getByRole('button', { name: 'Back to chat', exact: true });
+  await page.goto(fixture.url);
+  await use(link);
+  await page.getByText('This card is no longer available.', { exact: true }).waitFor();
+  await use(back);
+  hold = true;
+  await use(link);
+  await page.getByText('Opening work…', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.body.textContent.includes('Opening work…'));
+  assert(held.length > 0);
+  await use(back);
+  hold = false;
+  for (const release of held.splice(0)) release();
+  for (let attempt = 0; !received.has(heldId) && attempt < 100; attempt++) await page.waitForTimeout(20);
+  assert(received.has(heldId));
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await dialog.count(), 0);
+  assert.equal(await page.locator('[data-ask="nav-history"]').count(), 0);
+  await use(link);
+  await dialog.waitFor();
+  await page.waitForFunction(() => document.activeElement?.id === 'neo-ref-question-nav-answered');
+  await page.keyboard.press('Escape');
+  await use(back);
+  await use(link);
+  await dialog.waitFor();
+  await page.waitForFunction(() => document.activeElement?.id === 'neo-ref-question-nav-answered');
+  await page.evaluate(async () => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished)));
+  await page.screenshot({ path: `${evidence}/${touch ? 'mobile' : 'desktop'}-reference-retry.png`, scale: 'css' });
+  return { touch, refusalVisible: true, cancelledReadStayedClosed: true, retryOpenedTarget: true, repeatedActivation: true };
+}
 
 export async function verifyWorkItemNavigation(page, fixture, { phase, evidence, touch = false }) {
   const use = control => touch ? control.tap() : control.click();
