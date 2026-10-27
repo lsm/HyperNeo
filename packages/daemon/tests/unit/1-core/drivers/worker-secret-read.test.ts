@@ -216,6 +216,50 @@ test('Codex selected profile denies synthetic credentials and permits repository
   expect(fs[':root']).toBe('read');
 });
 
+test('worker policies use private gh configuration while protecting the home gh directory', async () => {
+  const home = join(fixture, 'home');
+  const gh = join(home, '.config/gh');
+  const fs = codexWorkerSandbox(root).config.permissions['hyperneo-worker'].filesystem as Record<
+    string,
+    string
+  >;
+  expect(fs[gh]).toBe('deny');
+  await installClaudeNativeWrites(root, [join(fixture, 'source')]);
+  const policy = settings();
+  expect(policy.sandbox.filesystem.denyRead).toContain(gh);
+  expect(policy.permissions.deny).toContain(`Read(/${gh}/**)`);
+  for (const path of [
+    'Library/Keychains',
+    '.git-credentials',
+    '.config/git/credentials',
+    '.codex/auth.json',
+    '.config/gh/hosts.yml',
+  ]) {
+    expect(fs[join(home, path)]).toBe('deny');
+    expect(policy.sandbox.filesystem.denyRead).toContain(join(home, path));
+  }
+});
+
+test('Claude resume preserves home gh and custom denials with private config environment', async () => {
+  await installClaudeNativeWrites(root, [join(fixture, 'source')]);
+  const gh = join(fixture, 'home/.config/gh');
+  const custom = join(fixture, 'private-custom');
+  const previous = settings();
+  previous.sandbox.filesystem.denyRead.push(gh, custom);
+  previous.permissions.deny.push(`Read(/${gh})`, `Read(/${gh}/**)`, `Read(/${custom}/**)`);
+  writeFileSync(settingsPath(), JSON.stringify(previous));
+  await readClaudeWorkerSandbox(root);
+  const policy = settings();
+  expect(policy.sandbox.filesystem.denyRead).toContain(gh);
+  expect(policy.permissions.deny).toContain(`Read(/${gh})`);
+  expect(policy.permissions.deny).toContain(`Read(/${gh}/**)`);
+  expect(policy.sandbox.filesystem.denyRead).toContain(custom);
+  expect(policy.permissions.deny).toContain(`Read(/${custom}/**)`);
+  expect(policy.sandbox.filesystem.denyRead).toContain(join(fixture, 'home/Library/Keychains'));
+  expect(policy.sandbox.filesystem.denyRead).toContain(join(gh, 'hosts.yml'));
+  expect(policy.env.GH_CONFIG_DIR).toBeTruthy();
+});
+
 test('configured engine homes remain denied without denying the worker repo', async () => {
   vi.stubEnv('CODEX_HOME', join(fixture, 'codex-home'));
   vi.stubEnv('CLAUDE_CONFIG_DIR', join(fixture, 'claude-home'));
