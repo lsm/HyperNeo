@@ -318,7 +318,10 @@ it('keeps legacy Advanced selectors from making a second attachment claim', asyn
 });
 
 it('uses the canonical skill picker without a second Advanced skills group', async () => {
-  const current = { ...session, config: { toolSelection: { version: 1 as const, choices: {} } } };
+  const current = {
+    ...session,
+    config: { ...session.config, toolSelection: { version: 1 as const, choices: {} } },
+  };
   const view = render(<ToolsModal isOpen onClose={() => {}} session={current} />);
   await view.findByRole('button', { name: 'Use here: Synthetic Browser' });
   fireEvent.click(view.getByRole('button', { name: 'Advanced settings' }));
