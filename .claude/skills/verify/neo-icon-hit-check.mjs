@@ -53,7 +53,7 @@ export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch
       await page.waitForTimeout(120);
       const pressed = await footer.evaluate(async button => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); return { background: getComputedStyle(button).backgroundColor, transform: getComputedStyle(button).transform }; });
       assert.notEqual(pressed.background, normal);
-      assert.notEqual(pressed.transform, 'none');
+      assert.equal(pressed.transform, 'matrix(0.94, 0, 0, 0.94, 0, 0)');
       await page.screenshot({ path: `${evidence}/mobile-pressed.png`, scale: 'css' });
       observations.push({ pressed, heldPointerInTouchLayout: true });
     } finally { await page.mouse.up(); }
