@@ -1,7 +1,7 @@
 import { buildWorkflowOptionsPatch } from './workflow-options-patch.ts';
+import { buildWorkflowNodeConfig, type WorkflowNodeConfig } from './workflow-node-config.ts';
 import type {
   CreateSpaceWorkflowParams,
-  HandoffTransition,
   PostApprovalRoute,
   SpaceAutonomyLevel,
   SpaceWorkflow,
@@ -67,10 +67,7 @@ interface NodeRow {
   updated_at: number;
 }
 
-interface NodeConfigJson {
-  agents?: WorkflowNodeAgent[];
-  postApproval?: PostApprovalRoute;
-  transitions?: HandoffTransition[];
+interface NodeConfigJson extends WorkflowNodeConfig {
   completionActions?: unknown;
 }
 
@@ -531,7 +528,7 @@ export class SpaceWorkflowRepository {
         continue;
       }
       rowOrderByNodeId.set(node.id, i + 1);
-      const configJson = JSON.stringify(this.buildNodeConfig(node));
+      const configJson = JSON.stringify(buildWorkflowNodeConfig(node));
       if (existingNodeIds.has(node.id)) {
         const result = updateNode.run(node.name, configJson, now, workflowId, node.id);
         if (result.changes === 0) {
@@ -598,29 +595,6 @@ export class SpaceWorkflowRepository {
     })();
   }
 
-  private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
-    const nodeCfg: NodeConfigJson = {};
-
-    const legacyAgentId = (input as unknown as Record<string, unknown>)['agentId'] as
-      | string
-      | undefined;
-    let resolvedAgents = input.agents && input.agents.length > 0 ? input.agents : undefined;
-    if (!resolvedAgents && legacyAgentId) {
-      resolvedAgents = [{ agentId: legacyAgentId, name: input.name }];
-    }
-    if (resolvedAgents && resolvedAgents.length > 0) {
-      nodeCfg.agents = resolvedAgents;
-    }
-    if (input.postApproval) {
-      nodeCfg.postApproval = input.postApproval;
-    }
-    if (input.transitions && input.transitions.length > 0) {
-      nodeCfg.transitions = input.transitions;
-    }
-
-    return nodeCfg;
-  }
-
   private insertNode(
     workflowId: string,
     input: WorkflowNodeInput,
@@ -639,7 +613,7 @@ export class SpaceWorkflowRepository {
         workflowId,
         input.name,
         '',
-        JSON.stringify(this.buildNodeConfig(input)),
+        JSON.stringify(buildWorkflowNodeConfig(input)),
         now,
         now
       );
