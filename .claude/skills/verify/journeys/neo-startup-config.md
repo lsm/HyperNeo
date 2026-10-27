@@ -5,13 +5,7 @@ no real keys or credential reads, loopback scripted model and ephemeral non-8399
 This is the existing real-SDK publication journey extended to cover an old stored root.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-neo-startup-proof-XXXXXX)
-mkdir -p "$RUN/home" "$RUN/evidence"
-cd packages/daemon
-env -i HOME="$RUN/home" PATH="$PATH" TERM=dumb NODE_ENV=test \
-  HYPERNEO_USE_DEV_PROXY=0 VERIFY_EVIDENCE_DIR="$RUN/evidence" \
-  node_modules/.bin/vitest run --config vitest.online.config.ts \
-  tests/online/convo/neo-publication-sdk.test.ts
+TMPDIR=/private/tmp bash .claude/skills/verify/neo-unsandboxed-sdk.sh /absolute/fresh/evidence-directory
 ```
 
 The test first creates a real SDK transcript containing a random marker at a synthetic
@@ -28,7 +22,8 @@ plumbing; it is not evidence of a real model's spontaneous decision to publish.
 Missing transcript data cannot be reconstructed by this
 config refresh and is not claimed recovered.
 
-Save `$RUN/evidence/neo-goal-cycle-sdk.json` outside the worktree; it contains startup
+The wrapper saves `neo-goal-cycle-sdk.json` outside the worktree and removes
+its fresh HOME/data/temp directory on success or failure; it contains startup
 config, tools seen by the model, historySeen, both paths, SDK id, publication and web-reader
 receipt. The test closes SDK turns, WebSocket, daemon and mock in finally. Focused startup
 unit tests also cover new/existing roots, no-root recovery, idempotency, changing pack
@@ -40,3 +35,8 @@ stored root config read-only: current prompt including root-turn-end and goal-cy
 Read/Bash in sdkToolsPreset and publication invoke in allowedTools. Do not deploy/restart
 or edit the live DB from this journey. Keep rollout/live-config confirmation pending until
 those actual readbacks exist.
+
+The sandbox-update RPC must report success with sandboxEnabled false and no
+error property. JSON omits undefined properties: an expected `error: undefined`
+key incorrectly rejects that successful wire response. This journey exercises
+both synthetic credential sources through the real SDK, not an OS sandbox.
