@@ -10,6 +10,13 @@ const task = {
   blockReason: 'agent_handoff_required',
 } as SpaceTask;
 
+test('handoff naming guidance is domain-neutral', () => {
+  const operation = createHandoffWorkerSessionOperation({} as never);
+  expect(operation.description).not.toContain('project and a number');
+  expect(operation.description).not.toContain('neo-ios dev 2');
+  expect(operation.description).toContain('never a task title');
+});
+
 describe('task.workerSession.handoff', () => {
   test('only the human RPC caller can authorize a successor', async () => {
     const calls: string[] = [];

@@ -168,7 +168,7 @@ try {
     );
     const todo = await add('human_confirmed', { questionId: question.id });
     assert.equal((await rpc('neo.question.answer', { questionId: question.id, answer })).ok, true);
-    await close(todo, answer === 'yes' ? 'done' : 'closed_unverified');
+    await close(todo, 'done');
   }
   const build = await rpc('system.build', {});
   assert.match(build.commit!, /^[0-9a-f]{40}$/);
@@ -185,7 +185,7 @@ try {
     enabledPacks: ['life-admin'],
   });
   console.log(
-    'PASS: real RPC derives completion text and checks human yes, file, artifact and daemon build ancestry with only life-admin enabled.'
+    'PASS: real RPC derives completion text and checks recorded human answers, file, artifact and daemon build ancestry with only life-admin enabled.'
   );
 } finally {
   ws?.close();

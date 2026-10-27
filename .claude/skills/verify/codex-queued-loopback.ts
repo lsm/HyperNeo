@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { startSigningAgent } from './signing-agent.ts';
 import { startCodexBootstrapServer } from '../../../packages/daemon/src/lib/drivers/codex-app-server.ts';
 import { queueCodexMessage, type CodexDesktopAdapterDeps } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
-import { codexWorkerSandbox, prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
+import { codexWorkerSandbox, configureWorkerSandbox, prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 
 const [codex, runArg] = process.argv.slice(2);
 const run = resolve(runArg);
@@ -67,6 +67,7 @@ try {
     spawn: () => { throw new Error('Unexpected CLI fallback'); },
     desktopRunning: async () => false,
   } as unknown as CodexDesktopAdapterDeps;
+  configureWorkerSandbox(() => 'always');
   const queued = await queueCodexMessage({ thread: { id, folder: worker, title: 'Synthetic worker', archived: 0, updatedAt: 1, rolloutPath: started.thread.path }, roots: [] }, 'Run the synthetic probe.', deps, 'queue');
   assert(queued.ok, JSON.stringify(queued));
   await wait(() => {
@@ -92,6 +93,7 @@ try {
   assert(observed.outsideRefused, 'Worker wrote outside its allowed roots');
   assert(observed.signedCommit, 'Queued worker could not sign a commit through the agent socket');
 } finally {
+  configureWorkerSandbox(() => 'off');
   signing.stop();
   await server?.close();
   writeFileSync(join(run, 'codex-app-server-finish'), 'done');

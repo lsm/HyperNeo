@@ -314,8 +314,9 @@ describe('neo.preferences.set', () => {
   test.each([
     [1, 10],
     [70, 70],
+    ['70', 70],
     [101, 100],
-  ])('clamps percentage %s to %s and exposes it in settings/snapshot', async (input, expected) => {
+  ])('clamps percentage %j to %s and exposes it in settings/snapshot', async (input, expected) => {
     const preference = {
       model: 'deepseek-v4-flash',
       provider: 'deepseek',
@@ -331,7 +332,7 @@ describe('neo.preferences.set', () => {
     });
   });
 
-  test.each([70.5, '70', null, true, Number.NaN, Number.POSITIVE_INFINITY])(
+  test.each([70.5, 'seventy', null, true, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects invalid percentage %s without saving',
     async (autoCompactPercent) => {
       const result = await invoke('neo.preferences.set', {

@@ -1,0 +1,44 @@
+{
+  "mode": "rpc",
+  "passed": false,
+  "cases": [
+    {
+      "field": "title",
+      "reference": "~/ordinary-source.md",
+      "receipt": {
+        "accepted": true,
+        "artifact": {
+          "daemonId": "b95cef70-ca98-4df2-a4a6-d89c4eb09284",
+          "artifactId": "0779e648-31aa-415e-b91a-61627a2e3ad1",
+          "title": "ordinary-source.md",
+          "kind": "markdown",
+          "byteLength": 43
+        }
+      },
+      "exactBytesRead": true,
+      "retryStable": true
+    },
+    {
+      "field": "blockedReason",
+      "reference": "~/blocked-source.md",
+      "receipt": {
+        "accepted": false,
+        "reason": "unavailable"
+      }
+    },
+    {
+      "field": "nextAction",
+      "reference": "~/next-source.md",
+      "receipt": {
+        "accepted": false,
+        "reason": "unavailable"
+      }
+    }
+  ],
+  "codeHead": "0399841595056bcb1cc407011e78e5a7185b8dc6",
+  "port": 49507,
+  "unmentioned": {
+    "accepted": false,
+    "reason": "unavailable"
+  }
+}

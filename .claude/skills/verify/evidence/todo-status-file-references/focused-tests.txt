@@ -1,0 +1,23 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 <worktree>/packages/daemon
+
+ ✓ tests/unit/1-core/operations/preview-candidates.test.ts (12 tests) 658ms
+   ✓ stored preview reference planning (12)
+     ✓ uses persisted publication revisions and current bindings after restart in actual Bun 640ms
+ ✓ tests/unit/1-core/operations/preview-resolve.test.ts (5 tests) 2156ms
+   ✓ human stored reference capture (5)
+     ✓ resolves complete spaced inline-code paths from chat and todo sources 967ms
+     ✓ opens unregistered home-relative publication HTML through the existing capture checks 632ms
+     ✓ captures only source-bound synthetic bytes and rechecks current authority 555ms
+ ✓ tests/unit/1-core/operations/artifact-todo-status-reference.test.ts (2 tests) 1387ms
+   ✓ resolves a home file mentioned only in the todo blockedReason 725ms
+   ✓ resolves a home file mentioned only in the todo nextAction 661ms
+
+ Test Files  3 passed (3)
+      Tests  19 passed (19)
+   Start at  00:48:20
+   Duration  5.31s (tests 83%, transform 10%, import 6%, setup 1%)
+

@@ -41,7 +41,7 @@ export function createHandoffWorkerSessionOperation(deps: HandoffWorkerSessionDe
   return defineOperation({
     name: 'task.workerSession.handoff',
     description:
-      'After a worker session cannot be resumed, a human can explicitly start a successor with a bounded, durable handoff from the predecessor. Keep a short session name with the project and a number, such as neo-ios dev 2 or HyperNeo dev 3, never a task title; use work.rename if the successor inherits a task title.',
+      'After a worker session cannot be resumed, a human can explicitly start a successor with a bounded, durable handoff from the predecessor. Keep a short session name for the matter, never a task title; use work.rename if the successor inherits a task title.',
     policy: { safetyClass: 'human_only' },
     inputSchema,
     resultSchema: z.union([

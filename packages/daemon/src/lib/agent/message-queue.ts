@@ -390,7 +390,7 @@ export class MessageQueue {
     }, this.timeoutMs);
   }
 
-  clear(): void {
+  clear(reason = new Error('Interrupted by user')): void {
     this.stopEpoch += 1;
     this.clearEpoch += 1;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
@@ -410,14 +410,14 @@ export class MessageQueue {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
       }
-      msg.reject(new Error('Interrupted by user'));
+      msg.reject(reason);
     }
     this.queue = [];
     for (const msg of this.claimed) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
       }
-      msg.reject(new Error('Interrupted by user'));
+      msg.reject(reason);
     }
     this.claimed.clear();
     const yieldedCompactions = [...this.yielded].filter((msg) => this.isInternalCompaction(msg));
@@ -426,7 +426,7 @@ export class MessageQueue {
         clearTimeout(msg.timeoutId);
       }
       if (msg.durable === true && !msg.internal) {
-        msg.reject(new Error('Interrupted by user'));
+        msg.reject(reason);
       } else {
         msg.resolve(msg.id);
       }

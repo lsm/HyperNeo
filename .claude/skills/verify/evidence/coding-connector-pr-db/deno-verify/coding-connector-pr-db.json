@@ -1,0 +1,741 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "Persisted synthetic job invoking production HookExecutor/pr_merged with the same reader wiring as TaskAgentManager",
+  "limitation": "Synthetic job wrapper; no real workflow run, model, GitHub or merge is started.",
+  "cold": [
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    }
+  ],
+  "open": [
+    {
+      "result": {
+        "type": "retryable_block",
+        "reason": "PR is not merged: pending external state",
+        "retryAfterMs": 30000,
+        "data": {
+          "externalStatePending": true
+        }
+      }
+    }
+  ],
+  "failed": [
+    {
+      "result": {
+        "type": "block",
+        "reason": "PR is not merged: Synthetic GitHub unavailable"
+      }
+    }
+  ],
+  "partial": [
+    {
+      "result": {
+        "type": "block",
+        "reason": "PR is not merged: GitHub connector PR facts unavailable: partial"
+      }
+    }
+  ],
+  "wrong-identity": [
+    {
+      "result": {
+        "type": "block",
+        "reason": "PR is not merged: GitHub connector PR facts unavailable: partial"
+      }
+    }
+  ],
+  "alias": [
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    }
+  ],
+  "health": {
+    "elapsedMs": 7.7356249999998,
+    "result": {
+      "status": "ok",
+      "dataMigration": {
+        "name": "sdk_message_columns_backfill_v2",
+        "state": "complete",
+        "through": 0,
+        "total": 0
+      },
+      "version": "0.49.0",
+      "uptime": 2808,
+      "sessions": {
+        "active": 0,
+        "total": 0
+      }
+    }
+  },
+  "late": [
+    {
+      "result": {
+        "type": "block",
+        "reason": "PR is not merged: GitHub connector PR observation superseded"
+      }
+    }
+  ],
+  "fence": {
+    "winner": {
+      "accepted": true,
+      "facts": {
+        "subject": {
+          "credentialId": "github-connector",
+          "url": "https://github.com/synthetic/basic/pull/7",
+          "accept": "application/vnd.hyperneo.pr-basic+json",
+          "apiVersion": "v1"
+        },
+        "factRevision": 4,
+        "observationRevision": 10,
+        "page": {
+          "status": "known",
+          "http": null,
+          "value": {
+            "mergeStateStatus": "CLEAN",
+            "mergeable": "MERGEABLE",
+            "state": "CLOSED",
+            "url": "https://github.com/synthetic/basic/pull/7"
+          },
+          "etag": null,
+          "next": null,
+          "observedAt": 1793082849505
+        }
+      }
+    },
+    "loser": {
+      "accepted": false,
+      "facts": {
+        "subject": {
+          "credentialId": "github-connector",
+          "url": "https://github.com/synthetic/basic/pull/7",
+          "accept": "application/vnd.hyperneo.pr-basic+json",
+          "apiVersion": "v1"
+        },
+        "factRevision": 4,
+        "observationRevision": 10,
+        "page": {
+          "status": "known",
+          "http": null,
+          "value": {
+            "mergeStateStatus": "CLEAN",
+            "mergeable": "MERGEABLE",
+            "state": "CLOSED",
+            "url": "https://github.com/synthetic/basic/pull/7"
+          },
+          "etag": null,
+          "next": null,
+          "observedAt": 1793082849505
+        }
+      }
+    }
+  },
+  "rows": [
+    {
+      "http_json": null,
+      "subject": "[\"github-connector\",\"https://github.com/synthetic/basic/pull/7\",\"application/vnd.hyperneo.pr-basic+json\",\"v1\",null,null]",
+      "fact_revision": 4,
+      "observation_revision": 10,
+      "value_json": "{\"mergeStateStatus\":\"CLEAN\",\"mergeable\":\"MERGEABLE\",\"state\":\"CLOSED\",\"url\":\"https://github.com/synthetic/basic/pull/7\"}",
+      "etag": null,
+      "next_url": null,
+      "observed_at": 1793082849505,
+      "attempted_at": 1793082849505,
+      "reason": null
+    }
+  ],
+  "counts": {
+    "cold": 1,
+    "repeat": 1,
+    "open": 1,
+    "failed": 1,
+    "partial": 1,
+    "wrong-identity": 1,
+    "recovered": 1,
+    "alias": 1,
+    "reopen": 1,
+    "late": 1
+  },
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 95.69487499999991,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 95.75720799999999,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 95.75754199999983,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 95.77174999999988,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 95.78108300000008,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.5239579999997659,
+      "argsBytes": 199,
+      "replyBytes": 290
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 2.336166999999932,
+      "argsBytes": 199,
+      "replyBytes": 290
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 2.344749999999749,
+      "argsBytes": 199,
+      "replyBytes": 290
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 2.3402500000001965,
+      "argsBytes": 199,
+      "replyBytes": 290
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 2.3401249999999436,
+      "argsBytes": 199,
+      "replyBytes": 290
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.7388330000001133,
+      "argsBytes": 353,
+      "replyBytes": 449
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.3524579999998423,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.46745800000007875,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.4786659999999756,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.49000000000023647,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.5077500000002146,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.13187500000003638,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.1310000000000855,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.7691660000000411,
+      "argsBytes": 353,
+      "replyBytes": 449
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.20483299999978044,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.14583399999992253,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.11766599999987193,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.35358399999995527,
+      "argsBytes": 351,
+      "replyBytes": 447
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.2086669999998776,
+      "argsBytes": 199,
+      "replyBytes": 421
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.109375,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.10674999999991996,
+      "argsBytes": 199,
+      "replyBytes": 421
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.37720800000033705,
+      "argsBytes": 219,
+      "replyBytes": 333
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.1327080000000933,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.11820900000020629,
+      "argsBytes": 199,
+      "replyBytes": 307
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.38341600000012477,
+      "argsBytes": 220,
+      "replyBytes": 334
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.11758300000019517,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.10850000000027649,
+      "argsBytes": 199,
+      "replyBytes": 308
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.3947499999999309,
+      "argsBytes": 220,
+      "replyBytes": 334
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.1113749999999527,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.1150830000001406,
+      "argsBytes": 199,
+      "replyBytes": 308
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.3309169999997721,
+      "argsBytes": 353,
+      "replyBytes": 449
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.20979200000010678,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.15333400000008623,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.15124999999989086,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.16745799999989686,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.17750000000023647,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.19383299999981318,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.0990830000000642,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.651459000000159,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.6605410000001939,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.6518749999995634,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.6561249999999745,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.337666999999783,
+      "argsBytes": 353,
+      "replyBytes": 449
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.18391700000029232,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.2147500000000946,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.2250000000003638,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.24437500000021828,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.25233299999990777,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 142.51141599999983,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.5853329999999914,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 1.027625000000171,
+      "argsBytes": 353,
+      "replyBytes": 449
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.30666699999983393,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.17479199999979755,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.23429200000009587,
+      "argsBytes": 199,
+      "replyBytes": 423
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.39350000000013097,
+      "argsBytes": 353,
+      "replyBytes": 450
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.30266700000038327,
+      "argsBytes": 353,
+      "replyBytes": 451
+    },
+    {
+      "name": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.2760409999996227,
+      "argsBytes": 219,
+      "replyBytes": 451
+    }
+  ],
+  "requests": [
+    {
+      "phase": "cold",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "repeat",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "open",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "failed",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "partial",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "wrong-identity",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "alias",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "late",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    }
+  ]
+}

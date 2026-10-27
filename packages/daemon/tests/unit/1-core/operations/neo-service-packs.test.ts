@@ -2,6 +2,9 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
+import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import {
   type DaemonInternalEventMap,
   InternalEventBus,
@@ -67,7 +70,7 @@ test('core checks stay installed with only life-admin enabled and read actual ou
   );
   expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
   service.todos.answerQuestion(question, 'no', 'button', 2);
-  expect(await core!.todos!.check(todo)).toEqual({ done: false, evidence: null });
+  expect(await core!.todos!.check(todo)).toMatchObject({ done: true });
   const yes = service.todos.askQuestion('yes', 'ask', question, 3);
   service.todos.answerQuestion(yes, 'yes', 'chat', 4);
   const confirmed = { ...todo, check: { ...todo.check!, params: { questionId: yes.id } } };
@@ -139,6 +142,164 @@ test('installed builtins keep identity and settings select without rebuilding th
       checkKind: null,
     })
   ).not.toContain(NEO_WORK_GOAL_MERGE);
+});
+
+test.each(
+  (['todo', 'doing', 'blocked', 'failed', 'closed_unverified'] as const).flatMap((state) =>
+    [
+      { kind: 'yesno' as const, answer: 'no', via: 'button' as const },
+      { kind: 'yesno' as const, answer: 'no', via: 'chat' as const },
+      { kind: 'yesno' as const, answer: 'yes', via: 'button' as const },
+      { kind: 'yesno' as const, answer: 'Yes, go ahead with this plan.', via: 'chat' as const },
+      { kind: 'reply' as const, answer: 'The synthetic plan is approved.', via: 'chat' as const },
+      {
+        kind: 'choice' as const,
+        answer: ['Delete the approved synthetic leftovers'],
+        via: 'button' as const,
+      },
+    ].map((answer) => ({ ...answer, state }))
+  )
+)(
+  'a recorded $kind answer completes its $state todo ($via: $answer)',
+  async ({ kind, answer, via, state }) => {
+    service.todos.openAsk({
+      id: 'ask',
+      title: 'Confirm synthetic plan',
+      request: 'Approve the synthetic plan',
+      sessionId: 'neo',
+      projectId: null,
+      originMessageId: null,
+      createdAt: 1,
+    });
+    const question = service.todos.askQuestion(
+      'approval',
+      'ask',
+      {
+        text: 'Approve the synthetic plan?',
+        kind,
+        options:
+          kind === 'choice' ? ['Keep everything', 'Delete the approved synthetic leftovers'] : null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Yes',
+        startTodos: null,
+      },
+      1
+    );
+    const todo = service.todos.addTodo(
+      'queued',
+      'ask',
+      {
+        title: 'Human approves the synthetic plan',
+        doneWhen: 'Human confirms',
+        instruction: null,
+        named: null,
+        check: { pack: 'core', kind: 'human_confirmed', params: { questionId: question.id } },
+      },
+      1
+    );
+    service.todos.updateTodo(todo, { state }, 2);
+    expect(service.todos.getTodo(todo.id)?.state).toBe(state);
+    service.todos.answerQuestion(
+      question,
+      typeof answer === 'string' ? answer : [...answer],
+      via,
+      2
+    );
+    await service.deliverQuestionAnswers(question.id);
+    expect(service.todos.getTodo(todo.id)?.state).toBe('done');
+  }
+);
+
+test('a queued confirmation starts its successor exactly once when the answer arrives', async () => {
+  const store = service.todos;
+  store.openAsk({
+    id: 'ask',
+    title: 'Synthetic ordered work',
+    request: 'Approve and continue',
+    sessionId: 'neo',
+    projectId: null,
+    originMessageId: null,
+    createdAt: 1,
+  });
+  store.addTodo(
+    'first',
+    'ask',
+    {
+      title: 'Human decides',
+      doneWhen: 'Human confirms',
+      instruction: null,
+      named: null,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'card' } },
+    },
+    1
+  );
+  const card = store.askQuestion(
+    'card',
+    'ask',
+    {
+      text: 'Approve the synthetic plan?',
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: null,
+      todoId: 'first',
+    },
+    1
+  );
+  store.addTodo(
+    'next',
+    'ask',
+    {
+      title: 'Next step',
+      doneWhen: 'Output exists',
+      instruction: 'Record a synthetic dispatch',
+      named: null,
+      check: null,
+    },
+    2
+  );
+  const raw = db.getDatabase(),
+    gateway = gatewayFor(raw),
+    sessions = new NeoTodoSessionRepository(raw);
+  sessions.create('next', { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } });
+  const dispatches: unknown[] = [];
+  const runner = createNeoTodoRunner({
+    store,
+    sessions,
+    write: gateway.run.bind(gateway),
+    packs: () => service.installedPacks(),
+    changed: () => {},
+    tell: async () => {},
+    invoke: async (_caller, name, input) => {
+      if (name === 'work.send') dispatches.push(input.ref);
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            delivered: true,
+            ref: input.ref,
+            status: 'running',
+            lastActivityAt: 1,
+          },
+        },
+      };
+    },
+  });
+  store.answerQuestion(card, 'The synthetic plan is approved.', 'chat', 3);
+  await runner.checkNow({ questionId: 'card' }, (_message, error) => {
+    throw error;
+  });
+  expect(store.getTodo('first')?.state).toBe('done');
+  expect(store.getTodo('next')?.state).toBe('doing');
+  expect(dispatches).toEqual([{ adapter: 'hyperneo', id: 'synthetic-worker' }]);
+  await runner.checkNow({ questionId: 'card' }, (_message, error) => {
+    throw error;
+  });
+  expect(dispatches).toHaveLength(1);
 });
 
 test('an installed legacy todo check observes reader replacements and retains its claims', async () => {

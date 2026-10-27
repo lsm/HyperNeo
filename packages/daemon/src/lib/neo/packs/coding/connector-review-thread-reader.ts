@@ -1,7 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import { withBusyRetry } from '../../../../storage/busy-retry.ts';
 import type { ConnectorOutcome } from '../../../github/connectors/connector.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
@@ -33,7 +32,10 @@ const Page = z.object({
   }),
   errors: z.array(z.unknown()).optional(),
 });
-type Target = Extract<ReturnType<typeof codingConnectorPrTarget>, { value: unknown }>['value'];
+type Target = Extract<
+  Awaited<ReturnType<typeof codingConnectorPrTarget>>,
+  { value: unknown }
+>['value'];
 type Fetched =
   | { kind: 'known'; value: { headOid: string; unresolvedThreadUrls: string[] } }
   | {
@@ -104,7 +106,7 @@ async function fetchPages(url: string, cwd: string, spawn: SpawnFn): Promise<Fet
 
 async function acquire(target: Target, cwd: string, spawn: SpawnFn, now: () => number) {
   const { facts, subject } = target;
-  const before = facts.read(subject, now(), Infinity);
+  const before = await facts.readCurrent(subject, now(), Infinity);
   const response = await facts.acquire(subject, null, async () => {
     const fetched = await fetchPages(subject.url, cwd, spawn);
     const result: ConnectorOutcome =
@@ -113,18 +115,21 @@ async function acquire(target: Target, cwd: string, spawn: SpawnFn, now: () => n
       fetched.kind === 'known'
         ? { value: fetched.value, etag: null, next: null }
         : { reason: fetched.kind };
-    const recorded = withBusyRetry(() =>
-      facts.record(subject, observation, now(), before.observationRevision)
+    const recorded = await facts.observeCurrent(
+      subject,
+      observation,
+      now(),
+      before.observationRevision
     );
     return Response.json({
-      result: recorded
+      result: recorded.accepted
         ? result
         : { ok: false, error: 'GitHub review-thread observation superseded' },
       revision: before.observationRevision + 1,
     });
   });
   const acquired = (await response.json()) as { result: ConnectorOutcome; revision: number };
-  const current = facts.read(subject, now(), Infinity);
+  const current = await facts.readCurrent(subject, now(), Infinity);
   return !acquired.result.ok
     ? acquired.result
     : current.observationRevision === acquired.revision && current.page.status === 'known'

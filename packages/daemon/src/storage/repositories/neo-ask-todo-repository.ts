@@ -748,7 +748,7 @@ export class NeoAskTodoRepository {
     return (
       this.db
         .prepare(
-          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked')
+          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed', 'closed_unverified')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
         )
         .all() as TodoRow[]
@@ -758,7 +758,7 @@ export class NeoAskTodoRepository {
   getCheckable(id: string): NeoTodo | null {
     const row = this.db
       .prepare(
-        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked')
+        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked', 'failed', 'closed_unverified')
            AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
       )
       .get(id) as TodoRow | null;

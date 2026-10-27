@@ -30,7 +30,8 @@ export const ProbeDaemonInputSchema = z.object({
     .refine(
       (url) => url.startsWith('ws://') || url.startsWith('wss://'),
       'URL must be a ws:// or wss:// MessageHub endpoint'
-    ),
+    )
+    .meta({ examples: ['wss://example.com/ws'] }),
 });
 
 export const ProbeDaemonResultSchema = z.discriminatedUnion('kind', [

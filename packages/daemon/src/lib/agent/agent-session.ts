@@ -1212,6 +1212,8 @@ export class AgentSession
   }): Promise<{ success: boolean; error?: string }> {
     this.rateLimitWatchdog.cancel();
     this.networkPause.stop();
+    if (options?.hardReset && this.queryRunner instanceof QueryRunner)
+      await this.queryRunner.resetFailureEpisode();
 
     const restartQuery = options?.restartQuery ?? true;
     if (options?.hardReset && this.runtimeOptions.hardReset) {

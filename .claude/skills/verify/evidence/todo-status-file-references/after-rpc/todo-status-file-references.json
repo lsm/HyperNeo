@@ -1,0 +1,60 @@
+{
+  "mode": "rpc",
+  "passed": true,
+  "cases": [
+    {
+      "field": "title",
+      "reference": "~/ordinary-source.md",
+      "receipt": {
+        "accepted": true,
+        "artifact": {
+          "daemonId": "25f84e02-5d13-4a40-9556-3e3d318f12ef",
+          "artifactId": "73cdce0e-6a04-48d3-800d-e7d8793e5586",
+          "title": "ordinary-source.md",
+          "kind": "markdown",
+          "byteLength": 43
+        }
+      },
+      "exactBytesRead": true,
+      "retryStable": true
+    },
+    {
+      "field": "blockedReason",
+      "reference": "~/blocked-source.md",
+      "receipt": {
+        "accepted": true,
+        "artifact": {
+          "daemonId": "25f84e02-5d13-4a40-9556-3e3d318f12ef",
+          "artifactId": "a9807d00-19dc-4f1a-a506-4df02208f61b",
+          "title": "blocked-source.md",
+          "kind": "markdown",
+          "byteLength": 51
+        }
+      },
+      "exactBytesRead": true,
+      "retryStable": true
+    },
+    {
+      "field": "nextAction",
+      "reference": "~/next-source.md",
+      "receipt": {
+        "accepted": true,
+        "artifact": {
+          "daemonId": "25f84e02-5d13-4a40-9556-3e3d318f12ef",
+          "artifactId": "43c079b8-8bc9-475e-8646-74be82f9b06c",
+          "title": "next-source.md",
+          "kind": "markdown",
+          "byteLength": 48
+        }
+      },
+      "exactBytesRead": true,
+      "retryStable": true
+    }
+  ],
+  "codeHead": "dd504df7c3dc9134844550c4bbb29a7d01ce6ef8",
+  "port": 50700,
+  "unmentioned": {
+    "accepted": false,
+    "reason": "unavailable"
+  }
+}

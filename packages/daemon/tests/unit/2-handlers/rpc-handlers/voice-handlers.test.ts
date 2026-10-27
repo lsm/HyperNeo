@@ -9,6 +9,7 @@ import {
 } from '../../../../src/lib/rpc-handlers/voice-handlers';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
+import { asrRelayDefaults, createInThreadAsrRelay } from '../../../../src/lib/voice/asr-relay.ts';
 
 type RequestHandler = (data: unknown, context?: CallContext) => Promise<unknown>;
 
@@ -1127,6 +1128,15 @@ describe('voice stream RPC handlers', () => {
     model: 'whisper-1',
     mode: 'batch' as const,
   };
+  const originalRelayFactory = asrRelayDefaults.create;
+
+  beforeEach(() => {
+    asrRelayDefaults.create = createInThreadAsrRelay;
+  });
+
+  afterEach(() => {
+    asrRelayDefaults.create = originalRelayFactory;
+  });
 
   it('voice.stream.start takes only pcm16 at 16 kHz', async () => {
     const { hub, handlers } = createMockMessageHub();

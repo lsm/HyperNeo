@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import {
   chmodSync,
   existsSync,
@@ -151,6 +152,7 @@ describe('hyperneo adapter send and status', () => {
   ) {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       prepareExecution,
       worktreeBaseDir: () => projectBase,
       db: () => db,
@@ -725,6 +727,7 @@ describe('hyperneo adapter start and stop', () => {
   function adapter(overrides: Partial<HyperneoSessionControl> = {}) {
     const controls = control(db, events);
     return createHyperneoAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],

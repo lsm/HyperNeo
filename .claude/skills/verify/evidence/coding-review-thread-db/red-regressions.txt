@@ -1,0 +1,56 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon
+
+ ❯ tests/unit/1-core/operations/coding-review-thread-writer.test.ts (2 tests | 2 failed) 29ms
+   × review-thread commands use the bound gateway with guarded main 8ms
+   × review-thread commands use the bound gateway with read-only main 20ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/coding-review-thread-writer.test.ts > review-thread commands use the bound gateway with guarded main
+Error: review-thread SQL on main
+ ❯ Database.<anonymous> tests/unit/1-core/operations/coding-review-thread-writer.test.ts:47:19
+     45|       : spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+     46|           if (/pack_coding_(poll_facts|repo_aliases)/.test(sql))
+     47|             throw new Error('review-thread SQL on main');
+       |                   ^
+     48|           return prepare(sql);
+     49|         }) as typeof main.prepare);
+ ❯ Number.codingConnectorPrTarget src/lib/neo/packs/coding/connector-pr-reader.ts:34:13
+ ❯ executePipe ../../../../94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/src/pipeline/executor.ts:263:19
+ ❯ continuePipeline ../../../../94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/src/pipeline/executor.ts:520:7
+ ❯ next ../../../../94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/src/pipeline/executor.ts:440:9
+ ❯ runPipeline ../../../../94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/src/pipeline/executor.ts:580:3
+ ❯ ../../../../94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/src/pipeline/Pipeline.ts:115:9
+ ❯ runPipelinePromise ../../../../94d97746/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/src/pipeline/Pipeline.ts:114:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/unit/1-core/operations/coding-review-thread-writer.test.ts > review-thread commands use the bound gateway with read-only main
+Error: attempt to write a readonly database
+ ❯ Database.execUnobserved src/storage/sqlite-node.ts:138:11
+    136|
+    137|   private execUnobserved(sql: string): void {
+    138|     super.exec(sql);
+       |           ^
+    139|   }
+    140|
+ ❯ run src/storage/sqlite-node.ts:160:14
+ ❯ CodingPollFactsRepository.record src/lib/neo/packs/coding/poll-facts.ts:253:20
+ ❯ src/lib/neo/packs/coding/connector-review-thread-reader.ts:117:13
+ ❯ withBusyRetry src/storage/busy-retry.ts:47:22
+ ❯ src/lib/neo/packs/coding/connector-review-thread-reader.ts:116:22
+ ❯ CodingPollFactsRepository.shareResponse src/lib/neo/packs/coding/poll-facts.ts:185:13
+ ❯ Number.acquire src/lib/neo/packs/coding/connector-review-thread-reader.ts:108:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  23:21:35
+   Duration  868ms (transform 65%, import 20%, setup 10%, tests 4%, worker 1%)
+

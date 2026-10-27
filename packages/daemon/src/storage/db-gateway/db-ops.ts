@@ -10,6 +10,7 @@ import {
   codingPollPageReads,
   codingPollPageWrites,
 } from '../../lib/neo/packs/coding/poll-http-db.ts';
+import { codingConnectorIdentityReads } from '../../lib/neo/packs/coding/connector-identity-db.ts';
 import { readWorkInput } from '../work-input.ts';
 import { codingMergeReads, codingMergeWrites } from '../../lib/neo/packs/coding/merge-facts-db.ts';
 import {
@@ -114,6 +115,7 @@ import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
 import { healthSessionCountReads } from '../repositories/health-session-count-read.ts';
 import { sessionProjectionReads } from '../repositories/session-projection-read.ts';
 import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
+import { messageCountReads } from '../repositories/sdk-message-count-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -124,6 +126,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoRunnerWrites,
     codingPollPageReads,
     codingPollPageWrites,
+    codingConnectorIdentityReads,
     readWorkInput,
     codingMergeReads,
     codingMergeWrites,
@@ -209,5 +212,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     healthSessionCountReads,
     sessionProjectionReads,
     singleMessageReads,
+    messageCountReads,
   ].map((op) => [op.name, op])
 );

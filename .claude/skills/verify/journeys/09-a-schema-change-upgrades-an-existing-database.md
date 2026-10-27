@@ -7,3 +7,9 @@
    table count and newest migration marker after each start. End state: the
    branch's marker is applied on the first upgraded start, and a restart changes
    nothing.
+
+For the card search index, use `card-search-upgrade.md`. Its helper reuses one
+clean owned checkout and restores its branch after three real daemon starts.
+Do not create a baseline worktree solely for a comparison; shared SKILL.md owns
+resource and disposable-data setup. The legacy upgrade-check.sh is only for an
+already available second checkout.

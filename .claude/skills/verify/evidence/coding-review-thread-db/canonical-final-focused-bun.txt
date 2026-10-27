@@ -1,0 +1,12 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-review-thread-writer.test.ts:
+(pass) review-thread commands use the bound gateway with guarded main [6.14ms]
+(pass) review-thread commands use the bound gateway with read-only main [2.18ms]
+(pass) connector identity canonicalizes mixed-case OLD/REPO [1.76ms]
+(pass) connector identity canonicalizes mixed-case NEW/REPO [1.22ms]
+
+ 4 pass
+ 0 fail
+ 8 expect() calls
+Ran 4 tests across 1 file. [68.00ms]

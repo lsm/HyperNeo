@@ -20,6 +20,11 @@ commit (`git commit -S`, `gpg.format=ssh`, key `key::<pub>`), serves and fetches
 On: `worker-sandbox.ts` and `worker-native-writes.ts` set `workerSandbox: 'always'`
 before `work.start`; their journeys keep the sandbox proofs (outside writes denied).
 
+Existing Codex threads also apply the current `off` preference on their next turn.
+Use `codex-existing-turn-sandbox.md` for native worker networking/signing and the
+synthetic-daemon Codex send journey for a live `always` to `off` settings change.
+Active-turn steering is unchanged; the setting applies when a new turn starts.
+
 ## Resume after permissive scratch modes (#9093 slice A)
 
 Run through the shared disposable-home wrapper with an explicitly selected installed CLI:

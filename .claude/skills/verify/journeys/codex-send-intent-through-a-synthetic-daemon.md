@@ -25,6 +25,7 @@ loaded list is checked before settings or queue calls; only a saved, unloaded
 thread is resumed.
 The stateful peer rejects settings and enqueue requests until that resume succeeds.
 Prepared sends first require an allowed named profile from `permissionProfile/list`;
+the journey explicitly selects the `always` worker sandbox preference for those cases.
 resume and settings requests must select it without a legacy sandbox override.
 The sandbox mock preserves the module's other production exports. Disconnecting
 the profile catalog must report that failed admission step without enqueueing.
@@ -46,6 +47,10 @@ precondition response. work.send must return notSent true so callers can retry.
 A later queue request loses its acknowledgment after dispatch: that response
 must remain uncertain, without notSent or a second queue submission. Explicit
 steering retains the same distinction between pre-send failure and a lost reply.
+Finally change the global preference from `always` to `off` over the real settings
+RPC and start another turn on the same existing Desktop thread. Its turn-start
+request must explicitly select `dangerFullAccess` rather than inherit the old
+profile; its other thread settings remain inherited.
 Two overlapping automatic submissions then share a long prefix, and another pair
 uses identical messages. Both queue calls take their pre-consumption snapshot
 before the receiver writes only the first input and reply. Run both normal and

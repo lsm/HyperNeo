@@ -14,7 +14,7 @@ prompt, then sends a coding todo to a synthetic HyperNeo worker and reads its
 queued mailbox input. No model/provider, external API, simulator or GUI is used.
 
 Inspect worker-session-guidance.json: all descriptions and Neo's prompt must
-require project-and-number session names, never task titles. The worker's
+require matter-named session names, never task titles. The worker's
 queued brief must instruct it to wait/retry for one of at most two booted
 simulators machine-wide and send coordination questions to Neo without a human
 card. The discovered message.send description must make the same distinction.

@@ -1,0 +1,40 @@
+{
+  "issue": "lsm/HyperNeo#9112",
+  "regressionCommit": "0399841595056bcb1cc407011e78e5a7185b8dc6",
+  "testedCodeCommit": "dd504df7c3dc9134844550c4bbb29a7d01ce6ef8",
+  "productionChangedLines": 2,
+  "proof": {
+    "surface": "artifact.reference.resolve and artifact.file.read over isolated WebSocket operation RPC",
+    "before": "committed-before/todo-status-file-references.json",
+    "after": "after-rpc/todo-status-file-references.json",
+    "beforeAccepted": {
+      "title": true,
+      "blockedReason": false,
+      "nextAction": false
+    },
+    "afterAccepted": {
+      "title": true,
+      "blockedReason": true,
+      "nextAction": true
+    },
+    "exactFileBytesRead": true,
+    "retryReceiptsStable": true,
+    "unmentionedFileRefused": true,
+    "wrapperExitCode": 0,
+    "temporaryDataRemoved": true
+  },
+  "validation": {
+    "fullCheck": "passed",
+    "focusedTests": 19,
+    "runtime": "1.4.3"
+  },
+  "inconclusiveAttempts": {
+    "before": "missing installed dependency before daemon startup",
+    "before-rpc": "missing installed dependency before daemon startup"
+  },
+  "unverified": [
+    "native iOS UI",
+    "web UI"
+  ],
+  "postProofChanges": "evidence only"
+}
