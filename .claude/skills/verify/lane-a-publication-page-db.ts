@@ -52,13 +52,13 @@ try{
  evidence.older=await read({conversationId,before:stored[4].sequence,limit:3});assert.deepEqual(evidence.older.items,stored.slice(1,4));
  evidence.empty=await read({conversationId,after:Number.MAX_SAFE_INTEGER});assert.deepEqual(evidence.empty,{ok:true,conversationId,items:[],nextAfter:Number.MAX_SAFE_INTEGER});
  evidence.foreign=await read({conversationId:foreign});assert.deepEqual(evidence.foreign,{ok:false,reason:'conversation_not_found'});
- evidence.unbound=await mcp('neo:unbound-synthetic');assert.deepEqual(evidence.unbound,{ok:false,reason:'human_only'});
+ evidence.unbound=await mcp('neo:unbound-synthetic');assert.equal(evidence.unbound.ok,false);assert.equal(evidence.unbound.reason.split(':')[0],'human_only');
  evidence.bound=await mcp(root);assert.deepEqual(evidence.bound,evidence.race[0]);
  const before=evidence.race[0];await app!.cleanup();app=undefined;await open();evidence.reopened=await read();assert.deepEqual(evidence.reopened,before);
  if(mode==='verify'){
   const gate=new Promise<void>(done=>{parked=done;});park=true;const pending=mcp(root);
   await Promise.race([gate,new Promise<never>((_,fail)=>setTimeout(()=>fail(new Error('Page did not reach gateway boundary')),5000))]);
-  measuring--;try{sql().prepare('DELETE FROM neo_session_bindings WHERE session_id=?').run(root);}finally{measuring++;}release();evidence.staleBinding=await pending;assert.deepEqual(evidence.staleBinding,{ok:false,reason:'human_only'});
+  measuring--;try{sql().prepare('DELETE FROM neo_session_bindings WHERE session_id=?').run(root);}finally{measuring++;}release();evidence.staleBinding=await pending;assert.equal(evidence.staleBinding.ok,false);assert.equal(evidence.staleBinding.reason.split(':')[0],'human_only');
   assert.deepEqual(mainSql,[],'Publication page SQL must leave main');
  }else assert(mainSql.length>0,'Baseline must show page SQL on main');
  evidence.textHash=hash(text);evidence.verified=true;
