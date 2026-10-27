@@ -1,3 +1,7 @@
+import {
+  voiceRecordingReads,
+  voiceRecordingWrites,
+} from '../repositories/voice-recording-repository.ts';
 import { turnVectorWrites } from '../turn-vectors.ts';
 import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
 import { taskScheduleDeleteWrites } from '../repositories/task-schedule-delete-write.ts';
@@ -143,6 +147,8 @@ import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    voiceRecordingReads,
+    voiceRecordingWrites,
     turnVectorWrites,
     neoPublicationWrites,
     neoAskSettlementReads,
