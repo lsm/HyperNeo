@@ -72,14 +72,6 @@ export const computeObservedRuntimeState = (superpipe({})('observed-tool-row') a
   .pipe(projectObservedRuntime, ['inventory', 'name'], 'state')
   .end('state') as (inventory: SessionToolInventory | null, name: string) => McpSkillRuntimeState;
 
-export function isSkillEnabledForSession(
-  skill: AppSkill,
-  pendingDisabledSkills: ReadonlySet<string>
-): boolean {
-  if (!skill.enabled) return false;
-  return !pendingDisabledSkills.has(skill.id);
-}
-
 export function buildDisabledSkillsList(
   skills: AppSkill[],
   pendingDisabledSkills: ReadonlySet<string>
@@ -94,17 +86,6 @@ export function buildDisabledSkillsList(
 export interface SourceBadgeStyle {
   label: string;
   className: string;
-}
-
-export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
-  switch (skill.sourceType) {
-    case 'builtin':
-      return { label: 'Built-in', className: 'text-accent/80 bg-accent-soft/10' };
-    case 'plugin':
-      return { label: 'Plugin', className: 'text-violet-400/80 bg-violet-400/10' };
-    case 'mcp_server':
-      return { label: 'MCP', className: 'text-warning/80 bg-warning/10' };
-  }
 }
 
 export function getMcpServerProvenanceBadge(server: AppMcpServer): SourceBadgeStyle {

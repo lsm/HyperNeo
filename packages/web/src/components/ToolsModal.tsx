@@ -9,7 +9,6 @@ import type {
   Session,
   ToolsConfig,
   GlobalToolsConfig,
-  AppSkill,
   SessionMcpListResponse,
   SessionMcpServerEntry,
   McpEnablementSetOverrideResponse,
@@ -35,8 +34,6 @@ import {
   computeSkillGroupState,
   getMcpServerEffectiveEnabled,
   getMcpServerProvenanceBadge,
-  getSkillSourceBadge,
-  isSkillEnabledForSession,
   type PendingMcpOverride,
 } from './ToolsModal.utils.ts';
 
@@ -122,7 +119,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
   const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
   const runtimeMcpGroupOpen = useSignal(true);
-  const skillsGroupOpen = useSignal(true);
   const mcpServersGroupOpen = useSignal(true);
   const advancedOpen = useSignal(false);
 
@@ -134,8 +130,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
   const sessionMcpEntries = useSignal<SessionMcpServerEntry[]>([]);
   const mcpServerSearch = useSignal('');
-
-  const skillSearch = useSignal('');
 
   const pendingMcpOverrides = useSignal<Map<string, PendingMcpOverride>>(new Map());
 
@@ -282,16 +276,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     )
   );
 
-  const filteredSkills = useComputed(() => {
-    const q = skillSearch.value.trim().toLowerCase();
-    if (!q) return allSkills.value;
-    return allSkills.value.filter(
-      (s) =>
-        s.displayName.toLowerCase().includes(q) ||
-        (s.description?.toLowerCase().includes(q) ?? false)
-    );
-  });
-
   const filteredMcpEntries = useComputed(() => {
     const q = mcpServerSearch.value.trim().toLowerCase();
     if (!q) return sessionMcpEntries.value;
@@ -302,44 +286,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     );
   });
 
-  const skillsGroupState = useComputed(() => {
-    const items = allSkills.value
-      .filter((s) => s.enabled)
-      .map((s) => ({
-        enabled: isSkillEnabledForSession(s, pendingDisabledSkills.value),
-      }));
-    return computeSkillGroupState(items);
-  });
   const mcpGroupState = useComputed(() => {
     const items = sessionMcpEntries.value.map((entry) => ({
       enabled: getMcpServerEffectiveEnabled(entry, pendingMcpOverrides.value.get(entry.server.id)),
     }));
     return computeSkillGroupState(items);
   });
-
-  const toggleSkill = (skill: AppSkill) => {
-    if (!skill.enabled) return;
-    const next = new Set(pendingDisabledSkills.value);
-    if (next.has(skill.id)) {
-      next.delete(skill.id);
-    } else {
-      next.add(skill.id);
-    }
-    pendingDisabledSkills.value = next;
-  };
-
-  const toggleAllSkills = () => {
-    const togglable = allSkills.value.filter((s) => s.enabled);
-    if (togglable.length === 0) return;
-    const allOn = togglable.every((s) => isSkillEnabledForSession(s, pendingDisabledSkills.value));
-    const next = new Set(pendingDisabledSkills.value);
-    if (allOn) {
-      for (const s of togglable) next.add(s.id);
-    } else {
-      for (const s of togglable) next.delete(s.id);
-    }
-    pendingDisabledSkills.value = next;
-  };
 
   const toggleMcpServer = (entry: SessionMcpServerEntry) => {
     const current = pendingMcpOverrides.value.get(entry.server.id);
@@ -466,11 +418,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
   if (!session) return null;
 
-  const skillsState = skillsGroupState.value;
   const mcpState = mcpGroupState.value;
-  const skillsRows = filteredSkills.value;
   const mcpRows = filteredMcpEntries.value;
-  const togglableSkillCount = allSkills.value.filter((s) => s.enabled).length;
 
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
@@ -557,106 +506,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
             onApplied={() => refreshInventory.value++}
           />
         )}
-
-        <div hidden={!advancedOpen.value}>
-          {allSkills.value.length > 0 ? (
-            <>
-              <GroupHeader
-                title="Skills"
-                isOpen={skillsGroupOpen.value}
-                onToggleOpen={() => {
-                  skillsGroupOpen.value = !skillsGroupOpen.value;
-                }}
-                allEnabled={skillsState.allEnabled}
-                someEnabled={skillsState.someEnabled}
-                onToggleAll={toggleAllSkills}
-                itemCount={allSkills.value.length}
-                disabled={togglableSkillCount === 0}
-                scopeNote="This session"
-              />
-              {skillsGroupOpen.value && (
-                <div class="mt-2 ml-5 space-y-2">
-                  <div class="text-xs text-fg-faint">
-                    Toggles apply to this session only. Click Save to persist.
-                  </div>
-                  {allSkills.value.length > 4 && (
-                    <input
-                      type="search"
-                      placeholder="Filter skills…"
-                      value={skillSearch.value}
-                      onInput={(e) => {
-                        skillSearch.value = (e.target as HTMLInputElement).value;
-                      }}
-                      class="w-full text-xs bg-surface border border-line rounded px-2.5 py-1.5 text-fg-soft placeholder:text-fg-faint focus:outline-none focus:border-accent/50"
-                    />
-                  )}
-                  {skillsRows.length === 0 ? (
-                    <div class="text-xs text-fg-faint py-1">
-                      No skills match &ldquo;{skillSearch.value}&rdquo;.
-                    </div>
-                  ) : (
-                    <div class="grid grid-cols-2 gap-1">
-                      {skillsRows.map((skill) => {
-                        const sessionEnabled = isSkillEnabledForSession(
-                          skill,
-                          pendingDisabledSkills.value
-                        );
-                        const sourceBadge = getSkillSourceBadge(skill);
-                        const globallyDisabled = !skill.enabled;
-                        return (
-                          <label
-                            key={skill.id}
-                            class={`flex items-center gap-2 p-2 rounded-lg bg-surface-raised/50 transition-colors min-w-0 ${
-                              globallyDisabled
-                                ? 'opacity-50 cursor-not-allowed'
-                                : 'hover:bg-surface-raised cursor-pointer'
-                            }`}
-                            title={
-                              globallyDisabled
-                                ? 'This skill is disabled at the global level. Enable it in Settings to toggle here.'
-                                : undefined
-                            }
-                          >
-                            <div class="flex-1 min-w-0">
-                              <div class="flex items-center gap-1.5">
-                                <span class="text-xs text-fg-soft truncate">
-                                  {skill.displayName}
-                                </span>
-                                <SourceBadge {...sourceBadge} />
-                              </div>
-                            </div>
-                            <div class="flex items-center gap-1 flex-shrink-0">
-                              <input
-                                type="checkbox"
-                                checked={sessionEnabled}
-                                onChange={() => toggleSkill(skill)}
-                                disabled={globallyDisabled}
-                                class="w-3.5 h-3.5 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
-                              />
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          ) : (
-            <div class="flex items-center gap-2 py-1">
-              <ChevronRightGlyph
-                class="w-3.5 h-3.5 text-fg-faint"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              />
-              <span class="text-sm font-medium text-fg-faint">Skills</span>
-              <span class="text-xs text-gray-700">(none configured)</span>
-            </div>
-          )}
-        </div>
-
-        <div hidden={!advancedOpen.value} class="border-t border-line-strong" />
 
         <div hidden={!advancedOpen.value}>
           {sessionMcpEntries.value.length > 0 ? (
