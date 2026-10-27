@@ -104,6 +104,17 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
   };
 }
 
+export async function resolveNeoTodoDraft(
+  input: z.infer<typeof NeoTodoDraftSchema>,
+  resolveTarget: NeoTodoControls['resolveTarget']
+): Promise<Gate<z.infer<typeof NeoTodoDraftSchema>>> {
+  if (!input.target || input.target.verb === 'start') return { value: input };
+  const resolved = await resolveTarget(input.target.ref);
+  return 'reason' in resolved
+    ? resolved
+    : { value: { ...input, target: { ...input.target, ref: resolved.value } } };
+}
+
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -113,14 +124,22 @@ export async function addNeoTodo(
   packs: readonly NeoPack[],
   split = false
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
-  if (input.target && input.target.verb !== 'start') {
-    const resolved = await controls.resolveTarget(input.target.ref);
-    if ('reason' in resolved) return resolved.reason;
-    input = { ...input, target: { ...input.target, ref: resolved.value } };
-    const current = todos.getAsk(ask.id);
-    if (!current) return { ok: false, reason: 'not_found: no such ask.' };
-    ask = current;
-  }
+  const resolved = await resolveNeoTodoDraft(input, controls.resolveTarget);
+  if ('reason' in resolved) return resolved.reason;
+  const current = todos.getAsk(ask.id);
+  if (!current) return { ok: false, reason: 'not_found: no such ask.' };
+  return recordNeoTodo(todos, sessions, controls, current, resolved.value, packs, split);
+}
+
+export async function recordNeoTodo(
+  todos: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  controls: Pick<NeoTodoControls, 'start'>,
+  ask: NeoAsk,
+  input: z.infer<typeof NeoTodoDraftSchema>,
+  packs: readonly NeoPack[],
+  split = false
+): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const planned = planNeoTodoDraft(input, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;

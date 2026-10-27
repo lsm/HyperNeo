@@ -10,7 +10,8 @@ import {
 } from '../operations/registry.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
-  addNeoTodo,
+  recordNeoTodo,
+  resolveNeoTodoDraft,
   type NeoTodoControls,
   NeoTodoDraftSchema,
   planNeoTodoDraft,
@@ -147,12 +148,33 @@ export function createNeoAskRecordOperations(
     )
     .pipe(
       async (
+        scope: { sessionId: string; projectId: string | null; goalId: string | null },
+        input: z.infer<typeof Open>
+      ) => {
+        const todos: z.infer<typeof NeoTodoDraftSchema>[] = [];
+        for (const todo of input.todos) {
+          const resolved = await resolveNeoTodoDraft(todo, controls.resolveTarget);
+          if ('reason' in resolved) return resolved;
+          todos.push(resolved.value);
+        }
+        return { value: { ...scope, input: { ...input, todos } } };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      async (
         {
           sessionId,
           projectId,
           goalId,
-        }: { sessionId: string; projectId: string | null; goalId: string | null },
-        input: z.infer<typeof Open>,
+          input,
+        }: {
+          sessionId: string;
+          projectId: string | null;
+          goalId: string | null;
+          input: z.infer<typeof Open>;
+        },
         _caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
         const origin = null;
@@ -213,7 +235,7 @@ export function createNeoAskRecordOperations(
         for (const todo of input.todos) {
           const row = recordedRow(todo);
           const added = !row
-            ? await addNeoTodo(
+            ? await recordNeoTodo(
                 store,
                 sessions,
                 controls,
@@ -239,7 +261,7 @@ export function createNeoAskRecordOperations(
           ...(records.length ? { records } : {}),
         };
       },
-      ['outcome', 'input', 'caller'],
+      ['outcome', 'caller'],
       'outcome'
     )
     .endAsync('outcome') as (
