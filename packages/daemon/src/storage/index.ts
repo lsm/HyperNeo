@@ -1,120 +1,121 @@
-import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
-import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
-import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
-import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
-import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
-import { Database as BunDatabase } from './sqlite-compat.ts';
-import { Logger } from '../lib/logger.ts';
 import type {
-  Session,
-  GlobalToolsConfig,
+  ChatMessage,
   GlobalSettings,
+  GlobalToolsConfig,
+  HyperNeoActionMessage,
   InboxItem,
   MessageOrigin,
-  HyperNeoActionMessage,
-  ChatMessage,
+  Session,
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { DatabaseCore } from './database-core.ts';
-import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
+import { Logger } from '../lib/logger.ts';
+import { type NeoMessageStatusRef, readMessageFacts } from '../lib/neo/message-status.ts';
 import { ShortIdAllocator } from '../lib/short-id-allocator.ts';
+import { DatabaseCore } from './database-core.ts';
+import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
+import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
+import { type NeoCardSearchPage, searchNeoCards } from './neo-card-search.ts';
+import { type MessageFeedArgs, readMessageFeed } from './sdk-message-feed-read.ts';
+import type { Database as BunDatabase } from './sqlite-compat.ts';
+import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
+import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
+
 export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
+
+import type { ReactiveDatabase } from './reactive-database.ts';
 import {
-  sessionConfigReplacer,
-  type SessionCreationOptions,
-  SessionRepository,
-  sessionWrites,
-} from './repositories/session-repository.ts';
-import type {
-  SessionMcpPreferenceEdit,
-  ToolPreferenceSnapshot,
-} from './repositories/tool-preference-commit.ts';
-import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
-import type { SessionWriteOutcome } from './repositories/session-status-write.ts';
-import type {
-  RuntimeSettingsPatch,
-  SessionRuntimeSettingsSnapshot,
-} from './repositories/session-runtime-settings-write.ts';
+  type AgentMemoryEmbedder,
+  AgentMemoryRepository,
+} from './repositories/agent-memory-repository.ts';
+import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-embedder.ts';
+import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
+import { EvolutionRepository } from './repositories/evolution-repository.ts';
+import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
+import {
+  type CreateInboxItemParams,
+  InboxItemRepository,
+} from './repositories/inbox-item-repository.ts';
+import { JobQueueRepository } from './repositories/job-queue-repository.ts';
+import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
+import { NodeExecutionRepository } from './repositories/node-execution-repository.ts';
+import { ProviderRepository } from './repositories/provider-repository.ts';
 import {
   messageSearchIndexWrites,
   SDKMessageRepository,
   type SendStatus,
 } from './repositories/sdk-message-repository.ts';
 import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
+import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
+import {
+  type SessionCreationOptions,
+  SessionRepository,
+  sessionConfigReplacer,
+  sessionWrites,
+} from './repositories/session-repository.ts';
+import type {
+  RuntimeSettingsPatch,
+  SessionRuntimeSettingsSnapshot,
+} from './repositories/session-runtime-settings-write.ts';
+import type { SessionWriteOutcome } from './repositories/session-status-write.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
-import {
-  InboxItemRepository,
-  type CreateInboxItemParams,
-} from './repositories/inbox-item-repository.ts';
-import { JobQueueRepository } from './repositories/job-queue-repository.ts';
-import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
-import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
-import { NodeExecutionRepository } from './repositories/node-execution-repository.ts';
-import { SpaceLongHorizonAgentRepository } from './repositories/space-long-horizon-agent-repository.ts';
-import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 import { SkillRepository } from './repositories/skill-repository.ts';
+import { SpaceLongHorizonAgentRepository } from './repositories/space-long-horizon-agent-repository.ts';
+import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
+import type {
+  SessionMcpPreferenceEdit,
+  ToolPreferenceSnapshot,
+} from './repositories/tool-preference-commit.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
-import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-embedder.ts';
-import type { WorkChatKind } from './work-chat-search.ts';
 import {
-  SDKStatusReader,
   projectSDKStatusPage,
   readSDKMessagePage,
   type SDKPageParams,
+  SDKStatusReader,
 } from './sdk-status-reader.ts';
-import {
-  type AgentMemoryEmbedder,
-  AgentMemoryRepository,
-} from './repositories/agent-memory-repository.ts';
-import { EvolutionRepository } from './repositories/evolution-repository.ts';
-import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
-import { ProviderRepository } from './repositories/provider-repository.ts';
-import type { ReactiveDatabase } from './reactive-database.ts';
+import type { WorkChatKind } from './work-chat-search.ts';
 
-export type { SendStatus } from './repositories/sdk-message-repository.ts';
-export type { SQLiteValue } from './types.ts';
 export type {
-  CreateInboxItemParams,
-  InboxItemFilter,
-} from './repositories/inbox-item-repository.ts';
-export type {
-  CreateGoalParams,
-  UpdateGoalParams,
-  CreateExecutionParams,
-  UpdateExecutionParams,
-} from './repositories/goal-repository.ts';
-export { getEffectiveMaxPlanningAttempts } from './repositories/goal-repository.ts';
-export type { Job, EnqueueParams } from './repositories/job-queue-repository.ts';
-export { JobQueueProcessor } from './job-queue-processor.ts';
+  CreateProviderParams,
+  ProviderRecord,
+  UpdateProviderParams,
+} from '@hyperneo/shared';
 export type {
   JobHandler,
   JobHandlerContext,
   JobQueueProcessorOptions,
 } from './job-queue-processor.ts';
-
-// @public - Library export
-export { GoalRepository } from './repositories/goal-repository.ts';
-export { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
-export { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
-export { SkillRepository } from './repositories/skill-repository.ts';
-export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
-export { AgentMemoryRepository } from './repositories/agent-memory-repository.ts';
-export { EvolutionRepository } from './repositories/evolution-repository.ts';
-export { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
-export { ProviderRepository } from './repositories/provider-repository.ts';
-export { WorkflowHookStateRepository } from './repositories/workflow-hook-state-repository.ts';
-export type { WorkflowHookStatePatch } from './repositories/workflow-hook-state-repository.ts';
-export type { GoalAutomationCursor } from './repositories/goal-automation-cursor-repository.ts';
+export { JobQueueProcessor } from './job-queue-processor.ts';
 export type {
   AgentMemoryEntry,
   AgentMemorySearchResult,
 } from './repositories/agent-memory-repository.ts';
-export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository.ts';
+export { AgentMemoryRepository } from './repositories/agent-memory-repository.ts';
+export { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
+export { EvolutionRepository } from './repositories/evolution-repository.ts';
+export type { GoalAutomationCursor } from './repositories/goal-automation-cursor-repository.ts';
+export { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
 export type {
-  ProviderRecord,
-  CreateProviderParams,
-  UpdateProviderParams,
-} from '@hyperneo/shared';
+  CreateExecutionParams,
+  CreateGoalParams,
+  UpdateExecutionParams,
+  UpdateGoalParams,
+} from './repositories/goal-repository.ts';
+// @public - Library export
+export { GoalRepository, getEffectiveMaxPlanningAttempts } from './repositories/goal-repository.ts';
+export type {
+  CreateInboxItemParams,
+  InboxItemFilter,
+} from './repositories/inbox-item-repository.ts';
+export type { EnqueueParams, Job } from './repositories/job-queue-repository.ts';
+export { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
+export { ProviderRepository } from './repositories/provider-repository.ts';
+export type { SendStatus } from './repositories/sdk-message-repository.ts';
+export { SkillRepository } from './repositories/skill-repository.ts';
+export type { WorkflowHookStatePatch } from './repositories/workflow-hook-state-repository.ts';
+export { WorkflowHookStateRepository } from './repositories/workflow-hook-state-repository.ts';
+export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository.ts';
+export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
+export type { SQLiteValue } from './types.ts';
 
 export interface DatabaseOptions {
   messageSearchIndexFlushIntervalMs?: number;
@@ -473,6 +474,12 @@ export class Database {
     if (this.getDbPath() === ':memory:')
       return readSDKMessagePage(this.sdkMessageRepo, { sessionId, page });
     return this.getSDKReader().readMessages({ sessionId, page });
+  }
+
+  searchNeoCardsAsync(query: string, cursor?: string, limit?: number): Promise<NeoCardSearchPage> {
+    if (this.getDbPath() === ':memory:')
+      return Promise.resolve(searchNeoCards(this.core.getDb(), query, cursor, limit));
+    return this.getSDKReader().readNeoCardSearch({ cardQuery: { query, cursor, limit } });
   }
 
   async searchWorkChatsAsync(

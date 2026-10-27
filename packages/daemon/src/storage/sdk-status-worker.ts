@@ -1,19 +1,20 @@
-import { readCodexSnapshot } from './codex-desktop-read.ts';
-import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
-import { readMessageFacts } from '../lib/neo/message-status.ts';
-import { readMessageFeed } from './sdk-message-feed-read.ts';
-import { Database } from './sqlite-compat.ts';
-import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
 import { subscribeToStructuredLogs } from '../lib/logger.ts';
+import { readMessageFacts } from '../lib/neo/message-status.ts';
+import { readCodexSnapshot } from './codex-desktop-read.ts';
+import { searchNeoCards } from './neo-card-search.ts';
+import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
+import { readMessageFeed } from './sdk-message-feed-read.ts';
 import {
-  projectSDKStatusPage,
   projectSDKStatusMessage,
+  projectSDKStatusPage,
   readSDKMessagePage,
-  sdkReadLogMetadata,
   type SDKReadResult,
   type SDKStatusReply,
   type SDKStatusRequest,
+  sdkReadLogMetadata,
 } from './sdk-status-reader.ts';
+import { Database } from './sqlite-compat.ts';
+import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 
 const worker = globalThis as unknown as {
   onmessage: (event: { data: SDKStatusRequest }) => void;
@@ -34,19 +35,21 @@ worker.onmessage = ({ data }) => {
     started = performance.now(),
     queueMs = Date.now() - data.sentAt;
   workerOperation = args
-    ? 'query' in args
-      ? 'work-search'
-      : 'codexSnapshot' in args
-        ? 'codex-snapshot'
-        : 'turnVectors' in args
-          ? 'turn-vectors'
-          : 'neoMessageStatus' in args
-            ? 'neo-message-status'
-            : 'feed' in args
-              ? 'message-feed'
-              : 'page' in args
-                ? 'sdk-page'
-                : 'sdk-status'
+    ? 'cardQuery' in args
+      ? 'card-search'
+      : 'query' in args
+        ? 'work-search'
+        : 'codexSnapshot' in args
+          ? 'codex-snapshot'
+          : 'turnVectors' in args
+            ? 'turn-vectors'
+            : 'neoMessageStatus' in args
+              ? 'neo-message-status'
+              : 'feed' in args
+                ? 'message-feed'
+                : 'page' in args
+                  ? 'sdk-page'
+                  : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -66,6 +69,14 @@ worker.onmessage = ({ data }) => {
         repository = new SDKMessageRepository(db);
       }
       result = db.transaction(() => {
+        if ('cardQuery' in args) {
+          return searchNeoCards(
+            db!,
+            args.cardQuery.query,
+            args.cardQuery.cursor,
+            args.cardQuery.limit
+          );
+        }
         if ('query' in args) {
           const semantic = args.semantic
             ? { model: args.semantic.model, vector: Float32Array.from(args.semantic.vector) }

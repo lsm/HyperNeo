@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { runMigration461 } from '../../../../src/storage/schema/m461-neo-card-search-fts.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { searchNeoCards } from '../../../../src/storage/neo-card-search.ts';
+import { runMigration461 } from '../../../../src/storage/schema/m461-neo-card-search-fts.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 function cardDb() {
   const db = new Database(':memory:');
@@ -34,6 +34,7 @@ function cardDb() {
     kind TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'open',
     answer TEXT,
+    answered_at INTEGER,
     created_at INTEGER NOT NULL
   );
   PRAGMA foreign_keys = ON;`);
@@ -52,7 +53,7 @@ function cardDb() {
   ).run();
   db.prepare(
     `INSERT INTO neo_questions (id, ask_id, text, kind, answer, created_at)
-     VALUES ('q-1', 'ask-2', 'Catalog or seedlings first?', 'choice', '"Catalog"', 1)`
+     VALUES ('q-1', 'ask-2', 'Catalog or seedlings first?', 'choice', '"Catalog finale"', 1)`
   ).run();
   return db;
 }
@@ -67,10 +68,13 @@ describe('neo card search', () => {
   test('matches titles over long text and reports the matched field', () => {
     const { results } = searchNeoCards(db, 'catalog');
     expect(results.length).toBeGreaterThan(0);
-    const fields = results.map((hit) => `${hit.askId}:${hit.field}`);
-    expect(fields).toContain('ask-1:title');
-    expect(fields).toContain('ask-2:meta');
-    expect(fields.indexOf('ask-1:title')).toBeLessThan(fields.indexOf('ask-2:meta'));
+    expect(results.some((hit) => hit.todoId === 'todo-1' && hit.field === 'title')).toBe(true);
+    expect(results.some((hit) => hit.questionId === 'q-1' && hit.field === 'title')).toBe(true);
+    expect(results.some((hit) => !hit.todoId && !hit.questionId && hit.field === 'title')).toBe(
+      true
+    );
+    expect(results[0].field).toBe('title');
+    expect(results[0].snippet.toLowerCase()).toContain('catalog');
   });
 
   test('returns pointers with snippets for each card kind', () => {
@@ -86,10 +90,9 @@ describe('neo card search', () => {
   test('searches question text and answers with question pointers', () => {
     const { results } = searchNeoCards(db, 'seedlings');
     expect(results.some((hit) => hit.questionId === 'q-1' && hit.field === 'title')).toBe(true);
-    const answered = searchNeoCards(db, 'Catalog');
-    expect(
-      answered.results.some((hit) => hit.questionId === 'q-1' && hit.field === 'body')
-    ).toBe(true);
+    const answered = searchNeoCards(db, 'finale');
+    expect(answered.results).toHaveLength(1);
+    expect(answered.results[0]).toMatchObject({ questionId: 'q-1', field: 'body' });
   });
 
   test('pages by cursor and ends with a null cursor', () => {
@@ -97,12 +100,11 @@ describe('neo card search', () => {
     expect(first.results).toHaveLength(2);
     expect(typeof first.nextCursor).toBe('string');
     const rest = searchNeoCards(db, 'catalog', first.nextCursor!, 2);
-    expect(rest.results.map((hit) => hit.askId + hit.field)).not.toEqual(
-      first.results.map((hit) => hit.askId + hit.field)
-    );
-    const drained = searchNeoCards(db, 'catalog', rest.nextCursor ?? undefined, 2);
-    expect(drained.results).toEqual([]);
-    expect(drained.nextCursor).toBeNull();
+    expect(rest.results).toHaveLength(1);
+    expect(rest.nextCursor).toBeNull();
+    const past = searchNeoCards(db, 'catalog', '9', 2);
+    expect(past.results).toEqual([]);
+    expect(past.nextCursor).toBeNull();
   });
 
   test('finds nothing for an absent term', () => {

@@ -1,14 +1,15 @@
-import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
-import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
-import type { PendingTurn } from './turn-vectors.ts';
-import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
-import type { MessageFeedArgs } from './sdk-message-feed-read.ts';
-import type { LiveQueryEvaluation } from './live-query.ts';
-import { capSdkMessage } from '../lib/rpc-handlers/message-output-cap.ts';
-import { emitStructuredLogEvent } from '../lib/logger.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
+import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
+import { emitStructuredLogEvent } from '../lib/logger.ts';
+import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
+import { capSdkMessage } from '../lib/rpc-handlers/message-output-cap.ts';
+import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
+import type { LiveQueryEvaluation } from './live-query.ts';
+import type { NeoCardSearchPage } from './neo-card-search.ts';
 import type { SDKMessageRepository, SendStatus } from './repositories/sdk-message-repository.ts';
+import type { MessageFeedArgs } from './sdk-message-feed-read.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
+import type { PendingTurn } from './turn-vectors.ts';
 import type { WorkChatKind, WorkChatMatch } from './work-chat-search.ts';
 
 export type SDKStatusArgs = { sessionId: string; status: SendStatus; limit: number };
@@ -36,6 +37,9 @@ export type WorkSearchArgs = {
   semantic?: { vector: number[]; model: string };
   kinds?: readonly WorkChatKind[];
 };
+export type CardSearchArgs = {
+  cardQuery: { query: string; cursor?: string; limit?: number };
+};
 type SDKReadArgs =
   | SDKStatusArgs
   | SDKPageArgs
@@ -43,10 +47,12 @@ type SDKReadArgs =
   | MessageFeedArgs
   | { neoMessageStatus: NeoMessageStatusRef[] }
   | { codexSnapshot: { statePath: string; includeClosed: boolean } }
-  | { turnVectors: { model: string; dimensions: number; limit: number | null } };
+  | { turnVectors: { model: string; dimensions: number; limit: number | null } }
+  | CardSearchArgs;
 export type SDKReadResult =
   | SDKStatusPage
   | SDKMessagePage
+  | NeoCardSearchPage
   | WorkChatMatch[]
   | LiveQueryEvaluation
   | Fact[]
@@ -182,6 +188,10 @@ export class SDKStatusReader {
     return this.enqueue(args) as Promise<WorkChatMatch[]>;
   }
 
+  readNeoCardSearch(args: CardSearchArgs): Promise<NeoCardSearchPage> {
+    return this.enqueue(args) as Promise<NeoCardSearchPage>;
+  }
+
   readMessageFeed(args: MessageFeedArgs): Promise<LiveQueryEvaluation> {
     return this.enqueue(args) as Promise<LiveQueryEvaluation>;
   }
@@ -205,7 +215,7 @@ export class SDKStatusReader {
   private async enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.beforeRead) await this.beforeRead(args);
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
-    const search = 'query' in args;
+    const search = 'query' in args || 'cardQuery' in args;
     if ((search ? this.searches : this.waiting) >= (search ? 3 : 16))
       return Promise.reject(new Error('SDK reader queue full'));
     const epoch = this.epoch,
@@ -280,19 +290,21 @@ export class SDKStatusReader {
           args: ['sqlite.worker.request'],
           metadata: {
             operation: args
-              ? 'query' in args
-                ? 'work-search'
-                : 'codexSnapshot' in args
-                  ? 'codex-snapshot'
-                  : 'turnVectors' in args
-                    ? 'turn-vectors'
-                    : 'neoMessageStatus' in args
-                      ? 'neo-message-status'
-                      : 'feed' in args
-                        ? 'message-feed'
-                        : 'page' in args
-                          ? 'sdk-page'
-                          : 'sdk-status'
+              ? 'cardQuery' in args
+                ? 'card-search'
+                : 'query' in args
+                  ? 'work-search'
+                  : 'codexSnapshot' in args
+                    ? 'codex-snapshot'
+                    : 'turnVectors' in args
+                      ? 'turn-vectors'
+                      : 'neoMessageStatus' in args
+                        ? 'neo-message-status'
+                        : 'feed' in args
+                          ? 'message-feed'
+                          : 'page' in args
+                            ? 'sdk-page'
+                            : 'sdk-status'
               : 'close',
             id,
             epoch,
