@@ -1,4 +1,4 @@
-import { mayRedispatch } from '../work-queue/follow-through.ts';
+import { createWorkQueue } from '../work-queue/sweep.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -32,7 +32,6 @@ import {
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
-import { planWorkQueue } from '../work-queue/capacity.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
@@ -451,28 +450,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     todoId: string
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
-  const fillQueue = (superpipe({})('neo.todo.fill-queue') as PipelineAPI)
-    .input(['limits'])
-    .pipe(() => sessions.read('queueFacts'), 'limits', 'queue')
-    .pipe(
-      (
-        queue: Awaited<ReturnType<typeof sessions.queueFacts>>,
-        limits: ReturnType<NeoTodoRunnerDeps['limits']>
-      ) => planWorkQueue(queue.candidates, queue.running, limits).start,
-      ['queue', 'limits'],
-      'todoIds'
-    )
-    .pipe(
-      async (todoIds: readonly string[]) => {
-        for (const todoId of todoIds) await start(todoId);
-      },
-      'todoIds',
-      'started'
-    )
-    .endAsync('started') as (limits: ReturnType<NeoTodoRunnerDeps['limits']>) => Promise<void>;
-  let filling: Promise<void> = Promise.resolve();
-  const fill = () =>
-    (filling = filling.catch(() => undefined).then(() => fillQueue(deps.limits())));
+  const queue = createWorkQueue<NudgeClaim>(
+    {
+      queue: () => sessions.read('queueFacts'),
+      claim: (todoId, now, move) => nudge(todoId, now, move),
+      act: (claim, now) => act(claim, now),
+      start: (todoId) => start(todoId),
+    },
+    deps.limits
+  );
+  const fill = () => queue.fill();
   const advance = () => fill().catch(() => undefined);
 
   const start = async (todoId: string) => {
@@ -656,7 +643,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
   };
 
-  const sweep = { movedAt: -Infinity };
   const restartLadder = (todoId: string, now: number) => {
     const prior = sessions.readNudge(todoId);
     sessions.recordNudge(todoId, {
@@ -782,14 +768,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const redispatchTodo = (superpipe({})('neo.todo.redispatch') as PipelineAPI)
     .input(['claim', 'now'])
-    .pipe(
-      ({ todo }: NudgeClaim, now: number) => {
-        sweep.movedAt = now;
-        return stop(todo);
-      },
-      ['claim', 'now'],
-      'refused'
-    )
+    .pipe(({ todo }: NudgeClaim) => stop(todo), 'claim', 'refused')
     .pipe(
       (refused: string | null) =>
         refused
@@ -903,7 +882,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   type NudgeContext = NonNullable<ReturnType<typeof sessions.nudgeContext>>;
   const nudge = (superpipe({})('neo.todo.nudge') as PipelineAPI)
-    .input(['todoId', 'now'])
+    .input(['todoId', 'now', 'mayMove'])
     .pipe((todoId: string) => sessions.read('nudgeContext', todoId), 'todoId', 'snapshot')
     .pipe(
       (snapshot: NudgeContext | null) => (snapshot ? { value: snapshot } : { reason: null }),
@@ -934,19 +913,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'admission',
       'result:admission'
     )
-    .pipe(
-      async (now: number) =>
-        mayRedispatch(
-          (await store.read('listCheckable')).filter(
-            (other) => other.state === 'doing' && !sessions.workerIdle(other.id)
-          ).length,
-          sweep.movedAt,
-          now,
-          deps.limits().running
-        ),
-      'now',
-      'move'
-    )
+    .pipe((mayMove: () => Promise<boolean>) => mayMove(), 'mayMove', 'move')
     .pipe(
       async (
         context: NudgeContext,
@@ -970,8 +937,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ['admission', 'live', 'now', 'move'],
       'result:admission'
     )
-    .pipe(act, ['admission', 'now'], 'admission')
-    .endAsync('admission') as (todoId: string, now: number) => Promise<void | null>;
+    .endAsync('admission') as (
+    todoId: string,
+    now: number,
+    mayMove: () => Promise<boolean>
+  ) => Promise<NudgeClaim | null>;
 
   type Stalled = { todo: NeoTodo; ask: NeoAsk; ref: WorkRef };
   const carded = ({ todo, ask }: Stalled) =>
@@ -1048,15 +1018,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:rescue'
     )
     .pipe(
-      async (stalled: Stalled, now: number) => {
-        const running = (await store.read('listCheckable')).filter(
-          (other) => other.state === 'doing' && !sessions.workerIdle(other.id)
-        ).length;
-        if (!mayRedispatch(running, sweep.movedAt, now, deps.limits().running))
-          return { reason: null };
-        sweep.movedAt = now;
-        return { value: stalled };
-      },
+      async (stalled: Stalled, now: number) =>
+        (await queue.takeMove(now)) ? { value: stalled } : { reason: null },
       ['rescue', 'now'],
       'result:rescue'
     )
@@ -1267,7 +1230,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
         );
-        await nudge(todo.id, Date.now()).catch((error) => warn('Todo nudge pending', error));
+        await queue
+          .followThrough(todo.id, Date.now())
+          .catch((error) => warn('Todo nudge pending', error));
         await rescueTodo(todo, Date.now()).catch((error) =>
           warn('Stalled todo rescue pending', error)
         );
