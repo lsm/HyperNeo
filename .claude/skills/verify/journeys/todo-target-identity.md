@@ -18,6 +18,11 @@ prefix must refuse the whole batch before opening an ask or adding any todo or
 delivery input. Unit MCP cases also put the unknown target first and request
 start:true on the valid first item, requiring zero dispatches; successful batches
 store every canonical reference and perform each lookup once.
+The helper also seeds a synthetic Space task. work.find with an exact ID plus
+an ignored prefix must return it, as must an explicit Space-adapter prefix lookup.
+Adding a todo for that task's short ID must persist its full reference without
+dispatch. Prefix-only discovery still defaults to HyperNeo and Codex; explicit
+adapter selection and exact-ID precedence must not be suppressed by that default.
 The saved observed.json contains actual replies and stored target rows.
 
 Focused neo-todo-target tests also cover Codex references, owning-daemon and

@@ -104,7 +104,10 @@ export function selectFindAdapters(input: FindInput, deps: FindWorkDeps): WorkAd
     .filter(
       (adapter) =>
         adapter.capabilities.includes('find') &&
-        (!input.idPrefix || ['hyperneo', 'codex-desktop'].includes(adapter.id)) &&
+        (!input.idPrefix ||
+          input.id ||
+          input.adapters ||
+          ['hyperneo', 'codex-desktop'].includes(adapter.id)) &&
         (!input.adapters || input.adapters.includes(adapter.id))
     );
 }
