@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import {
   backfillDeepSeekProvider,
   gateProviderImport,
@@ -26,6 +26,8 @@ describe('backfillDeepSeekProvider', () => {
     try {
       unlinkSync(dbPath);
     } catch {}
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
     if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = originalKey;
   });
@@ -177,6 +179,8 @@ describe('migrateProvidersIfNeeded', () => {
     try {
       unlinkSync(dbPath);
     } catch {}
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -217,6 +221,8 @@ describe('migrateProvidersIfNeeded', () => {
     try {
       unlinkSync(dbPath);
     } catch {}
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
     if (originalKey === undefined) delete process.env.GLM_API_KEY;
     else process.env.GLM_API_KEY = originalKey;
   });

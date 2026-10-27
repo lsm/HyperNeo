@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -48,6 +49,8 @@ describe('Database Facade', () => {
     try {
       require('fs').unlinkSync(dbPath);
     } catch {}
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
   });
 
   describe('constructor and initialize', () => {
