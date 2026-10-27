@@ -30,7 +30,8 @@ close its connection before acknowledging it. Withhold the input's rollout entry
 not_delivered result must lack notSent. Restart only this daemon and run its
 real refresh handler: the card must stay pending with no new peer input. Publish
 that accepted input into the synthetic rollout, append 160 newer unrelated inputs,
-then refresh again. work.status must reconcile the exact worker-answer marker, accept delivery and return doing,
+then refresh again. The card must reconcile the exact worker-answer marker through
+work.read, accept delivery and return doing,
 without resending. An extra refresh must leave the peer input count at three.
 Before the uncertain attempt, the helper also forces a definite refusal and
 records 60 inputs while the answer waits. Feed the native rollout through the
