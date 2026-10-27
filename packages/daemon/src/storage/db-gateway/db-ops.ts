@@ -1,3 +1,4 @@
+import { turnVectorWrites } from '../turn-vectors.ts';
 import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
@@ -137,6 +138,7 @@ import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    turnVectorWrites,
     neoPublicationWrites,
     neoAskSettlementReads,
     neoAskSettlementWrites,
