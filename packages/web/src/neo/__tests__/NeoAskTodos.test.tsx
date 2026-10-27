@@ -1,6 +1,6 @@
 import guidanceQuestions from './fixtures/question-guidance.json';
 import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { messageTime } from '../NeoMessage.tsx';
@@ -87,10 +87,19 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   },
   state: 'todo',
   todos: [],
-  doneCount: 0,
+  doneCount: patch.todos?.filter((todo) => todo.state === 'done').length ?? 0,
   questions: [],
   ...patch,
 });
+
+const toggleAll = (app: ReturnType<typeof render>) => {
+  const dialog = app.queryByRole('dialog');
+  fireEvent.click(
+    dialog
+      ? within(dialog).getByRole('button', { name: 'Close modal' })
+      : app.getByRole('button', { name: /^(All|全部) ·/ })
+  );
+};
 
 describe('NeoAskTodos', () => {
   it('loads todo bodies only after opening a summary without open questions', async () => {
@@ -153,8 +162,8 @@ describe('NeoAskTodos', () => {
       ['choice', ['Ship']],
       ['confirm', 'yes'],
     ]);
-    fireEvent.click(app.getByRole('button', { name: /Details$/ }));
-    fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+    toggleAll(app);
+    toggleAll(app);
     expect(app.getByRole('button', { name: 'Ship' })).toBeTruthy();
     expect(app.getByRole('button', { name: 'Stop' })).toBeTruthy();
     load.mockResolvedValueOnce({
@@ -211,13 +220,13 @@ describe('NeoAskTodos', () => {
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
     try {
       expect(app.queryByRole('button', { name: 'Copy quote' })).toBeNull();
-      fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+      toggleAll(app);
       await waitFor(() => expect(app.getByRole('button', { name: 'Copy quote' })).toBeTruthy());
       fireEvent.click(app.getByRole('button', { name: 'Copy quote' }));
       await waitFor(() => expect(copy).toHaveBeenLastCalledWith('Ready to send.\n\nThank you.'));
-      fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+      toggleAll(app);
       expect(app.queryByRole('button', { name: 'Copy quote' })).toBeNull();
-      fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+      toggleAll(app);
       await waitFor(() =>
         expect(app.getAllByRole('button', { name: 'Copy quote' })).toHaveLength(1)
       );
@@ -264,7 +273,7 @@ describe('NeoAskTodos', () => {
     const app = render(
       <NeoAskTodos entry={{ ...original, ask: { ...original.ask, outcome } }} onAnswer={vi.fn()} />
     );
-    fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+    toggleAll(app);
     await waitFor(() =>
       expect(app.getByRole('link', { name: 'Positioning document' }).getAttribute('href')).toBe(
         'https://example.test/positioning.md'
@@ -522,27 +531,18 @@ describe('NeoAskTodos', () => {
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
   });
 
-  it('collapses detailed todos by default and the bottom control opens or closes everything', () => {
+  it('opens All without bulk-expanding todos or changing the card disclosures', () => {
     locale.value = 'en';
     const data = detailed();
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
-    for (const item of data.todos) expect(app.queryByText(item.report!.trim())).toBeNull();
     fireEvent.click(app.getByRole('button', { name: 'Show details: Todo a' }));
-    expect(app.queryByText(data.todos[1].report!.trim())).toBeNull();
-    const all = app.container.querySelector('[data-ask-details-toggle]')!;
-    expect(app.queryByRole('button', { name: 'Expand all' })).toBeNull();
-    fireEvent.click(all);
-    for (const item of data.todos) expect(app.getByText(item.report!.trim())).toBeTruthy();
-    expect(all.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(all);
-    for (const item of data.todos) {
-      expect(app.queryByText(item.report!.trim())).toBeNull();
-      expect(
-        app
-          .getByRole('button', { name: `Show details: ${item.title}` })
-          .getAttribute('aria-expanded')
-      ).toBe('false');
-    }
+    toggleAll(app);
+    const dialog = app.getByRole('dialog');
+    expect(within(dialog).getByText(data.todos[0].report!.trim())).toBeTruthy();
+    expect(within(dialog).queryByText(data.todos[1].report!.trim())).toBeNull();
+    toggleAll(app);
+    expect(app.queryByRole('dialog')).toBeNull();
+    expect(app.getByRole('button', { name: 'Hide details: Todo a' })).toBeTruthy();
   });
 
   it('remembers each card within the session across switches and remounts without auto-opening new todos', () => {
@@ -607,7 +607,7 @@ describe('NeoAskTodos', () => {
     expect(plain.querySelector('[data-todo-hint]')).toBeNull();
     expect(app.queryByRole('button', { name: 'Show details: Todo b' })).toBeNull();
     expect(app.getByRole('button', { name: 'Show details: Todo a' })).toBeTruthy();
-    expect(app.container.querySelector('[data-ask-details-toggle]')).toBeNull();
+    expect(app.container.querySelector('[data-ask-details-toggle]')).toBeTruthy();
   });
 
   it('keeps Open separate from the disclosure in Chinese', () => {
@@ -663,7 +663,7 @@ describe('NeoAskTodos', () => {
       );
       if (state !== 'open')
         fireEvent.click(app.container.querySelector('[data-ask-details-toggle]')!);
-      const body = app.container.querySelector('#neo-ref-question-markdown')!;
+      const body = app.baseElement.querySelector('#neo-ref-question-markdown')!;
       await waitFor(() => expect(body.querySelector('table')).toBeTruthy());
       expect(body.querySelector('strong')?.textContent).toBe('bold decision');
       expect(body.querySelectorAll('ul li')).toHaveLength(2);
@@ -693,7 +693,7 @@ describe('NeoAskTodos', () => {
     );
     fireEvent.click(app.container.querySelector('[data-ask-details-toggle]')!);
     const line = (id: string) =>
-      app.container.querySelector(`#neo-ref-question-${id} > p`)?.textContent ?? '';
+      app.baseElement.querySelector(`#neo-ref-question-${id} > p`)?.textContent ?? '';
     expect(line('old')).toContain(messageTime(earlier)!.label);
     expect(line('old')).toMatch(/1月|Jan/);
     expect(line('new')).toContain(messageTime(today)!.label);
@@ -890,9 +890,11 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.getByText('在做')).toBeTruthy();
-    expect(app.getByText('#102 已合并')).toBeTruthy();
+    expect(app.queryByText('#102 已合并')).toBeNull();
     expect(app.container.querySelector('[aria-label="待办"]')?.textContent).not.toContain('Todo d');
     expect(app.getByText('新')).toBeTruthy();
+    toggleAll(app);
+    expect(app.getByText('#102 已合并')).toBeTruthy();
     fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
     expect(onOpen).toHaveBeenCalledWith('/session/w', 'Todo a');
   });
@@ -993,13 +995,13 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('Todo d')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: '更多 — 详情' }));
+    toggleAll(app);
     const line = app.getByRole('list', { name: '已移除' }).querySelector('li')!;
     expect(line.textContent).toBe('Todo d — 换成「Todo e」');
     expect(line.id).toBe('neo-ref-todo-d');
   });
 
-  it('keeps a removed todo still listed in an open start question out of Details', async () => {
+  it('shows removed start-question work in All with unique anchors', async () => {
     const app = render(
       <NeoAskTodos
         entry={entry({
@@ -1009,15 +1011,21 @@ describe('NeoAskTodos', () => {
         onAnswer={() => {}}
       />
     );
-    expect(app.queryByRole('button', { name: '更多 — 详情' })).toBeNull();
+    expect(app.queryByRole('button', { name: /^全部 ·/ })).toBeTruthy();
     expect(app.container.querySelectorAll('[data-ask-todo="d"]')).toHaveLength(1);
+    toggleAll(app);
+    expect(app.getByRole('list', { name: '已移除' }).textContent).toContain('Todo d');
+    expect(app.baseElement.querySelectorAll('#neo-ref-todo-d')).toHaveLength(1);
+    expect(app.baseElement.querySelector('#all-neo-ref-todo-d')).toBeTruthy();
+    const ids = [...app.baseElement.querySelectorAll('[id]')].map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('shows no Details button when there is nothing to put in it', () => {
+  it('shows All for active work without closed history', () => {
     const app = render(
       <NeoAskTodos entry={entry({ todos: [todo('a', { state: 'doing' })] })} onAnswer={() => {}} />
     );
-    expect(app.queryByRole('button', { name: '更多 — 详情' })).toBeNull();
+    expect(app.queryByRole('button', { name: /^全部 ·/ })).toBeTruthy();
   });
 
   it('shows a retired question in Details with why it is no longer needed', async () => {
@@ -1036,7 +1044,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('Allow a placeholder key?')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: '更多 — 详情' }));
+    toggleAll(app);
     await waitFor(() =>
       expect(app.getByRole('list', { name: '不再需要' }).textContent).toContain(
         'Allow a placeholder key?'
@@ -1068,7 +1076,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('已回答')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: '更多 — 详情' }));
+    toggleAll(app);
     await waitFor(() => expect(app.getByText('开始这 1 件？')).toBeTruthy());
     expect(app.getByText('— 开始 Todo a')).toBeTruthy();
   });
@@ -1139,48 +1147,80 @@ describe('neoDonePageMerge', () => {
   });
 });
 
+describe('All items dialog', () => {
+  it('keeps only unfinished todos on the card and opens held items with one full-width control', async () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [
+            todo('active'),
+            todo('done', { state: 'done' }),
+            todo('removed', { state: 'removed' }),
+          ],
+          doneCount: 1,
+          questions: [
+            question('answered', { state: 'answered', answer: 'Yes', answeredBy: 'chat' }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.container.querySelector('[data-ask-todo="done"]')).toBeNull();
+    expect(app.container.querySelector('[data-ask-todo="active"]')).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: 'All · 4' }));
+    expect(await app.findByRole('dialog')).toBeTruthy();
+    expect(app.getByRole('dialog').querySelector('[data-ask-todo="done"]')).toBeTruthy();
+    expect(app.getByRole('dialog').querySelector('[data-ask-todo="removed"]')).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: 'Close modal' }));
+    expect(app.queryByRole('dialog')).toBeNull();
+    expect(app.getByRole('button', { name: 'All · 4' })).toBeTruthy();
+  });
+});
+
 describe('done todos on a card', () => {
   beforeEach(() => {
     locale.value = 'en';
   });
   const done = (id: string) => todo(id, { state: 'done', status: 'Done', title: `Done ${id}` });
   const rows = (app: ReturnType<typeof render>) =>
-    [...app.container.querySelectorAll('[data-ask-todo]')].map((row) =>
-      row.getAttribute('data-ask-todo')
+    [
+      ...(
+        app.baseElement.querySelector('[data-testid^="neo-ask-all-"]') ?? app.container
+      ).querySelectorAll('[data-ask-todo]'),
+    ].map((row) => row.getAttribute('data-ask-todo'));
+
+  it.each([2, 5])('closes %i completed todos with All and reopens cached rows', async (count) => {
+    const onLoadDone = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('a'), ...Array.from({ length: count }, (_, i) => done(`d${i}`))],
+          doneCount: count,
+        })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
     );
+    expect(rows(app)).toEqual(['a']);
+    toggleAll(app);
+    expect(rows(app)).toHaveLength(count + 1);
+    toggleAll(app);
+    expect(rows(app)).toEqual(['a']);
+    toggleAll(app);
+    expect(rows(app)).toHaveLength(count + 1);
+    expect(onLoadDone).not.toHaveBeenCalled();
+  });
 
-  it.each([2, 5])(
-    'folds %i completed todos back down and reopens the cached rows',
-    async (count) => {
-      const onLoadDone = vi.fn();
-      const app = render(
-        <NeoAskTodos
-          entry={entry({
-            todos: [todo('a'), ...Array.from({ length: count }, (_, i) => done(`d${i}`))],
-            doneCount: count,
-          })}
-          onAnswer={vi.fn()}
-          onLoadDone={onLoadDone}
-        />
-      );
-      if (count > 3)
-        fireEvent.click(app.getByRole('button', { name: `${count} done — show more` }));
-      expect(rows(app)).toHaveLength(count + 1);
-      fireEvent.click(app.getByRole('button', { name: 'Hide done todos' }));
-      expect(rows(app)).toEqual(['a']);
-      fireEvent.click(app.getByRole('button', { name: `${count} done — show more` }));
-      expect(rows(app)).toHaveLength(count + 1);
-      expect(onLoadDone).not.toHaveBeenCalled();
-    }
-  );
-
-  it('shows up to three done todos and folds more behind one control', () => {
+  it('keeps every completed todo in All, including small lists', () => {
     const few = render(
       <NeoAskTodos
         entry={entry({ todos: [todo('a'), done('d1'), done('d2')], doneCount: 2 })}
         onAnswer={vi.fn()}
       />
     );
+    expect(rows(few)).toEqual(['a']);
+    toggleAll(few);
     expect(rows(few)).toEqual(['a', 'd1', 'd2']);
     cleanup();
     const many = render(
@@ -1193,7 +1233,7 @@ describe('done todos on a card', () => {
       />
     );
     expect(rows(many)).toEqual(['a']);
-    fireEvent.click(many.getByRole('button', { name: '4 done — show more' }));
+    toggleAll(many);
     expect(rows(many)).toEqual(['a', 'd1', 'd2', 'd3', 'd4']);
     expect(many.queryByRole('button', { name: /done — show more/ })).toBeNull();
   });
@@ -1212,7 +1252,8 @@ describe('done todos on a card', () => {
         onLoadDone={onLoadDone}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    toggleAll(app);
+    fireEvent.click(app.getByRole('button', { name: '4 done — show more' }));
     await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2', 'd3', 'd4', 'd5']));
     expect(onLoadDone).toHaveBeenCalledWith('ask', 1);
   });
@@ -1240,7 +1281,7 @@ describe('done todos on a card', () => {
         onLoadDone={onLoadDone}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    toggleAll(app);
     await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
     fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
     await waitFor(() => expect(onLoadDone).toHaveBeenCalledTimes(2));
@@ -1264,7 +1305,7 @@ describe('done todos on a card', () => {
         onLoadDone={onLoadDone}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    toggleAll(app);
     await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
     app.rerender(
       <NeoAskTodos
@@ -1288,7 +1329,7 @@ describe('done todos on a card', () => {
         onLoadDone={onLoadDone}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    toggleAll(app);
     await waitFor(() =>
       expect(app.getByRole('alert').textContent).toBe('Couldn’t load the done todos.')
     );
@@ -1318,7 +1359,7 @@ describe('done todos on a card', () => {
         onLoadDone={onLoadDone}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    toggleAll(app);
     await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
     expect(onLoadDone).toHaveBeenLastCalledWith('ask', 0);
     fireEvent.click(app.getByRole('button', { name: '1 done — show more' }));
@@ -1379,7 +1420,7 @@ describe('Settled question previews', () => {
         />
       );
       fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
-      const row = view.container.querySelector('#neo-ref-question-long')!;
+      const row = view.baseElement.querySelector('#neo-ref-question-long')!;
       await waitFor(() => expect(row.textContent).toContain('A settled decision'));
       expect(row.textContent).not.toContain('Final detail');
       expect(row.textContent!.length).toBeLessThan(450);
@@ -1387,11 +1428,11 @@ describe('Settled question previews', () => {
         state === 'answered' ? 'Keep the decision' : 'No longer needed'
       );
       fireEvent.click(view.getByRole('button', { name: 'Read all', exact: true }));
-      const dialog = await view.findByRole('dialog');
+      const dialog = (await view.findAllByRole('dialog')).at(-1)!;
       await waitFor(() => expect(dialog.querySelector('strong')?.textContent).toBe('Final detail'));
       expect(dialog.textContent).toContain('Long synthetic context. '.repeat(60).trim());
-      fireEvent.click(view.getByRole('button', { name: /close/i }));
-      await waitFor(() => expect(view.queryByRole('dialog')).toBeNull());
+      fireEvent.click(within(dialog).getByRole('button', { name: /close/i }));
+      await waitFor(() => expect(dialog.isConnected).toBe(false));
       expect(row.textContent).not.toContain('Final detail');
     }
   );
@@ -1410,7 +1451,7 @@ describe('Settled question previews', () => {
     );
     fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
     await waitFor(() =>
-      expect(view.container.querySelector('#neo-ref-question-short strong')?.textContent).toBe(
+      expect(view.baseElement.querySelector('#neo-ref-question-short strong')?.textContent).toBe(
         'Brief question'
       )
     );
@@ -1443,14 +1484,14 @@ describe('Question full-version document', () => {
       );
       if (state !== 'open')
         fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
-      expect(view.queryByRole('dialog')).toBeNull();
+      expect(view.queryAllByRole('dialog')).toHaveLength(state === 'open' ? 0 : 1);
       fireEvent.click(view.getByRole('button', { name: 'View full versions' }));
-      const dialog = await view.findByRole('dialog');
+      const dialog = (await view.findAllByRole('dialog')).at(-1)!;
       expect(dialog.querySelector('pre')?.textContent).toBe(document);
       expect(dialog.querySelector('script')).toBeNull();
       expect(dialog.textContent).toContain('Remote version');
-      fireEvent.click(view.getByRole('button', { name: /close/i }));
-      await waitFor(() => expect(view.queryByRole('dialog')).toBeNull());
+      fireEvent.click(within(dialog).getByRole('button', { name: /close/i }));
+      await waitFor(() => expect(dialog.isConnected).toBe(false));
     }
   );
 });

@@ -1,0 +1,40 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/packages/daemon
+
+ ❯ tests/unit/1-core/operations/neo-publication-read.test.ts (22 tests | 4 failed) 135ms
+   ❯ authored publication reads (22)
+     × refuses non-human caller { source: 'mcp', role: 'neo', …(1) } before any ledger read 17ms
+     × refuses non-human caller { source: 'mcp', …(2) } before any ledger read 5ms
+     × refuses non-human caller { source: 'internal' } before any ledger read 6ms
+     × refuses non-human caller { source: 'rpc' } before any ledger read 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/neo-publication-read.test.ts > authored publication reads > refuses non-human caller { source: 'mcp', role: 'neo', …(1) } before any ledger read
+ FAIL  tests/unit/1-core/operations/neo-publication-read.test.ts > authored publication reads > refuses non-human caller { source: 'mcp', …(2) } before any ledger read
+ FAIL  tests/unit/1-core/operations/neo-publication-read.test.ts > authored publication reads > refuses non-human caller { source: 'internal' } before any ledger read
+ FAIL  tests/unit/1-core/operations/neo-publication-read.test.ts > authored publication reads > refuses non-human caller { source: 'rpc' } before any ledger read
+AssertionError: expected "defaultBinding" to be called at least once
+ ❯ tests/unit/1-core/operations/neo-publication-read.test.ts:112:22
+    110|       value: { ok: true },
+    111|     });
+    112|     expect(bindings).toHaveBeenCalled();
+       |                      ^
+    113|   });
+    114|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 18 passed (22)
+   Start at  17:27:04
+   Duration  3.94s (transform 75%, import 18%, tests 4%, setup 3%)
+
+  Transform  transforming modules took 2.71s · 75% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

@@ -1,7 +1,5 @@
 import type { NeoAskEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 
-export const NEO_DONE_SHOWN = 3;
-
 export type NeoDoneTodosPage =
   | { ok: true; todos: NeoTodoEntry[]; doneCount: number; nextOffset: number | null }
   | { ok: false; reason: string };

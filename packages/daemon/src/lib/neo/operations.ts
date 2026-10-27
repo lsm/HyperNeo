@@ -668,7 +668,7 @@ export function createNeoOperations(service: NeoService) {
         service.notifyPublicationsChanged(conversationId);
       },
     }),
-    createNeoPublicationReadOperation(service.repo, service.publications),
+    createNeoPublicationReadOperation(service.publications),
     createNeoConversationReadOperation(
       service.repo,
       new NeoConversationReader(service.db.getDatabase(), messageStatuses),

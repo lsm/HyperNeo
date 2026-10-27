@@ -255,7 +255,11 @@ describe('Neo artifact taps', () => {
       questions: [],
     };
     render(<NeoAskTodos entry={entry} onAnswer={() => {}} />);
-    const row = document.querySelector('[data-ask-todo="t1"]') as HTMLElement;
+    expect(document.querySelector('[data-ask-todo="t1"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'All · 2', exact: true }));
+    const row = screen
+      .getByRole('dialog', { name: 'Layout' })
+      .querySelector('[data-ask-todo="t1"]') as HTMLElement;
     expect(within(row).queryByRole('button', { name: 'Open preview: Layout report' })).toBeNull();
     fireEvent.click(
       within(row).getByRole('button', { name: 'Show details: Write the layout report' })

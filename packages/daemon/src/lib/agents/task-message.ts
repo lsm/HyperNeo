@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   fillPrompt,
   TASK_MESSAGE_GATED_HANDOFF,
@@ -9,7 +7,6 @@ import {
 import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import type { AgentMemoryCoreEntry } from '../../storage/repositories/agent-memory-repository.ts';
 import { Logger } from '../logger.ts';
-import { workerWorkLocations } from '../work-locations.ts';
 import type { CustomAgentConfig, TaskMessageContext } from './custom-agent-types.ts';
 
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
@@ -27,7 +24,6 @@ export function buildCustomAgentTaskMessage(
     workflowRun,
     workflow,
     space,
-    workspacePath,
     goal,
     relevantScopeLessons,
     previousTaskSummaries,
@@ -51,18 +47,6 @@ export function buildCustomAgentTaskMessage(
   }
   if (startNote) {
     sections.push('', '## Note From the User', '', startNote);
-  }
-
-  sections.push('');
-  sections.push('## Runtime Location');
-  sections.push('');
-  sections.push(`- Worktree: ${workspacePath}`);
-  if (existsSync(join(workspacePath, '.git/hyperneo-worker-sandbox'))) {
-    const workLocations = workerWorkLocations(workspacePath);
-    sections.push(`- New worktrees: ${workLocations.worktrees} (HYPERNEO_WORKTREES)`);
-    sections.push(`- Verification evidence: ${workLocations.evidence} (HYPERNEO_EVIDENCE)`);
-    sections.push(`- Build output: ${workLocations.builds} (HYPERNEO_BUILDS)`);
-    sections.push(`- Scratch and TMPDIR: ${workLocations.scratch}`);
   }
 
   if (goal) {

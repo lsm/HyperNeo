@@ -18,9 +18,10 @@
   ],
   "initialDenoFaultObservation": "The Deno lost-receipt worker failure also rejected an in-flight background search flush; its expected injected-fault log is retained. Later independent approval recovers the writer. No closed-database shutdown error occurred.",
   "baseSync": {
-    "dev": "4ad4e0b1578a307f067f235c72ba48a4988ad50e",
-    "previousHead": "2413a3b790e0e478dfde0a9899f3c1e2b7cf0c9c",
-    "conflicts": 0,
+    "dev": "7e9990046399be8cda941ff6a71a97998d9f4712",
+    "previousHead": "c941e2a38ce531eac472569f70abd686d242134f",
+    "conflicts": 1,
+    "resolution": "Preserve the upstream publication-page writer and append the pairing approval writer registration.",
     "focusedVitestPassed": 50,
     "repositoryCheck": "passed",
     "bunDenoMainSql": 0,

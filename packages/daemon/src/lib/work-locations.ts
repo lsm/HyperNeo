@@ -24,3 +24,26 @@ export function workerWorkLocations(root: string): WorkerWorkLocations {
     ghConfig: join(dataDir, 'work', 'gh-config', key),
   };
 }
+
+export function workerWorkEnvironment(root: string) {
+  const locations = workerWorkLocations(root);
+  return {
+    HYPERNEO_WORKTREES: locations.worktrees,
+    HYPERNEO_EVIDENCE: locations.evidence,
+    HYPERNEO_BUILDS: locations.builds,
+  };
+}
+
+export function workerWorkLocationsBrief(root: string) {
+  const locations = workerWorkLocations(root);
+  return [
+    '## Runtime Location',
+    '',
+    `- Worktree: ${root}`,
+    `- New worktrees: ${locations.worktrees} (HYPERNEO_WORKTREES)`,
+    `- Verification evidence: ${locations.evidence} (HYPERNEO_EVIDENCE)`,
+    `- Build output: ${locations.builds} (HYPERNEO_BUILDS)`,
+    `- Scratch: ${locations.scratch} (used for TMPDIR only when sandboxing is on)`,
+    'Create output directories as needed. Existing worktrees stay in place.',
+  ].join('\n');
+}

@@ -149,6 +149,7 @@ describe('Neo desktop panes', () => {
             testAskEntry('proposal', 'Fictional proposal'),
             testAskEntry('result', 'Fictional result', {
               state: 'done',
+              doneCount: 1,
               todos: [testTodo('result', { state: 'done', link: '/session/result-session' })],
             }),
           ],
@@ -164,7 +165,13 @@ describe('Neo desktop panes', () => {
       name: 'Draft',
     }) as HTMLTextAreaElement;
     fireEvent.input(draft, { target: { value: 'Keep my fictional draft' } });
+    fireEvent.click(
+      within(screen.getByRole('article', { name: 'Fictional result' })).getByRole('button', {
+        name: '全部 · 1',
+      })
+    );
     fireEvent.click(screen.getByRole('button', { name: '打开 Todo result' }));
+    expect(screen.queryByRole('dialog', { name: 'Fictional result' })).toBeNull();
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);

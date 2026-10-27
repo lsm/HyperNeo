@@ -1,3 +1,4 @@
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -582,6 +583,7 @@ export class QueryOptionsBuilder {
         ...mergedEnv,
         ...compactEnv,
         HYPERNEO_HANDOFF_DIR: handoffDirectory,
+        ...(!neo && this.getCwd() ? workerWorkEnvironment(this.getCwd()!) : {}),
         ...workerSandbox?.env,
         ...readAccess?.env,
       },
@@ -841,10 +843,11 @@ export class QueryOptionsBuilder {
       return presetConfig;
     }
 
-    const plain = this.joinSystemPromptAppendParts([
+    const parts = [
       this.ctx.getSpaceBriefing?.(),
       this.ctx.session.worktree ? this.getMinimalWorktreePrompt() : undefined,
-    ]);
+    ];
+    const plain = parts.some((part) => part?.trim()) ? this.joinSystemPromptAppendParts(parts) : '';
     return plain ? buildHostAuthoredPrompt(plain) : undefined;
   }
 
@@ -882,7 +885,12 @@ export class QueryOptionsBuilder {
   }
 
   private joinSystemPromptAppendParts(parts: Array<string | undefined>): string {
-    return parts
+    return [
+      ...parts,
+      !neoCoordinatorBinding(this.ctx.db, this.ctx.session.id) && this.getCwd()
+        ? workerWorkLocationsBrief(this.getCwd()!)
+        : undefined,
+    ]
       .map((part) => part?.trim())
       .filter((part): part is string => !!part)
       .join('\n\n');
