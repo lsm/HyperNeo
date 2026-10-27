@@ -64,6 +64,12 @@ function world() {
       }
       if (name === 'work.send') {
         const worker = workers.get(id);
+        if (knobs.sendRefused)
+          return completed({
+            ok: false,
+            reason: 'not_delivered',
+            detail: 'thread-follower-steer-turn-timeout',
+          });
         if (worker?.replies) worker.lastActivityAt = Date.now();
         return completed({ ok: true, value: { delivered: true } });
       }
@@ -314,5 +320,15 @@ describe('a doing todo never sits idle without someone on it', () => {
     const before = w.sessions.readNudge(idle.id);
     await w.at(60);
     expect(w.sessions.readNudge(idle.id)).toEqual(before);
+  });
+
+  test('a reminder the worker never receives stalls the todo so a fresh worker takes it', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null);
+    w.knobs.sendRefused = true;
+    await w.at(20);
+    expect(w.named('work.send')).toHaveLength(1);
+    expect(w.named('work.start')).toHaveLength(1);
+    expect(w.todo(todo.id).state).toBe('doing');
   });
 });

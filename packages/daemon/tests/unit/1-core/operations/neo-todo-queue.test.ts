@@ -108,7 +108,7 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
     await runner.recompute(store.getTodo(id)!, { state: 'done', finishedAt: Date.now() });
   };
   const tick = () => runner.refresh(() => {});
-  return { db, store, runner, clock, started, ask, approved, add, state, finish, tick };
+  return { db, store, sessions, runner, clock, started, ask, approved, add, state, finish, tick };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -270,5 +270,15 @@ describe('queued todos start themselves', () => {
     w.store.updateTodo(w.store.getTodo(first)!, { state: 'doing', startedAt: 3 }, 3);
     await w.finish(first);
     expect(w.state(first)).toBe('done');
+  });
+
+  test('todos whose workers sit idle do not fill the running cap', async () => {
+    const w = (current = world({ running: 2, perGroup: 2 }));
+    const idle = [w.add(w.approved()), w.add(w.approved())];
+    await w.tick();
+    for (const id of idle) w.sessions.recordLive(id, 'done', undefined);
+    const waiting = w.add(w.approved());
+    await w.tick();
+    expect(w.state(waiting)).toBe('doing');
   });
 });
