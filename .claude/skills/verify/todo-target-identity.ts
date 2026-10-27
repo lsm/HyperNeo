@@ -104,6 +104,7 @@ try {
   assert.equal(reopened.ok, true, JSON.stringify(reopened));
   assert.equal(reopened.ask.id, opened.ask.id);
   assert.deepEqual(todos.listTodos(opened.ask.id), beforeReopen);
+  todos.openAsk({ id: 'settled-parent-child', parentId: opened.ask.id, repo: 'github.com/synthetic/child', projectId: null, sessionId: sender, originMessageId: null, title: 'Child', request: 'Filed work', createdAt: 1 });
   todos.settleAsk(opened.ask, 'done', 'Synthetic result complete', Date.now());
   const settled = await handler({ name: 'neo.ask.open', input: { ...reopenInput, todos: [{ ...reopenInput.todos[0], title: 'New worker task' }] } });
   evidence.push({ operation: 'neo.ask.open', settledMissingWorker: true, settled });

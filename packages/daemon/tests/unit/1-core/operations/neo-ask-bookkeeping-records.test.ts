@@ -137,7 +137,20 @@ describe('todo and ask bookkeeping records through MCP', () => {
         };
         const first = await h.call('neo.ask.open', input);
         expect(first.ok).toBe(true);
-        if (state === 'done') h.store.settleAsk(first.ask, 'done', 'Finished', 2);
+        if (state === 'done') {
+          h.store.openAsk({
+            id: 'recorded-child',
+            parentId: first.ask.id,
+            repo: 'github.com/synthetic/child',
+            projectId: null,
+            sessionId: first.ask.sessionId,
+            originMessageId: null,
+            title: 'Child',
+            request: 'Filed work',
+            createdAt: 1,
+          });
+          h.store.settleAsk(first.ask, 'done', 'Finished', 2);
+        }
         const before = h.store.listTodos(first.ask.id);
         gone = true;
         const again = await h.call('neo.ask.open', input);
@@ -161,6 +174,17 @@ describe('todo and ask bookkeeping records through MCP', () => {
       }),
     });
     try {
+      h.store.openAsk({
+        id: 'settled-child',
+        parentId: h.ask.id,
+        repo: 'github.com/synthetic/child',
+        projectId: null,
+        sessionId: h.ask.sessionId,
+        originMessageId: null,
+        title: 'Child',
+        request: 'Filed work',
+        createdAt: 1,
+      });
       h.store.settleAsk(h.ask, 'done', 'Finished', 2);
       const before = h.store.listTodos(h.ask.id);
       const reply = await h.call('neo.ask.open', {

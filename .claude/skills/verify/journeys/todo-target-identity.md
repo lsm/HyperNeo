@@ -23,6 +23,11 @@ an ignored prefix must return it, as must an explicit Space-adapter prefix looku
 Adding a todo for that task's short ID must persist its full reference without
 dispatch. Prefix-only discovery still defaults to HyperNeo and Codex; explicit
 adapter selection and exact-ID precedence must not be suppressed by that default.
+After an ask records its worker, deleting only that synthetic session and
+reopening the same ask must return the original todo without resolving its old
+reference again. A settled parent ask with a child and a new missing target must return its
+ask_settled bookkeeping receipt without creating or dispatching work. New-target
+batches still resolve completely before any ask/todo mutation.
 The saved observed.json contains actual replies and stored target rows.
 
 Focused neo-todo-target tests also cover Codex references, owning-daemon and
