@@ -247,7 +247,7 @@ describe('durable public conversation presentation', () => {
     }
   );
 
-  it('keeps the short reply, shows the full one under it on demand, and copies the full one', async () => {
+  it('copies the whole Markdown message while Details copy stays block-only', async () => {
     const value = publication({ shortText: 'The comparison is ready. Nothing has been executed.' });
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} />
@@ -268,15 +268,36 @@ describe('durable public conversation presentation', () => {
     expect(copyDetails.parentElement?.textContent).toBe('Details');
     fireEvent.click(copyDetails);
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
+    const copyMessage = screen.getByRole('button', { name: 'Copy Neo’s message' });
+    fireEvent.click(copyMessage);
+    await waitFor(() =>
+      expect(clipboard).toHaveBeenLastCalledWith(`${value.shortText}\n\n${value.fullText}`)
+    );
     const less = await screen.findByRole('button', { name: /^less$/ });
     expect(less.closest('[data-publication-details]')).toBeTruthy();
     fireEvent.click(less);
     expect(container.querySelector('[data-publication-details]')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
     expect(await screen.findByRole('button', { name: /^more$/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
-    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
+    fireEvent.click(copyMessage);
+    await waitFor(() =>
+      expect(clipboard).toHaveBeenLastCalledWith(`${value.shortText}\n\n${value.fullText}`)
+    );
     expect(container.querySelector('script')).toBeNull();
+  });
+
+  it.each([
+    ['Only **short** source', '', 'Only **short** source'],
+    [undefined, 'Only **full** source', 'Only **full** source'],
+    ['Same **source**', 'Same **source**', 'Same **source**'],
+  ])('copies single-part source once: %s', async (shortText, fullText, expected) => {
+    render(
+      <NeoPublicConversation
+        conversation={conversation([], [publication({ shortText, fullText })])}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
+    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(expected));
   });
 
   it('renders a verbatim publication in full with no more control and copies the whole content', async () => {
@@ -327,7 +348,9 @@ describe('durable public conversation presentation', () => {
         .map((item) => item.textContent)
     ).toEqual(['Select text', 'Copy', 'Reply']);
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy' }));
-    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
+    await waitFor(() =>
+      expect(clipboard).toHaveBeenLastCalledWith(`${value.shortText}\n\n${value.fullText}`)
+    );
     await waitFor(() => expect(screen.getByTitle('Copied!')).toBeTruthy());
     expect(screen.queryByRole('menu')).toBeNull();
     fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
@@ -455,7 +478,9 @@ describe('durable public conversation presentation', () => {
       '2026-09-30T12:10:00.000Z',
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
-    await waitFor(() => expect(clipboard).toHaveBeenCalledWith('Latest **detail**'));
+    await waitFor(() =>
+      expect(clipboard).toHaveBeenCalledWith('Latest summary\n\nLatest **detail**')
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Reply to Neo’s message' }));
     expect(onQuote).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'Latest summary', anchor: bubble.id })
