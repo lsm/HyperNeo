@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
 const [source, directory, expectedCommit] = process.argv.slice(2);
+const expectedVersion = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version as string;
 const run = resolve(directory);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -77,7 +78,7 @@ let socket: WebSocket | undefined;
 let logs = '';
 try {
   const version = (await cli(['--version'])).trim();
-  assert.equal(version, '0.49.0');
+  assert.equal(version, expectedVersion);
   steps.install = { pass: true, version, sha256: createHash('sha256').update(readFileSync(installed)).digest('hex'), method: 'copy candidate into fresh HOME/.local/bin; execute away from checkout' }; save();
   daemon = Bun.spawn([installed, '--host', '127.0.0.1', '--port', String(port), '--db-path', join(run, 'data/daemon.db'), '--workspace', join(run, 'home/HyperNeo')], {
     cwd: join(run, 'home'), env: { ...env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${mock.port}`, HYPERNEO_USE_DEV_PROXY: '0' }, stdout: 'pipe', stderr: 'pipe',
@@ -111,7 +112,7 @@ try {
   });
   const op = (name: string, input: unknown = {}) => rpc('operation.invoke', { name, input });
   const build = await op('system.build');
-  assert.equal(build.commit, expectedCommit); assert.equal(build.version, '0.49.0'); assert.equal(build.health, 'ok');
+  assert.equal(build.commit, expectedCommit); assert.equal(build.version, expectedVersion); assert.equal(build.health, 'ok');
   assert(logs.includes('OAuth refresh scheduler skipped: test daemon without the human login'));
   steps.firstStart = { pass: true, build, served: '/neo HTTP 200', isolated: true }; save();
   await wait('SDK download', () => logs.includes('[SDK] Claude Code binary ready:'), 360000);
