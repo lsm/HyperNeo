@@ -110,8 +110,14 @@ test('worker gh configuration preserves public settings without copying host cre
   expect(env.GH_CONFIG_DIR).toBeTruthy();
   expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe('git_protocol: ssh\n');
   expect(existsSync(join(env.GH_CONFIG_DIR, 'hosts.yml'))).toBe(false);
+  await writeFile(join(home, '.config/gh/config.yml'), 'git_protocol: https\n');
   await prepareWorkerSandbox(root);
-  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe('git_protocol: ssh\n');
+  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe(
+    'git_protocol: https\n'
+  );
+  rmSync(join(home, '.config/gh/config.yml'));
+  await prepareWorkerSandbox(root);
+  expect(existsSync(join(env.GH_CONFIG_DIR, 'config.yml'))).toBe(false);
 });
 
 test('runtime preparation tolerates shared work locations with ordinary modes', async () => {
