@@ -8,6 +8,7 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { Database } from '../../../../src/storage/database';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
+import { createTestDb, createTestSession } from '../../../helpers/database';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -970,26 +971,40 @@ describe('Message RPC Handlers', () => {
   });
 
   describe('message.count', () => {
-    test('returns message count', async () => {
-      const handler = messageHubData.handlers.get('message.count');
-      expect(handler).toBeDefined();
-
-      sessionManagerData.agentSessionData.mocks.getSDKMessageCount.mockReturnValueOnce(42);
-
-      const result = await handler!({ sessionId: 'session-123' }, {});
-
-      expect(result).toEqual({ count: 42 });
+    test('returns the persisted message count', async () => {
+      const db = await createTestDb();
+      try {
+        await db.createSession(createTestSession('session-123'));
+        await db.saveUserMessage(
+          'session-123',
+          {
+            type: 'user',
+            uuid: 'count-user',
+            parent_tool_use_id: null,
+            message: { role: 'user', content: 'Count this message' },
+          },
+          'consumed'
+        );
+        setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+        const handler = messageHubData.handlers.get('message.count')!;
+        expect(await handler({ sessionId: 'session-123' }, {})).toEqual({ count: 1 });
+        expect(sessionManagerData.mocks.getSessionForControl).not.toHaveBeenCalled();
+      } finally {
+        await db.close();
+      }
     });
 
-    test('throws error when session not found', async () => {
-      const handler = messageHubData.handlers.get('message.count');
-      expect(handler).toBeDefined();
-
-      sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
-
-      await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
-        'Session not found'
-      );
+    test('throws error when the persisted session is not found', async () => {
+      const db = await createTestDb();
+      try {
+        setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+        const handler = messageHubData.handlers.get('message.count')!;
+        await expect(handler({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+          'Session not found'
+        );
+      } finally {
+        await db.close();
+      }
     });
   });
 

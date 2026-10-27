@@ -1,0 +1,106 @@
+{
+  "expectedCount": 3,
+  "writerBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldMs": 3.7493750000001,
+  "concurrentWarmMs": 1.0712499999999636,
+  "missingSession": "MessageHubResponseError: Session not found",
+  "healthMs": 0.1996670000000904,
+  "writerAfter": {
+    "outside": 0,
+    "inside": 1
+  },
+  "laterCommitObserved": true,
+  "workerFailure": "MessageHubResponseError: synthetic message-count reader failure",
+  "readerRecovered": true,
+  "actorCacheStayedEmpty": true,
+  "maxLoopLagMs": 3.8244170000000395,
+  "rpcLatencyUnder250ms": true,
+  "rssBytes": 516030464,
+  "walBytes": 4120032,
+  "mainSqlAttempts": 0,
+  "workerTimings": [
+    {
+      "roundTripMs": 2.087833000000046,
+      "replyBytes": 1,
+      "encodeMs": 0.012166999999863037
+    },
+    {
+      "roundTripMs": 0.08791700000006131,
+      "replyBytes": 1,
+      "encodeMs": 0.003249999999979991
+    },
+    {
+      "roundTripMs": 0.17416700000012497,
+      "replyBytes": 1,
+      "encodeMs": 0.0005830000000059954
+    },
+    {
+      "roundTripMs": 0.2241670000000795,
+      "replyBytes": 1,
+      "encodeMs": 0.00045799999998052954
+    },
+    {
+      "roundTripMs": 0.26395800000000236,
+      "replyBytes": 1,
+      "encodeMs": 0.0019999999999527063
+    },
+    {
+      "roundTripMs": 0.3052500000001146,
+      "replyBytes": 1,
+      "encodeMs": 0.0002919999999448919
+    },
+    {
+      "roundTripMs": 0.34950000000003456,
+      "replyBytes": 1,
+      "encodeMs": 0.0003329999999550637
+    },
+    {
+      "roundTripMs": 0.3806250000000091,
+      "replyBytes": 1,
+      "encodeMs": 0.00037500000007639755
+    },
+    {
+      "roundTripMs": 0.41650000000004184,
+      "replyBytes": 1,
+      "encodeMs": 0.00037500000007639755
+    },
+    {
+      "roundTripMs": 0.4558750000001055,
+      "replyBytes": 1,
+      "encodeMs": 0.0002910000000611035
+    },
+    {
+      "roundTripMs": 0.5055829999998878,
+      "replyBytes": 1,
+      "encodeMs": 0.00024999999982355803
+    },
+    {
+      "roundTripMs": 0.059166000000004715,
+      "replyBytes": 1,
+      "encodeMs": 0.0023340000002463057
+    },
+    {
+      "roundTripMs": 0.05220899999994799,
+      "replyBytes": 1,
+      "encodeMs": 0.0007499999999254214
+    },
+    {
+      "roundTripMs": 0.05083300000001145,
+      "replyBytes": 1,
+      "encodeMs": 0.0010419999998703133
+    },
+    {
+      "roundTripMs": 0.14545799999996234,
+      "replyBytes": 1,
+      "encodeMs": 0.003167000000075859
+    },
+    {
+      "roundTripMs": 0.2742920000000595,
+      "replyBytes": 1,
+      "encodeMs": 0.0034580000001369626
+    }
+  ]
+}
