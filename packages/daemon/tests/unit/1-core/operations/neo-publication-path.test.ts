@@ -13,8 +13,8 @@ function sources(dir: string): string[] {
   });
 }
 
-describe('one Neo publication path', () => {
-  test('only NeoService.appendPublication writes a publication; every caller goes through it', () => {
+describe('Neo publication persistence paths', () => {
+  test('publication delivery uses the writer and only idle notices retain the legacy append', () => {
     const writers = sources(SRC)
       .filter((path) => !path.includes('/storage/'))
       .flatMap((path) =>
@@ -26,11 +26,14 @@ describe('one Neo publication path', () => {
       [
         'lib/neo/service.ts:appendPublication(',
         'lib/neo/service.ts:appendPublication(',
-        'lib/neo/service.ts:appendPublication(',
         'lib/neo/service.ts:publications.append(',
       ].sort()
     );
     const service = readFileSync(join(SRC, 'lib/neo/service.ts'), 'utf8');
-    expect(service.match(/append: \(input\) => this\.appendPublication\(input\)/g)).toHaveLength(1);
+    expect(
+      service.match(
+        /append: \(input\) => this\.db\.gateway\.call\(neoPublicationWrites, 'append', input\)/g
+      )
+    ).toHaveLength(1);
   });
 });

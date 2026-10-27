@@ -25,6 +25,8 @@ describe('Neo publication without runtime input attribution', () => {
   let ledger: NeoPublicationRepository;
   let publish: ReturnType<typeof createNeoPublisher>;
   const notify = vi.fn();
+  let held: Promise<void> | null;
+  let failWrite: boolean;
   beforeEach(() => {
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
@@ -36,12 +38,18 @@ describe('Neo publication without runtime input attribution', () => {
     repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
     ledger = new NeoPublicationRepository(mailbox.db);
     notify.mockClear();
+    held = null;
+    failWrite = false;
     publish = createNeoPublisher({
       receivedHumanInput: () => false,
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
-      append: (input) => ledger.append(input),
+      append: async (input) => {
+        if (held) await held;
+        if (failWrite) throw new Error('writer failed');
+        return ledger.append(input);
+      },
       notify,
       artifact: (id, who) =>
         id === report.artifactId && who.sessionId === root.sessionId ? report : null,
@@ -49,8 +57,30 @@ describe('Neo publication without runtime input attribution', () => {
   });
   afterEach(() => mailbox.close());
 
-  test('publishes without a holder and leaves answered input unspecified', () => {
-    const receipt = publish(draft, caller);
+  test('publication notifications wait for the durable write receipt', async () => {
+    let release = () => {};
+    held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = publish(draft, caller);
+    await Promise.resolve();
+    expect(notify).not.toHaveBeenCalled();
+    expect(ledger.list(conversationId)).toHaveLength(0);
+    release();
+    expect(await pending).toMatchObject({ accepted: true, created: true });
+    expect(notify).toHaveBeenCalledOnce();
+    expect(ledger.list(conversationId)).toHaveLength(1);
+  });
+
+  test('a failed writer does not announce an unpersisted publication', async () => {
+    failWrite = true;
+    await expect(publish(draft, caller)).rejects.toThrow('writer failed');
+    expect(notify).not.toHaveBeenCalled();
+    expect(ledger.list(conversationId)).toHaveLength(0);
+  });
+
+  test('publishes without a holder and leaves answered input unspecified', async () => {
+    const receipt = await publish(draft, caller);
     expect(receipt).toMatchObject({ accepted: true, created: true });
     expect(receipt).not.toHaveProperty('answered');
     expect(ledger.list(conversationId)).toEqual([expect.objectContaining({ shortText: 'Ready' })]);
@@ -60,15 +90,15 @@ describe('Neo publication without runtime input attribution', () => {
     expect(notify).toHaveBeenCalledOnce();
   });
 
-  test('retries the same request without duplicating or rewriting the publication', () => {
-    expect(publish(draft, caller)).toMatchObject({ accepted: true, created: true });
-    expect(publish(draft, caller)).toMatchObject({ accepted: true, created: false });
-    expect(publish({ ...draft, shortText: 'Changed' }, caller)).toMatchObject({
+  test('retries the same request without duplicating or rewriting the publication', async () => {
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: true });
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: false });
+    expect(await publish({ ...draft, shortText: 'Changed' }, caller)).toMatchObject({
       accepted: false,
       reason: 'publication_conflict',
     });
     expect(ledger.list(conversationId)).toHaveLength(1);
-    expect(publish({ ...draft, requestId: 'send-two' }, caller)).toMatchObject({
+    expect(await publish({ ...draft, requestId: 'send-two' }, caller)).toMatchObject({
       accepted: true,
       created: true,
     });
@@ -76,8 +106,8 @@ describe('Neo publication without runtime input attribution', () => {
 
   test.each(['worker', 'ordinary', 'neo:foreign'])(
     'refuses a foreign publisher %s',
-    (sessionId) => {
-      expect(publish(draft, { ...caller, sessionId })).toMatchObject({
+    async (sessionId) => {
+      expect(await publish(draft, { ...caller, sessionId })).toMatchObject({
         accepted: false,
         reason: 'avatar_required',
       });
@@ -85,29 +115,32 @@ describe('Neo publication without runtime input attribution', () => {
     }
   );
 
-  test('refuses a human transport even with the Neo session id', () => {
-    expect(publish(draft, { ...caller, source: 'rpc' })).toMatchObject({ accepted: false });
+  test('refuses a human transport even with the Neo session id', async () => {
+    expect(await publish(draft, { ...caller, source: 'rpc' })).toMatchObject({ accepted: false });
   });
 
-  test('delivers text with registered artifacts and omits invented references', () => {
-    expect(publish({ ...draft, artifacts: [report] }, caller)).toMatchObject({
+  test('delivers text with registered artifacts and omits invented references', async () => {
+    expect(await publish({ ...draft, artifacts: [report] }, caller)).toMatchObject({
       accepted: true,
       publication: { artifacts: [report] },
     });
     expect(
-      publish(
+      await publish(
         { ...draft, requestId: 'bad', artifacts: [{ ...report, artifactId: 'missing' }] },
         caller
       )
     ).toMatchObject({ accepted: true, publication: { artifacts: [], fullText: draft.fullText } });
   });
 
-  test('omits missing project references without blocking bundled topics', () => {
+  test('omits missing project references without blocking bundled topics', async () => {
     expect(
-      publish({ ...draft, links: [{ kind: 'project', id: 'missing', label: 'Missing' }] }, caller)
+      await publish(
+        { ...draft, links: [{ kind: 'project', id: 'missing', label: 'Missing' }] },
+        caller
+      )
     ).toMatchObject({ accepted: true, publication: { links: [] } });
     expect(
-      publish(
+      await publish(
         {
           ...draft,
           requestId: 'garden',
@@ -117,7 +150,7 @@ describe('Neo publication without runtime input attribution', () => {
       )
     ).toMatchObject({ accepted: true });
     expect(
-      publish(
+      await publish(
         { ...draft, requestId: 'topics', fullText: '# Garden\nDone.\n# Travel\nWaiting.' },
         caller
       )
@@ -127,15 +160,15 @@ describe('Neo publication without runtime input attribution', () => {
     });
   });
 
-  test('omits unknown reply ids without attributing a human answer', () => {
-    const receipt = publish({ ...draft, replyTo: [conversationId] }, caller);
+  test('omits unknown reply ids without attributing a human answer', async () => {
+    const receipt = await publish({ ...draft, replyTo: [conversationId] }, caller);
     expect(receipt).toMatchObject({ accepted: true, publication: { replyTo: [] } });
     expect(ledger.list(conversationId)![0].producerInput).toBeUndefined();
   });
 
-  test('publishes a verbatim reply from one text field and stores it unaltered', () => {
+  test('publishes a verbatim reply from one text field and stores it unaltered', async () => {
     const content = '> quoted line\n\n```ts\nconst draft = \"as written\";\n```';
-    const receipt = publish(
+    const receipt = await publish(
       { requestId: 'send-verbatim', verbatim: true, fullText: content },
       caller
     );
@@ -150,14 +183,14 @@ describe('Neo publication without runtime input attribution', () => {
     expect(stored.fullText).toBe(content);
   });
 
-  test('rejects shortText when verbatim is set and requires it otherwise', () => {
+  test('rejects shortText when verbatim is set and requires it otherwise', async () => {
     expect(
-      publish(
+      await publish(
         { requestId: 'send-verbatim', verbatim: true, shortText: 'Preview', fullText: 'Whole.' },
         caller
       )
     ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
-    expect(publish({ requestId: 'send-split', fullText: 'Whole.' }, caller)).toMatchObject({
+    expect(await publish({ requestId: 'send-split', fullText: 'Whole.' }, caller)).toMatchObject({
       accepted: false,
       reason: 'invalid_publication',
     });
@@ -166,8 +199,8 @@ describe('Neo publication without runtime input attribution', () => {
 
   test.each(['askOrigin', 'producerInput', 'conversationId', 'publicationId'])(
     'does not accept model authored runtime field %s',
-    (field) => {
-      expect(publish({ ...draft, [field]: 'forged' }, caller)).toMatchObject({
+    async (field) => {
+      expect(await publish({ ...draft, [field]: 'forged' }, caller)).toMatchObject({
         accepted: false,
         reason: 'invalid_publication',
       });
