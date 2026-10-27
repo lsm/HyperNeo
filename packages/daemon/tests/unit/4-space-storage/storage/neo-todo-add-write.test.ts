@@ -92,6 +92,32 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
   });
+  test('a settled split parent still admits work to its existing open child', async () => {
+    const repo = 'github.com/synthetic/child';
+    store.openAsk({
+      id: 'child',
+      parentId: 'ask',
+      repo,
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Child',
+      request: 'Keep working',
+      createdAt: 1,
+    });
+    store.settleAsk(store.getAsk('ask')!, 'done', 'Filed into child cards', 2);
+    const coding = {
+      ...draft(),
+      check: {
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: { urls: ['https://github.com/synthetic/child/pull/1'] },
+      },
+    };
+    expect(await add('one', coding)).toMatchObject({ ok: true, todo: { askId: 'child' } });
+    expect(store.getAsk('ask')?.status).toBe('done');
+    expect(store.listTodos('child')).toHaveLength(1);
+  });
   test('returns start intent without starting a worker or creating a start card', async () => {
     expect(await add('one', { ...draft(), start: true })).toMatchObject({
       ok: true,
