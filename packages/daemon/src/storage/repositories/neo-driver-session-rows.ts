@@ -233,13 +233,15 @@ export class NeoDriverSessionRows {
     ref: WorkRef,
     startedAt?: number,
     link?: string,
-    observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'> = {}
+    observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'> = {},
+    target?: unknown
   ): void {
     this.db
       .prepare(
         `UPDATE ${this.table}
           SET ref = ?1, started_at = ?2, link = ?3, actual_model = ?4, actual_effort = ?5,
-            sent_receipt = CASE WHEN ref IS ?1 THEN sent_receipt ELSE NULL END
+            sent_receipt = CASE WHEN ref IS ?1 THEN sent_receipt ELSE NULL END,
+            target = COALESCE(?7, target)
           WHERE ${this.key} = ?6`
       )
       .run(
@@ -248,7 +250,8 @@ export class NeoDriverSessionRows {
         link ?? null,
         observed.model ?? null,
         observed.effort ?? null,
-        id
+        id,
+        target ? JSON.stringify(target) : null
       );
   }
 

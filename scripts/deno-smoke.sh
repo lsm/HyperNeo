@@ -487,6 +487,9 @@ env -i HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CLEANUP_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-cleanup-enqueue.ts" "$CLEANUP_ENQUEUE_RUN"
 
+WORKFLOW_IDENTITY_CONTRACT_RUN="$WORK_DIR/workflow-identity-contract"
+mkdir -p "$WORKFLOW_IDENTITY_CONTRACT_RUN/home"
+env -i HOME="$WORKFLOW_IDENTITY_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_IDENTITY_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-identity-contract.ts" verify "$WORKFLOW_IDENTITY_CONTRACT_RUN"
 MAILBOX_ADMISSION_RUN="$WORK_DIR/mailbox-admission"
 mkdir -p "$MAILBOX_ADMISSION_RUN/home"
 env -i HOME="$MAILBOX_ADMISSION_RUN/home" PATH="$PATH" NODE_ENV=test \
@@ -505,6 +508,9 @@ env -i HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$DELIVERY_PARKING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-delivery-parking.ts" "$DELIVERY_PARKING_RUN"
 
+WORKFLOW_DELETE_WRITER_RUN="$WORK_DIR/workflow-delete-writer"
+mkdir -p "$WORKFLOW_DELETE_WRITER_RUN/home"
+env -i HOME="$WORKFLOW_DELETE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_DELETE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-delete-writer.ts" verify "$WORKFLOW_DELETE_WRITER_RUN"
 RATE_LIMIT_CANCEL_RUN="$WORK_DIR/rate-limit-cancel"
 mkdir -p "$RATE_LIMIT_CANCEL_RUN/home"
 env -i HOME="$RATE_LIMIT_CANCEL_RUN/home" PATH="$PATH" NODE_ENV=test \
@@ -547,6 +553,9 @@ env -i HOME="$STALE_RECLAIM_RUN/home" PATH="$PATH" TMPDIR="$STALE_RECLAIM_RUN/tm
 	HYPERNEO_DATA_DIR="$STALE_RECLAIM_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-stale-reclaim-writer.ts" "$STALE_RECLAIM_RUN"
 
+OUTCOME_PARKING_RUN="$WORK_DIR/direct-outcome-parking-writer"
+mkdir -p "$OUTCOME_PARKING_RUN/home"
+env -i HOME="$OUTCOME_PARKING_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$OUTCOME_PARKING_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/direct-outcome-parking-writer.ts" verify "$OUTCOME_PARKING_RUN"
 MAILBOX_EXPIRY_RUN="$WORK_DIR/mailbox-expiry-writer"
 mkdir -p "$MAILBOX_EXPIRY_RUN/home" "$MAILBOX_EXPIRY_RUN/tmp"
 env -i HOME="$MAILBOX_EXPIRY_RUN/home" PATH="$PATH" TMPDIR="$MAILBOX_EXPIRY_RUN/tmp" NODE_ENV=test \

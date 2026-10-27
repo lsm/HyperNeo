@@ -42,7 +42,7 @@ function world() {
   const base = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(base);
   const workers = new Map<string, { lastActivityAt: number; replies: boolean; status?: string }>();
-  const knobs = { stopRefused: false, tellRefused: false };
+  const knobs = { stopRefused: false, tellRefused: false, placeKnown: true, startRefused: false };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   let started = 0;
@@ -54,6 +54,8 @@ function world() {
     invoke: async (_caller, name, input) => {
       calls.push({ name, input });
       const id = (input.ref as { id?: string } | undefined)?.id ?? '';
+      if (name === 'work.start' && knobs.startRefused)
+        return completed({ ok: false, reason: 'invalid_place', detail: 'synthetic place refusal' });
       if (name === 'work.start') {
         const ref = { adapter: 'hyperneo', id: `worker-${++started}` };
         workers.set(ref.id, { lastActivityAt: Date.now(), replies: false });
@@ -67,6 +69,23 @@ function world() {
         if (worker?.replies) worker.lastActivityAt = Date.now();
         return completed({ ok: true, value: { delivered: true } });
       }
+      if (name === 'work.find')
+        return completed({
+          unreachable: [],
+          places: knobs.placeKnown
+            ? [
+                {
+                  place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+                  work: [
+                    {
+                      ref: { adapter: 'hyperneo', id: input.id },
+                      place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+                    },
+                  ],
+                },
+              ]
+            : [],
+        });
       if (name === 'work.stop')
         return completed(
           knobs.stopRefused
@@ -170,6 +189,7 @@ describe('a doing todo never sits idle without someone on it', () => {
   for (const instruction of [null, 'Keep an eye on it.'])
     test(`an adopted worker ${instruction ? 'with' : 'without'} an instruction is reminded, then stalls with no fresh worker to take it`, async () => {
       const w = (current = world());
+      w.knobs.placeKnown = false;
       const todo = w.adopt(instruction);
       for (const minutes of [20, 40, 60]) await w.at(minutes);
       expect(w.named('work.send')).toHaveLength(2);
@@ -196,6 +216,7 @@ describe('a doing todo never sits idle without someone on it', () => {
 
   test('a started todo without an instruction stalls instead of staying doing', async () => {
     const w = (current = world());
+    w.knobs.placeKnown = false;
     const todo = w.add();
     await w.runner.start(todo.id);
     w.db.prepare('UPDATE neo_todos SET instruction = NULL WHERE id = ?').run(todo.id);
@@ -314,5 +335,97 @@ describe('a doing todo never sits idle without someone on it', () => {
     const before = w.sessions.readNudge(idle.id);
     await w.at(60);
     expect(w.sessions.readNudge(idle.id)).toEqual(before);
+  });
+
+  test('a stalled todo whose worker place is known gets a fresh worker there', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60, 62]) await w.at(minutes);
+    expect(w.named('work.start').map((call) => call.input.place)).toEqual([
+      { machine: 'laptop', name: 'repo', folder: '/repo' },
+    ]);
+    expect(w.todo(todo.id).state).toBe('doing');
+    expect(w.sessions.get(todo.id)).toMatchObject({ verb: 'start', adapter: 'hyperneo' });
+  });
+
+  test('a stalled todo with no known place puts one card in front of the human', async () => {
+    const w = (current = world());
+    w.knobs.placeKnown = false;
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60, 62, 64]) await w.at(minutes);
+    expect(w.named('work.start')).toEqual([]);
+    expect(w.named('work.find')).toHaveLength(1);
+    expect(w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)).toEqual([
+      expect.objectContaining({ state: 'open', kind: 'reply' }),
+    ]);
+  });
+
+  test("the human's own tracked session gets a card, not a fresh worker", async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    for (const minutes of [60, 62]) await w.at(minutes);
+    expect(w.named('work.start')).toEqual([]);
+    expect(
+      w.store.listQuestions('tracked').filter((question) => question.todoId === todo.id)
+    ).toHaveLength(1);
+  });
+
+  test('an answered stalled card is not asked again while the todo is unchanged', async () => {
+    const w = (current = world());
+    w.knobs.placeKnown = false;
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    const card = w.store.listQuestions('ask').find((question) => question.todoId === todo.id)!;
+    w.store.answerQuestion(card, 'Leave it for now.', 'chat', Date.now());
+    for (const minutes of [62, 64]) await w.at(minutes);
+    expect(
+      w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)
+    ).toHaveLength(1);
+  });
+
+  test('a stalled todo whose worker comes back is neither carded nor doubled', async () => {
+    const w = (current = world());
+    w.knobs.placeKnown = false;
+    const todo = w.adopt(null, 'tracked');
+    for (const minutes of [20, 40]) await w.at(minutes);
+    w.store.updateTodo(
+      w.todo(todo.id),
+      {
+        state: 'blocked',
+        blockedBy: 'stalled',
+        blockedReason: 'Idle.',
+        nextAction: 'Continue it.',
+      },
+      Date.now()
+    );
+    Object.assign(w.workers.get('adopted-session')!, { status: 'running' });
+    await w.at(41);
+    expect(w.todo(todo.id).state).toBe('doing');
+    expect(w.store.listQuestions('tracked')).toEqual([]);
+  });
+
+  test('a stalled todo whose fresh start is refused stays stalled and asks the human', async () => {
+    const w = (current = world());
+    w.knobs.startRefused = true;
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    expect(w.named('work.start')).toHaveLength(1);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+    expect(
+      w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)
+    ).toHaveLength(1);
+  });
+
+  test('no place lookup runs while the worker cap blocks a rescue', async () => {
+    const w = (current = world());
+    for (let index = 0; index < 6; index++) {
+      const busy = w.add();
+      await w.runner.start(busy.id);
+      w.sessions.recordLive(busy.id, 'running', undefined);
+      w.workers.get(`worker-${index + 1}`)!.status = 'running';
+    }
+    w.adopt(null);
+    for (const minutes of [20, 40, 60, 62]) await w.at(minutes);
+    expect(w.named('work.find')).toEqual([]);
   });
 });

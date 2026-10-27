@@ -135,7 +135,7 @@ function createMockWorkflowManager(
         : []
     ),
     updateWorkflow: mock(() => ({ ...workflow!, name: 'Updated' })),
-    deleteWorkflow: mock(() => true),
+    deleteWorkflowAsync: mock(async () => true),
     hasExecutableRuns: mock(() => false),
   } as unknown as SpaceWorkflowManager;
 }
@@ -501,7 +501,7 @@ describe('space-workflow-handlers', () => {
       const result = (await call('spaceWorkflow.delete', { id: 'wf-1' })) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(workflowManager.deleteWorkflow).toHaveBeenCalledWith('wf-1');
+      expect(workflowManager.deleteWorkflowAsync).toHaveBeenCalledWith('wf-1');
       expect(internalEventBus.publish).toHaveBeenCalledWith('spaceWorkflow.deleted', {
         sessionId: 'global',
         spaceId: mockWorkflow.spaceId,
@@ -515,7 +515,7 @@ describe('space-workflow-handlers', () => {
         call('spaceWorkflow.delete', { id: 'wf-1', spaceId: 'deleted-space' })
       ).rejects.toThrow('Space not found: deleted-space');
       expect(workflowManager.getWorkflow).not.toHaveBeenCalled();
-      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+      expect(workflowManager.deleteWorkflowAsync).not.toHaveBeenCalled();
       expect(internalEventBus.publish).not.toHaveBeenCalled();
     });
 
@@ -523,7 +523,7 @@ describe('space-workflow-handlers', () => {
       await expect(
         call('spaceWorkflow.delete', { id: 'wf-1', spaceId: 'space-other' })
       ).rejects.toThrow('Workflow not found: wf-1');
-      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+      expect(workflowManager.deleteWorkflowAsync).not.toHaveBeenCalled();
       expect(internalEventBus.publish).not.toHaveBeenCalled();
     });
 
@@ -536,12 +536,12 @@ describe('space-workflow-handlers', () => {
       await expect(call('spaceWorkflow.delete', { id: 'ghost' })).rejects.toThrow(
         'Workflow not found: ghost'
       );
-      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+      expect(workflowManager.deleteWorkflowAsync).not.toHaveBeenCalled();
       expect(internalEventBus.publish).not.toHaveBeenCalled();
     });
 
-    it('throws when deleteWorkflow returns false', async () => {
-      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockReturnValue(false);
+    it('throws when deleteWorkflowAsync returns false', async () => {
+      (workflowManager.deleteWorkflowAsync as ReturnType<typeof mock>).mockReturnValue(false);
 
       await expect(call('spaceWorkflow.delete', { id: 'wf-1' })).rejects.toThrow(
         'Workflow not found: wf-1'
@@ -549,7 +549,7 @@ describe('space-workflow-handlers', () => {
     });
 
     it('propagates WorkflowDeletionBlockedError and does NOT emit deleted (RFC §4 #3)', async () => {
-      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockImplementation(() => {
+      (workflowManager.deleteWorkflowAsync as ReturnType<typeof mock>).mockImplementation(() => {
         throw new WorkflowDeletionBlockedError('blocked: executable run', 'wf-1');
       });
 
@@ -1251,7 +1251,7 @@ describe('space-workflow-handlers', () => {
       const templateHash = computeWorkflowHash(template);
       const updatedWf: SpaceWorkflow = { ...newer, templateHash };
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(updatedWf);
-      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockReturnValue(true);
+      (workflowManager.deleteWorkflowAsync as ReturnType<typeof mock>).mockReturnValue(true);
 
       const result = (await call('spaceWorkflow.resyncDuplicates', {
         spaceId: 'space-1',
@@ -1260,8 +1260,8 @@ describe('space-workflow-handlers', () => {
 
       expect(result.keptWorkflowId).toBe('wf-newer');
       expect(result.deletedIds).toEqual(['wf-older']);
-      expect(workflowManager.deleteWorkflow).toHaveBeenCalledWith('wf-older');
-      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-newer');
+      expect(workflowManager.deleteWorkflowAsync).toHaveBeenCalledWith('wf-older');
+      expect(workflowManager.deleteWorkflowAsync).not.toHaveBeenCalledWith('wf-newer');
 
       expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
       const [calledId, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>)
@@ -1321,7 +1321,7 @@ describe('space-workflow-handlers', () => {
 
       expect(result.deletedIds).toEqual([]);
       expect(result.skippedDueToExecutableRuns).toEqual(['wf-older']);
-      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-older');
+      expect(workflowManager.deleteWorkflowAsync).not.toHaveBeenCalledWith('wf-older');
       expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-older');
       expect(internalEventBus.publish).not.toHaveBeenCalledWith(
         'spaceWorkflow.deleted',
@@ -1353,7 +1353,7 @@ describe('space-workflow-handlers', () => {
 
       expect(result.keptWorkflowId).toBe('wf-only');
       expect(result.deletedIds).toEqual([]);
-      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+      expect(workflowManager.deleteWorkflowAsync).not.toHaveBeenCalled();
       expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
     });
 
@@ -1383,7 +1383,7 @@ describe('space-workflow-handlers', () => {
       setupWithGroup([older1, older2, newer]);
 
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
-      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockReturnValue(true);
+      (workflowManager.deleteWorkflowAsync as ReturnType<typeof mock>).mockReturnValue(true);
 
       await call('spaceWorkflow.resyncDuplicates', {
         spaceId: 'space-1',
