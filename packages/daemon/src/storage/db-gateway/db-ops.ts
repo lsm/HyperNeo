@@ -146,6 +146,7 @@ import { agentReminderDeleteWrites } from '../repositories/agent-reminder-delete
 import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
 import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
+import { neoPublicationPageWrites } from '../repositories/neo-publication-page-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -269,5 +270,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     taskScheduleDeleteWrites,
     codingStageTargetReads,
     codingLedgerPollReads,
+    neoPublicationPageWrites,
   ].map((op) => [op.name, op])
 );

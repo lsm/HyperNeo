@@ -87,7 +87,7 @@ export function readNeoConversationPage<T extends { sequence: number }>(
   };
 }
 
-const read = (superpipe({})('neo-publication-read') as PipelineAPI)
+export const readNeoPublicationPage = (superpipe({})('neo-publication-read') as PipelineAPI)
   .input(['page', 'caller', 'repo', 'ledger'])
   .pipe(
     (caller: OperationCaller, repo: NeoRepository) =>
@@ -113,10 +113,7 @@ const read = (superpipe({})('neo-publication-read') as PipelineAPI)
   ledger: NeoPublicationRepository
 ) => Result;
 
-export function createNeoPublicationReadOperation(
-  repo: NeoRepository,
-  ledger: NeoPublicationRepository
-) {
+export function createNeoPublicationReadOperation(ledger: NeoPublicationRepository) {
   return defineOperation({
     name: 'neo.publication.read',
     description:
@@ -132,6 +129,6 @@ export function createNeoPublicationReadOperation(
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
-    execute: async (page, caller) => read(page, caller, repo, ledger),
+    execute: async (page, caller) => ledger.readPageCurrent(page, caller),
   });
 }

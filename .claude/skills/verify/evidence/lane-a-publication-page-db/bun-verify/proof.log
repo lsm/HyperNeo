@@ -1,0 +1,27 @@
+41 |  const ledger=new NeoPublicationRepository(sql()),stored=[];
+42 |  for(let n=1;n<=7;n++){const result=ledger.append({conversationId,publicationId:id(n),verbatim:true,fullText:n===1?text:`Fictional reply ${n} 甲🙂`,links:[]});assert(result.accepted);stored.push(result.publication);}
+43 |  assert(ledger.append({conversationId:foreign,publicationId:id(8),verbatim:true,fullText:'Foreign row must stay private.',links:[]}).accepted);
+44 |  const payload=sql().prepare('SELECT payload_json AS value FROM neo_publications WHERE publication_id=?').get(id(1)) as {value:string};sql().prepare('UPDATE neo_publications SET payload_json=? WHERE publication_id=?').run('{}',id(1));
+45 |  await assert.rejects(read(),/Invalid stored Neo publication/);evidence.conversationAfterFailedRead=sql().prepare('SELECT id FROM neo_conversation').get()??null;
+46 |  assert.equal(evidence.conversationAfterFailedRead,null,'Failed page decoding must roll conversation initialization back');
+             ^
+AssertionError: Failed page decoding must roll conversation initialization back
++ actual - expected
+
++ {
++   id: '10000000-0000-4000-8000-000000009244'
++ }
+- null
+
+ generatedMessage: false,
+     actual: {
+  id: "10000000-0000-4000-8000-000000009244",
+},
+   expected: null,
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/.claude/skills/verify/lane-a-publication-page-db.ts:46:9
+
+Bun v1.4.3 (macOS arm64)
