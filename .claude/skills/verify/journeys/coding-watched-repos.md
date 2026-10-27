@@ -15,19 +15,21 @@ login. It reads and writes the watch list through the human WebSocket operation
 door and runs the real Coding sweep with synthetic external session facts.
 
 `evidence/result.json` must show: empty watch list and zero GitHub calls for the
-foreign session; after explicitly adding `chosen/repo`, exactly one GitHub call
-for that repository and no foreign session facts; the choice survives restart;
+foreign session; after explicitly adding `chosen/repo`, three GitHub calls
+(viewer lookup and open/closed PR lists) and no foreign session facts; the choice
+survives restart;
 a saved empty list survives another restart and makes no further GitHub calls.
-It then prepares synthetic pre-upgrade state (a project watch with no watch-list
-preference), checks one-time legacy seeding, adds a second project alias and
-restarts to prove it is not enrolled. The helper stops all its resources in
-`finally`. Aliases and
+It then prepares synthetic pre-upgrade state (a project alias, retained ledger
+and todo-PR rows, with no watch-list preference). Upgrade must leave the watch
+list empty and make no GitHub calls while retaining the history. A second
+project alias and restart must still leave it empty. The helper stops all its
+resources in `finally`. Aliases and
 suppression of retained terminal/unowned notices are pinned by
 `coding-watched-repos.test.ts`. The settings UI and owned-session automatic
 addition are follow-up slices; this journey does not claim either surface.
 
-Finally forget the synthetic legacy project through `neo.project.forget`: its
-watch must be removed, another sweep must make no GitHub call, and restart must
-keep the empty list. Unit contracts also pin refusal, shared repos, aliases,
+Finally forget the synthetic legacy project through `neo.project.forget`: the
+watch list must stay empty, another sweep must make no GitHub call, and restart
+must keep the empty list. Unit contracts also pin refusal, shared repos, aliases,
 disabled packs and atomic rollback if unwatch storage fails. Retained ledger
 history is hidden from active reads, not deleted by forgetting a project.

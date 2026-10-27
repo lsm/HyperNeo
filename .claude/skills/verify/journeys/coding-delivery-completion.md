@@ -1,41 +1,28 @@
-# Gated coding todos finish only after QA smoke
+# Coding completion follows its declared check
 
-Use shared isolation in `../SKILL.md`. This backend journey needs no provider,
-model, HTTP mock or browser. It owns two actual isolated daemon instances and
-calls the normal operation door for `neo.coding.result`, `neo.coding.smoke` and
-`neo.todo.close`.
+Use the shared metadata-only isolation setup. This backend journey needs no
+provider, model, HTTP mock or browser. The helper owns isolated daemons on port 0
+and calls the normal operation door for coding results, smoke and todo closure.
 
-```bash
-RUN=$(mktemp -d /private/tmp/hyperneo-delivery-completion-XXXXXX)
-mkdir -p "$RUN/home" "$RUN/bin"
-env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
-  bun .claude/skills/verify/coding-delivery-completion.ts "$RUN"
+```sh
+bash .claude/skills/verify/proof-run.sh \
+  /absolute/fresh/evidence-directory .claude/skills/verify/coding-delivery-completion.ts
 ```
 
-The helper seeds only its synthetic todo and persisted review/QA assignments,
-uses the existing merge-preparation API to record its receipt, and simulates a
-merge in the refusing GitHub stub. The stub permits only PR views and synthetic
-ancestry comparisons; no real GitHub mutation, merge command, deployment or restart
-of the human's app occurs. Deployment evidence goes through the normal
-`readGithubDeploys` composition, observing this isolated daemon's build commit.
-External direct HTTP throws.
+The helper seeds a synthetic todo and persisted review/QA assignments, uses the
+merge-preparation API to record a receipt, and simulates a merge in the refusing
+GitHub stub. Only synthetic PR views and ancestry comparisons are permitted;
+no real GitHub mutation or deployment occurs, and direct external HTTP throws.
 
-Pass: real `neo.todo.close` refuses merge-only and failed smoke, and still refuses
-after app restart. The wrong actor cannot record smoke. A passing smoke from the
-assigned QA actor then permits completion. `evidence/observed.json` retains every
-operation reply, final todo and persisted receipt and ends with `verified: true`;
-`evidence/gh.log` shows the actual stub calls. Both app instances and sockets
-close in finally. Keep evidence outside the worktree.
+A passed pr_merged check permits completion before smoke and remains done after a
+failed smoke and daemon restart. Smoke evidence still requires the assigned actor
+and observed running-build containment; a wrong actor is refused. Delivery
+receipts remain available for their own verification work rather than silently
+adding conditions to a merge or issue check. The helper preserves operation
+replies, final todos, receipts and stub calls, then closes sockets and daemons.
+The wrapper saves evidence and removes synthetic data, including failed runs.
 
-Unit contracts also preserve unmarked `pr_merged`/`issue_closed` completion,
-require CLOSED/COMPLETED for marked issues, accept recorded inapplicability only
-with a reason, keep failed smoke pending, prevent a new head from restoring legacy
-completion, reject invalidated QA and replay captured judgement after DB close.
-The opt-in is sticky assignment `newDispatch` evidence across all heads; existing
-unmarked todos and historical outcomes are not rewritten.
-
-This slice wires completion and smoke only. Final merge-operation admission and
-new-dispatch guidance still depend on c1 and the configured-bot review API; they
-must land before #8429 closes. Live GitHub, real rollout and GUI behavior are not
-verified by this synthetic backend journey.
+Run the companion todo-completion-facts journey for the real scheduled refresh:
+closed/completed issues and merged PRs finish despite old needs-human, worker or
+delivery blocks, while open checks and removed work retain their states.
+This proves backend completion and smoke admission, not live rollout or GUI layout.

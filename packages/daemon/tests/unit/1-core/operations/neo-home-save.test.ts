@@ -1,14 +1,24 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -71,6 +81,293 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test('does not execute an inherited filter selected by writable home attributes', async () => {
+    await writeFile(join(root, '.gitattributes'), '*.md filter=home-probe\n');
+    await git('add', '.gitattributes');
+    await git('commit', '-m', 'Home attributes');
+    const config = join(fixture, 'gitconfig');
+    const marker = join(fixture, 'filter-ran-outside-home');
+    await git(
+      'config',
+      '--file',
+      config,
+      'filter.home-probe.clean',
+      `printf executed > '${marker}'; cat`
+    );
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = config;
+    try {
+      const result = await save({ path: 'filtered.md', content: 'Curated progress.' });
+      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+      expect(result.ok).toBe(true);
+      expect(await git('show', 'HEAD:filtered.md')).toBe('Curated progress.');
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
+  test('does not execute a filter whose configured name contains non-UTF-8 bytes', async () => {
+    const name = Buffer.from([0xe9]);
+    await writeFile(
+      join(root, '.gitattributes'),
+      Buffer.concat([Buffer.from('raw-name.md filter='), name, Buffer.from('\n')])
+    );
+    await git('add', '.gitattributes');
+    await git('commit', '-m', 'Synthetic raw attribute');
+    const marker = join(fixture, 'raw-filter-outside-home');
+    await writeFile(
+      join(root, '.git', 'config'),
+      Buffer.concat([
+        Buffer.from('\n[filter "'),
+        name,
+        Buffer.from(`"]\n clean = "printf executed > '${marker}'; cat"\n`),
+      ]),
+      { flag: 'a' }
+    );
+    const result = await save({ path: 'raw-name.md', content: 'Exact home bytes.\n' });
+    expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+    expect(result.ok).toBe(true);
+    expect(await git('show', 'HEAD:raw-name.md')).toBe('Exact home bytes.');
+  });
+  test.each(['global', 'system'])(
+    'does not execute an inherited %s filter selected by home attributes',
+    async (source) => {
+      await writeFile(join(root, '.gitattributes'), '*.md filter=home-probe\n');
+      await git('add', '.gitattributes');
+      await git('commit', '-m', 'Home attributes');
+      const config = join(fixture, 'gitconfig');
+      const marker = join(fixture, 'filter-ran-outside-home');
+      await git(
+        'config',
+        '--file',
+        config,
+        'filter.home-probe.clean',
+        `printf executed > '${marker}'; cat`
+      );
+      const previous = new Map(
+        ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'].map((key) => [
+          key,
+          process.env[key],
+        ])
+      );
+      process.env[source === 'system' ? 'GIT_CONFIG_SYSTEM' : 'GIT_CONFIG_GLOBAL'] = config;
+      if (source === 'system') process.env.GIT_CONFIG_NOSYSTEM = '0';
+      try {
+        const result = await save({ path: 'filtered.md', content: 'Curated progress.' });
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(await git('show', 'HEAD:filtered.md')).toBe('Curated progress.');
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  );
+  test('drops inherited aliases and protocol grants from the sanitized home Git config', async () => {
+    const config = join(fixture, 'gitconfig');
+    const marker = join(fixture, 'alias-ran-outside-home');
+    await git('config', '--file', config, 'alias.commit', `!printf executed > '${marker}'`);
+    await git('config', '--file', config, 'protocol.ext.allow', 'always');
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = config;
+    try {
+      const result = await save({ path: 'alias-free.md', content: 'Exact home bytes.' });
+      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+      expect(result.ok).toBe(true);
+      expect(await git('show', 'HEAD:alias-free.md')).toBe('Exact home bytes.');
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
+  test.each(['file', 'parent'])(
+    'does not write outside home after a %s symlink swap following validation',
+    async (state) => {
+      const path = 'documents/raced.md';
+      await save({ path, content: 'Previous document.' });
+      const outside = join(fixture, 'outside');
+      await mkdir(outside);
+      await writeFile(join(outside, 'raced.md'), 'Outside sentinel.');
+      const bin = join(fixture, 'bin');
+      await mkdir(bin);
+      const action =
+        state === 'file'
+          ? `rm '${join(root, path)}'; ln -s '${join(outside, 'raced.md')}' '${join(root, path)}'`
+          : `mv '${join(root, 'documents')}' '${join(root, 'preserved-documents')}'; ln -s '${outside}' '${join(root, 'documents')}'`;
+      await writeFile(
+        join(bin, 'git'),
+        `#!/bin/sh
+set -eu
+for arg do
+ if [ "$arg" = add ] && [ ! -e '${join(fixture, 'raced')}' ]; then
+  touch '${join(fixture, 'raced')}'
+  ${action}
+  exit 9
+ fi
+done
+exec /usr/bin/git "$@"
+`,
+        { mode: 0o755 }
+      );
+      const previous = process.env.PATH;
+      process.env.PATH = `${bin}:${previous}`;
+      try {
+        await save({ path, content: 'Requested new document.' }).catch(() => null);
+        expect(await readFile(join(fixture, 'raced'), 'utf8')).toBe('');
+        expect(await readFile(join(outside, 'raced.md'), 'utf8')).toBe('Outside sentinel.');
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    }
+  );
+  test.each(['file', 'parent'])(
+    'does not write outside home after a %s symlink swap during the committed read',
+    async (state) => {
+      const path = 'validated/raced.md';
+      await save({ path, content: 'Previous document.' });
+      const outside = join(fixture, 'outside-validated');
+      await mkdir(outside);
+      await writeFile(join(outside, 'raced.md'), 'Outside sentinel.');
+      const bin = join(fixture, 'bin-validated');
+      await mkdir(bin);
+      const action =
+        state === 'file'
+          ? `rm '${join(root, path)}'; ln -s '${join(outside, 'raced.md')}' '${join(root, path)}'`
+          : `mv '${join(root, 'validated')}' '${join(root, 'preserved-validated')}'; ln -s '${outside}' '${join(root, 'validated')}'`;
+      await writeFile(
+        join(bin, 'git'),
+        `#!/bin/sh
+set -eu
+for arg do
+ if [ "$arg" = 'HEAD:${path}' ] && [ ! -e '${join(fixture, 'validated-raced')}' ]; then
+  touch '${join(fixture, 'validated-raced')}'
+  ${action}
+ fi
+done
+exec /usr/bin/git "$@"
+`,
+        { mode: 0o755 }
+      );
+      const previous = process.env.PATH;
+      process.env.PATH = `${bin}:${previous}`;
+      try {
+        await save({ path, content: 'Requested new document.' }).catch(() => null);
+        expect(await readFile(join(fixture, 'validated-raced'), 'utf8')).toBe('');
+        expect(await readFile(join(outside, 'raced.md'), 'utf8')).toBe('Outside sentinel.');
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    }
+  );
+  test.each(['unreadable', 'dangling'])(
+    'saves without reading a pre-existing %s ignore entry',
+    async (state) => {
+      const ignore = join(root, '.gitignore');
+      await writeFile(ignore, '# Legacy home\n');
+      await git('commit', '-am', 'Legacy ignores');
+      const missing = join(fixture, 'missing-ignore');
+      if (state === 'dangling') {
+        await rm(ignore);
+        await symlink(missing, ignore);
+      } else await chmod(ignore, 0);
+      try {
+        await expect(readFile(ignore, 'utf8')).rejects.toMatchObject({
+          code: state === 'dangling' ? 'ENOENT' : 'EACCES',
+        });
+        expect(await save({ path: 'digest.md', content: 'Curated progress.\n' })).toMatchObject({
+          ok: true,
+        });
+        expect(await git('show', 'HEAD:digest.md')).toBe('Curated progress.');
+        expect(await git('show', 'HEAD:.gitignore')).toBe('# Legacy home');
+        if (state === 'dangling') expect(await readlink(ignore)).toBe(missing);
+        else expect((await lstat(ignore)).mode & 0o777).toBe(0);
+      } finally {
+        if (state === 'unreadable') await chmod(ignore, 0o644);
+      }
+    }
+  );
+  test.each(['new', 'empty', 'tracked'])(
+    'commits a %s document already written through file tools',
+    async (state) => {
+      const path = 'written.md';
+      if (state === 'tracked') await save({ path, content: 'Previously committed.' });
+      const content = state === 'empty' ? '' : 'Edited through ordinary file tools.\n';
+      await writeFile(join(root, path), content);
+      const before = await git('rev-parse', 'HEAD');
+      const saved = await save({ path, content });
+      expect(saved.ok).toBe(true);
+      expect(saved.commit).not.toBe(before);
+      expect(await git('show', `HEAD:${path}`)).toBe(content.trim());
+      const head = await git('rev-parse', 'HEAD');
+      expect(await save({ path, content })).toMatchObject({ ok: true, commit: head });
+      expect(await git('rev-parse', 'HEAD')).toBe(head);
+    }
+  );
+  test('leaves an existing ignore symlink and its outside target untouched', async () => {
+    await writeFile(join(root, '.gitignore'), '# Legacy home\n');
+    await git('commit', '-am', 'Legacy ignores');
+    const outside = join(fixture, 'human-ignore');
+    await writeFile(outside, 'Human-owned bytes.\n');
+    await rm(join(root, '.gitignore'));
+    await symlink(outside, join(root, '.gitignore'));
+    expect(await save({ path: 'digest.md', content: 'Curated progress.\n' })).toMatchObject({
+      ok: true,
+    });
+    expect(await readFile(outside, 'utf8')).toBe('Human-owned bytes.\n');
+    expect(await git('show', 'HEAD:.gitignore')).toBe('# Legacy home');
+  });
+  test.each([false, true])(
+    'does not adopt human ignore edits during repair (staged: %s)',
+    async (staged) => {
+      await writeFile(join(root, '.gitignore'), '# Legacy home\n');
+      await git('commit', '-am', 'Legacy ignores');
+      const pending = '# Legacy home\nhuman-draft/\n';
+      await writeFile(join(root, '.gitignore'), pending);
+      if (staged) await git('add', '.gitignore');
+      const saved = await save({ path: 'digest.md', content: 'Curated progress.\n' });
+      expect(saved.ok).toBe(true);
+      expect(await git('show', 'HEAD:.gitignore')).toBe('# Legacy home');
+      expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe(pending);
+      expect(await git('diff', '--cached', '--name-only')).toBe(staged ? '.gitignore' : '');
+      if (staged) expect(await git('show', ':.gitignore')).toBe(pending.trim());
+      const head = await git('rev-parse', 'HEAD');
+      expect(await save({ path: 'digest.md', content: 'Curated progress.\n' })).toMatchObject({
+        ok: true,
+      });
+      expect(await git('rev-parse', 'HEAD')).toBe(head);
+    }
+  );
+  test.each([false, true])(
+    'ignore repair leaves an unrelated direction draft uncommitted (staged: %s)',
+    async (staged) => {
+      await writeFile(join(root, '.gitignore'), '# Legacy home\n');
+      await git('commit', '-am', 'Legacy ignores');
+      await writeFile(join(root, 'direction.md'), 'Pending direction draft.');
+      if (staged) await git('add', 'direction.md');
+      const result = await save({ path: 'digest.md', content: 'Curated progress.' });
+      expect(result.ok).toBe(true);
+      expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Pending direction draft.');
+      expect(await git('show', 'HEAD:direction.md')).toBe('');
+      expect(await git('diff', '--cached', '--name-only')).toBe(staged ? 'direction.md' : '');
+      expect(await git('show', 'HEAD:digest.md')).toBe('Curated progress.');
+    }
+  );
+  test('Neo saves and commits with an untracked evidence folder in its home', async () => {
+    await mkdir(join(root, 'evidence'));
+    await writeFile(join(root, 'evidence', 'run.json'), '{"observed":true}');
+    const result = await save(
+      { path: 'runbook.md', content: 'Neo owns this document.' },
+      { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+    );
+    expect(result).toMatchObject({ ok: true, commit: await git('rev-parse', 'HEAD') });
+    expect(await git('show', 'HEAD:runbook.md')).toBe('Neo owns this document.');
+    expect(await git('ls-files', 'evidence')).toBe('');
+    expect(await readFile(join(root, 'evidence', 'run.json'), 'utf8')).toBe('{"observed":true}');
+  });
   test.each(['first save', 'legacy ignore'])('preserves runtime folders on %s', async (state) => {
     const prior = process.env.GIT_CONFIG_GLOBAL;
     try {
@@ -98,9 +395,14 @@ describe('Neo home save', () => {
           `Synthetic ${dir} bytes.`
         );
         expect(await git('ls-files', '--', dir)).toBe('');
-        expect(await git('show', 'HEAD:.gitignore')).toContain(`${dir}/`);
+        if (state === 'first save')
+          expect(await git('show', 'HEAD:.gitignore')).toContain(`${dir}/`);
       }
-      expect(await git('status', '--porcelain')).toBe('');
+      if (state === 'first save') expect(await git('status', '--porcelain')).toBe('');
+      else {
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('.coordinators/\n');
+        expect(await git('diff', '--name-only', 'HEAD^', 'HEAD')).toBe('digest.md');
+      }
     } finally {
       if (prior === undefined) delete process.env.GIT_CONFIG_GLOBAL;
       else process.env.GIT_CONFIG_GLOBAL = prior;
@@ -149,6 +451,7 @@ describe('Neo home save', () => {
     'SECRET=' + 'h'.repeat(24),
     'PASSWORD=' + 'i'.repeat(24),
   ])('refuses synthetic credential content without writes: %s', async (content) => {
+    await git('remote', 'add', 'origin', join(fixture, 'synthetic-remote.git'));
     const before = await git('rev-parse', 'HEAD');
     expect(await save({ path: 'digest.md', content })).toMatchObject({
       ok: false,
@@ -156,6 +459,11 @@ describe('Neo home save', () => {
     });
     expect(await git('rev-parse', 'HEAD')).toBe(before);
     expect(await git('status', '--porcelain')).toBe('');
+  });
+  test('local-only content is Neo’s to edit and commit', async () => {
+    const content = 'TOKEN=' + 'synthetic'.repeat(4);
+    expect(await save({ path: 'fixture.md', content })).toMatchObject({ ok: true });
+    expect(await git('show', 'HEAD:fixture.md')).toBe(content);
   });
   test.each([
     '../escape.md',
@@ -192,7 +500,7 @@ describe('Neo home save', () => {
     expect(await git('status', '--porcelain')).toBe('');
   });
   test.each(['untracked', 'staged', 'modified', 'staged transcript'])(
-    'refuses %s human changes without altering them',
+    'saves alongside %s changes without committing them',
     async (state) => {
       if (state === 'modified') await writeFile(join(root, 'README.md'), 'Human change.');
       else if (state !== 'staged transcript')
@@ -206,10 +514,8 @@ describe('Neo home save', () => {
         await git('add', '.coordinators/transcript.md');
       }
       const before = await git('status', '--porcelain', '-z');
-      expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('dirty'),
-      });
+      expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({ ok: true });
+      expect(await git('show', '--format=', '--name-only', 'HEAD')).toBe('digest.md');
       expect(await git('status', '--porcelain', '-z')).toBe(before);
     }
   );
@@ -231,17 +537,6 @@ describe('Neo home save', () => {
     expect(
       await readFile(join(fixture, 'outside', 'digest.md'), 'utf8').catch(() => null)
     ).toBeNull();
-  });
-  test('refuses a first save on a dirty non-repository without bootstrapping it', async () => {
-    await rm(root, { recursive: true });
-    await mkdir(root);
-    await writeFile(join(root, 'human.md'), 'Preserve me.');
-    expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('dirty'),
-    });
-    expect(await readFile(join(root, 'README.md'), 'utf8').catch(() => null)).toBeNull();
-    expect(await readFile(join(root, '.git', 'HEAD'), 'utf8').catch(() => null)).toBeNull();
   });
   test.each(['existing', 'new', 'non-UTF-8'])(
     'restores only its own %s document after commit failure',

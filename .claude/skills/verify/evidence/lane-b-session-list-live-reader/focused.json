@@ -1,0 +1,44 @@
+{
+  "base": "55f1e8c7ec77d796688a5fb472722a351b92496c",
+  "redCommit": "4bc6180fd6c2da221ec49e66ccb35bbb83ea1b8a",
+  "productionBudget": 190,
+  "focusedTestsPassed": 219,
+  "preexistingSkippedTests": 26,
+  "baseline": {
+    "newScopeTestsFailed": 8,
+    "mainSqlAttempts": 1,
+    "subscriptionError": "live session list or counters SQL reached main connection",
+    "rollbackDiagnostic": "initial fixture did not verify transaction retention; final fixtures use separate BEGIN/update and assert inside/outside values before and after"
+  },
+  "changedCallGraph": [
+    "LiveQuery RPC setup passes a scalar-only gateway read callback",
+    "sessions.list.live.read uses the existing list SQL/mapSessionRow and counters in one reader transaction",
+    "scope predicate uses supplied scope fields only; unknown session IDs conservatively invalidate",
+    "subscription engine, callback delivery, capacity, errors and disposal remain on main",
+    "legacy callback-free setup retains synchronous metadata through the relocated counter helper"
+  ],
+  "sqlGuard": "all session table SQL plus the exact subscribed total/archived counter projection, including cached statement execution",
+  "outsideScopeFinding": {
+    "sql": "SELECT total_count FROM session_counters WHERE id = 1",
+    "caller": "system.health / countHumanSessions",
+    "owner": "outside this slice; coordinator to assign",
+    "status": "pre-existing main read; excluded from this slice claim"
+  },
+  "verification": [
+    "full snapshots unchanged; heldPrompt redacted on wire and retained in storage",
+    "archive/removal deltas and metadata-only counter changes coherent with reconstructed rows",
+    "unknown scopes re-evaluate without lookup; known excluded scopes skipped",
+    "initial and delta native worker failures release subscriptions; later subscriptions recover; health usable",
+    "actual WAL writer validated before and after RPC/subscription reads (outside=0, inside=1)",
+    "main target SQL attempts zero on Bun and Deno; actor cache stays empty",
+    "owned temporary data removed; earlier RPC proof supplemented with corrected WAL fixture"
+  ],
+  "unverified": [
+    "UI and served-build smoke",
+    "production scale",
+    "remaining main reads outside target family"
+  ],
+  "productionChangedLines": 110,
+  "operationBoundary": "typed repository read command, scalar includeArchived only",
+  "fullRepositoryCheck": "passed"
+}

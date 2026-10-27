@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoQuestion } from '../question-operations.ts';
 import {
-  isVisibleHomeProposal,
-  requireHomeSave,
   type HomeSaveInput,
   type HomeSavePlan,
+  isVisibleHomeProposal,
+  requireHomeSave,
 } from './save.ts';
 
 export function requireHomeConfirmation(
@@ -41,7 +41,7 @@ export function requireHomeConfirmation(
       },
     };
   const entry = `\n## ${new Date(read.question.answeredAt).toISOString()}\n\n${input.message}\n\nPath: ${input.path}\nSHA-256: ${sha256}\nConfirmed by human: question ${question.id}\n\n${question.text}\n`;
-  const content = requireHomeSave({ ...input, content: entry });
+  const content = requireHomeSave({ ...input, content: entry }, false);
   return content.reason
     ? content
     : { value: { ...input, confirmation: { questionId: question.id, entry } } };

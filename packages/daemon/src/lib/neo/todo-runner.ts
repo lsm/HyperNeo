@@ -1,6 +1,8 @@
-import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
+import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
   NeoAskTodoRepository,
@@ -10,12 +12,13 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { dispatchNeoInput } from './dispatch-input.ts';
 import {
   driverWorkCall,
   driverWorkCaller,
   messageOpening,
-  neoCardSent,
   type NeoDriverTarget,
+  neoCardSent,
   readDriverActivity,
   readDriverFollowUp,
   readDriverLive,
@@ -28,12 +31,15 @@ import {
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
-import { dispatchNeoInput } from './dispatch-input.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
 type Rejection = { ok: false; reason: string };
-type Gate<T> = { value: T } | { reason: Rejection };
+type Recorded = { ok: true; todo: NeoTodo; records: string[] };
+type Gate<T> = { value: T } | { reason: Rejection | Recorded };
+const record = (todo: NeoTodo, reason: string): { reason: Recorded } => ({
+  reason: { ok: true, todo, records: [reason] },
+});
 type Startable = {
   todo: NeoTodo;
   ask: NeoAsk;
@@ -43,6 +49,7 @@ type Startable = {
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
 export interface NeoTodoRunnerDeps {
+  write: RunDbOp;
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
   invoke(
@@ -99,7 +106,8 @@ export function requireNeoTodoStartable(read: {
 }): Gate<Startable> {
   const { todo, ask, target } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
-  if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
+  if (ask.status !== 'open')
+    return record(todo, `ask_settled: this ask is ${ask.status}; no work was dispatched.`);
   if (!isNeoTodoStartable(todo)) return fail(`already_started: this todo is ${todo.state}.`);
   if (!todo.instruction || !target)
     return fail('no_session: this todo has no instruction and target; the daemon checks it.');
@@ -115,9 +123,10 @@ export function requireNeoTodoContinuable(read: {
 }): Gate<{ todo: NeoTodo; ask: NeoAsk; ref: WorkRef }> {
   const { todo, ask, ref } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
-  if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
+  if (ask.status !== 'open')
+    return record(todo, `ask_settled: this ask is ${ask.status}; no work was dispatched.`);
   if (todo.state === 'todo' || todo.state === 'removed' || !ref)
-    return fail(`not_started: this todo is ${todo.state} and has no session to continue.`);
+    return record(todo, `not_started: this todo is ${todo.state} and has no session to continue.`);
   return { value: { todo, ask, ref } };
 }
 
@@ -134,9 +143,12 @@ export function requireNeoTodoRetryable(read: {
   ref: WorkRef | null;
   target: NeoDriverTarget | null;
   interrupted: boolean;
+  ask: NeoAsk | null;
 }): Gate<NeoTodo> {
   const { todo, target } = read;
   if (!todo) return fail('not_found: no such todo.');
+  if (read.ask && read.ask.status !== 'open')
+    return record(todo, `ask_settled: this ask is ${read.ask.status}; no work was dispatched.`);
   if (read.interrupted)
     return fail(
       'start_uncertain: the start failed after the driver may have opened a session; find it with work.find before starting again.'
@@ -144,7 +156,10 @@ export function requireNeoTodoRetryable(read: {
   const failed =
     todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
   if (!failed || !target || !['start', 'send'].includes(target.verb))
-    return fail('not_retryable: only a failed todo with a worker target can be retried.');
+    return record(
+      todo,
+      'not_retryable: no retry was needed or no worker target is recorded; no work was dispatched.'
+    );
   return { value: todo };
 }
 
@@ -249,12 +264,40 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
   const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
-  const recompute = async (
+  const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
+    .input(['todo', 'patch', 'now', 'judgement'])
+    .pipe(
+      (
+        todo: NeoTodo,
+        patch: NeoTodoPatch = {},
+        now = Date.now(),
+        judgement: NeoTodoJudgement = { state: 'no_opinion' }
+      ) =>
+        deps.write(neoTodoRunnerWrites, {
+          method: 'recompute',
+          args: [todo.id, todo.check, patch, now, judgement],
+        }),
+      ['todo', 'patch', 'now', 'judgement'],
+      'receipt'
+    )
+    .pipe(
+      async (
+        receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['recompute']>,
+        todo: NeoTodo
+      ) => {
+        if (receipt.changed) deps.changed();
+        if (receipt.startNext) await start(receipt.startNext);
+        return receipt.todo ?? todo;
+      },
+      ['receipt', 'todo'],
+      'todo'
+    )
+    .endAsync('todo') as (
     todo: NeoTodo,
-    patch: NeoTodoPatch = {},
-    now = Date.now(),
-    judgement: NeoTodoJudgement = { state: 'no_opinion' }
-  ) => store.recompute(todo, patch, now, judgement, (id) => start(id));
+    patch?: NeoTodoPatch,
+    now?: number,
+    judgement?: NeoTodoJudgement
+  ) => Promise<NeoTodo>;
   const finish = async (todo: NeoTodo, ask: NeoAsk, patch: NeoTodoPatch | null, now: number) => {
     if (!patch) return todo;
     const next = await recompute(todo, patch, now);
@@ -286,6 +329,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         workId: todo.id,
         goal: null,
         doneWhen: todo.doneWhen,
+        checkKind: todo.check?.kind ?? null,
       },
       formatGoal
     );
@@ -293,6 +337,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       call.input.preparation = {
         pack: prepare.id,
         parameters: target.preparationParameters ?? {},
+        ...(target.sandbox ? { sandbox: true } : {}),
       };
     if (target.verb === 'start') call.input.todoId = todo.id;
     const message = String(call.input.message);
@@ -352,45 +397,68 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: committed.todo ?? todo };
   };
 
-  const start = (superpipe({})('neo.todo.start') as PipelineAPI)
+  const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
     .input(['todoId'])
     .pipe(
-      (todoId: string) => {
-        const todo = store.getTodo(todoId);
-        return {
-          todo,
-          ask: todo ? store.getAsk(todo.askId) : null,
-          target: todo ? sessions.get(todo.id) : null,
-        };
-      },
+      (todoId: string) =>
+        deps.write(neoTodoRunnerWrites, { method: 'claim', args: [todoId, Date.now()] }),
       'todoId',
-      'read'
+      'receipt'
     )
-    .pipe(requireNeoTodoStartable, 'read', 'result:outcome')
     .pipe(
-      (plan: Startable): Gate<Startable> => {
-        const claimed = store.claimStart(plan.todo, Date.now());
-        const todo = claimed && relocate(claimed.id);
-        return todo
-          ? { value: { ...plan, todo, ask: store.getAsk(todo.askId) ?? plan.ask } }
-          : fail('already_started: this todo started.');
+      (
+        receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>
+      ): Gate<Startable> => {
+        if (receipt.changed) deps.changed();
+        return !receipt.ok
+          ? fail(receipt.reason)
+          : receipt.ask && receipt.target
+            ? { value: { todo: receipt.todo, ask: receipt.ask, target: receipt.target } }
+            : { reason: { ok: true, todo: receipt.todo, records: receipt.records ?? [] } };
       },
-      'outcome',
+      'receipt',
       'result:outcome'
     )
+    .pipe(dispatch, 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    todoId: string
+  ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
+
+  const start = async (todoId: string) => {
+    const tracked = starting.has(todoId);
+    starting.add(todoId);
+    try {
+      return await claimAndDispatch(todoId);
+    } finally {
+      if (!tracked) starting.delete(todoId);
+    }
+  };
+
+  const recoverStart = (superpipe({})('neo.todo.recover-committed-start') as PipelineAPI)
+    .input(['todoId'])
     .pipe(
-      async (plan: Startable) => {
-        starting.add(plan.todo.id);
-        try {
-          return await dispatch(plan);
-        } finally {
-          starting.delete(plan.todo.id);
-        }
-      },
-      'outcome',
-      'outcome'
+      (todoId: string) =>
+        deps.write(neoTodoRunnerWrites, { method: 'recover', args: [todoId, Date.now()] }),
+      'todoId',
+      'receipt'
     )
-    .endAsync('outcome') as (todoId: string) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
+    .pipe(
+      (receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['recover']>) => {
+        if (receipt.changed) deps.changed();
+        return receipt.recovery ? { value: receipt.recovery } : { reason: null };
+      },
+      'receipt',
+      'result:recovery'
+    )
+    .pipe(
+      async ({ todo, ask }: { todo: NeoTodo; ask: NeoAsk }) => {
+        if (['done', 'failed', 'blocked'].includes(todo.state))
+          await deps.tell(ask, todo, neoTodoNote(todo));
+      },
+      'recovery',
+      'notified'
+    )
+    .endAsync('notified') as (todoId: string) => Promise<void | null>;
 
   const noteNeedsYou = async (
     todoId: string,
@@ -459,10 +527,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const judgement =
         pack && pack.readFacts && pack.judge ? pack.judge(todo, await pack.readFacts(todo)) : null;
       const result = judgement ? null : await rule.check(todo);
+      const completion =
+        judgement ??
+        (result?.done && !result.failed
+          ? { state: 'done' as const, evidence: result.evidence }
+          : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
-      const next = judgement
-        ? await recompute(live, {}, now, judgement)
+      const next = completion
+        ? await recompute(live, {}, now, completion)
         : await finish(
             live,
             ask,
@@ -470,7 +543,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             now
           );
       if (
-        judgement &&
+        completion &&
         next.state !== live.state &&
         ['done', 'failed', 'blocked'].includes(next.state)
       )
@@ -687,6 +760,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       workId: todo.id,
       goal: null,
       doneWhen: todo.doneWhen,
+      checkKind: todo.check?.kind ?? null,
     });
     const status = await deps.invoke(caller(ask), 'work.status', { ref });
     if (readDriverLive(status)?.status === 'needs_you')
@@ -721,23 +795,45 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: next };
   };
 
-  const stop = async (todo: NeoTodo) => {
-    const ref = sessions.readRef(todo.id);
-    const ask = store.getAsk(todo.askId);
-    const live = sessions.readLiveStatus(todo.id);
-    const settled = live === 'done' || live === 'failed' || live === 'stopped';
-    const adopted = sessions.get(todo.id)?.verb === 'adopt';
-    if (!ref || !ask || adopted || (todo.state !== 'doing' && settled)) return null;
-    const stopped = await deps
-      .invoke(caller(ask), 'work.stop', { ref })
-      .catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
-    if (stopped.kind !== 'completed')
-      return `stop_failed: ${(stopped as { message?: string }).message ?? 'the stop did not complete'}`;
-    const value = stopped.value as { ok?: boolean; reason?: string; detail?: string } | null;
-    return value?.ok === false && value.reason !== 'unsupported'
-      ? `stop_failed: ${value.detail ?? value.reason ?? 'the driver refused'}`
-      : null;
-  };
+  type StopContext = NonNullable<ReturnType<NeoTodoSessionRepository['stopContext']>>;
+  const stop = (superpipe({})('neo.todo.stop-current-worker') as PipelineAPI)
+    .input(['todo'])
+    .pipe((todo: NeoTodo) => sessions.read('stopContext', todo.id), 'todo', 'context')
+    .pipe(
+      (context: StopContext | null) =>
+        context?.ref &&
+        context.ask &&
+        !context.adopted &&
+        (context.todo.state === 'doing' ||
+          !['done', 'failed', 'stopped'].includes(context.live ?? ''))
+          ? { value: context as StopContext & { ask: NeoAsk; ref: WorkRef } }
+          : { reason: null },
+      'context',
+      'result:outcome'
+    )
+    .pipe(
+      ({ ask, ref }: StopContext & { ask: NeoAsk; ref: WorkRef }) =>
+        deps
+          .invoke(caller(ask), 'work.stop', { ref })
+          .catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) })),
+      'outcome',
+      'stopped'
+    )
+    .pipe(
+      (stopped: OperationOutcome) => {
+        if (stopped.kind !== 'completed')
+          return {
+            reason: `stop_failed: ${(stopped as { message?: string }).message ?? 'the stop did not complete'}`,
+          };
+        const value = stopped.value as { ok?: boolean; reason?: string; detail?: string } | null;
+        return value?.ok === false && value.reason !== 'unsupported'
+          ? { reason: `stop_failed: ${value.detail ?? value.reason ?? 'the driver refused'}` }
+          : { value: null };
+      },
+      'stopped',
+      'result:outcome'
+    )
+    .endAsync('outcome') as (todo: NeoTodo) => Promise<string | null>;
 
   return {
     start,
@@ -772,26 +868,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
       for (const todoId of await sessions.read('unrecordedStarts')) {
-        const todo = store.getTodo(todoId);
-        const ask = todo ? store.getAsk(todo.askId) : null;
-        if (
-          todo?.state !== 'doing' ||
-          !ask ||
-          starting.has(todoId) ||
-          sessions.readRef(todoId) !== null
-        )
-          continue;
-        sessions.recordStartInterrupted(todoId);
-        await finish(
-          todo,
-          ask,
-          planNeoTodoFailure(
-            todo,
-            'Start was interrupted; a session may have started without being recorded.',
-            Date.now()
-          ),
-          Date.now()
-        ).catch((error) => warn('Todo start recovery pending', error));
+        if (starting.has(todoId)) continue;
+        await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
       }
       for (const { todoId, ref } of await sessions.read('awaitingReports'))
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));

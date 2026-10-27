@@ -34,6 +34,16 @@ import { WorkDeliverySchema, WorkDetailSchema } from '../../../../src/lib/driver
 import { claudeInboxText } from '../../../../src/lib/drivers/claude-inbox';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
+let workerDataDir: string;
+beforeEach(() => {
+  workerDataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = workerDataDir;
+});
+afterEach(() => {
+  rmSync(workerDataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
 describe('claudeDirectInput', () => {
   test.each([
     ['a split emoji at the cut', `${'x'.repeat(199)}😀 and more\nsecond line`],

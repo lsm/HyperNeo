@@ -3,6 +3,8 @@ import {
   NEO_WORKER_PERMISSION_MODES,
   neoWorkerPermissionMode,
   type NeoWorkerPermissionMode,
+  WORKER_SANDBOX_MODES,
+  type WorkerSandboxMode,
 } from '@hyperneo/shared/types/settings';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
@@ -16,19 +18,19 @@ export function NeoWorkerPermissionSettings() {
   const effective = neoWorkerPermissionMode(neo);
   if (!settings) return null;
 
-  const save = async (workerPermissionMode: NeoWorkerPermissionMode) => {
+  const save = async (updates: Parameters<typeof updateGlobalSettings>[0]) => {
     setSaving(true);
     try {
-      await updateGlobalSettings({ neo: { ...neo, workerPermissionMode } });
+      await updateGlobalSettings(updates);
     } catch {
-      toast.error('Failed to update Claude worker permission');
+      toast.error('Failed to update worker settings');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <SettingsSection title="Claude workers">
+    <SettingsSection title="Workers">
       <SettingsGroup>
         <SettingsRow
           label="Claude worker permission"
@@ -39,13 +41,38 @@ export function NeoWorkerPermissionSettings() {
             class="st-select"
             value={effective}
             disabled={saving}
-            onChange={(event) =>
-              save((event.target as HTMLSelectElement).value as NeoWorkerPermissionMode)
+            onChange={({ currentTarget }) =>
+              save({
+                neo: {
+                  ...neo,
+                  workerPermissionMode: currentTarget.value as NeoWorkerPermissionMode,
+                },
+              })
             }
           >
             {NEO_WORKER_PERMISSION_MODES.map((mode) => (
               <option key={mode} value={mode}>
                 {mode === effective && !neo?.workerPermissionMode ? `${mode} (not set)` : mode}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
+        <SettingsRow
+          label="Worker sandbox"
+          description="Always: workers Neo starts from now on may write only inside their work folder. On demand: only starts Neo marks as untrusted, such as PRs from forks. Off: no OS sandbox."
+        >
+          <select
+            aria-label="Worker sandbox"
+            class="st-select"
+            value={settings.workerSandbox ?? 'off'}
+            disabled={saving}
+            onChange={({ currentTarget }) =>
+              save({ workerSandbox: currentTarget.value as WorkerSandboxMode })
+            }
+          >
+            {WORKER_SANDBOX_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
               </option>
             ))}
           </select>

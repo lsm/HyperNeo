@@ -1,9 +1,15 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack, NeoTodoJudgement } from '../../../../src/lib/neo/pack-contract.ts';
+import type {
+  NeoPack,
+  NeoTodoCheckResult,
+  NeoTodoJudgement,
+} from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -15,7 +21,7 @@ afterEach(() => {
   for (const close of closing.splice(0).reverse()) close();
 });
 
-function fixture() {
+function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
   const directory = mkdtempSync(join(tmpdir(), 'neo-todo-plan-'));
   closing.push(() => rmSync(directory, { recursive: true, force: true }));
   let db: Database;
@@ -33,6 +39,7 @@ function fixture() {
     todos: {
       schema: () => {},
       check: async (todo: NeoTodo) => {
+        if (legacyResult) return legacyResult;
         const read = facts.get(todo.id);
         return {
           done: read?.state === 'done',
@@ -50,6 +57,7 @@ function fixture() {
     db = new Database(join(directory, 'plan.db'));
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     store = new NeoAskTodoRepository(db);
     sessions = new NeoTodoSessionRepository(db);
     if (!store.getAsk('ask'))
@@ -63,9 +71,10 @@ function fixture() {
         createdAt: 1,
       });
     return createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
-      packs: () => [pack],
+      packs: () => [legacyCheck ? { ...pack, readFacts: undefined, judge: undefined } : pack],
       invoke: async (_caller, name, input) => {
         if (name === 'work.start') {
           starts.push(String(input.message));
@@ -159,6 +168,42 @@ function fixture() {
 }
 
 describe('ordered ask progression from facts', () => {
+  test('failure wins when a legacy check also reports done', async () => {
+    const f = fixture(true, {
+      done: true,
+      failed: 'Observed failure',
+      evidence: 'Conflicting success',
+    });
+    f.add('first', 'doing');
+    await f.runner.checkNow(['first'], (_message, error) => {
+      throw error;
+    });
+    expect(f.store.getTodo('first')).toMatchObject({ state: 'failed', reason: 'Observed failure' });
+    expect(f.starts).toHaveLength(0);
+  });
+  test('a legacy pack check also supersedes a stale human hold', async () => {
+    const f = fixture(true);
+    f.add('first');
+    f.store.updateTodo(
+      f.store.getTodo('first')!,
+      {
+        state: 'blocked',
+        blockedBy: 'needs-human',
+        blockedReason: 'Old question',
+        nextAction: 'Answer',
+      },
+      2
+    );
+    f.facts.set('first', { state: 'done', evidence: 'Observed completion' });
+    await f.runner.checkNow(['first'], (_message, error) => {
+      throw error;
+    });
+    expect(f.store.getTodo('first')).toMatchObject({
+      state: 'done',
+      blockedBy: null,
+      evidence: 'Observed completion',
+    });
+  });
   test('done starts the next recorded todo through the existing dispatch path', async () => {
     const f = fixture();
     f.add('first');

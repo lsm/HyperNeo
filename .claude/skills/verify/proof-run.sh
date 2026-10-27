@@ -7,7 +7,7 @@ shift 2
 bash "$(dirname "${BASH_SOURCE[0]}")/resource-check.sh"
 mkdir "$EVIDENCE"
 PROOF_TMP_ROOT=${TMPDIR:-/private/tmp}
-RUN=$(mktemp -d "${PROOF_TMP_ROOT%/}/hyperneo-proof-XXXXXX")
+RUN=$(mktemp -d "${PROOF_TMP_ROOT%/}/${VERIFY_PROOF_PREFIX:-hyperneo-proof-}XXXXXX")
 RUN=$(cd "$RUN" && pwd -P)
 save_and_clean() {
   STATUS=$?
@@ -24,7 +24,12 @@ mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
 PROOF_RUNTIME=(bun)
 if [[ ${VERIFY_PROOF_RUNTIME:-bun} = node ]]; then
   PROOF_RUNTIME=(node --import tsx)
+elif [[ ${VERIFY_PROOF_RUNTIME:-bun} = deno ]]; then
+  PROOF_RUNTIME=(deno run -A)
 fi
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
+  DENO_DIR="$RUN/deno-cache" \
+  NODE_PATH="${NODE_PATH:-}" VERIFY_BROWSER="${VERIFY_BROWSER:-}" \
+  HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" \
+  VERIFY_BROWSER="${VERIFY_BROWSER:-}" NODE_PATH="${NODE_PATH:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \
   > "$RUN/proof.log" 2>&1

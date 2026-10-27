@@ -103,10 +103,10 @@ export function loadNeoFilePacks(deps: {
       const loaded = loadNeoPackSkill(id, deps.root, read);
       if (typeof loaded === 'string') warn(id, new Error(loaded));
       else {
-        const free = requireNeoPackIdFree(
-          loaded.id,
-          NEO_BUILTIN_PACK_BRIEFS.map((brief) => brief.id)
-        );
+        const free = requireNeoPackIdFree(loaded.id, [
+          'core',
+          ...NEO_BUILTIN_PACK_BRIEFS.map((brief) => brief.id),
+        ]);
         if ('reason' in free) warn(id, new Error(free.reason));
         else packs.push(loaded);
       }

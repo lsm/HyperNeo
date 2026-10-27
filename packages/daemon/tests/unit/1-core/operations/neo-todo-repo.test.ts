@@ -1,7 +1,12 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
-import { codingTodoRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import {
+  codingTodoRepository,
+  codingTodoDoneWhen,
+} from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { neoMoveTodo, neoTodoRepo } from '../../../../src/lib/neo/todo-repo.ts';
@@ -13,14 +18,14 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const draft = {
   title: 'Fix it',
   doneWhen: 'Merged',
-  check: null,
+  check: pendingTodoCheck,
   instruction: null,
   named: null,
   start: false,
 };
 const coding = {
   id: 'coding',
-  todos: { repository: codingTodoRepository },
+  todos: { repository: codingTodoRepository, doneWhen: codingTodoDoneWhen },
 } as unknown as NeoPack;
 const place = {
   machine: 'laptop',
@@ -69,6 +74,7 @@ describe('neoTodoRepo', () => {
     };
     const started = {
       ...draft,
+      check: pendingTodoCheck,
       instruction: 'Go',
       target: { verb: 'start' as const, adapter: 'hyperneo', place },
     };
@@ -108,7 +114,7 @@ describe('neo.todo.add repo', () => {
         retry: async () => ({ ok: false as const, reason: 'no' }),
         stop: async () => null,
       },
-      () => [coding],
+      () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
       () => null
     ).find((op) => op.name === 'neo.todo.add')!;
     const call = async (input: unknown) =>
@@ -120,6 +126,7 @@ describe('neo.todo.add repo', () => {
     const first = await call({
       askId: 'ask',
       ...draft,
+      check: pendingTodoCheck,
       named: { repository: 'lsm/HyperNeo' },
     });
     expect(first.todo.repo).toBe('github.com/lsm/hyperneo');
@@ -149,8 +156,10 @@ describe('neo.ask.open repo', () => {
       () => null,
       () => true,
       () => [],
-      () => [coding],
-      () => null
+      () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
+      () => null,
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
     ).find((op) => op.name === 'neo.ask.open')!;
     const receipt = (await open.execute(
       open.inputSchema.parse({
@@ -210,7 +219,10 @@ describe('repo child cards', () => {
         () => null,
         () => true,
         () => [],
-        () => [coding]
+        () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
+        undefined,
+        undefined,
+        { gateway: gatewayFor(db), changed: () => {} }
       ),
       'neo.ask.open'
     );
@@ -222,7 +234,7 @@ describe('repo child cards', () => {
           ...controls,
           recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         },
-        () => [coding],
+        () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
         () => null
       ),
       'neo.todo.add'
@@ -261,11 +273,11 @@ describe('repo child cards', () => {
     ).toEqual([2, 1]);
     expect(
       await open({ ...request, todos: [...request.todos, { ...draft, title: 'Write notes' }] })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('ask_settled') });
+    ).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled')] });
     expect(store.listTodos(receipt.ask.id)).toEqual([]);
     expect(
       await open({ ...request, todos: [...request.todos, pr('HyperNeo', 5), pr('ops', 4)] })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('nothing was added') });
+    ).toMatchObject({ ok: true, records: [expect.stringContaining('nothing was added')] });
     expect(store.listChildAsks(receipt.ask.id)).toHaveLength(2);
     expect(
       store.listChildAsks(receipt.ask.id).map((child) => store.listTodos(child.id).length)

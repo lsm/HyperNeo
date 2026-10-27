@@ -1,6 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import { openVoiceStream, VOICE_STREAM_STOP_TIMEOUT_MS } from '../voice-stream.ts';
+import { setVoiceLanguage } from '../voice-language.ts';
+
+beforeEach(() => {
+  const stored = new Map<string, string>();
+  vi.mocked(localStorage.getItem).mockImplementation((key) => stored.get(key) ?? null);
+  vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
+    stored.set(key, value);
+  });
+});
 
 type Handler = (data: unknown) => void;
 
@@ -38,6 +47,43 @@ function calls(request: ReturnType<typeof vi.fn>, method: string) {
 }
 
 describe('openVoiceStream', () => {
+  it.each(['auto', 'zh', 'en'] as const)(
+    'sends the %s choice on every new connection',
+    async (language) => {
+      setVoiceLanguage(language);
+      const { hub, request } = fakeHub(streaming);
+      for (let index = 0; index < 2; index++) {
+        const live = openVoiceStream(hub, vi.fn());
+        await live.finish();
+        live.close();
+      }
+      expect(calls(request, 'voice.stream.start')).toEqual(
+        Array(2).fill([
+          'voice.stream.start',
+          { encoding: 'pcm16', sampleRate: 16_000, ...(language === 'auto' ? {} : { language }) },
+        ])
+      );
+    }
+  );
+
+  it('keeps the active connection unchanged and applies a new choice to the next one', async () => {
+    const { hub, request } = fakeHub(streaming);
+    const first = openVoiceStream(hub, vi.fn());
+    setVoiceLanguage('zh');
+    expect(calls(request, 'voice.stream.start')).toEqual([
+      ['voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 }],
+    ]);
+    await first.finish();
+    first.close();
+    const next = openVoiceStream(hub, vi.fn());
+    await next.finish();
+    expect(calls(request, 'voice.stream.start')[1]).toEqual([
+      'voice.stream.start',
+      { encoding: 'pcm16', sampleRate: 16_000, language: 'zh' },
+    ]);
+    next.close();
+  });
+
   it('streams PCM16 at 16 kHz and stops with the extended timeout', async () => {
     const { hub, request } = fakeHub(streaming);
     const live = openVoiceStream(hub, vi.fn());

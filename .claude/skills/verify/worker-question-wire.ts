@@ -1,3 +1,4 @@
+import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -210,7 +211,7 @@ try {
   assert.equal(restored.listQuestions(todo.askId).length, 1);
   assert.equal(wakes().length, 0);
   const reminders: string[] = [];
-  const runner = createNeoTodoRunner({ store: restored, sessions: links, packs: () => [], changed: () => {},
+  const runner = createNeoTodoRunner({ write: gatewayFor(app.db.getDatabase()).run.bind(gatewayFor(app.db.getDatabase())), store: restored, sessions: links, packs: () => [], changed: () => {},
     invoke: async (_caller, name) => { reminders.push(name); return { kind: 'completed', value: { ok: true, value: { ref, title: 'Stopped', place: { machine: 'test', name: 'Test' }, status: 'stopped', lastActivityAt: 1 } } }; },
     tell: async () => { reminders.push('tell'); },
   });

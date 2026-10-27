@@ -1,10 +1,13 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
+import { vi } from 'vitest';
+import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import {
   codexStartReceipt,
   createCodexDesktopAdapter,
@@ -130,6 +133,7 @@ describe('codexStartReceipt', () => {
 describe('codex-desktop start receipt', () => {
   let dir = '';
   afterEach(() => {
+    configureWorkerSandbox(() => 'off');
     if (dir) rmSync(dir, { recursive: true, force: true });
     dir = '';
   });
@@ -168,6 +172,7 @@ describe('codex-desktop start receipt', () => {
 });
 
 describe('codex-desktop start', () => {
+  beforeEach(() => configureWorkerSandbox(() => 'always'));
   let dir = '';
   afterEach(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -208,7 +213,12 @@ describe('codex-desktop start', () => {
     const prepared: unknown[] = [];
     let released = false;
     const { instance, calls, spawned } = adapter(
-      { call: async () => ({ thread: { id: 'fresh' } }) },
+      {
+        call: async () => ({
+          thread: { id: 'fresh' },
+          activePermissionProfile: { id: 'hyperneo-worker' },
+        }),
+      },
       undefined,
       {
         root: '/focus/dolmen',
@@ -239,21 +249,91 @@ describe('codex-desktop start', () => {
       'thread/start',
       {
         cwd: dir,
-        sandbox: 'workspace-write',
+        permissions: 'hyperneo-worker',
         config: {
-          sandbox_workspace_write: {
-            writable_roots: expect.arrayContaining([dir, join(dir, '.git')]),
-            exclude_slash_tmp: true,
-            exclude_tmpdir_env_var: true,
+          permissions: {
+            'hyperneo-worker': { filesystem: { [dir]: 'write', [join(dir, '.git')]: 'write' } },
           },
         },
       },
     ]);
     expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
-      sandboxPolicy: { type: 'workspaceWrite', excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+      permissions: 'hyperneo-worker',
     });
     expect(spawned).toEqual([]);
     expect(released).toBe(false);
+  });
+
+  test('an unconfirmed prepared profile releases its clone and runtime without opening a turn', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-unconfirmed-'));
+    mkdirSync(join(dir, '.git'));
+    const prepare = vi
+      .spyOn(sandbox, 'prepareWorkerSandbox')
+      .mockResolvedValue(sandbox.workerSandboxPaths(dir));
+    const release = vi.spyOn(sandbox, 'releaseWorkerSandbox').mockResolvedValue();
+    const persist = vi.spyOn(sandbox, 'persistCodexWorkerProfile').mockResolvedValue();
+    let released = false;
+    const { instance, calls, closed } = adapter(
+      { call: async () => ({ thread: { id: 'unconfirmed' } }) },
+      undefined,
+      {
+        prepareExecution: async () => ({
+          ok: true,
+          value: {
+            directory: dir,
+            release: async () => {
+              released = true;
+            },
+          },
+        }),
+      }
+    );
+    try {
+      expect(
+        await instance.start!(
+          { ...request, preparation: { pack: 'coding', parameters: { target: 'dev' } } },
+          user
+        )
+      ).toMatchObject({
+        ok: false,
+        detail: 'Codex did not confirm the prepared worker permission profile.',
+      });
+      expect(calls.some(([method]) => method === 'thread/start')).toBe(true);
+      expect(calls.some(([method]) => method === 'desktop/start-turn')).toBe(false);
+      expect(released).toBe(true);
+      expect(release).toHaveBeenCalledWith(dir);
+      expect(closed()).toBe(true);
+    } finally {
+      prepare.mockRestore();
+      release.mockRestore();
+      persist.mockRestore();
+    }
+  });
+
+  test('with the default worker sandbox preference a prepared Codex start has full access', async () => {
+    configureWorkerSandbox(() => 'off');
+    dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-'));
+    mkdirSync(join(dir, '.git'));
+    const { instance, calls } = adapter(
+      { call: async () => ({ thread: { id: 'fresh' } }) },
+      undefined,
+      {
+        root: '/focus/dolmen',
+        linked: true,
+        prepareExecution: async () => ({
+          ok: true,
+          value: { directory: dir, release: async () => {} },
+        }),
+      }
+    );
+    expect(
+      await instance.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user)
+    ).toMatchObject({ ok: true });
+    expect(calls[0]).toMatchObject(['thread/start', { cwd: dir, sandbox: 'danger-full-access' }]);
+    expect(calls.find(([name]) => name === 'desktop/start-turn')?.[1]).toMatchObject({
+      sandboxPolicy: { type: 'dangerFullAccess' },
+    });
+    expect(existsSync(join(dir, '.git/hyperneo-worker-sandbox'))).toBe(false);
   });
 
   test('failed preparation creates no thread and a failed thread start releases the prepared directory', async () => {

@@ -1,9 +1,10 @@
-import type { WorkerIdentity } from './worker-identity.ts';
-import type { NeoSessionMessage } from './neo-session-message.ts';
-import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
+import type { NeoSessionMessage } from './neo-session-message.ts';
+import type { NeoConversationWake } from './neo-wake.ts';
+import type { NeoRuleSource } from './settings';
 import type { NeoModelPreference } from './settings.ts';
+import type { WorkerIdentity } from './worker-identity.ts';
 
 export interface NeoWorkDriverReceipt {
   workId: string;
@@ -25,6 +26,7 @@ export interface NeoWorkGoal {
   workId: string;
   goal: string | null;
   doneWhen: string | null;
+  checkKind?: string | null;
 }
 
 export const NEO_WORK_CLOSED_DONE_PREFIX = 'Closed as done by ';
@@ -171,6 +173,12 @@ export interface NeoPackSetting {
   setAt: number;
 }
 
+export interface NeoAskHistoryPage {
+  ok: true;
+  entries: NeoAskEntry[];
+  nextCursor: { updatedAt: number; id: string } | null;
+}
+
 export interface NeoSnapshot {
   session?: WorkerIdentity | null;
   packPreferences?: NeoPackSetting[];
@@ -186,9 +194,11 @@ export interface NeoSnapshot {
   wakes?: NeoConversationWake[];
   mutedSessions?: string[];
   standingRules?: string[];
+  standingRuleSources?: Record<string, NeoRuleSource>;
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];
+  historyCursor?: { updatedAt: number; id: string } | null;
   packRows?: NeoPackRows[];
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   trimmed?: string;

@@ -98,10 +98,55 @@ OS containment of native file tools or arbitrary MCP/helper processes.
 Prepared Claude starts/resumes explicitly pass the clone's generated settings file;
 local-source loading alone does not apply its protected environment variables.
 Runtime roots are re-created on resume/query and sibling-policy refresh. Claude
-HTTP(S) hosts are allowed through its proxy; SSH-agent/Unix sockets are not granted,
-so use HTTPS repository-token remotes. Live GitHub push/authentication is unverified.
+HTTP(S) hosts are allowed through its proxy. Workers may reach Unix sockets,
+including signing agents; filesystem read denials do not contain host IPC.
+Live GitHub push/authentication is unverified.
 
 Pre-upgrade prepared Claude sessions repair missing env/sandbox defaults before
 resume. Sibling permission refresh supplies defaults for absent/corrupt settings
 but preserves complete existing env/sandbox values and never provisions another
 worker's runtime. Policy replacements are atomic within the prepared clone.
+
+Slice 4 (#8630) selects the installed app-server's experimental named permission
+profiles at thread creation, opening turn and future-turn settings updates.
+This applies to prepared workers with Worker sandbox set to `always`. The `off`
+default introduced by #9024 intentionally provides no secret-read isolation;
+preparation alone does not enable the sandbox.
+`hyperneo-worker` defines explicit private write roots, normal filesystem reads,
+and secret-path read denials; no legacy sandbox selector may override it. This
+uses the engine's OS enforcement instead of a second daemon Seatbelt wrapper or
+removing host paths. Unknown/unsupported profiles fail closed. Pre-profile Codex
+threads may need recreation rather than a workspaceWrite fallback.
+The daemon also installs the profile in the clone's protected `.codex/config.toml`
+so Desktop can resolve it after the bootstrap process exits. Other settings in
+that managed file survive refresh; generated config is locally Git-excluded.
+Exclusions are installed only during creation, before the worker runs; profile
+refresh never edits worker-controlled Git metadata.
+A pre-existing config without this clone's generated profile is refused without
+modification. Policy refresh does not invoke Git on worker-controlled metadata.
+Unconfirmed profile starts release their clone/runtime without an opening turn. Codex's
+existing workspace protections for `.agents` and `.aws` stay read-only; `.codex`
+also protects the generated profile. This retains slice 3's Git/tooling limits.
+The shared home credential list supplies Azure/GCloud/GnuPG and histories, but
+workers narrow its broad Library entry to Keychains and 1Password so Library
+toolchains remain readable. Section 3 deliberately denies all of `.config`;
+tools needing those configurations must use explicit session grants later.
+Startup requires confirmed profile provenance; queue admission requires the
+profile catalog to recognize and allow it before changing settings or sending.
+Home `.env`/`.env.*` and PEM/key filename patterns cover the home root and immediate
+children. They stop before nested private clones, preserving tracked environment
+examples and test-key fixtures. Known credential stores remain recursively denied;
+arbitrary files in nonstandard secret locations are outside this known-path policy.
+Claude persists matching Bash `denyRead` and native `Read` denies, including on
+legacy resume and sibling refresh. Covered paths include section 3's tool-auth
+locations, engine auth files and shell profiles, with configured engine-home
+locations included. Keychain/1Password IPC and arbitrary MCP processes remain
+uncovered. Policy tests run inside prepared workers; the real OS denial/allowed
+repo-read proof is `worker-secret-read.md`, run by Neo after deployment on a host
+that can apply a fresh sandbox. Nested sandbox failure is not OS proof.
+
+
+Prepared Codex workers get read-only `.agents`, `.codex` and `.aws` inside their
+clone: the daemon owns the persisted profile under `.codex`, and credential-style
+directories stay immutable even in-clone; repository content outside those three
+paths remains writable.

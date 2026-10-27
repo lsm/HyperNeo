@@ -1,3 +1,7 @@
+import type {
+  SessionToolApplication,
+  SessionToolChoiceKey,
+} from '@hyperneo/shared/types/session-tool-choice';
 import { sdkPendingRemoval } from '../../storage/repositories/sdk-message-transactions.ts';
 import type { ChildProcess } from 'node:child_process';
 import type {
@@ -52,7 +56,11 @@ import {
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
-import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
+import type {
+  OperationCallerRole,
+  OperationRegistry,
+  OperationRegistryProvider,
+} from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
 import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import {
@@ -282,6 +290,7 @@ export class AgentSession
   readonly modelSwitchHandler: ModelSwitchHandler;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   private operationMcpServer?: ReturnType<typeof createOperationMcpServer>;
+  private operationMcpServerRole?: OperationCallerRole;
 
   private operationRegistryProvider?: () => OperationRegistry | undefined;
   private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
@@ -332,19 +341,22 @@ export class AgentSession
   getOperationMcpServer(
     inputOrigin?: () => { messageId: string } | null
   ): ReturnType<typeof createOperationMcpServer> {
-    if (!inputOrigin && this.operationMcpServer) return this.operationMcpServer;
+    const descriptionRole = this.operationCallerIdentity().role;
+    if (!inputOrigin && this.operationMcpServer && this.operationMcpServerRole === descriptionRole)
+      return this.operationMcpServer;
     const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
-      () => {
-        return {
-          ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
-          consumedInputId: inputOrigin?.()?.messageId,
-        };
-      },
-      '',
-      this.recordOperationRefusal
+      () => ({
+        ...this.operationCallerIdentity(),
+        consumedInputId: inputOrigin?.()?.messageId,
+      }),
+      this.recordOperationRefusal,
+      descriptionRole
     );
-    if (!inputOrigin) this.operationMcpServer = server;
+    if (!inputOrigin) {
+      this.operationMcpServer = server;
+      this.operationMcpServerRole = descriptionRole;
+    }
     return server;
   }
 
@@ -359,8 +371,15 @@ export class AgentSession
     return operationsCapabilityContribution(
       this.getOperationMcpServer(),
       this.resolveOperationRegistry(),
-      { ...resolveCallerIdentity(this.callerScopeResolver, this.session.id), source: 'mcp' }
+      { ...this.operationCallerIdentity(), source: 'mcp' }
     );
+  }
+
+  private operationCallerIdentity() {
+    return {
+      ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+      profile: this.session.config.toolProfile,
+    };
   }
 
   readonly optionsBuilder: QueryOptionsBuilder;
@@ -1624,7 +1643,7 @@ export class AgentSession
     await this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     await this.internalEventBus.publish('session.updated', {
       sessionId: this.session.id,
-      source: 'model-switch',
+      source: 'model-switch-pending',
       session: { metadata: this.session.metadata },
     });
   }
@@ -1661,6 +1680,14 @@ export class AgentSession
       return { state: 'unverified', tools: [], skills: [], plugins: [], mcpServers: [] };
     }
     return this.queryRunner.getToolInventory();
+  }
+
+  async applyToolChoice(key: SessionToolChoiceKey): Promise<SessionToolApplication> {
+    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner)
+      return { application: 'restart_required', reason: 'provider_unverified' };
+    if (key.startsWith('skill:') && this.isQueryActiveOrStarting())
+      return { application: 'restart_required', reason: 'instructions_reload_unavailable' };
+    return this.queryRunner.applyToolChoice();
   }
 
   async refreshToolsContextUsage(): Promise<void> {

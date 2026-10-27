@@ -15,6 +15,7 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
 const edit = { add: ['Ask before publishing synthetic work.'], remove: ['Retire this synthetic rule.'] };
 let questionId = '';
+let approvalId = '';
 for (const phase of ['initial', 'restart']) {
   const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath }), verbose: false });
   let ws: WebSocket | undefined;
@@ -27,10 +28,11 @@ for (const phase of ['initial', 'restart']) {
       ws!.onmessage = (event) => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return;
         clearTimeout(timer); evidence.push({ phase, name, input, reply });
         if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
-      ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+      ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: name === 'settings.global.update' ? name : 'operation.invoke', data: name === 'settings.global.update' ? input : { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
     });
     const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'neo:10000000-0000-4000-8000-000000000002', role: 'neo' }));
     const mcp = async (name: string, input: unknown) => {
+      await app.db.updateSession('neo:10000000-0000-4000-8000-000000000002', { title: 'Synthetic Neo' });
       const result = await handler({ name, input }); evidence.push({ phase, name, input, mcp: result });
       return JSON.parse(result.content[0].text);
     };
@@ -46,6 +48,29 @@ for (const phase of ['initial', 'restart']) {
         repo.saveSDKMessage('neo:10000000-0000-4000-8000-000000000002', { type: 'user', uuid, session_id: 'neo:10000000-0000-4000-8000-000000000002', parent_tool_use_id: null, inputKind, message: { role: 'user', content } } as any);
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', 'human-rule');
       assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0], triggerId: 'human:human-rule' })).ok, false);
+      approvalId = crypto.randomUUID();
+      const sessionId = 'neo:10000000-0000-4000-8000-000000000002';
+      const greetingId = crypto.randomUUID();
+      await rpc('neo.message.send', { sessionId, requestId: greetingId, content: 'hi' });
+      repo.markDeliveryConsumedByUuid(sessionId, greetingId);
+      assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: greetingId })).ok, false);
+      await rpc('neo.rule.save', { add: edit.remove });
+      const approval = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'direct-approval', ...edit });
+      assert.equal(approval.ok, true);
+      await rpc('neo.message.send', { sessionId, requestId: approvalId, content: 'yes', replyTo: { kind: 'question', id: approval.questionId } });
+      repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
+      assert.equal((await mcp('neo.rule.save', { add: ['Publish without asking.'], messageId: approvalId })).ok, false);
+      assert.equal((await mcp('neo.rule.save', { ...edit, messageId: approvalId })).ok, true);
+      const sources = app.db.getGlobalSettings().neo?.standingRuleSources;
+      assert.deepEqual(sources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
+      evidence.push({ approvalSources: sources });
+      await rpc('settings.global.update', { updates: { neo: { workerPermissionMode: 'default', standingRuleSources: {} } } });
+      assert.deepEqual((await rpc('neo.snapshot', {})).standingRuleSources, sources);
+      assert.equal(app.db.getGlobalSettings().neo?.workerPermissionMode, 'default');
+      const many = Array.from({ length: 25 }, (_, i) => `Extra rule ${i}.`);
+      assert.equal((await rpc('neo.rule.save', { add: many })).ok, true);
+      assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, [...edit.add, ...many]);
+      await rpc('neo.rule.save', { remove: many });
       await rpc('neo.rule.save', { remove: edit.add, add: edit.remove });
       const declined = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'declined', ...edit });
       assert.equal(declined.ok, true);
@@ -96,6 +121,15 @@ for (const phase of ['initial', 'restart']) {
     assert.equal((await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'accepted', add: ['Tampered.'] })).ok, false);
     assert.equal((await mcp('neo.rule.applyAnswer', { questionId })).ok, true);
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.add);
+    if (phase === 'initial') {
+      const renewed = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'final-reference', add: edit.add });
+      assert.equal(renewed.ok, true);
+      approvalId = crypto.randomUUID();
+      await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: approvalId, content: 'yes', replyTo: { kind: 'question', id: renewed.questionId } });
+      app.db.getSDKMessageRepo().markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', approvalId);
+      assert.equal((await mcp('neo.rule.save', { add: edit.add, messageId: approvalId })).ok, true);
+    }
+    assert.deepEqual((await rpc('neo.snapshot', {})).standingRuleSources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
   } finally { ws?.close(); await app.cleanup(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
 writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));

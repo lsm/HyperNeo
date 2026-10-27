@@ -23,6 +23,16 @@ import {
   hyperneoSessionControl,
 } from '../../../../src/lib/rpc-handlers/family-operations/drivers.ts';
 
+let workerDataDir: string;
+beforeEach(() => {
+  workerDataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = workerDataDir;
+});
+afterEach(() => {
+  rmSync(workerDataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
 describe('hyperneoSessionControl withdraw', () => {
   let fixture: MailboxTestDb;
   beforeEach(() => {
@@ -328,7 +338,12 @@ describe('createDriverSession', () => {
     const { created, manager } = sessionManager(true);
     expect(await createDriverSession(manager as never, '/repo', 'font size')).toBe('new');
     expect(created).toEqual([
-      { workspacePath: '/repo', title: 'font size', worktreeMode: 'worktree' },
+      {
+        workspacePath: '/repo',
+        title: 'font size',
+        worktreeMode: 'worktree',
+        toolProfile: 'worker',
+      },
     ]);
   });
 
@@ -341,7 +356,12 @@ describe('createDriverSession', () => {
       const { created, manager } = sessionManager(true, () => true, linked);
       await createDriverSession(manager as never, linked, 'font size');
       expect(created).toEqual([
-        { workspacePath: linked, title: 'font size', worktreeMode: 'direct' },
+        {
+          workspacePath: linked,
+          title: 'font size',
+          worktreeMode: 'direct',
+          toolProfile: 'worker',
+        },
       ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -351,7 +371,9 @@ describe('createDriverSession', () => {
   test('starts work in a plain folder directly', async () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(manager as never, '/notes', 'essay');
-    expect(created).toEqual([{ workspacePath: '/notes', title: 'essay', worktreeMode: 'direct' }]);
+    expect(created).toEqual([
+      { workspacePath: '/notes', title: 'essay', worktreeMode: 'direct', toolProfile: 'worker' },
+    ]);
   });
 });
 
@@ -394,6 +416,7 @@ describe('createDriverSession model', () => {
         workspacePath: '/HyperNeo',
         title: 'task',
         worktreeMode: 'direct',
+        toolProfile: 'worker',
         config: { model: 'swe-2-high', provider: 'custom:synthetic', thinkingLevel: 'think32k' },
       },
     ]);

@@ -1,7 +1,7 @@
-import { readNeoQuestion } from '../question-operations.ts';
-import type { HomeSavePlan } from './save.ts';
 import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoDerivedId } from '../derived-id.ts';
+import { readNeoQuestion } from '../question-operations.ts';
+import type { HomeSavePlan } from './save.ts';
 
 export type HomeConflict = { id: string; text: string; document: string };
 export type HomeFailure = {
@@ -59,7 +59,8 @@ export function homeConflictQuestionId(root: string, local: string, remote: stri
 export function requireHomeChoice(
   input: HomeSavePlan,
   store: NeoAskTodoRepository,
-  sessionId: string | undefined
+  sessionId: string | undefined,
+  root: string
 ): { value: HomeSavePlan } | { reason: HomeFailure } {
   if (!input.conflictQuestionId) return { value: input };
   const question = store.getQuestion(input.conflictQuestionId);
@@ -84,12 +85,27 @@ export function requireHomeChoice(
           'human_choice_required: record the root-Neo question’s human Keep local or Use remote answer first; Review together needs further review.',
       },
     };
+  const revisions = [
+    ...(question.document ?? '').matchAll(/^(?:Local|Remote) \(([a-f0-9]{40,64})\)$/gm),
+  ].map((match) => match[1]);
+  const bound = revisions.flatMap((local) =>
+    revisions
+      .filter((remote) => homeConflictQuestionId(root, local, remote) === question.id)
+      .map((remote) => ({ local, remote }))
+  )[0];
+  if (!bound || !question.document?.includes(`File: ${JSON.stringify(input.path)}\n`))
+    return {
+      reason: {
+        ok: false,
+        reason: 'human_choice_required: question does not bind this home conflict.',
+      },
+    };
   return {
     value: {
       ...input,
       resolution: {
         questionId: question.id,
-        version: choice[0] === 'Keep local' ? 'local' : 'remote',
+        revision: choice[0] === 'Keep local' ? bound.local : bound.remote,
       },
     },
   };

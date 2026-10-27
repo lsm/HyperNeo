@@ -1,3 +1,5 @@
+import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { existsSync,mkdirSync,writeFileSync } from 'node:fs';
@@ -19,7 +21,7 @@ assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run
 assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));assert(port>0&&port!==8399);
 assert(!existsSync(join(run,'data/daemon.db')));
 for(const part of ['home','data','workspace'])mkdirSync(join(run,part),{recursive:true});
-const core=new DatabaseCore(join(run,'data/daemon.db'));await core.initialize();const db=core.getDb();
+const core=new DatabaseCore(join(run,'data/daemon.db'));await core.initialize();const db=core.getDb();createCodingPackTables(db);
 db.prepare(`INSERT INTO sessions(id,title,created_at,last_active_at,status,config,metadata,processing_state,type) VALUES ('worker','Synthetic','2026-10-20','2026-10-20','active','{}','{}','{"status":"idle"}','worker')`).run();
 const report='  SYNTHETIC_TODO_REPORT 🔬\n'.repeat(300)+'\n';
 const store=new NeoAskTodoRepository(db);const sessions=new NeoTodoSessionRepository(db);
@@ -33,7 +35,7 @@ const adapter=createHyperneoAdapter({db:()=>db,machine:'synthetic',searchChats:a
  handoff:async(_id,message,_from,uuid)=>{receipt={executionId:'worker',inputId:uuid};put(uuid,'user',message,10);put('human','user','Mid-turn human clarification',15);put('report','assistant',report,null);db.prepare('INSERT INTO sdk_message_bodies(seq,sdk_message) SELECT seq,sdk_message FROM sdk_messages WHERE id=?').run('report');db.prepare('UPDATE sdk_messages SET sdk_message=? WHERE id=?').run('{"type":"assistant"}','report');put('terminal','result','',20);put('other','user','A separate later turn',30);put('other-result','result','UNRELATED_LATER_REPORT',40);original=digest();return {kind:'enqueued',id:'synthetic-handoff'};},
  sessions:{create:async()=>{throw new Error('unused');},resolveModel:async()=>null,model:()=>null,chooseWorktree:async()=>{},announce:()=>{},interrupt:()=>false},neoFolder:()=>join(run,'data/Neo'),folderExists:()=>true,makeFolder:()=>{},homeDir:join(run,'home')});
 let registry:ReturnType<typeof createOperationRegistry>;const notes:string[]=[];const errors:string[]=[];
-const runner=createNeoTodoRunner({store,sessions,invoke:(caller,name,input)=>invokeOperation(registry,name,input,caller),packs:()=>[],tell:async(_ask,_todo,note)=>{notes.push(note);},changed:()=>{}});
+const runner=createNeoTodoRunner({ write: gatewayFor(db).run.bind(gatewayFor(db)),store,sessions,invoke:(caller,name,input)=>invokeOperation(registry,name,input,caller),packs:()=>[],tell:async(_ask,_todo,note)=>{notes.push(note);},changed:()=>{}});
 registry=createOperationRegistry([...createWorkVerbOperations({adapters:()=>[adapter],daemonName:'synthetic',remote:{list:()=>[],invoke:async()=>{throw new Error('no remote');}}}),...createNeoTodoOperations(store,sessions,runner,()=>[])]);
 const results:string[]=[];let step=0;
 const strings=(value:unknown):string=>typeof value==='string'?value:Array.isArray(value)?value.map(strings).join('\n'):value&&typeof value==='object'&&'text'in value?strings(value.text):JSON.stringify(value);

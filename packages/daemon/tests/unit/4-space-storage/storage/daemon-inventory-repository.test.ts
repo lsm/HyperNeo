@@ -402,7 +402,7 @@ describe('ordinary chat inspection through the database catalog', () => {
       value: { accepted: true },
     });
   });
-  test('catalog discovery describes the actual primitive while unbound Neo callers cannot inspect', async () => {
+  test('catalog discovery describes the actual primitive while sessionless callers cannot inspect', async () => {
     session('existing-chat', null, 100);
     const registry = createDatabaseOperationCatalog(db);
     expect(
@@ -416,7 +416,10 @@ describe('ordinary chat inspection through the database catalog', () => {
       kind: 'completed',
       value: { found: true, inputSchema: expect.objectContaining({ type: 'object' }) },
     });
-    expect(await inspect('existing-chat', {}, { ...caller, sessionId: 'not-bound' })).toEqual({
+    expect(await inspect('existing-chat', {}, { ...caller, sessionId: 'not-bound' })).toMatchObject(
+      { kind: 'completed', value: { accepted: true } }
+    );
+    expect(await inspect('existing-chat', {}, { source: 'mcp', role: caller.role })).toEqual({
       kind: 'completed',
       value: { accepted: false, reason: 'inspection_forbidden' },
     });

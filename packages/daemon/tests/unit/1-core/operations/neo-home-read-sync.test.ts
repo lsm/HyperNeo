@@ -10,8 +10,8 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
-import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
 let fixture: string, root: string, peer: string, remote: string;
@@ -144,10 +144,10 @@ describe('Curated home reads within a Neo wake', () => {
     const head = await git(root, 'rev-parse', 'HEAD');
     await version('Remote edit');
     const failed = await read();
-    expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('dirty') });
+    expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('sync_failed') });
     expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Human uncommitted edit');
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
-    expect(await pulls()).toBe(0);
+    expect(await pulls()).toBe(1);
     await writeFile(join(root, 'direction.md'), 'Initial');
     expect(await read()).toMatchObject({ content: 'Remote edit' });
   });

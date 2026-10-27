@@ -1,0 +1,12 @@
+{
+  "ciRunnerPasses": 138,
+  "ciRunnerFailures": 0,
+  "files": 3,
+  "waitsForReceiptBeforeDraftCleanup": true,
+  "unavailableWriterDoesNotReplay": true,
+  "insertRejectionRollsBack": true,
+  "receiptLoadingFailureRollsBackInsertion": true,
+  "lostReceiptDoesNotReplayOrClearDraft": true,
+  "temporaryHomesRemoved": true,
+  "productionModeStartupVerified": false
+}

@@ -10,4 +10,5 @@ export const SESSION_OPERATION_NAMES = [
   'session.runtimeSettings.read',
   'session.runtimeSettings.update',
   'session.state.update',
+  'session.tools.setChoice',
 ] as const;

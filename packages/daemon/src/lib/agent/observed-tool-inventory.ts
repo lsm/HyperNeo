@@ -85,7 +85,21 @@ export class ObservedToolInventory {
 
   captureStatus(token: QueryAttemptToken, servers: ServerObservation[]): void {
     if (!this.owns(token) || this.inventory.state !== 'observed') return;
-    this.inventory = { ...this.inventory, mcpServers: servers.map(projectServer) };
+    const mcpServers = servers.map(projectServer);
+    this.inventory = {
+      ...this.inventory,
+      mcpServers,
+      tools: names([
+        ...this.inventory.tools.filter((name) => !name.startsWith('mcp__')),
+        ...mcpServers.flatMap((server) =>
+          server.status === 'unverified' || server.tools === null
+            ? this.inventory.tools.filter((name) => name.startsWith(`mcp__${server.name}__`))
+            : server.status === 'connected'
+              ? server.tools.map((tool) => `mcp__${server.name}__${tool}`)
+              : []
+        ),
+      ]),
+    };
   }
 
   end(token: QueryAttemptToken): void {

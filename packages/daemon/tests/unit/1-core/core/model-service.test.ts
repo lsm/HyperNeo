@@ -475,7 +475,7 @@ describe('Model Service', () => {
         const refreshing = refreshModels().then(() => {
           settled = true;
         });
-        await jest.advanceTimersByTimeAsync(9_000);
+        await jest.advanceTimersByTimeAsync(29_000);
         expect(settled).toBe(false);
         await jest.advanceTimersByTimeAsync(2_000);
         await refreshing;

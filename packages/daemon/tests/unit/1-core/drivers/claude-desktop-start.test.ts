@@ -7,12 +7,14 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { createNodeSpawn } from '../../../../src/lib/runtime-spawn/node-backend';
 import { listProcesses } from '../../../../src/lib/process-watchdog';
 import { neoReadCheckoutPaths } from '../../../../src/lib/neo/read-access';
@@ -58,6 +60,7 @@ describe('claude-desktop start', () => {
   let handoffs: number;
 
   beforeEach(() => {
+    configureWorkerSandbox(() => 'always');
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
     spawned = [];
     cwds = [];
@@ -71,6 +74,7 @@ describe('claude-desktop start', () => {
   });
 
   afterEach(() => {
+    configureWorkerSandbox(() => 'off');
     vi.unstubAllEnvs();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -348,6 +352,21 @@ describe('claude-desktop start', () => {
     });
   });
 
+  test('with the worker sandbox off, a prepared start passes no sandbox settings file', async () => {
+    configureWorkerSandbox(() => 'off');
+    const directory = join(dir, 'prepared');
+    mkdirSync(join(directory, '.git/info'), { recursive: true });
+    const driver = adapter({
+      prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
+    });
+    expect(
+      (await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user))
+        .ok
+    ).toBe(true);
+    expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(false);
+    expect(spawned.some((args) => args.includes('--settings'))).toBe(false);
+  });
+
   test('B1 accepts and reports the actual imported acceptEdits mode', async () => {
     expect(
       await adapter({
@@ -507,8 +526,8 @@ describe('claude-desktop start', () => {
       retained.sandbox.network.allowedDomains = ['synthetic.invalid'];
       writeFileSync(settingsPath, JSON.stringify(retained));
       const firstRuntime = retained.env.TMPDIR;
-      rmSync(join(firstRuntime, '..'), { recursive: true, force: true });
-      if (runtimeState === 'unusable') writeFileSync(join(firstRuntime, '..'), 'unrelated runtime');
+      rmSync(firstRuntime, { recursive: true, force: true });
+      if (runtimeState === 'unusable') writeFileSync(firstRuntime, 'unrelated runtime');
       const secondDriver = adapter({
         prepareExecution: async () => ({
           ok: true,
@@ -529,10 +548,10 @@ describe('claude-desktop start', () => {
       ).toBe(true);
       const readPolicy = (root: string) =>
         JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
-      expect(existsSync(firstRuntime)).toBe(false);
+      expect(existsSync(firstRuntime) && statSync(firstRuntime).isDirectory()).toBe(false);
       expect(readPolicy(first).env).toEqual(retained.env);
       expect(readPolicy(first).sandbox).toEqual(retained.sandbox);
-      rmSync(join(firstRuntime, '..'), { recursive: true, force: true });
+      rmSync(firstRuntime, { recursive: true, force: true });
       expect(readPolicy(first).env.TMPDIR).not.toBe(readPolicy(sibling).env.TMPDIR);
       expect(readPolicy(first).env.XDG_CACHE_HOME).not.toBe(readPolicy(sibling).env.XDG_CACHE_HOME);
       expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
@@ -623,7 +642,7 @@ describe('claude-desktop start', () => {
     ).toBe(true);
     const settings = join(directory, '.claude/settings.local.json');
     const runtime = JSON.parse(readFileSync(settings, 'utf8')).env.TMPDIR;
-    rmSync(join(runtime, '..'), { recursive: true, force: true });
+    rmSync(runtime, { recursive: true, force: true });
     expect(
       (await driver.send!({ adapter: 'claude-desktop', id: 'local_u1' }, 'Synthetic resume', user))
         .ok
@@ -675,7 +694,8 @@ describe('claude-desktop start', () => {
     const prepared = join(dir, 'prepared');
     mkdirSync(join(prepared, '.claude'));
     const settings = join(prepared, '.claude/settings.local.json');
-    writeFileSync(settings, '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}');
+    mkdirSync(settings);
+    writeFileSync(join(settings, 'sentinel'), 'do not overwrite');
     const result = await adapter({
       prepareExecution: async () => ({
         ok: true,
@@ -692,9 +712,7 @@ describe('claude-desktop start', () => {
       reason: 'preparation_failed',
       detail: expect.stringContaining('native write policy'),
     });
-    expect(readFileSync(settings, 'utf8')).toBe(
-      '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}'
-    );
+    expect(readFileSync(join(settings, 'sentinel'), 'utf8')).toBe('do not overwrite');
     expect(spawned).toEqual([]);
     expect(released).toBe(1);
   });

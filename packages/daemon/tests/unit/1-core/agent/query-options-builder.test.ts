@@ -1,25 +1,19 @@
-import { handoffDraftDirectory } from '../../../../src/lib/handoffs/outbox';
-import { installClaudeNativeWrites } from '../../../../src/lib/drivers/claude-native-writes';
-import {
-  workerSandboxPaths,
-  releaseWorkerSandbox,
-} from '../../../../src/lib/drivers/worker-sandbox';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { vi } from 'vitest';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { AppMcpServer, AppSkill, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir, tmpdir } from 'os';
-import {
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  statSync,
-  realpathSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
+import { vi } from 'vitest';
 import {
   buildProviderSettings,
   ensureAgentTools,
@@ -31,6 +25,12 @@ import {
   SDK_TRANSCRIPT_RETENTION_DAYS,
   withSdkTranscriptRetention,
 } from '../../../../src/lib/agent/sdk-transcript-retention';
+import { installClaudeNativeWrites } from '../../../../src/lib/drivers/claude-native-writes';
+import {
+  releaseWorkerSandbox,
+  workerSandboxPaths,
+} from '../../../../src/lib/drivers/worker-sandbox';
+import { handoffDraftDirectory } from '../../../../src/lib/handoffs/outbox';
 import {
   bumpProviderCatalogEpoch,
   clearModelsCache,
@@ -41,8 +41,8 @@ import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import { SkillsManager } from '../../../../src/lib/skills-manager';
-import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
+import type { SkillsManager } from '../../../../src/lib/skills-manager';
+import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { createTables } from '../../../../src/storage/schema';
 import { createNeoTables } from '../../../../src/storage/schema/neo';
@@ -168,6 +168,34 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.TMPDIR).toBe(workerSandboxPaths(root).TMPDIR);
       expect(statSync(options.env!.TMPDIR!).isDirectory()).toBe(true);
       await releaseWorkerSandbox(root);
+    });
+
+    it('starts with sparse disabled settings without forwarding obsolete temp paths', async () => {
+      const root = join(handoffDataDir, 'disabled-sparse');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      mkdirSync(join(root, '.claude'));
+      writeFileSync(
+        join(root, '.git/hyperneo-native-writes.json'),
+        JSON.stringify({ roots: [join(handoffDataDir, 'source')] })
+      );
+      writeFileSync(
+        join(root, '.claude/settings.local.json'),
+        JSON.stringify({
+          sandbox: { enabled: false },
+          env: {
+            TMPDIR: '/synthetic/obsolete-temp',
+            XDG_CACHE_HOME: '/synthetic/obsolete-cache',
+            CUSTOM_WORKER_VALUE: 'retain',
+          },
+        })
+      );
+      mockSession.workspacePath = root;
+      const options = await builder.build();
+      expect(options.sandbox?.enabled).toBe(false);
+      expect(options.env?.TMPDIR).not.toBe('/synthetic/obsolete-temp');
+      expect(options.env?.XDG_CACHE_HOME).not.toBe('/synthetic/obsolete-cache');
+      expect(options.env?.CUSTOM_WORKER_VALUE).toBe('retain');
+      expect(options.sandbox?.filesystem?.allowWrite).toContain(root);
     });
 
     it('should build basic query options', async () => {
@@ -2218,6 +2246,7 @@ describe('QueryOptionsBuilder', () => {
               'WebFetch',
               'Bash',
               'mcp__hyperneo-operations__invoke',
+              'mcp__fetch-mcp',
             ]);
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.agent).toBeUndefined();
@@ -2233,7 +2262,8 @@ describe('QueryOptionsBuilder', () => {
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
             expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
             expect(options.additionalDirectories).toEqual([]);
-            expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
+            expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace/.git']);
+            expect(options.sandbox?.filesystem?.allowWrite).toContain('/test/workspace');
             expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
             expect(options.env?.GH_TOKEN).toBe('synthetic-poller-query-token');
@@ -2260,7 +2290,9 @@ describe('QueryOptionsBuilder', () => {
                 excludedCommands: [],
                 enableWeakerNetworkIsolation: true,
               });
-              expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/test/workspace');
+              expect(enforced.sandbox?.filesystem?.allowWrite).toContain('/test/workspace');
+              expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/');
+              expect(enforced.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace/.git']);
               for (const key of [
                 'allowAppleEvents',
                 'enableWeakerNestedSandbox',
@@ -2522,7 +2554,7 @@ describe('QueryOptionsBuilder', () => {
         mockSession.config.permissionMode = 'plan';
         expect((await builder.build()).permissionMode).toBe('plan');
       } finally {
-        rmSync(dirname(workerSandboxPaths(root).TMPDIR), { recursive: true, force: true });
+        rmSync(workerSandboxPaths(root).TMPDIR, { recursive: true, force: true });
       }
     });
 

@@ -1,0 +1,4 @@
+{
+  "rollbackAfterFailure": "SQLiteError: cannot rollback - no transaction is active",
+  "mainSqlAttempts": 1
+}

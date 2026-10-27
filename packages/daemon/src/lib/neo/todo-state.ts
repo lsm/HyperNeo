@@ -8,7 +8,7 @@ export interface TodoStateFacts {
   order: readonly (Pick<NeoTodo, 'id' | 'state' | 'startedAt'> & { questionOpen?: number })[];
   askOpen: boolean;
   questionOpen: boolean;
-  humanAnswerDelivered?: boolean;
+  answerPending?: boolean;
   dispatched: boolean;
   live: string | null;
   change: NeoTodoPatch;
@@ -25,9 +25,10 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
   if (todo.state === 'removed') return { patch: {}, startNext: null };
   if (
     todo.blockedBy === 'needs-human' &&
+    judgement.state !== 'done' &&
     change.state !== 'removed' &&
     facts.askOpen &&
-    (!facts.humanAnswerDelivered || facts.questionOpen)
+    (facts.questionOpen || facts.answerPending)
   )
     return {
       patch: {

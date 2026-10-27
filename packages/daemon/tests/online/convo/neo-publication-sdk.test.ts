@@ -1,18 +1,18 @@
 import { expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MessageHub, WebSocketClientTransport, type Session } from '@hyperneo/shared';
+import { MessageHub, type Session, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { createScheduleDelivery } from '../../../src/lib/scheduler/session-schedule-delivery.ts';
-import { createOperationRegistry } from '../../../src/lib/operations/registry.ts';
-import { SessionScheduleRepository } from '../../../src/storage/repositories/session-schedule-repository.ts';
-import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
+import { createOperationRegistry } from '../../../src/lib/operations/registry.ts';
+import { createScheduleDelivery } from '../../../src/lib/scheduler/session-schedule-delivery.ts';
+import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { SessionScheduleRepository } from '../../../src/storage/repositories/session-schedule-repository.ts';
 
 const sandboxProof = process.env.HYPERNEO_TEST_DISABLE_SANDBOX !== '1';
 async function verifyNeoGithubSource(githubSource: 'store' | 'daemon-gh') {
@@ -69,7 +69,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       name: 'Bash',
       input: {
         command: sandboxProof
-          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
+          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf HOME_OK > '${isolated}/data/Neo/blocked.txt'; printf '*.md filter=probe' > '${isolated}/data/Neo/.gitattributes'; mkdir -p '${isolated}/data/Neo/.git/info'; printf FILTER_PROBE >> '${isolated}/data/Neo/.git/config'; mkdir -p '${isolated}/data/Neo/.git/hooks'; printf HOOK_PROBE > '${isolated}/data/Neo/.git/hooks/pre-push'; printf 'evidence/\\n' >> '${isolated}/data/Neo/.git/info/exclude'); (ln '${isolated}/data/Neo/.git/config' '${isolated}/data/Neo/config-link' && printf LINK_PIVOT_PROBE >> '${isolated}/data/Neo/config-link'); (mv '${isolated}/data/Neo/.git/config' '${isolated}/data/Neo/config-moved' && printf RENAME_PIVOT_PROBE >> '${isolated}/data/Neo/config-moved'); printf REPLACEMENT_PROBE > '${isolated}/data/Neo/config-replacement'; mv '${isolated}/data/Neo/config-replacement' '${isolated}/data/Neo/.git/config'; mv '${isolated}/data/Neo/.git' '${isolated}/data/Neo/git-metadata-moved'; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
           : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
       },
     },
@@ -82,11 +82,51 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
   const historyMarker = `synthetic-history-${randomUUID()}`;
   const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
   const newCwd = join(isolated, 'data', 'Neo');
+  const metadataBefore = new Map<string, string | null>();
+  let hardlinkControlPassed = false;
+  if (sandboxProof) {
+    await mkdir(newCwd, { recursive: true });
+    execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '--quiet'], {
+      cwd: newCwd,
+      timeout: 10000,
+    });
+    for (const path of ['.git/config', '.git/hooks/pre-push', '.git/info/exclude'])
+      metadataBefore.set(
+        path,
+        existsSync(join(newCwd, path)) ? readFileSync(join(newCwd, path), 'utf8') : null
+      );
+    const control = join(newCwd, 'hardlink-control');
+    await link(join(newCwd, '.git/config'), control);
+    const changed = `${metadataBefore.get('.git/config')}\n# Hardlink control\n`;
+    await writeFile(control, changed);
+    expect(readFileSync(join(newCwd, '.git/config'), 'utf8')).toBe(changed);
+    hardlinkControlPassed = true;
+    await rm(control);
+    await writeFile(join(newCwd, '.git/config'), metadataBefore.get('.git/config')!);
+    if (process.env.VERIFY_EVIDENCE_DIR) {
+      await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
+      await writeFile(
+        join(process.env.VERIFY_EVIDENCE_DIR, `neo-home-link-control-${githubSource}.json`),
+        JSON.stringify(
+          {
+            hardlinkControlPassed,
+            configRestored:
+              readFileSync(join(newCwd, '.git/config'), 'utf8') ===
+              metadataBefore.get('.git/config'),
+            scope: 'Unsandboxed filesystem control only; SDK OS enforcement is unverified.',
+          },
+          null,
+          2
+        )
+      );
+    }
+  }
   let sdkSessionId = '';
   const historySeen: boolean[] = [];
   const nativeToolsSeen: string[][] = [];
   const shortText = 'The fictional moon garden is ready.';
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
+  const verbatimText = '> kept quote\n\n```md\n# Draft\nCopy exactly: "as written"\n```';
   const calls: string[] = [];
   const receipts: { accepted: boolean; created?: boolean }[] = [];
   const receivedToolCalls = new Set<string>();
@@ -175,7 +215,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
           }
           if (id.startsWith('tool-fictional-'))
             for (const item of result.content ?? [])
-              if (item.text) receipts.push(JSON.parse(item.text));
+              if (item.text?.startsWith('{')) receipts.push(JSON.parse(item.text));
         }
       }
     }
@@ -206,17 +246,24 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                     : 'neo.question.ask',
               input:
                 round <= 2
-                  ? {
-                      requestId: 'fictional-send',
-                      shortText,
-                      fullText,
-                      links: [],
-                      replyTo: [requestId],
-                    }
+                  ? round === 2
+                    ? {
+                        requestId: 'fictional-verbatim',
+                        verbatim: true,
+                        fullText: verbatimText,
+                        links: [],
+                        replyTo: [requestId],
+                      }
+                    : {
+                        requestId: 'fictional-send',
+                        shortText,
+                        fullText,
+                        links: [],
+                        replyTo: [requestId],
+                      }
                   : round === 3
                     ? {
                         messageId: requestId,
-                        from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
                         add: ['Keep synthetic garden changes as drafts.'],
                       }
                     : {
@@ -282,7 +329,10 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     event('message_stop', { type: 'message_stop' });
     res.end();
   });
-  await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve, reject) => {
+    fixture.once('error', reject);
+    fixture.listen(0, '127.0.0.1', resolve);
+  });
   const address = fixture.address();
   if (!address || typeof address === 'string') throw new Error('Missing fictional server port');
   const environment = {
@@ -599,16 +649,21 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     let page = await read();
     const deadline = Date.now() + 45000;
     while (
-      !page.items?.some((item: NeoPublication) => item.shortText === shortText) &&
+      (!page.items?.some((item: NeoPublication) => item.shortText === shortText) ||
+        !page.items?.some((item: NeoPublication) => item.verbatim === true)) &&
       Date.now() < deadline
     ) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       page = await read();
     }
     expect(page.ok).toBe(true);
-    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(2);
+    const verbatim = page.items.filter((item) => item.verbatim === true);
+    expect(verbatim, JSON.stringify({ calls, receipts, sdkErrors })).toHaveLength(1);
+    expect(verbatim[0]).not.toHaveProperty('shortText');
+    expect(verbatim[0].fullText).toBe(verbatimText);
+    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(3);
     expect(
-      page.items.filter((item) => item.shortText.startsWith('Daily dropped work '))
+      page.items.filter((item) => item.shortText?.startsWith('Daily dropped work '))
     ).toHaveLength(1);
     const authored = page.items.filter((item) => item.shortText === shortText);
     expect(authored, JSON.stringify({ calls, receipts, requests, sdkErrors })).toHaveLength(1);
@@ -633,15 +688,13 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       },
       {
         accepted: true,
-        created: false,
-        publication: { publicationId: authored[0].publicationId },
+        created: true,
+        publication: { publicationId: verbatim[0].publicationId },
       },
-      { ok: true, standingRules: ['Keep synthetic garden changes as drafts.'] },
+      { ok: false, reason: expect.stringContaining('human yes') },
       { ok: true, question: { replyTo: [requestId] } },
     ]);
-    expect(daemon.db.getGlobalSettings().neo?.standingRules).toEqual([
-      'Keep synthetic garden changes as drafts.',
-    ]);
+    expect(daemon.db.getGlobalSettings().neo?.standingRules ?? []).toEqual([]);
     expect(todos.listQuestions('fictional-garden')).toEqual([
       expect.objectContaining({ replyTo: [requestId] }),
     ]);
@@ -653,7 +706,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       })
     ).toMatchObject({ ok: true, question: { replyTo: [requestId] } });
     page = await read();
-    expect(page.items).toHaveLength(3);
+    expect(page.items).toHaveLength(4);
     const notices = page.items.filter((item) => item.cardReply);
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({
@@ -667,7 +720,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       },
     });
     expect(notices[0].replyTo).toBeUndefined();
-    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(2);
+    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(3);
     expect((await read()).items).toEqual(page.items);
     const messageStatuses = await hub.request<{
       items: { requestId: string; messageStatus?: string }[];
@@ -742,7 +795,20 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
             approvalProbeCreatedFile: existsSync(approvalProbeFile),
             tempWriteAllowed: existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')),
             checkoutWriteAllowed: existsSync(join(readCheckout, 'allowed.txt')),
-            protectedWritesDenied: [workerCheckout, join(isolated, 'data'), newCwd].every(
+            homeWriteAllowed: existsSync(join(newCwd, 'blocked.txt')),
+            hardlinkControlPassed,
+            metadataUnchanged: sandboxProof
+              ? [...metadataBefore].every(([path, content]) =>
+                  content === null
+                    ? !existsSync(join(newCwd, path))
+                    : existsSync(join(newCwd, path)) &&
+                      readFileSync(join(newCwd, path), 'utf8') === content
+                )
+              : null,
+            hardlinkCreated: existsSync(join(newCwd, 'config-link')),
+            renamePivotCreated: existsSync(join(newCwd, 'config-moved')),
+            metadataDirectoryMoved: existsSync(join(newCwd, 'git-metadata-moved')),
+            protectedWritesDenied: [workerCheckout, join(isolated, 'data')].every(
               (path) => !existsSync(join(path, 'blocked.txt'))
             ),
             sdkSessionId,
@@ -799,7 +865,16 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
       expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
       expect(existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt'))).toBe(true);
-      for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
+      expect(readFileSync(join(newCwd, 'blocked.txt'), 'utf8')).toBe('HOME_OK');
+      expect(readFileSync(join(newCwd, '.gitattributes'), 'utf8')).toContain('filter=probe');
+      expect(hardlinkControlPassed).toBe(true);
+      for (const [path, content] of metadataBefore) {
+        expect(existsSync(join(newCwd, path))).toBe(content !== null);
+        if (content !== null) expect(readFileSync(join(newCwd, path), 'utf8')).toBe(content);
+      }
+      expect(existsSync(join(newCwd, 'config-moved'))).toBe(false);
+      expect(existsSync(join(newCwd, 'git-metadata-moved'))).toBe(false);
+      for (const path of [workerCheckout, join(isolated, 'data')])
         expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
     }
     for (const index of [4, 5]) {

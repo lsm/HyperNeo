@@ -1,7 +1,16 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
@@ -79,6 +88,7 @@ describe('hyperneo adapter send and status', () => {
   let events: string[];
 
   beforeEach(() => {
+    configureWorkerSandbox(() => 'always');
     source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
     execFileSync('git', ['init', source]);
     projectBase = join(source, 'project-storage');
@@ -130,6 +140,7 @@ describe('hyperneo adapter send and status', () => {
   });
 
   afterEach(() => {
+    configureWorkerSandbox(() => 'off');
     db.close();
     rmSync(source, { recursive: true, force: true });
   });
@@ -282,6 +293,83 @@ describe('hyperneo adapter send and status', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test.each([
+    ['off', undefined, false],
+    ['off', true, false],
+    ['on-demand', undefined, false],
+    ['on-demand', true, true],
+    ['always', undefined, true],
+  ] as const)(
+    'with the worker sandbox preference %s and a start asking %s, the sandbox is on: %s',
+    async (mode, sandbox, enabled) => {
+      configureWorkerSandbox(() => mode);
+      const root = mkdtempSync(join(tmpdir(), 'hyperneo-sandbox-mode-'));
+      const directory = join(root, 'prepared');
+      mkdirSync(join(directory, '.git/info'), { recursive: true });
+      try {
+        const driver = adapter(async () => ({
+          ok: true,
+          value: { directory, release: async () => {} },
+        }));
+        expect(
+          await driver.start!(
+            {
+              place: { machine: 'imac', folder: source, name: 'repo' },
+              title: 't',
+              message: 'm',
+              preparation: { pack: 'coding', parameters: {}, sandbox },
+            },
+            { from: 'user', caller: { source: 'rpc' } }
+          )
+        ).toMatchObject({ ok: true });
+        expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(enabled);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  test.each([false, true])(
+    'starts repeatedly in the same prepared directory with existing settings: %s',
+    async (existingSettings) => {
+      const dataDir = mkdtempSync(join(tmpdir(), 'hyperneo-worker-data-'));
+      process.env.HYPERNEO_DATA_DIR = dataDir;
+      const directory = join(source, 'prepared');
+      mkdirSync(join(directory, '.git/info'), { recursive: true });
+      mkdirSync(join(directory, '.claude'));
+      const settings = join(directory, '.claude/settings.local.json');
+      if (existingSettings) writeFileSync(settings, '{"permissions":{"allow":["Bash(*)"]}}');
+      const driver = adapter(async () => ({
+        ok: true,
+        value: { directory, release: async () => {} },
+      }));
+      try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          db.prepare("DELETE FROM sessions WHERE id = 'new'").run();
+          expect(
+            await driver.start!(
+              {
+                place: { machine: 'imac', folder: source, name: 'repo' },
+                title: 'Existing worktree',
+                message: 'Continue work',
+                preparation: { pack: 'coding', parameters: {} },
+              },
+              { from: 'user', caller: { source: 'rpc' } }
+            )
+          ).toMatchObject({ ok: true });
+          const policy = JSON.parse(readFileSync(settings, 'utf8'));
+          expect(policy.sandbox.enabled).toBe(true);
+          expect(policy.permissions.allow).toEqual([`Edit(/${directory}/**)`]);
+          expect(policy.permissions.deny).toContain(`Edit(/${source}/**)`);
+        }
+        expect(handed).toHaveLength(2);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+        delete process.env.HYPERNEO_DATA_DIR;
+      }
+    }
+  );
 
   test('failed preparation creates no native session or handoff', async () => {
     const driver = adapter(async () => ({

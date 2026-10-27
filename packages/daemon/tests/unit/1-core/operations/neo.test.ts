@@ -363,6 +363,7 @@ describe('Neo MVP', () => {
       'neo.coding.smoke',
       'neo.coding.result',
       'neo.pack.read',
+      'neo.ask.history',
       'neo.snapshot',
       'neo.project.save',
     ]);

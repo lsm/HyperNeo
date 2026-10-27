@@ -1,4 +1,5 @@
 import { releaseWorkerSandbox } from '../drivers/worker-sandbox.ts';
+import type { SessionToolProfile } from '@hyperneo/shared/types/session-tool-choice';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import type {
   MessageHub,
@@ -73,6 +74,7 @@ export interface CreateSessionParams {
   parentSessionId?: string;
   currentTaskId?: string;
   promptProvenance?: SessionMetadata['promptProvenance'];
+  toolProfile?: SessionToolProfile;
 }
 
 export class SessionLifecycle {
@@ -212,6 +214,7 @@ export class SessionLifecycle {
           ? { ...globalSettings.sandbox, ...params.config.sandbox }
           : globalSettings.sandbox,
         settingSources: params.config?.settingSources ?? globalSettings.settingSources,
+        ...(params.toolProfile ? { toolProfile: params.toolProfile } : {}),
       },
       metadata: {
         ...(params.executionProjectPath

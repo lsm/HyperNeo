@@ -14,6 +14,12 @@ The supported Deno line is **2.9.x**. The integration test skips itself unless `
 
 ## Platform support (OS)
 
+Daemon-managed Neo home Git commands require **Git 2.32 or newer**. This is the
+first version supporting the global/system configuration selectors used to
+isolate executable filters, including conditional includes in linked worktrees.
+Older Git refuses these commands before checkout; local document reads remain
+available when Git synchronization cannot run.
+
 Release binaries cover `darwin` (arm64/x64), `linux` (x64/arm64), and — since the windows-x64 release slice — `windows-x64` for both the CLI (`.exe`, also published as the `@hyperneo/cli-windows-x64` npm package) and the desktop installers (`.msi` + NSIS `_setup.exe`, unsigned). The Windows target is release/CI-only: `release.yml` compiles and smoke-tests it on a `windows-latest` runner (see `docs/release-process.md` for the dry-run dispatch that validates it without publishing). Day-to-day development on Windows (running the test suite, `make dev`) is not validated; the Bun runtime itself supports Windows, and the daemon's release boot path (SQLite, HTTP/WS server, home-dir data layout, SDK `win32-x64` binary resolution) has no Unix-only dependencies.
 
 ## Running the daemon under Deno

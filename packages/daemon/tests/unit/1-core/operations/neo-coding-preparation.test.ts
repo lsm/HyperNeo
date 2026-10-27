@@ -114,7 +114,10 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
           call: async (method, params) => {
             if (method === 'thread/start') {
               starts.push(git(String(params.cwd), 'rev-parse', 'HEAD'));
-              return { thread: { id: 'fresh' } };
+              return {
+                thread: { id: 'fresh' },
+                activePermissionProfile: { id: 'hyperneo-worker' },
+              };
             }
             return {};
           },

@@ -1,3 +1,5 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { planNudge } from '../../../../src/lib/neo/nudge.ts';
 import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
@@ -45,6 +47,7 @@ function setup(
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
+  createCodingPackTables(db);
   db.prepare(
     "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
   ).run();
@@ -87,6 +90,7 @@ function setup(
   } satisfies NeoPack;
   const packs: NeoPack[] = [pack];
   const runner = createNeoTodoRunner({
+    write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
     invoke: async (_caller, name, input) => {
@@ -198,6 +202,46 @@ describe('neo todo runner', () => {
       h.db.close();
     }
   });
+
+  test.each([true, undefined])(
+    'a start target asking for the sandbox (%s) carries the request into its preparation',
+    async (sandbox) => {
+      const h = setup();
+      try {
+        h.packs[0] = {
+          ...h.packs[0],
+          prepareExecution: async () => ({ ok: false, reason: 'unused' }),
+        };
+        const todo = h.store.addTodo(
+          crypto.randomUUID(),
+          'ask',
+          {
+            title: 'Rows',
+            doneWhen: 'PR merged',
+            check: { pack: 'coding', kind: 'pr', params: {} },
+            instruction: 'Build the rows.',
+            named: null,
+          },
+          1
+        );
+        h.sessions.create(todo.id, {
+          verb: 'start',
+          adapter: 'hyperneo',
+          place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+          ...(sandbox ? { sandbox } : {}),
+        });
+        await h.runner.start(todo.id);
+        const start = h.calls.find((call) => call.name === 'work.start')!.input;
+        expect(start.preparation).toEqual({
+          pack: 'coding',
+          parameters: {},
+          ...(sandbox ? { sandbox: true } : {}),
+        });
+      } finally {
+        h.db.close();
+      }
+    }
+  );
 
   test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
     const h = setup();
@@ -824,6 +868,7 @@ describe('neo todo runner', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
     const ask = store.openAsk({
@@ -844,6 +889,7 @@ describe('neo todo runner', () => {
     sessions.create(todo.id, { verb: 'send', ref });
     const calls: string[] = [];
     const runner = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async (_caller, name) => {
@@ -940,6 +986,7 @@ describe('neo todo runner', () => {
     const { db, store, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'login expired' }),
@@ -962,6 +1009,7 @@ describe('neo todo runner', () => {
     const todo = h.add();
     try {
       const runner = createNeoTodoRunner({
+        write: gatewayFor(h.db).run.bind(gatewayFor(h.db)),
         store: h.store,
         sessions: h.sessions,
         packs: () => [],
@@ -986,6 +1034,7 @@ describe('neo todo runner', () => {
     const { db, store, add } = setup();
     const todo = add();
     const accepted = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () =>
@@ -1017,6 +1066,7 @@ describe('neo todo runner', () => {
     const hint =
       'Claude Desktop did not import the new session. The task was not started. Open Claude Desktop, then ask Neo to start it again.';
     const waiting = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () =>
@@ -1054,9 +1104,10 @@ describe('neo todo runner follow-ups', () => {
   test('continue sends the next step and reopens the todo; retry goes again only before a session', async () => {
     const { store, runner, calls, add, setStatus } = setup();
     const todo = add();
-    expect(await runner.proceed(todo.id, 'next')).toEqual({
-      ok: false,
-      reason: 'not_started: this todo is todo and has no session to continue.',
+    expect(await runner.proceed(todo.id, 'next')).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'todo' },
+      records: [expect.stringContaining('not_started:')],
     });
     await runner.start(todo.id);
     store.updateTodo(store.getTodo(todo.id)!, { state: 'done', report: 'Done' }, 3);
@@ -1065,9 +1116,10 @@ describe('neo todo runner follow-ups', () => {
     expect(continued.ok && continued.todo).toMatchObject({ state: 'doing', report: null });
     expect(calls.at(-1)).toMatchObject({ name: 'work.send', input: { ref } });
     expect(String(calls.at(-1)?.input.message)).toContain('Now add tests.');
-    expect(await runner.retry(todo.id)).toEqual({
-      ok: false,
-      reason: 'not_retryable: only a failed todo with a worker target can be retried.',
+    expect(await runner.retry(todo.id)).toMatchObject({
+      ok: true,
+      todo: { id: todo.id, state: 'doing' },
+      records: [expect.stringContaining('not_retryable:')],
     });
   });
 });
@@ -1141,6 +1193,7 @@ describe('neo todo runner uncertainty', () => {
     const todo = add();
     const sessions = new NeoTodoSessionRepository(db);
     const flaky = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async (_caller, name, input) => {
@@ -1172,6 +1225,7 @@ describe('neo todo runner uncertainty', () => {
     await flaky.stop(store.updateTodo(resumed, { state: 'doing' }, 7));
     expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
     const unsupported = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async () =>
@@ -1182,6 +1236,7 @@ describe('neo todo runner uncertainty', () => {
     });
     expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
     const refusing = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'Offline.' }),
@@ -1357,6 +1412,7 @@ describe('a todo sent to an existing session', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    createCodingPackTables(db);
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
     store.openAsk({
@@ -1372,6 +1428,7 @@ describe('a todo sent to an existing session', () => {
     const lastActivity = Date.parse('2026-10-17T20:14:36Z');
     let confirmedAt = 0;
     const runner = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
       invoke: async (_caller, name) =>
@@ -1520,6 +1577,7 @@ describe('blocked todos', () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'login expired' }),
@@ -1943,6 +2001,7 @@ describe('current explicit removal behavior before recompute', () => {
           sessions = new NeoTodoSessionRepository(db);
         const effects: string[] = [];
         const runner = createNeoTodoRunner({
+          write: gatewayFor(db).run.bind(gatewayFor(db)),
           store,
           sessions,
           packs: () => [],
@@ -1959,8 +2018,14 @@ describe('current explicit removal behavior before recompute', () => {
         await runner.refresh(() => {});
         await runner.refresh(() => {});
         expect(await runner.start(todo.id)).toMatchObject({ ok: false });
-        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({ ok: false });
-        expect(await runner.retry(todo.id)).toMatchObject({ ok: false });
+        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_started:')],
+        });
+        expect(await runner.retry(todo.id)).toMatchObject({
+          ok: true,
+          records: [expect.stringContaining('not_retryable:')],
+        });
         expect(store.getTodo(todo.id)).toEqual(removed);
         expect(store.getTodo(todo.id)?.report).toBe(report);
         expect(store.getTodo(sibling.id)?.state).toBe('doing');

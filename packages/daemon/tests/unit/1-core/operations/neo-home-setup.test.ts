@@ -1,12 +1,22 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -74,6 +84,116 @@ afterEach(async () => {
 });
 
 describe('Neo home setup', () => {
+  test.each(['unreadable', 'dangling'])(
+    'initializes around a pre-existing %s ignore entry',
+    async (state) => {
+      const ignore = join(root, '.gitignore');
+      const missing = join(fixture, 'missing-ignore');
+      if (state === 'dangling') await symlink(missing, ignore);
+      else {
+        await writeFile(ignore, 'Human-owned policy.\n');
+        await chmod(ignore, 0);
+      }
+      try {
+        await expect(readFile(ignore, 'utf8')).rejects.toMatchObject({
+          code: state === 'dangling' ? 'ENOENT' : 'EACCES',
+        });
+        expect(await init()).toMatchObject({ ok: true });
+        expect(await git('ls-files')).toBe('README.md\ndirection.md');
+        expect(await git('show', 'HEAD:README.md')).toContain('# Neo home');
+        if (state === 'dangling') expect(await readlink(ignore)).toBe(missing);
+        else expect((await lstat(ignore)).mode & 0o777).toBe(0);
+      } finally {
+        if (state === 'unreadable') await chmod(ignore, 0o644);
+      }
+    }
+  );
+  test.each(['global', 'system', 'command', 'command-file'])(
+    'preserves exact inherited %s identity bytes in commits',
+    async (scope) => {
+      await git('config', '--unset', 'user.name');
+      const name =
+        scope === 'command' ? Buffer.from('Command 🦊 identity') : Buffer.from([0x4e, 0xe9, 0x6f]);
+      const profile = join(fixture, 'raw-profile');
+      await writeFile(
+        profile,
+        Buffer.concat([
+          Buffer.from('[user]\n name = '),
+          name,
+          Buffer.from('\n[i18n]\n commitEncoding = ISO-8859-1\n'),
+        ])
+      );
+      if (scope === 'system')
+        await git('config', '--file', process.env.GIT_CONFIG_GLOBAL!, '--unset', 'user.name');
+      const previous = new Map(
+        [
+          'GIT_CONFIG_GLOBAL',
+          'GIT_CONFIG_SYSTEM',
+          'GIT_CONFIG_NOSYSTEM',
+          'GIT_CONFIG_COUNT',
+          'GIT_CONFIG_KEY_0',
+          'GIT_CONFIG_VALUE_0',
+        ].map((key) => [key, process.env[key]])
+      );
+      if (scope === 'global') process.env.GIT_CONFIG_GLOBAL = profile;
+      if (scope === 'system') {
+        process.env.GIT_CONFIG_SYSTEM = profile;
+        process.env.GIT_CONFIG_NOSYSTEM = '0';
+      }
+      if (scope === 'command') {
+        process.env.GIT_CONFIG_COUNT = '1';
+        process.env.GIT_CONFIG_KEY_0 = 'user.name';
+        process.env.GIT_CONFIG_VALUE_0 = name.toString('utf8');
+      }
+      if (scope === 'command-file') {
+        process.env.GIT_CONFIG_COUNT = '1';
+        process.env.GIT_CONFIG_KEY_0 = 'include.path';
+        process.env.GIT_CONFIG_VALUE_0 = profile;
+      }
+      try {
+        expect(await init()).toMatchObject({ ok: true });
+        const child = spawnProcess(['git', 'cat-file', 'commit', 'HEAD'], {
+          cwd: root,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const [raw, error, code] = await Promise.all([
+          new Response(child.stdout).arrayBuffer(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        if (code) throw new Error(error);
+        const bytes = Buffer.from(raw);
+        const author = bytes.subarray(bytes.indexOf(Buffer.from('\nauthor ')) + 1);
+        const prefix = Buffer.concat([
+          Buffer.from('author '),
+          name,
+          Buffer.from(' <verify@example.invalid>'),
+        ]);
+        expect(author.subarray(0, prefix.length)).toEqual(prefix);
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  );
+  test('preserves quoted inherited identity below repository settings', async () => {
+    const name = 'Verify "Neo" \\ identity';
+    await git('config', '--file', process.env.GIT_CONFIG_GLOBAL!, 'user.name', name);
+    await git('config', '--unset', 'user.name');
+    expect(await init()).toMatchObject({ ok: true });
+    expect(await git('log', '-1', '--format=%an')).toBe(name);
+    await git('config', 'user.name', 'Local identity');
+    await writeFile(join(root, 'identity.md'), 'Identity precedence.');
+    await git('add', 'identity.md');
+    await git('commit', '-m', 'Local precedence control');
+    await rm(join(root, '.gitignore'));
+    await git('commit', '-am', 'Missing default ignore');
+    expect(await init()).toMatchObject({ ok: true });
+    expect(await git('log', '-1', '--format=%an')).toBe('Local identity');
+  });
   test('reserves project paths without running project SQL through the main repository', async () => {
     repo.saveProject({ id: 'synthetic-home', title: 'Synthetic', summary: '', context: '' }, 0);
     const list = spyOn(repo, 'listProjects').mockImplementation(() => {
@@ -145,7 +265,7 @@ describe('Neo home setup', () => {
     }
   );
   test.each(['untracked document', 'staged transcript'])(
-    'does not ignore unrelated changes during ignore repair: %s',
+    'repairs ignores alongside unrelated changes: %s',
     async (change) => {
       await init();
       await rm(join(root, '.gitignore'));
@@ -155,7 +275,7 @@ describe('Neo home setup', () => {
       await writeFile(join(root, path), 'Human draft.');
       if (change === 'staged transcript') await git('add', path);
       const before = await git('status', '--porcelain', '-z');
-      expect(await init()).toMatchObject({ ok: false, reason: expect.stringContaining('dirty') });
+      expect(await init()).toMatchObject({ ok: true });
       expect(await git('status', '--porcelain', '-z')).toBe(before);
     }
   );
@@ -194,22 +314,40 @@ describe('Neo home setup', () => {
       expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
     }
   );
-  test('recovers the staged bootstrap after service interruption', async () => {
-    await writeFile(join(root, 'README.md'), 'Preserved home introduction.');
-    await writeFile(join(root, 'direction.md'), '');
-    await writeFile(join(root, '.gitignore'), '.coordinators/\n');
-    await git('add', '--', 'README.md', '.gitignore', 'direction.md');
-    home = new NeoHomeRepository(root, repo);
-    expect(await init()).toMatchObject({ ok: true });
-    expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
-    expect(await git('status', '--porcelain')).toBe('');
-    expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
-  });
-  test('refuses bootstrap when pre-existing changes are staged', async () => {
+  test.each([false, true])(
+    'initializes without adopting staged bootstrap documents (retry: %s)',
+    async (retry) => {
+      await writeFile(join(root, 'README.md'), 'Preserved home introduction.');
+      await writeFile(join(root, 'direction.md'), 'Pending direction draft.');
+      await writeFile(join(root, '.gitignore'), '.coordinators/\n');
+      await git('add', '--', 'README.md', '.gitignore', 'direction.md');
+      home = new NeoHomeRepository(root, repo);
+      if (retry) {
+        await git('config', 'user.name', '');
+        await git('config', 'user.email', '');
+        await expect(init()).rejects.toThrow();
+        expect(await git('diff', '--cached', '--name-only')).toBe(
+          '.gitignore\nREADME.md\ndirection.md'
+        );
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('.coordinators/\n');
+        await git('config', 'user.name', 'Verify Neo');
+        await git('config', 'user.email', 'verify@example.invalid');
+      }
+      expect(await init()).toMatchObject({ ok: true });
+      expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
+      expect(await git('diff', '--cached', '--name-only')).toBe(
+        '.gitignore\nREADME.md\ndirection.md'
+      );
+      expect(await git('ls-tree', '--name-only', 'HEAD')).toBe('');
+      expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Pending direction draft.');
+      expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
+    }
+  );
+  test('bootstraps without committing pre-existing staged changes', async () => {
     await git('init', '--quiet');
     await writeFile(join(root, 'human.md'), 'Human draft.');
     await git('add', 'human.md');
-    expect(await init()).toMatchObject({ ok: false, reason: expect.stringContaining('dirty') });
+    expect(await init()).toMatchObject({ ok: true });
     expect(await git('diff', '--cached', '--name-only')).toBe('human.md');
   });
   test('belongs to the local human or root Neo', async () => {

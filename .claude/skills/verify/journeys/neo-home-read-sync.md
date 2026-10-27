@@ -8,9 +8,10 @@ real provider, credentials, GUI or port 8399 is used. GitHub is stubbed.
 
 Neo MCP and human RPC reads both independently synchronize. Peer updates must
 appear on the next read without a new turn. A failed fetch must retry on the
-next read; no holder lifetime or wake cache may gate it. Dirty human edits must
-remain byte-for-byte unchanged, with no fetch or HEAD change. The fixture Git
-wrapper counts nine fetches across those reads and retains RPC/MCP replies in
+next read; no holder lifetime or wake cache may gate it. Dirty human edits are no longer a refusal: the read synchronizes (one more
+fetch), returns the uncommitted bytes and leaves the edit and HEAD unchanged. The
+fixture Git wrapper counts ten fetches across those reads and retains RPC/MCP
+replies in
 `evidence/neo-home-read-sync.json`; its resources close in finally.
 
 The prior once-per-holder-wake cache was deleted in #8114. The focused home

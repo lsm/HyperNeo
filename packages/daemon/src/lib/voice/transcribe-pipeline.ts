@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 import type { SettingsManager } from '../settings-manager.ts';
+import { batchTranscriptionUrl } from './stream-protocols.ts';
 import {
   fetchTranscriptionWithRedirects,
   normalizeErrorMessage,
@@ -227,6 +228,7 @@ function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeC
       outcome: denied('Voice transcription endpoint must use http:// or https://'),
     };
   }
+  endpoint = batchTranscriptionUrl(endpoint);
   const audio = Buffer.from(ctx.data.audioBase64, 'base64');
   if (audio.byteLength === 0) return { ...ctx, outcome: denied('Audio data is empty') };
   if (audio.byteLength > MAX_AUDIO_BYTES) {
@@ -280,7 +282,7 @@ async function acquireTranscriptionCredentials(
       try {
         const liveEndpoint = new URL(liveVoice.endpoint);
         if (liveEndpoint.protocol === 'http:' || liveEndpoint.protocol === 'https:') {
-          endpoint = liveEndpoint;
+          endpoint = batchTranscriptionUrl(liveEndpoint);
         }
       } catch {}
       allowPrivateNetwork = liveVoice.allowPrivateNetwork ?? false;
@@ -288,11 +290,19 @@ async function acquireTranscriptionCredentials(
       tlsCaPem = liveVoice.tlsCaPem?.trim() || undefined;
       model = liveVoice.model?.trim() || model;
     }
+    const keyEndpoint = (() => {
+      try {
+        const raw = new URL(liveVoice?.endpoint ?? '');
+        return raw.protocol === 'http:' || raw.protocol === 'https:' ? raw : endpoint;
+      } catch {
+        return endpoint;
+      }
+    })();
     return withTimeout(
       resolveApiKey(
         liveVoice?.apiKey,
         liveVoice?.apiKeyEndpoint,
-        endpoint,
+        keyEndpoint,
         ctx.deps.credentialManager
       ),
       CREDENTIAL_LOOKUP_TIMEOUT_MS,

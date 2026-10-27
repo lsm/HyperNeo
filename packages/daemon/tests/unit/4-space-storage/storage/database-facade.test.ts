@@ -1,8 +1,9 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { existsSync, unlinkSync } from 'node:fs';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { Database } from '../../../../src/storage';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 
 function createTestSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -45,9 +46,13 @@ describe('Database Facade', () => {
     if (db) {
       db.close();
     }
-    try {
-      require('fs').unlinkSync(dbPath);
-    } catch {}
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        unlinkSync(`${dbPath}${suffix}`);
+      } catch {}
+    }
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
   });
 
   describe('constructor and initialize', () => {

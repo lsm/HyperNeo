@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -20,8 +20,8 @@ import type {
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-function makeTempDbPath(): string {
-  return join(tmpdir(), `task-id-cache-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+function makeTempDbDir(): string {
+  return mkdtempSync(join(tmpdir(), 'task-id-cache-'));
 }
 
 function makeSession(id: string, type: SessionType, context?: SessionContext): Session {
@@ -73,6 +73,7 @@ function userMessage(text: string, uuid: string): SDKMessage {
 const TASK_RESOLUTION_SQL = /SELECT task_id, type FROM sessions/;
 
 describe('SDK writer task attribution across transactions', () => {
+  let dbDir: string;
   let dbPath: string;
   let db: Database;
   let reactiveDb: ReactiveDatabase;
@@ -80,7 +81,8 @@ describe('SDK writer task attribution across transactions', () => {
   let taskResolutions: number;
 
   beforeEach(async () => {
-    dbPath = makeTempDbPath();
+    dbDir = makeTempDbDir();
+    dbPath = join(dbDir, 'test.db');
     db = new Database(dbPath);
     reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
@@ -98,9 +100,7 @@ describe('SDK writer task attribution across transactions', () => {
       db.close();
     } catch {}
     try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
+      rmSync(dbDir, { recursive: true, force: true });
     } catch {}
   });
 
@@ -296,6 +296,7 @@ describe('SDK writer task attribution across transactions', () => {
 });
 
 describe('saveUserMessageCore / runPostSaveSideEffects composition contract', () => {
+  let dbDir: string;
   let dbPath: string;
   let db: Database;
   let reactiveDb: ReactiveDatabase;
@@ -304,7 +305,8 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
   let events: TableChangeEvent[];
 
   beforeEach(async () => {
-    dbPath = makeTempDbPath();
+    dbDir = makeTempDbDir();
+    dbPath = join(dbDir, 'test.db');
     db = new Database(dbPath);
     reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
@@ -319,9 +321,7 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
       db.close();
     } catch {}
     try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
+      rmSync(dbDir, { recursive: true, force: true });
     } catch {}
   });
 

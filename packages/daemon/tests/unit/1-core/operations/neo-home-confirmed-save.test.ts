@@ -269,6 +269,7 @@ describe('Neo human-confirmed home saves', () => {
     }
   );
   test('still refuses credential content and non-owner callers with a bound human yes', async () => {
+    await git('remote', 'add', 'origin', join(fixture, 'synthetic-remote.git'));
     const sensitive = { ...input, content: '-----BEGIN PRIVATE KEY-----\nSynthetic\n' };
     const questionId = await proposal(sensitive);
     expect(await call('neo.home.save', { ...sensitive, questionId })).toMatchObject({

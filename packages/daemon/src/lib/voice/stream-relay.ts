@@ -3,16 +3,21 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import WebSocket from 'ws';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
-import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
-import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
-import { joinFinals, streamProtocol, type StreamProtocol } from './stream-protocols.ts';
-
 import {
   voiceDiagnostic,
-  voiceSocketReason,
-  voiceSocketErrorCode,
   voicePeerReasonBytes,
+  voiceSocketErrorCode,
+  voiceSocketReason,
 } from './diagnostics.ts';
+import {
+  BATCH_TRANSCRIPTIONS_PATH,
+  joinFinals,
+  type StreamProtocol,
+  serviceBaseEndpoint,
+  streamProtocol,
+} from './stream-protocols.ts';
+import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
+import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
@@ -28,6 +33,7 @@ export interface VoiceStreamText {
 
 export interface VoiceStreamDeps {
   clientId?: string;
+  language?: 'zh' | 'en';
   voice: () => VoiceSettings | undefined;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
   transcribeWav: (wavBase64: string) => Promise<VoiceTranscribeOutcome>;
@@ -47,11 +53,31 @@ export function admitVoiceStream(voice: VoiceSettings | undefined): Gate<VoiceSe
   return { value: voice };
 }
 
+function derivedStreamUrl(batchEndpoint: string): string | undefined {
+  try {
+    const url = new URL(batchEndpoint);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+    const pathname = url.pathname.replace(/\/+$/, '');
+    const base = serviceBaseEndpoint(url)
+      ? pathname
+      : pathname.endsWith(BATCH_TRANSCRIPTIONS_PATH)
+        ? pathname.slice(0, -BATCH_TRANSCRIPTIONS_PATH.length)
+        : null;
+    if (base === null) return undefined;
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = `${base}/listen`;
+    url.search = '';
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export function voiceStreamRoute(
   voice: VoiceSettings
 ): { url: URL; protocol: StreamProtocol } | null {
   const protocol = streamProtocol(voice.streamProtocol);
-  const endpoint = voice.streamEndpoint?.trim();
+  const endpoint = voice.streamEndpoint?.trim() || derivedStreamUrl(voice.endpoint);
   if (!protocol || !endpoint) return null;
   let url: URL;
   try {
@@ -116,6 +142,7 @@ async function openAsrSocket(
     if (apiKey && url.protocol !== 'wss:')
       return { reason: 'Voice API keys are only sent over TLS' };
     const target = new URL(url);
+    if (deps.language) target.searchParams.set('language', deps.language);
     target.hostname = resolved.hostname;
     const pinned = target.hostname !== url.hostname;
     const tls = { ...voiceStreamTls(voice), ...(pinned ? { servername: url.hostname } : {}) };

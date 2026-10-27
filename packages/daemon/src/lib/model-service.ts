@@ -33,7 +33,10 @@ import {
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
 import { getProviderRegistry } from './providers/registry.js';
-import { raceWithTimeout } from './providers/discovery-refresh-pipeline.js';
+import {
+  PROVIDER_MODEL_LOAD_TIMEOUT_MS,
+  raceWithTimeout,
+} from './providers/discovery-refresh-pipeline.js';
 import {
   classifyProviderLoadOutcomes,
   type ProviderLoadOutcome,
@@ -819,8 +822,6 @@ function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[
   return missing.length === 0 ? models : [...models, ...missing];
 }
 
-const PROVIDER_MODEL_LOAD_TIMEOUT_MS = 10_000;
-
 const refreshPreview = new Map<string, ModelInfo[]>();
 const refreshPreviewListeners = new Set<() => void>();
 
@@ -1391,7 +1392,7 @@ export function markRefreshAttemptedFor(providerIds: string[]): void {
 
 export async function refreshModels(
   signal?: AbortSignal,
-  options?: { forceRemote?: boolean }
+  options?: { forceRemote?: boolean; allowPartial?: boolean }
 ): Promise<void> {
   const cacheKey = 'global';
   const forceRemote = options?.forceRemote ?? false;
@@ -1412,7 +1413,7 @@ export async function refreshModels(
     }
     const superseded = (cacheGeneration.get(cacheKey) ?? 0) !== generationAtJoin;
     if (!superseded && joinedForced) {
-      if (joinError !== undefined) throw joinError;
+      if (joinError !== undefined && !options?.allowPartial) throw joinError;
       return;
     }
   }
@@ -1437,7 +1438,7 @@ export async function refreshModels(
     bumpProviderCatalogEpoch();
     if (current.forcedDiscoveryError !== undefined) {
       clearFailedStrictProviderCaches(current);
-      if (current.loadedProviderIds.length > 0) {
+      if (current.loadedProviderIds.length > 0 || options?.allowPartial) {
         applyRefreshedModels(
           cacheKey,
           current.models,
@@ -1447,7 +1448,8 @@ export async function refreshModels(
           new Set(current.unavailableProviderIds)
         );
       }
-      throw current.forcedDiscoveryError;
+      if (!options?.allowPartial) throw current.forcedDiscoveryError;
+      return;
     }
     applyRefreshedModels(
       cacheKey,

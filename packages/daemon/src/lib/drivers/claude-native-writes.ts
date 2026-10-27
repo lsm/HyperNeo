@@ -1,9 +1,30 @@
-import { appendFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { prepareWorkerSandbox, workerSandboxPaths } from './worker-sandbox.ts';
+import { secretNamePatterns } from '../neo/secret-read-rules.ts';
+import {
+  excludeWorkerConfig,
+  prepareWorkerSandbox,
+  workerSandboxPaths,
+  workerSecretPaths,
+  workerWritableRoots,
+} from './worker-sandbox.ts';
 
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
+const RUNTIME_MANAGED_ENV_KEYS = [
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'CLAUDE_CODE_TMPDIR',
+  'XDG_CACHE_HOME',
+  'GH_CONFIG_DIR',
+  'HYPERNEO_WORKTREES',
+  'HYPERNEO_EVIDENCE',
+  'HYPERNEO_BUILDS',
+] as const;
+const managedEnv = (env: Record<string, string>) =>
+  Object.fromEntries(RUNTIME_MANAGED_ENV_KEYS.map((key) => [key, env[key]]));
 const markerPath = (root: string) => join(root, '.git/hyperneo-native-writes.json');
 const settingsPath = (root: string) => join(root, '.claude/settings.local.json');
 const editRule = (path: string, tree = false) =>
@@ -20,25 +41,31 @@ function policy(root: string, roots: string[], siblings: string[]) {
       allowUnsandboxedCommands: false,
       excludedCommands: [],
       filesystem: {
-        allowWrite: [root, join(root, '.git'), ...Object.values(workerSandboxPaths(root))],
+        denyRead: [...workerSecretPaths(), ...secretNamePatterns(homedir())],
+        allowWrite: [root, join(root, '.git'), ...workerWritableRoots(root)],
         denyWrite: [
           ...roots,
           ...siblings.filter((sibling) => sibling !== root),
           markerPath(root),
           settingsPath(root),
+          workerSandboxPaths(root).GH_CONFIG_DIR,
           join(root, '.git/hyperneo-worker-sandbox'),
         ],
       },
       network: {
         allowedDomains: ['*'],
-        allowUnixSockets: [],
-        allowAllUnixSockets: false,
+        allowAllUnixSockets: true,
         allowLocalBinding: true,
       },
     },
     permissions: {
       allow: [editRule(root, true)],
       deny: [
+        ...secretNamePatterns(homedir()).map((path) => `Read(/${path})`),
+        ...workerSecretPaths().flatMap((path) => [
+          editRule(path).replace(/^Edit\(/, 'Read('),
+          editRule(path, true).replace(/^Edit\(/, 'Read('),
+        ]),
         ...[...roots, ...siblings.filter((sibling) => sibling !== root)].map((path) =>
           editRule(path, true)
         ),
@@ -50,10 +77,14 @@ function policy(root: string, roots: string[], siblings: string[]) {
   };
 }
 
-async function writePolicy(root: string, value: ReturnType<typeof policy>) {
-  const temporary = `${settingsPath(root)}.${crypto.randomUUID()}.tmp`;
+async function writeAtomic(path: string, value: unknown) {
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
-  await rename(temporary, settingsPath(root));
+  try {
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 async function install(root: string, roots: string[]) {
@@ -62,6 +93,7 @@ async function install(root: string, roots: string[]) {
     .map((entry) => join(dirname(root), entry.name));
   const workers: { root: string; roots: string[] }[] = [];
   for (const sibling of siblings) {
+    if (sibling === root) continue;
     try {
       workers.push({
         root: sibling,
@@ -75,12 +107,9 @@ async function install(root: string, roots: string[]) {
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');
-  await writeFile(settingsPath(root), JSON.stringify(policy(root, roots, siblings)), {
-    flag: 'wx',
-    mode: 0o600,
-  });
-  await appendFile(join(root, '.git/info/exclude'), '\n/.claude/settings.local.json\n');
-  await writeFile(markerPath(root), JSON.stringify({ roots }), { flag: 'wx', mode: 0o600 });
+  await writeAtomic(settingsPath(root), policy(root, roots, siblings));
+  await excludeWorkerConfig(root, '/.claude/settings.local.json');
+  await writeAtomic(markerPath(root), { roots });
   for (const worker of workers) {
     if (!(await lstat(join(worker.root, '.claude'))).isDirectory())
       throw new Error('Native write policy requires an in-clone .claude directory');
@@ -88,7 +117,7 @@ async function install(root: string, roots: string[]) {
     const existing = await readFile(settingsPath(worker.root), 'utf8')
       .then(JSON.parse)
       .catch(() => computed);
-    await writePolicy(worker.root, { ...computed, ...existing, permissions: computed.permissions });
+    await writeAtomic(settingsPath(worker.root), withSecretDenials(computed, existing));
   }
 }
 
@@ -100,6 +129,43 @@ export function installClaudeNativeWrites(directory: string, roots: string[]): P
   return next;
 }
 
+function withSecretDenials(
+  computed: ReturnType<typeof policy>,
+  existing: Partial<ReturnType<typeof policy>>,
+  resetFilesystem = false
+) {
+  return {
+    ...computed,
+    ...existing,
+    env: { ...(existing?.env ?? computed.env), ...managedEnv(computed.env) },
+    permissions: {
+      ...computed.permissions,
+      ...existing?.permissions,
+      deny: [...new Set([...computed.permissions.deny, ...(existing?.permissions?.deny ?? [])])],
+    },
+    sandbox: {
+      ...computed.sandbox,
+      ...existing?.sandbox,
+      network: {
+        ...computed.sandbox.network,
+        ...existing?.sandbox?.network,
+        allowAllUnixSockets: computed.sandbox.network.allowAllUnixSockets,
+      },
+      filesystem: {
+        ...(resetFilesystem
+          ? computed.sandbox.filesystem
+          : { ...computed.sandbox.filesystem, ...existing?.sandbox?.filesystem }),
+        denyRead: [
+          ...new Set([
+            ...computed.sandbox.filesystem.denyRead,
+            ...(existing?.sandbox?.filesystem?.denyRead ?? []),
+          ]),
+        ],
+      },
+    },
+  };
+}
+
 export async function readClaudeWorkerSandbox(directory: string | undefined) {
   if (!directory) return null;
   const marker = await readFile(markerPath(directory), 'utf8').catch((error) => {
@@ -108,18 +174,20 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   });
   if (marker === null) return null;
   const { roots } = Marker.parse(JSON.parse(marker));
-  await prepareWorkerSandbox(directory);
-  const computed = policy(directory, roots, []);
   const existing = await readFile(settingsPath(directory), 'utf8')
     .then(JSON.parse)
     .catch(() => ({}));
-  if (!existing?.env || !existing?.sandbox) {
-    Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });
-    await writePolicy(directory, { ...computed, ...existing });
+  if (existing?.sandbox?.enabled !== false) await prepareWorkerSandbox(directory);
+  const computed = policy(directory, roots, []);
+  const before = JSON.stringify(existing);
+  const upgraded = withSecretDenials(computed, existing, true);
+  const env: Record<string, string> = { ...upgraded.env };
+  if (upgraded.sandbox.enabled === false) {
+    for (const key of RUNTIME_MANAGED_ENV_KEYS) {
+      if (!key.startsWith('HYPERNEO_')) delete env[key];
+    }
   }
-  if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
-    existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
-    await writePolicy(directory, { ...computed, ...existing });
-  }
-  return { ...computed, ...existing } as typeof computed;
+  const normalized = { ...upgraded, env };
+  if (before !== JSON.stringify(normalized)) await writeAtomic(settingsPath(directory), normalized);
+  return normalized;
 }

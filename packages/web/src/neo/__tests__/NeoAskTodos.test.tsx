@@ -91,6 +91,30 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
+  it('loads question text and todo bodies only after opening the summary', async () => {
+    locale.value = 'en';
+    const summary = entry({
+      summary: { todoCount: 1, questionCount: 1, openQuestionCount: 1 },
+      todos: [todo('one', { instruction: null })],
+      questions: [],
+    });
+    const answer = vi.fn();
+    const load = vi.fn().mockResolvedValue({
+      ...summary,
+      summary: undefined,
+      questions: [question('choice', { kind: 'choice', options: ['Ship', 'Wait'] })],
+      todos: [todo('one', { instruction: 'Full task instructions', report: 'Full worker report' })],
+    });
+    const app = render(<NeoAskTodos entry={summary} onAnswer={answer} onLoadDetails={load} />);
+    expect(load).not.toHaveBeenCalled();
+    expect(app.queryByRole('button', { name: 'Ship' })).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: /Show details.*Todo one/i }));
+    await waitFor(() => expect(app.getByText('Full worker report')).toBeTruthy());
+    expect(app.getByText('Full task instructions')).toBeTruthy();
+    expect(load).toHaveBeenCalledWith('ask');
+    fireEvent.click(app.getByRole('button', { name: 'Ship' }));
+    expect(answer).toHaveBeenCalledWith('choice', ['Ship']);
+  });
   it('copies a quote after expanding and reopening a collapsed card', async () => {
     locale.value = 'en';
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
@@ -481,7 +505,13 @@ describe('NeoAskTodos', () => {
     locale.value = 'en';
     const app = render(
       <NeoAskTodos
-        entry={entry({ todos: [todo('a', { report: 'More here' }), todo('b'), todo('c')] })}
+        entry={entry({
+          todos: [
+            todo('a', { report: 'More here' }),
+            todo('b', { instruction: null }),
+            todo('c', { instruction: null }),
+          ],
+        })}
         onAnswer={vi.fn()}
       />
     );
@@ -1207,6 +1237,71 @@ describe('NeoAskTodos in English', () => {
     expect(app.getByRole('button', { name: 'Open Todo a' }).textContent).toContain('Open');
     expect(app.getByRole('button', { name: 'Ask actions' })).toBeTruthy();
     expect(app.container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
+  });
+});
+
+describe('Settled question previews', () => {
+  it.each(['answered', 'retired'] as const)(
+    'keeps a long %s question bounded until Read all opens it',
+    async (state) => {
+      locale.value = 'en';
+      const text =
+        '## A settled decision\n\n' +
+        'Long synthetic context. '.repeat(60) +
+        '\n\n**Final detail**';
+      const view = render(
+        <NeoAskTodos
+          entry={entry({
+            questions: [
+              question('long', {
+                text,
+                state,
+                answer: state === 'answered' ? 'Keep the decision' : null,
+                answeredAt: state === 'answered' ? 1 : null,
+                retiredReason: 'No longer needed',
+              }),
+            ],
+          })}
+          onAnswer={vi.fn()}
+        />
+      );
+      fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+      const row = view.container.querySelector('#neo-ref-question-long')!;
+      await waitFor(() => expect(row.textContent).toContain('A settled decision'));
+      expect(row.textContent).not.toContain('Final detail');
+      expect(row.textContent!.length).toBeLessThan(450);
+      expect(row.textContent).toContain(
+        state === 'answered' ? 'Keep the decision' : 'No longer needed'
+      );
+      fireEvent.click(view.getByRole('button', { name: 'Read all', exact: true }));
+      const dialog = await view.findByRole('dialog');
+      await waitFor(() => expect(dialog.querySelector('strong')?.textContent).toBe('Final detail'));
+      expect(dialog.textContent).toContain('Long synthetic context. '.repeat(60).trim());
+      fireEvent.click(view.getByRole('button', { name: /close/i }));
+      await waitFor(() => expect(view.queryByRole('dialog')).toBeNull());
+      expect(row.textContent).not.toContain('Final detail');
+    }
+  );
+
+  it('keeps short questions inline and uses a localized full-text control', async () => {
+    const view = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('short', { text: '**Brief question**', state: 'answered', answer: 'Yes' }),
+            question('long', { text: '长问题。'.repeat(120), state: 'retired' }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+    await waitFor(() =>
+      expect(view.container.querySelector('#neo-ref-question-short strong')?.textContent).toBe(
+        'Brief question'
+      )
+    );
+    expect(view.getAllByRole('button', { name: '阅读全文', exact: true })).toHaveLength(1);
   });
 });
 

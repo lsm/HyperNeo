@@ -1,3 +1,4 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -394,6 +395,7 @@ test('a hold arriving during the runner status lookup prevents a stale reminder'
         'todo'
       );
     const runner = createNeoTodoRunner({
+      write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: service.todos,
       sessions: service.todoSessions,
       packs: () => [],

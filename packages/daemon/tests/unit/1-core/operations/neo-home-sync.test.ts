@@ -59,6 +59,7 @@ const call = async (name: string, input: unknown) => {
     ok: boolean;
     reason?: string;
     commit?: string;
+    questionId?: string;
     question: { id: string };
   };
 };
@@ -96,6 +97,164 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test('publishes the requested document without adopting staged human ignore edits', async () => {
+    await commit(root, '.gitignore', '# Legacy home\n');
+    await git(root, 'push');
+    const pending = '# Legacy home\nhuman-draft/\n';
+    await writeFile(join(root, '.gitignore'), pending);
+    await git(root, 'add', '.gitignore');
+    const saved = await call('neo.home.save', input);
+    expect(saved.ok).toBe(true);
+    expect(await git(remote, 'show', 'main:.gitignore')).toBe('# Legacy home');
+    expect(await git(root, 'show', ':.gitignore')).toBe(pending.trim());
+    expect(await git(root, 'diff', '--cached', '--name-only')).toBe('.gitignore');
+    expect(await git(remote, 'show', 'main:digest.md')).toBe(input.content.trim());
+  });
+  test('saves with origin and an unrelated staged document while fetching peer progress', async () => {
+    await writeFile(join(root, 'staged.md'), 'Unrelated draft.\n');
+    await git(root, 'add', 'staged.md');
+    await commit(peer, 'peer-progress.md', 'Peer progress.\n');
+    await git(peer, 'push');
+    const result = await call('neo.home.save', input);
+    expect(result.ok).toBe(true);
+    expect(await git(root, 'diff', '--cached', '--name-only')).toBe('staged.md');
+    expect(await readFile(join(root, 'staged.md'), 'utf8')).toBe('Unrelated draft.\n');
+    expect(await readFile(join(root, 'peer-progress.md'), 'utf8')).toBe('Peer progress.\n');
+    expect(await git(remote, 'rev-parse', 'main')).toBe(await git(root, 'rev-parse', 'HEAD'));
+    expect(await git(root, 'ls-tree', '--name-only', 'HEAD', '--', 'staged.md')).toBe('');
+  });
+  test('does not publish credential-like bytes in a commit message', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    const message = 'Rotate ghp_' + 'synthetic'.repeat(5);
+    const result = await call('neo.home.save', { ...input, message });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(result.reason).toContain(await git(root, 'rev-parse', 'HEAD'));
+    expect(result.reason).toContain('local commit');
+    expect(result.reason).toContain('rewrite');
+    expect(await git(root, 'log', '-1', '--format=%B')).toBe(message);
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
+  });
+  test('does not publish credential-like bytes introduced in binary history', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    await commit(root, 'fixture.bin', '\0TOKEN=' + 'synthetic'.repeat(4));
+    const result = await call('neo.home.save', input);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
+  });
+  test.each(['global', 'system', 'local', 'command'])(
+    'reads and resolves conflicts without executing a %s merge driver',
+    async (scope) => {
+      await commit(root, '.gitattributes', 'merged.md merge=home-probe\n');
+      await commit(root, 'merged.md', 'Base version.\n');
+      await git(root, 'push');
+      await git(peer, 'pull', '--ff-only');
+      const local = 'Human local version.\n';
+      await commit(root, 'merged.md', local);
+      await commit(peer, 'merged.md', 'Human peer version.\n');
+      await git(peer, 'push');
+      const marker = join(fixture, 'merge-ran-outside-home');
+      const key = 'merge.home-probe.driver';
+      const driver = `printf executed > '${marker}'; exit 1`;
+      const config = join(fixture, 'merge-gitconfig');
+      const previous = new Map(
+        [
+          'GIT_CONFIG_GLOBAL',
+          'GIT_CONFIG_SYSTEM',
+          'GIT_CONFIG_NOSYSTEM',
+          'GIT_CONFIG_COUNT',
+          'GIT_CONFIG_KEY_0',
+          'GIT_CONFIG_VALUE_0',
+        ].map((key) => [key, process.env[key]])
+      );
+      if (scope === 'local') await git(root, 'config', key, driver);
+      else await git(root, 'config', '--file', config, key, driver);
+      if (scope === 'global') process.env.GIT_CONFIG_GLOBAL = config;
+      if (scope === 'system') {
+        process.env.GIT_CONFIG_SYSTEM = config;
+        process.env.GIT_CONFIG_NOSYSTEM = '0';
+      }
+      if (scope === 'command') {
+        process.env.GIT_CONFIG_COUNT = '1';
+        process.env.GIT_CONFIG_KEY_0 = key;
+        process.env.GIT_CONFIG_VALUE_0 = driver;
+      }
+      try {
+        const conflict = await call('neo.home.read', { path: 'merged.md' });
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(conflict.reason).toContain('conflict');
+        expect(
+          (
+            await call('neo.question.answer', {
+              questionId: conflict.questionId,
+              answer: ['Keep local'],
+            })
+          ).ok
+        ).toBe(true);
+        const result = await call('neo.home.save', {
+          path: 'merged.md',
+          content: local,
+          message: 'Apply human choice',
+          conflictQuestionId: conflict.questionId,
+        });
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(await readFile(join(root, 'merged.md'), 'utf8')).toBe(local);
+        expect(await git(remote, 'show', 'main:merged.md')).toBe(local.trim());
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  );
+  test.each([
+    ['smudge', false],
+    ['process', false],
+    ['smudge', true],
+    ['process', true],
+  ])(
+    'reads peer progress without executing an inherited %s filter (conditional: %s)',
+    async (driver, conditional) => {
+      await commit(peer, '.gitattributes', 'peer.md filter=home-probe\n');
+      await commit(peer, 'peer.md', 'Unfiltered peer progress.\n');
+      await git(peer, 'push');
+      const config = join(fixture, 'gitconfig');
+      const marker = join(fixture, 'filter-ran-outside-home');
+      await git(
+        root,
+        'config',
+        '--file',
+        config,
+        `filter.home-probe.${driver}`,
+        `printf executed > '${marker}'; ${driver === 'process' ? 'exit 1' : 'cat'}`
+      );
+      await git(root, 'config', '--file', config, 'filter.home-probe.required', 'true');
+      const previous = process.env.GIT_CONFIG_GLOBAL;
+      if (conditional) {
+        const include = join(fixture, 'conditional-gitconfig');
+        await writeFile(
+          include,
+          `[includeIf "gitdir:${root}/.git/worktrees/"]\n path = ${config}\n`
+        );
+        process.env.GIT_CONFIG_GLOBAL = include;
+      } else process.env.GIT_CONFIG_GLOBAL = config;
+      try {
+        const result = await call('neo.home.read', { path: 'peer.md' }).catch((error) => ({
+          ok: false,
+          reason: error.message,
+        }));
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(await readFile(join(root, 'peer.md'), 'utf8')).toBe('Unfiltered peer progress.\n');
+      } finally {
+        if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+        else process.env.GIT_CONFIG_GLOBAL = previous;
+      }
+    }
+  );
   test('pulls peer changes, commits and pushes exact content, including an unchanged retry', async () => {
     await commit(peer, 'peer.md', 'Peer progress.\n');
     await git(peer, 'push');
@@ -153,15 +312,23 @@ describe('Neo home save remote sync', () => {
     expect(await readFile(join(root, input.path)).catch(() => null)).toBeNull();
     expect(await git(root, 'status', '--porcelain')).toBe('');
   });
-  test('preserves dirty human work without pulling or writing', async () => {
+  test('saves alongside an unrelated edited home document', async () => {
     await writeFile(join(root, 'README.md'), 'Human draft.');
-    const head = await git(root, 'rev-parse', 'HEAD');
     expect(await call('neo.home.save', input)).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('dirty'),
+      ok: true,
     });
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Human draft.');
-    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await git(root, 'show', `HEAD:${input.path}`)).toBe(input.content.trim());
+  });
+  test('keeps credential-like local history off the remote', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    await commit(root, 'fixture.md', 'TOKEN=' + 'synthetic'.repeat(4));
+    expect(await call('neo.home.save', input)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('content_refused'),
+    });
+    expect(await git(root, 'show', `HEAD:${input.path}`)).toBe(input.content.trim());
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
   });
   test('leaves a human rebase paused for editing rather than aborting it', async () => {
     await commit(root, 'local.md', 'Local commit.');

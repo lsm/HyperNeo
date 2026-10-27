@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { Logger } from '../logger.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from '../utils/script-utils.ts';
 import {
@@ -12,6 +13,7 @@ import {
 import type { ConnectorOutcome } from './connectors/connector.ts';
 
 export const DEFAULT_GH_LOOKUP_TIMEOUT_MS = 30_000;
+const log = new Logger('GhLookup');
 export type GhResponseQuota = {
   status: number | null;
   resource: string | null;
@@ -174,6 +176,14 @@ export async function runGhJson(
 ): Promise<ConnectorOutcome> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GH_LOOKUP_TIMEOUT_MS;
 
+  log.info('gh lookup', {
+    resource: options?.resourceHint ?? null,
+    host: options?.hostHint ?? null,
+    tool: args[0] ?? null,
+    subcommand: args[1] ?? null,
+    endpoint: args.find((arg) => arg.startsWith('repos/')) ?? args[2] ?? null,
+  });
+
   const ghEnv = buildGitHubLookupEnv();
   if (options?.stripGHRepo) delete ghEnv.GH_REPO;
 
@@ -223,7 +233,12 @@ export async function runGhJson(
   };
   const remaining = numberHeader('x-ratelimit-remaining');
   const reset = numberHeader('x-ratelimit-reset');
-  if (response)
+  if (response) {
+    log.info('gh lookup response', {
+      status: response.status,
+      resource: response.headers.get('x-ratelimit-resource'),
+      remaining,
+    });
     options?.onResponse?.({
       status: response.status,
       resource: response.headers.get('x-ratelimit-resource'),
@@ -232,6 +247,7 @@ export async function runGhJson(
       retryAfterMs,
       requestId: response.headers.get('x-github-request-id'),
     });
+  }
 
   if (exitCode !== 0) {
     const stderrText = stderrResult.text.trim();

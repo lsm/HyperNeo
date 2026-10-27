@@ -4,11 +4,11 @@ import { isLocalUser } from '../../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
-import { NeoHomeRepository, type HomeResult } from './repository.ts';
 import { requireHomeConfirmation } from './confirmation.ts';
 import { reportHomeConflict, requireHomeChoice } from './conflicts.ts';
 import { HomeReadInput, HomeReadResult } from './read.ts';
-import { HomeSaveInput, HomeSaveResult, requireHomePath, requireHomeSave } from './save.ts';
+import { type HomeResult, NeoHomeRepository } from './repository.ts';
+import { HomeSaveInput, HomeSaveResult, requireHomePath } from './save.ts';
 
 export function createNeoHomeOperations(
   service: Pick<NeoService, 'repo' | 'todos' | 'defaultSessionId'>,
@@ -43,7 +43,6 @@ export function createNeoHomeOperations(
     .input(['input', 'caller'])
     .pipe(owner, 'caller', 'result:outcome')
     .pipe(requireHomePath, 'input', 'result:outcome')
-    .pipe(requireHomeSave, 'outcome', 'result:outcome')
     .pipe(
       (input: HomeSaveInput) =>
         requireHomeConfirmation(input, service.todos, service.defaultSessionId()),
@@ -51,7 +50,7 @@ export function createNeoHomeOperations(
       'result:outcome'
     )
     .pipe(
-      (input) => requireHomeChoice(input, service.todos, service.defaultSessionId()),
+      (input) => requireHomeChoice(input, service.todos, service.defaultSessionId(), home.root),
       'outcome',
       'result:outcome'
     )
@@ -83,7 +82,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.read',
       description:
-        'Read a complete curated home document and its SHA-256. With origin/upstream, synchronizes using bounded noninteractive fetch and isolated rebase for each read through the same path as a human RPC read. Publishes only a fast-forward that preserves ignored and untracked files. Local-only reads include human edits; remote-backed dirty changes refuse synchronization unchanged. A sync conflict returns questionId for one human choice with a full-version document; answering alone does not apply it; neo.home.save can apply a current recorded version choice. includeRemote optionally adds the browser origin URL without fetching. Never initializes or authors a commit. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
+        'Read a complete curated home document and its SHA-256. With origin/upstream, synchronizes using bounded noninteractive fetch and isolated rebase for each read through the same path as a human RPC read. Publishes only a fast-forward that preserves ignored and untracked files. Local-only reads include human edits; synchronization relies on Git merge errors rather than a blanket dirty-state refusal. A sync conflict returns questionId for one human choice with a full-version document; answering alone does not apply it; neo.home.save can apply the exact recorded version choice. includeRemote optionally adds the browser origin URL without fetching. Never initializes or authors a commit. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
       inputSchema: HomeReadInput,
       resultSchema: HomeReadResult,
       policy: { safetyClass: 'read', roles: ['neo'] },
@@ -92,7 +91,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.save',
       description:
-        'Save one curated document and commit locally. With a configured origin/upstream, fetches and rebases in an isolated worktree before a protected fast-forward, then writes and pushes. Network steps are noninteractive and stop after 30 seconds. A conflict leaves the original home untouched and returns questionId for one human choice with a full-version document; answering alone does not apply that choice; conflictQuestionId applies a current human Keep local/Use remote answer to one regular conflicting document using exact selected bytes and a merge preserving both histories. Refuses stale revisions or human edits. Multi-file, deletion and Review together choices require further review. Direction/mandate still need a separate exact-path/SHA questionId; the version choice never bypasses it. Remote publication uses a revision lease; push_failed retains the named local commit for retry. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require questionId: a matching human yes on a root-Neo question bound to the exact path and content SHA-256. Appends the confirmed decision and commits both files with Neo-Confirmed-By. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
+        'Save one curated document and commit locally. With a configured origin/upstream, fetches and rebases in an isolated worktree before a protected fast-forward, then writes and pushes. Network steps are noninteractive and stop after 30 seconds. A conflict leaves the original home untouched and returns questionId for one human choice with a full-version document; answering alone does not apply that choice; conflictQuestionId applies a human Keep local/Use remote answer from its recorded path and version to one regular conflicting document using exact selected bytes and a merge preserving both histories. Multi-file, deletion and Review together choices require further review. Direction/mandate still need a separate exact-path/SHA questionId; the version choice never bypasses it. RPC remote publication uses a revision lease; push_failed retains the named local commit for retry. Allows unrelated staged, edited and untracked home files; commits only the requested document and any confirmed decision log. Refuses credential-like content when origin is configured, and internal/ignored paths. Direction and mandate require questionId: a matching human yes on a root-Neo question bound to the exact path and content SHA-256. Appends the confirmed decision and commits both files with Neo-Confirmed-By. Root Neo or the local user only; Neo owns its home documents and can edit them with file tools; this RPC commits while sandboxed Bash cannot write .git metadata. This operation retains a human-facing RPC for confirmed mandate/direction receipts with a decision log; direct edits do not attest human approval. Credential publication checks cover these RPC paths; direct remote Git commands follow the prompt rule against publishing credentials and is not constrained by this RPC gate.',
       inputSchema: HomeSaveInput,
       resultSchema: HomeSaveResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

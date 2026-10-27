@@ -1,21 +1,25 @@
-import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  subscribeToStructuredLogs,
   type StructuredLogEvent,
+  subscribeToStructuredLogs,
   type VoiceSettings,
 } from '@hyperneo/shared';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { vi } from 'vitest';
+import { type WebSocket, WebSocketServer } from 'ws';
+import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
 import {
-  VoiceStream,
+  batchTranscriptionUrl,
+  deepgram,
+  joinFinals,
+} from '../../../../src/lib/voice/stream-protocols';
+import {
   pcm16Wav,
+  VoiceStream,
+  type VoiceStreamText,
   voiceMode,
   voiceStreamRoute,
   voiceStreamTls,
-  type VoiceStreamText,
 } from '../../../../src/lib/voice/stream-relay';
-import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
-import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
 import type { VoiceTranscribeOutcome } from '../../../../src/lib/voice/transcribe-pipeline';
 import recorded from './fixtures/wlk-deepgram.json';
 
@@ -60,10 +64,60 @@ describe('voice stream settings', () => {
     ).toBe('300');
   });
 
+  test('batchTranscriptionUrl keeps a trailing-slash transcriptions URL as-is', () => {
+    expect(batchTranscriptionUrl(new URL('https://h/v1/audio/transcriptions/')).toString()).toBe(
+      'https://h/v1/audio/transcriptions/'
+    );
+    expect(batchTranscriptionUrl(new URL('https://h/speech/v1/')).toString()).toBe(
+      'https://h/speech/v1/audio/transcriptions'
+    );
+  });
+
+  test('voiceStreamRoute derives listen from a trailing-slash transcriptions URL', () => {
+    expect(
+      voiceStreamRoute({
+        ...voice,
+        streamEndpoint: undefined,
+        endpoint: 'https://h/v1/audio/transcriptions/',
+      })?.url.toString()
+    ).toBe(
+      'wss://h/v1/listen?encoding=linear16&sample_rate=16000&channels=1&interim_results=true&endpointing=700'
+    );
+  });
+
   test('voiceStreamRoute needs a ws or wss endpoint and a supported protocol', () => {
-    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })).toBeNull();
+    expect(
+      voiceStreamRoute({ ...voice, endpoint: 'not a url', streamEndpoint: undefined })
+    ).toBeNull();
     expect(voiceStreamRoute({ ...voice, streamEndpoint: 'https://ai0:8011/v1/listen' })).toBeNull();
     expect(voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })).toBeNull();
+  });
+
+  test('voiceStreamRoute derives the live listen URL from one base link', () => {
+    expect(
+      voiceStreamRoute({
+        ...voice,
+        endpoint: 'https://ai0:8011/speech/v1',
+        streamEndpoint: undefined,
+      })?.url.pathname
+    ).toBe('/speech/v1/listen');
+    expect(
+      voiceStreamRoute({
+        ...voice,
+        endpoint: 'http://ai0:8011/speech/v1',
+        streamEndpoint: undefined,
+      })?.url.protocol
+    ).toBe('ws:');
+    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })?.url.pathname).toBe(
+      '/v1/listen'
+    );
+    expect(
+      voiceStreamRoute({
+        ...voice,
+        endpoint: 'https://ai0:8011/inference',
+        streamEndpoint: undefined,
+      })
+    ).toBeNull();
   });
 
   test('voiceStreamTls pins a configured CA and never turns verification off by default', () => {
@@ -125,6 +179,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
   let batches: string[];
   let logs: StructuredLogEvent[];
   let unsubscribe: () => void;
+  let connections: URL[];
 
   beforeEach(async () => {
     logs = [];
@@ -134,6 +189,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     received = 0;
     pushed = [];
     batches = [];
+    connections = [];
     onAudio = (socket, bytes) => socket.send(results(`heard ${bytes}`, false));
     onCloseStream = (socket) => {
       socket.send(results(`heard ${received}`, true));
@@ -145,6 +201,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     port = (server.address() as { port: number }).port;
     server.on('connection', (socket, request) => {
       const url = new URL(request.url!, 'http://stub');
+      connections.push(url);
       expect(url.pathname).toBe('/v1/listen');
       expect(url.searchParams.get('sample_rate')).toBe('16000');
       socket.on('message', (data: Buffer, isBinary: boolean) => {
@@ -184,6 +241,20 @@ describe('VoiceStream against a stub Deepgram server', () => {
     if ('error' in started) throw new Error(started.error);
     return started;
   };
+
+  test.each([undefined, 'zh', 'en'] as const)(
+    'sends language %s on the ASR connection request',
+    async (language) => {
+      const started = await VoiceStream.start('language', { ...deps(), language });
+      if ('error' in started) throw new Error(started.error);
+      try {
+        expect(started.via).toBe('streaming');
+        expect(connections[0].searchParams.getAll('language')).toEqual(language ? [language] : []);
+      } finally {
+        started.stream.close();
+      }
+    }
+  );
 
   test('relays chunks, pushes interim text, and returns the finals the server flushes on CloseStream', async () => {
     const { stream, via } = await start();
@@ -303,9 +374,14 @@ describe('VoiceStream against a stub Deepgram server', () => {
     });
   });
 
-  test('without a streaming endpoint auto mode goes to batch', async () => {
-    const { via } = await start({ streamEndpoint: undefined });
-    expect(via).toBe('batch');
+  test('auto mode derives the live listen URL from the one base link', async () => {
+    const { via, stream } = await start({
+      endpoint: `http://127.0.0.1:${port}/speech/v1`,
+      streamEndpoint: undefined,
+    });
+    expect(via).toBe('streaming');
+    expect(connections[0].pathname).toBe('/speech/v1/listen');
+    await stream.stop();
   });
 
   test('auto falls back to batch with the whole buffered audio when the ASR is unreachable', async () => {

@@ -108,6 +108,34 @@ afterEach(async () => {
 });
 
 describe('Second-machine home configuration', () => {
+  test.each(['plain', 'back\\slash', 'quoted"name', 'tab\tname'])(
+    'clones through an inherited URL rewrite with subsection %s',
+    async (name) => {
+      const rewritten = join(fixture, name);
+      await git(fixture, 'clone', '--bare', remote, rewritten);
+      await git(
+        fixture,
+        'config',
+        '--file',
+        process.env.GIT_CONFIG_GLOBAL!,
+        `url.${rewritten}.insteadOf`,
+        'neo-test-8832://'
+      );
+      const previousProtocol = process.env.GIT_ALLOW_PROTOCOL;
+      process.env.GIT_ALLOW_PROTOCOL = 'file';
+      try {
+        expect(await call({ remoteUrl: 'neo-test-8832://' })).toEqual(
+          expect.objectContaining({ ok: true })
+        );
+      } finally {
+        if (previousProtocol === undefined) delete process.env.GIT_ALLOW_PROTOCOL;
+        else process.env.GIT_ALLOW_PROTOCOL = previousProtocol;
+      }
+      expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe(
+        'Human direction from the first machine\n'
+      );
+    }
+  );
   test('clones the selected shared history, configures origin/upstream and keeps local transcripts private', async () => {
     expect(await call({ remoteUrl: remote })).toMatchObject({ ok: true, path: root });
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(

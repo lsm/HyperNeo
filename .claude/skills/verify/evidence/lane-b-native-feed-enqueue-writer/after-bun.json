@@ -1,0 +1,124 @@
+{
+  "healthBefore": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 395,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "claimed": 2,
+  "jobs": [
+    {
+      "id": "00916a7c-ac48-4c23-baec-d70ff0592e75",
+      "queue": "work.feed.claude",
+      "status": "completed",
+      "payload": {
+        "scope": "claude"
+      },
+      "result": {
+        "files": 0,
+        "turns": 0
+      },
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1792988241012,
+      "createdAt": 1792988241012,
+      "startedAt": 1792988241016,
+      "heartbeatAt": null,
+      "completedAt": 1792988241017,
+      "claimToken": "a7dbae1a-f350-4878-9de1-e381fe9243b3"
+    },
+    {
+      "id": "58937f24-8ffe-45cf-9e22-e0e8bacefcad",
+      "queue": "work.feed.codex",
+      "status": "completed",
+      "payload": {
+        "scope": "codex"
+      },
+      "result": {
+        "files": 0,
+        "turns": 0
+      },
+      "error": null,
+      "priority": 0,
+      "maxRetries": 3,
+      "retryCount": 0,
+      "runAt": 1792988241012,
+      "createdAt": 1792988241012,
+      "startedAt": 1792988241016,
+      "heartbeatAt": null,
+      "completedAt": 1792988241017,
+      "claimToken": "598a53ba-36b3-4512-a338-006dba06ba83"
+    }
+  ],
+  "successors": [
+    [
+      {
+        "id": "3f3b6bd6-8330-4f46-b386-442f0c8683dd",
+        "queue": "work.feed.claude",
+        "status": "pending",
+        "payload": {
+          "scope": "claude"
+        },
+        "result": null,
+        "error": null,
+        "priority": 0,
+        "maxRetries": 3,
+        "retryCount": 0,
+        "runAt": 1792988301016,
+        "createdAt": 1792988241016,
+        "startedAt": null,
+        "heartbeatAt": null,
+        "completedAt": null,
+        "claimToken": null
+      }
+    ],
+    [
+      {
+        "id": "1743a155-a5a8-456e-b5cf-a84dfd8b7d2c",
+        "queue": "work.feed.codex",
+        "status": "pending",
+        "payload": {
+          "scope": "codex"
+        },
+        "result": null,
+        "error": null,
+        "priority": 0,
+        "maxRetries": 3,
+        "retryCount": 0,
+        "runAt": 1792988301017,
+        "createdAt": 1792988241017,
+        "startedAt": null,
+        "heartbeatAt": null,
+        "completedAt": null,
+        "claimToken": null
+      }
+    ]
+  ],
+  "healthAfter": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 398,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "mainSqlAttempts": 0
+}

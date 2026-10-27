@@ -107,6 +107,18 @@ describe('session.clone.spawn', () => {
     expect(h.enqueued).toEqual([]);
   });
 
+  test.each(['worker', undefined] as const)(
+    'a clone keeps its parent tool profile (%s) without it passing through client config',
+    async (toolProfile) => {
+      const h = makeHarness();
+      const parent = h.sessions.get('parent')!;
+      h.sessions.set('parent', { ...parent, config: { ...parent.config, toolProfile } });
+      await run(h, {});
+      expect(h.created[0].toolProfile).toBe(toolProfile);
+      expect(h.created[0].config?.toolProfile).toBeUndefined();
+    }
+  );
+
   test('an MCP caller naming another parent is denied', async () => {
     const h = makeHarness();
     const result = await run(h, { parentSessionId: 'other' });

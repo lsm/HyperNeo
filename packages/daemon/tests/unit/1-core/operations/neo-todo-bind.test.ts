@@ -1,3 +1,6 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -15,13 +18,16 @@ function setup() {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db),
     sessions = new NeoTodoSessionRepository(db);
+  const packs = createTodoCheckPacks(db);
   const calls: string[] = [];
   const runner = createNeoTodoRunner({
+    write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
-    packs: () => [],
+    packs: () => packs,
     tell: async () => {},
     changed: () => {},
     invoke: async (_caller, name) => {
@@ -37,7 +43,7 @@ function setup() {
       store,
       sessions,
       runner,
-      () => [],
+      () => packs,
       () => null
     ),
     ...createNeoAskRecordOperations(
@@ -47,7 +53,10 @@ function setup() {
       () => null,
       (id) => id === caller.sessionId,
       () => [],
-      () => []
+      () => packs,
+      undefined,
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
     ),
   ];
   const invoke = async (name: string, input: unknown) => {
@@ -74,6 +83,7 @@ describe('bind an already running worker without dispatch', () => {
           request: 'Track work already in progress',
           todos: [
             {
+              check: pendingTodoCheck,
               title: 'Running work',
               doneWhen: 'Result verified',
               ...options,
@@ -99,6 +109,7 @@ describe('bind an already running worker without dispatch', () => {
         request: 'Track work',
         todos: [
           {
+            check: pendingTodoCheck,
             title: 'Failed backfill',
             doneWhen: 'Result verified',
             instruction: 'Original task already running',
