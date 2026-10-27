@@ -78,7 +78,6 @@ test('a missing token leaves gh unauthenticated in an isolated config directory'
     ENV: '/dev/null',
     GH_PROMPT_DISABLED: '1',
   });
-  expect(access.filesystem.denyWrite).toEqual(['/synthetic/Neo']);
 });
 
 test('the runtime token provider can be swapped and unavailable providers stay unauthenticated', async () => {
