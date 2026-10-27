@@ -278,7 +278,7 @@ describe('NeoAskTodos', () => {
     ).toBe('todo');
   });
 
-  it('keeps the focused session opener on the ask after its question is retired', () => {
+  it('keeps focused session context without a duplicate header opener', () => {
     locale.value = 'en';
     const onOpen = vi.fn();
     const focusedSession = {
@@ -301,8 +301,8 @@ describe('NeoAskTodos', () => {
     );
     expect(app.container.querySelector('[data-ask-question]')).toBeNull();
     expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
-    fireEvent.click(app.getByRole('button', { name: 'Open session: Positioning discussion' }));
-    expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
+    expect(app.queryByRole('button', { name: 'Open session: Positioning discussion' })).toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
@@ -340,7 +340,7 @@ describe('NeoAskTodos', () => {
       expect(body.textContent).not.toContain('Codex');
       const open = app.getByRole('button', { name: 'Open session: Review worker', exact: true });
       expect(open.textContent).toBe('Open');
-      expect(open.querySelector('svg')).toBeNull();
+      expect(open.querySelector('svg')).toBeTruthy();
       fireEvent.click(open);
       expect(onOpen).toHaveBeenCalledWith(link, 'Codex · Review worker');
       fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));
