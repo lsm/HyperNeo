@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { installRecoveryWait } from './tool-recovery-writer-wait.ts';
 
 const run = process.argv.at(-1)!;
+const whitespace = process.argv.includes('whitespace');
 assert(run.startsWith('/private/tmp/'));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -15,14 +16,14 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const NativeWorker = globalThis.Worker;
 const fixture = join(run, 'writer.ts');
-writeFileSync(fixture, `import { installRecoveryWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/tool-recovery-writer-wait.ts')).href)}; installRecoveryWait(${JSON.stringify(run)}, 'worker'); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/db-gateway/db-gateway-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
+writeFileSync(fixture, `import { installRecoveryWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/tool-recovery-writer-wait.ts')).href)}; installRecoveryWait(${JSON.stringify(run)}, 'worker', ${whitespace}); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/db-gateway/db-gateway-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
 globalThis.Worker = function(url: string | URL, options?: WorkerOptions) {
   return new NativeWorker(String(url).endsWith('/db-gateway-worker.ts') ? pathToFileURL(fixture).href : url, options);
 } as unknown as typeof Worker;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let socket: WebSocket | undefined;
 let probe: ReturnType<typeof spawn> | undefined;
-const evidence: Record<string, unknown> = { runtime: Bun.version, modeledWaitMs: 1200 };
+const evidence: Record<string, unknown> = { runtime: Bun.version, modeledWaitMs: 1200, whitespace };
 try {
   app = await createDaemonApp({ config: getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true, disableGoalProcessing: true, verbose: false });
   await app.jobProcessor.stop();
@@ -46,7 +47,7 @@ try {
   for(let n=0;!output.includes('READY') && n<500;n++) await Bun.sleep(10);
   assert(output.includes('READY'),errors);
   const fixturePrepare = app.db.getDatabase().prepare.bind(app.db.getDatabase());
-  installRecoveryWait(run, 'main');
+  installRecoveryWait(run, 'main', whitespace);
   const toolUseId = crypto.randomUUID();
   const created = await app.internalEventBus.publish('sdk.toolUse.created', { sessionId, toolUseId, toolName: 'Bash', timestamp: Date.now() });
   assert.deepEqual(created.failures, []); assert(created.delivered > 0);

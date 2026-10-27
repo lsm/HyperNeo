@@ -1,10 +1,11 @@
 import { appendFileSync } from 'node:fs';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
-export function installRecoveryWait(run: string, thread: string): void {
+export function installRecoveryWait(run: string, thread: string, whitespace = false): void {
   const prepare = Database.prototype.prepare;
   let first = true;
   Database.prototype.prepare = function(sql, options) {
+    if (whitespace && sql.includes('tool_continuation_recovery')) sql = `\n  ${sql}`;
     const statement = prepare.call(this,sql,options);
     if (!sql.includes('tool_continuation_recovery')) return statement;
     return new Proxy(statement,{get(target,property) {
