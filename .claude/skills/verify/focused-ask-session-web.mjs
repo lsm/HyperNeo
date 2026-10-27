@@ -40,13 +40,17 @@ try {
       }
       await page.screenshot({ path: `${run}/evidence/ask-${width}.png`, fullPage: true, animations: 'disabled' });
       assert.equal(await header.getByRole('button').count(), 0);
-      await card.getByRole('button', { name: 'Open session: Positioning discussion', exact: true }).click();
+      const opener = card.getByRole('button', { name: 'Open Human-led discussion', exact: true });
+      assert.equal(await card.getByRole('button', { name: 'Open session: Positioning discussion', exact: true }).count(), 0);
+      assert.equal((await opener.innerText()).trim(), 'Open');
+      assert.equal(await opener.locator('svg').count(), 1);
+      await opener.click();
       const pane = page.locator('.neo-session-pane');
       await pane.getByRole('heading', { name: saved.source.label, exact: true }).waitFor();
       await page.screenshot({ path: `${run}/evidence/session-${width}.png`, fullPage: true, animations: 'disabled' });
       await pane.getByRole('button', { name: 'Back to Neo', exact: true }).click();
-      await card.getByRole('button', { name: 'Open session: Positioning discussion', exact: true }).waitFor();
-      observed.push({ width, outcomeLinksVisible: !!saved.outcomeMode, questionRetired: true, sourceRetained: saved.source.link, duplicateHeaderOpenerAbsent: true, cardFallbackReopens: true });
+      await opener.waitFor();
+      observed.push({ width, outcomeLinksVisible: !!saved.outcomeMode, questionRetired: true, sourceRetained: saved.source.link, duplicateHeaderOpenerAbsent: true, duplicateFallbackAbsent: true, todoOpenerReopens: true });
     } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/web.json`, JSON.stringify(observed, null, 2));
