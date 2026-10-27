@@ -1,9 +1,9 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
-  buildTaskDependencyGraph,
-  hasTaskDependencyCycle,
-  type TaskDependencyNode,
-} from './dependency-graph.ts';
+  buildDependencyGraph,
+  hasDependencyCycle,
+  type DependencyNode,
+} from '../work-queue/dependency-graph.ts';
 
 type DependencyRejection =
   | 'task_not_found'
@@ -15,7 +15,7 @@ type DependencyRejection =
 type Gate = { value: readonly string[] } | { reason: DependencyRejection };
 
 export function requireDependencyTarget(
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   taskId: string,
   dependsOn: readonly string[]
 ): Gate {
@@ -32,7 +32,7 @@ export function requireDistinctDependencies(taskId: string, dependsOn: readonly 
 }
 
 export function requireExistingDependencies(
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   dependsOn: readonly string[]
 ): Gate {
   const ids = new Set(tasks.map((task) => task.id));
@@ -44,7 +44,7 @@ export function requireExistingDependencies(
 const ENDED_DEPENDENCY_STATUSES = new Set(['cancelled', 'archived']);
 
 export function requireLiveDependencies(
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   taskId: string,
   dependsOn: readonly string[]
 ): Gate {
@@ -60,11 +60,11 @@ export function requireLiveDependencies(
 }
 
 export function requireAcyclicDependencies(
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   taskId: string,
   dependsOn: readonly string[]
 ): Gate {
-  return hasTaskDependencyCycle(buildTaskDependencyGraph(tasks, taskId, dependsOn))
+  return hasDependencyCycle(buildDependencyGraph(tasks, taskId, dependsOn))
     ? { reason: 'dependency_cycle' }
     : { value: dependsOn };
 }
@@ -82,7 +82,7 @@ export const planTaskDependencies = (superpipe({})('plan-task-dependencies') as 
   .pipe(requireAcyclicDependencies, ['tasks', 'taskId', 'dependsOn'], 'result:dependencies')
   .pipe(copyDependencies, 'dependsOn', 'dependencies')
   .end('dependencies') as (
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   taskId: string,
   dependsOn: readonly string[]
 ) => string[] | DependencyRejection;
@@ -90,7 +90,7 @@ export const planTaskDependencies = (superpipe({})('plan-task-dependencies') as 
 const NEW_TASK_ID = '\u0000new-task';
 
 export function planNewTaskDependencies(
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   dependsOn: readonly string[]
 ): string[] | DependencyRejection {
   return planTaskDependencies([...tasks, { id: NEW_TASK_ID }], NEW_TASK_ID, dependsOn);
@@ -98,7 +98,7 @@ export function planNewTaskDependencies(
 
 export function dependencyRejectionMessage(
   reason: DependencyRejection,
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   dependsOn: readonly string[],
   taskId?: string
 ): string {
