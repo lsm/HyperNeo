@@ -47,10 +47,6 @@ export function useNeoMessageMenu() {
     at,
     close,
     bind: {
-      onContextMenu: (event: MouseEvent) => {
-        event.preventDefault();
-        setAt({ x: event.clientX, y: event.clientY });
-      },
       onTouchStart: (event: TouchEvent) => {
         const touch = event.touches[0];
         if (!touch) return;

@@ -122,7 +122,10 @@ describe('Neo publication quote preview', () => {
     async (via) => {
       const { container } = render(<Chat />);
       if (via === 'menu') {
-        fireEvent.contextMenu(container.querySelector('article')!, { clientX: 10, clientY: 10 });
+        fireEvent.touchStart(container.querySelector('article')!, {
+          touches: [{ clientX: 10, clientY: 10 }],
+        });
+        await screen.findByRole('menuitem', { name: 'Reply' });
         fireEvent.click(screen.getByRole('menuitem', { name: 'Reply' }));
       } else {
         fireEvent.click(screen.getByRole('button', { name: 'Reply to Neo’s message' }));
