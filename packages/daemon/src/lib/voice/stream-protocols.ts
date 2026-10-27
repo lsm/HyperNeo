@@ -10,7 +10,7 @@ export function serviceBaseEndpoint(endpoint: URL): boolean {
 export function batchTranscriptionUrl(endpoint: URL): URL {
   if (!serviceBaseEndpoint(endpoint)) return endpoint;
   const derived = new URL(endpoint);
-  derived.pathname = `${pathname}${BATCH_TRANSCRIPTIONS_PATH}`;
+  derived.pathname = `${endpoint.pathname.replace(/\/+$/, '')}${BATCH_TRANSCRIPTIONS_PATH}`;
   return derived;
 }
 

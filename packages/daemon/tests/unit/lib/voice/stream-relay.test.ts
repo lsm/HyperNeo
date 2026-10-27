@@ -108,7 +108,9 @@ describe('voice stream settings', () => {
         streamEndpoint: undefined,
       })?.url.protocol
     ).toBe('ws:');
-    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })).toBeNull();
+    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })?.url.pathname).toBe(
+      '/v1/listen'
+    );
     expect(
       voiceStreamRoute({
         ...voice,
