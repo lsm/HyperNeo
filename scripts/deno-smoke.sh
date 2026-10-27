@@ -547,6 +547,9 @@ env -i HOME="$STALE_RECLAIM_RUN/home" PATH="$PATH" TMPDIR="$STALE_RECLAIM_RUN/tm
 	HYPERNEO_DATA_DIR="$STALE_RECLAIM_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-stale-reclaim-writer.ts" "$STALE_RECLAIM_RUN"
 
+OUTCOME_PARKING_RUN="$WORK_DIR/direct-outcome-parking-writer"
+mkdir -p "$OUTCOME_PARKING_RUN/home"
+env -i HOME="$OUTCOME_PARKING_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$OUTCOME_PARKING_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/direct-outcome-parking-writer.ts" verify "$OUTCOME_PARKING_RUN"
 MAILBOX_EXPIRY_RUN="$WORK_DIR/mailbox-expiry-writer"
 mkdir -p "$MAILBOX_EXPIRY_RUN/home" "$MAILBOX_EXPIRY_RUN/tmp"
 env -i HOME="$MAILBOX_EXPIRY_RUN/home" PATH="$PATH" TMPDIR="$MAILBOX_EXPIRY_RUN/tmp" NODE_ENV=test \
