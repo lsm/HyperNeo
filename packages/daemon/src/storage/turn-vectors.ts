@@ -1,4 +1,4 @@
-import { defineDbOp } from './db-gateway/db-op.ts';
+import { defineRepositoryOp } from './db-gateway/db-op.ts';
 import type { Database as BunDatabase } from './sqlite-compat.ts';
 
 const MIN_TURN_CHARS = 20;
@@ -83,16 +83,24 @@ export function saveTurnVector(
   );
 }
 
-export const turnVectorWrites = defineDbOp<
-  {
+class TurnVectorWriter {
+  constructor(private readonly db: BunDatabase) {}
+
+  save({
+    turn,
+    model,
+    vector,
+    now,
+  }: {
     turn: Pick<PendingTurn, 'id' | 'bodyLength'>;
     model: string;
     vector: Float32Array;
     now: number;
-  },
-  void
->({
-  name: 'turn-vector.save',
-  mode: 'write',
-  run: (db, { turn, model, vector, now }) => saveTurnVector(db, turn, model, vector, now),
-});
+  }): void {
+    saveTurnVector(this.db, turn, model, vector, now);
+  }
+}
+
+export const turnVectorWrites = defineRepositoryOp('turn-vector.save', 'write', TurnVectorWriter, [
+  'save',
+] as const);

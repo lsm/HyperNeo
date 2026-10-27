@@ -40,7 +40,7 @@ export async function embedPendingTurns(
     for (const turn of pending) {
       tried.add(turn.id);
       const vector = Float32Array.from(await embedder.embedPassage(turn.text));
-      await gatewayFor(db.getDatabase()).run(turnVectorWrites, {
+      await gatewayFor(db.getDatabase()).call(turnVectorWrites, 'save', {
         turn,
         model: embedder.model,
         vector,
