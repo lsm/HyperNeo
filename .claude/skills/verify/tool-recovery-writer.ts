@@ -25,7 +25,7 @@ let socket: WebSocket | undefined;
 let probe: ReturnType<typeof spawn> | undefined;
 const evidence: Record<string, unknown> = { runtime: Bun.version, modeledWaitMs: 1200, whitespace };
 try {
-  app = await createDaemonApp({ config: getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true, disableGoalProcessing: true, verbose: false });
+  app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true }, verbose: false });
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
   const url = `ws://127.0.0.1:${app.server.port}/ws`;

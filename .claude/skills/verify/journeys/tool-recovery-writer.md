@@ -37,3 +37,7 @@ reaches SQLite. Both modes must identify the INSERT after trimming and record
 exactly one 1200 ms wait, with measured elapsed wait at least 1100 ms. Otherwise
 the proof fails even if health is fast. The unpadded repository query starts
 with INSERT already; the padded case guards formatting changes in this helper.
+
+The helper sets `disableWorktrees` inside daemon Config and stops the job
+processor before creating the manual session, following SKILL.md. It does not
+rely on the unused `disableGoalProcessing` setting.
