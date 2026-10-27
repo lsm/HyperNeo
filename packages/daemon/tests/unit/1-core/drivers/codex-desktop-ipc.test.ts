@@ -16,6 +16,7 @@ import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-opera
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 
 interface Message {
   type: string;
@@ -44,6 +45,7 @@ describe('withCodexDesktopIpc', () => {
   let server: Server | undefined;
   const sockets = new Set<Socket>();
   afterEach(async () => {
+    configureWorkerSandbox(() => 'off');
     for (const socket of sockets) socket.destroy();
     sockets.clear();
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
@@ -1051,6 +1053,41 @@ describe('withCodexDesktopIpc', () => {
         text: 'use the parser\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.\n[HyperNeo agent input]',
       });
     });
+
+    test.each(['off', 'always', 'on-demand'] as const)(
+      'existing idle turns use the current sandbox preference: %s',
+      async (mode) => {
+        configureWorkerSandbox(() => mode);
+        const f = await fixture((message, _socket, send) =>
+          send({
+            type: 'response',
+            requestId: message.requestId,
+            ...(message.method === 'thread-owner-discovery'
+              ? { resultType: 'success', handledByClientId: 'desktop-owner' }
+              : message.method === 'thread-follower-start-turn'
+                ? { resultType: 'success', result: { result: { turn: { id: 'next-turn' } } } }
+                : { resultType: 'error', error: 'NoActiveTurn' }),
+          })
+        );
+        const result = await steerCodexDesktopTurn(
+          f.path,
+          noDesktopOpen,
+          'old-restricted-thread',
+          'continue work',
+          'input-next'
+        );
+        expect(result).toMatchObject({
+          reason: { ok: true, value: { delivered: true, startedTurnId: 'next-turn' } },
+        });
+        const params = f.seen.at(-1)?.params as {
+          turnStart: { request: { sandboxPolicy?: unknown }; context: unknown };
+        };
+        expect(params.turnStart.request.sandboxPolicy).toEqual(
+          mode === 'off' ? { type: 'dangerFullAccess' } : undefined
+        );
+        expect(params.turnStart.context).toEqual({ inheritThreadSettings: true });
+      }
+    );
 
     test.each([false, true])(
       'starts idle Desktop input or reports its refusal: %s',

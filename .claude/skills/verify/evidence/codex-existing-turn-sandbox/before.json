@@ -1,0 +1,37 @@
+{
+  "unitFailures": 7,
+  "unitPasses": 42,
+  "expectedOffPolicy": "danger-full-access",
+  "native": {
+    "desktop": {
+      "initialProfile": "old-restricted",
+      "activeProfile": "old-restricted",
+      "loopbackConnected": false,
+      "networkFetch": false,
+      "signedCommit": false,
+      "outsideWritePermitted": false,
+      "cleanup": {
+        "appServerClosed": true,
+        "modelClosed": true,
+        "signingAgentStopped": true
+      },
+      "sandboxPolicyType": "workspace-write",
+      "networkAccess": false
+    },
+    "queue": {
+      "initialProfile": "old-restricted",
+      "activeProfile": "hyperneo-worker",
+      "loopbackConnected": true,
+      "networkFetch": true,
+      "signedCommit": true,
+      "outsideWritePermitted": false,
+      "cleanup": {
+        "appServerClosed": true,
+        "modelClosed": true,
+        "signingAgentStopped": true
+      },
+      "sandboxPolicyType": "workspace-write",
+      "networkAccess": true
+    }
+  }
+}
