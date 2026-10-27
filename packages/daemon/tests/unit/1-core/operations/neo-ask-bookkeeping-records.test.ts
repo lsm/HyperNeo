@@ -1,4 +1,4 @@
-import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
+import { createTodoCheckPacks, existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { describe, expect, test } from 'bun:test';
@@ -8,7 +8,10 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
-import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
+import {
+  type NeoTodoControls,
+  createNeoTodoOperations,
+} from '../../../../src/lib/neo/todo-operations.ts';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import {
   createNeoWorkerQuestionWriter,
@@ -21,7 +24,7 @@ import {
 import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 
-function setup() {
+function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start'>> = {}) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -74,11 +77,11 @@ function setup() {
     ...createNeoAskRecordOperations(
       store,
       sessions,
-      { ...runner, stop: async () => null },
+      { ...runner, resolveTarget: existingTodoTarget, stop: async () => null, ...overrides },
       () => null,
       () => true,
       () => [],
-      undefined,
+      () => createTodoCheckPacks(db),
       undefined,
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
@@ -109,6 +112,79 @@ function setup() {
 }
 
 describe('todo and ask bookkeeping records through MCP', () => {
+  test.each([0, 1])(
+    'an unknown target at batch position %s refuses the whole ask before writes or dispatch',
+    async (position) => {
+      const starts: string[] = [];
+      const h = setup({
+        resolveTarget: async (ref) =>
+          ref.id === 'missing'
+            ? { reason: { ok: false as const, reason: 'target_not_found: missing' } }
+            : { value: { ...ref, id: '10000000-0000-4000-8000-000000000001' } },
+        start: async (id) => {
+          starts.push(id);
+          return { ok: true as const, todo: h.store.getTodo(id)! };
+        },
+      });
+      try {
+        const before = h.store.listAsks(null, 100);
+        const todos = ['10000000', 'missing'].map((id, index) => ({
+          title: `Batch item ${index}`,
+          check: pendingTodoCheck,
+          instruction: 'Work',
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id } },
+          start: true,
+        }));
+        if (position === 0) todos.reverse();
+        const result = await h.call('neo.ask.open', {
+          title: 'Invalid target batch',
+          request: 'Track batch',
+          todos,
+        });
+        expect(result).toEqual({ ok: false, reason: 'target_not_found: missing' });
+        expect(h.store.listAsks(null, 100)).toEqual(before);
+        expect(starts).toEqual([]);
+        expect(h.calls).toEqual([]);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('ask.open stores the pre-resolved canonical references for every target', async () => {
+    const lookups: string[] = [];
+    const h = setup({
+      resolveTarget: async (ref) => {
+        lookups.push(ref.id);
+        return {
+          value: {
+            ...ref,
+            id: `10000000-0000-4000-8000-00000000000${ref.id === 'short-a' ? 1 : 2}`,
+          },
+        };
+      },
+    });
+    try {
+      const result = await h.call('neo.ask.open', {
+        title: 'Canonical target batch',
+        request: 'Track batch',
+        todos: ['short-a', 'short-b'].map((id) => ({
+          title: id,
+          check: pendingTodoCheck,
+          target: { verb: 'bind', ref: { adapter: 'hyperneo', id } },
+        })),
+      });
+      expect(result.ok).toBe(true);
+      expect(lookups).toEqual(['short-a', 'short-b']);
+      expect(
+        result.todos.map((todo: { id: string }) => h.sessions.readRef(todo.id)?.id).sort()
+      ).toEqual(['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002']);
+      expect(h.calls).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('settlement preserves failure diagnostics in the unverified todo receipt', async () => {
     const h = setup();
     try {

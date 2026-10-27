@@ -62,6 +62,18 @@ try {
   assert.match(rejected.reason, /^target_not_found:/);
   assert.equal(todos.listTodos('synthetic-ask').length, count);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
+  const beforeBatch = todos.listAsks(null, 100);
+  const batch = await handler({ name: 'neo.ask.open', input: {
+    title: 'Refused target batch', request: 'Resolve every target before recording',
+    todos: [worker.slice(0, 8), 'deadbeef'].map((id, n) => ({ title: `Batch item ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'hyperneo', id } } })),
+  } });
+  evidence.push({ operation: 'neo.ask.open', batch });
+  assert.notEqual(batch.isError, true);
+  const rejectedBatch = JSON.parse(batch.content[0].text);
+  assert.equal(rejectedBatch.ok, false);
+  assert.match(rejectedBatch.reason, /^target_not_found:/);
+  assert.deepEqual(todos.listAsks(null, 100), beforeBatch, 'Rejected batch opened an ask or recorded its first todo');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   evidence.push({ rows: db.prepare('SELECT target, ref FROM neo_todo_sessions').all() });
   console.log('PASS: real daemon MCP add and direct bind store full target IDs; unknown prefixes are refused without recording, rebinding or dispatching.');
 } finally {
