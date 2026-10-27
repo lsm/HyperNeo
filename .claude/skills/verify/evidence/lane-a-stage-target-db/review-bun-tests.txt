@@ -1,0 +1,37 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-coding-assign.test.ts:
+(pass) coding actor assignments > an unavailable default (unsupported_model) is attempted once after a cloned read-only plan reply [243.71ms]
+(pass) coding actor assignments > an unavailable default (unsupported_effort) is attempted once after a cloned read-only plan reply [220.45ms]
+(pass) coding actor assignments > an unavailable default (unsupported_preparation) is attempted once after a cloned read-only plan reply [215.82ms]
+(pass) coding actor assignments > an unavailable default (unknown_adapter) is attempted once after a cloned read-only plan reply [216.76ms]
+(pass) coding actor assignments > configured bot suppresses all reviewer starts, including explicit human/preferences, but permits independent Verify [239.62ms]
+(pass) coding actor assignments > a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts [228.66ms]
+(pass) coding actor assignments > a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts [240.12ms]
+(pass) coding actor assignments > one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments [276.14ms]
+(pass) coding actor assignments > an explicit human is an alternative with no reviewer session [244.18ms]
+(pass) coding actor assignments > missing provenance and same-model review cannot launch; explicit opt-out permits the default [245.58ms]
+(pass) coding actor assignments > shared Review/Verify harness, model and effort preferences reach the started actor [244.32ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_model) safely falls back to the qualifying default [208.38ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_effort) safely falls back to the qualifying default [244.57ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_preparation) safely falls back to the qualifying default [214.00ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unknown_adapter) safely falls back to the qualifying default [207.07ms]
+(pass) coding actor assignments > uncertain delivery is never retried or recorded as an assignment [213.07ms]
+(pass) coding actor assignments > a new head requires fresh assignments; contract changes and stale/closed PRs refuse before launch [292.30ms]
+(pass) coding actor assignments > Verify cannot reuse the author or reviewer ref [266.93ms]
+(pass) coding actor assignments > head changes during start stop only the new actor rather than persist stale ownership [236.49ms]
+(pass) coding actor assignments > simultaneous assignment requests do not duplicate session starts [238.18ms]
+
+tests/unit/1-core/operations/neo-coding-stage-preferences.test.ts:
+(pass) coding stage target preferences > shares the prefer shape for write without storing defaults [105.80ms]
+(pass) coding stage target preferences > shares the prefer shape for review without storing defaults [113.03ms]
+(pass) coding stage target preferences > shares the prefer shape for verify without storing defaults [111.33ms]
+(pass) coding stage target preferences > an unavailable preference uses the default with a reason, without changing the saved setting [114.00ms]
+(pass) coding stage target preferences > repository values override global preferences with case-insensitive repository matching [104.00ms]
+(pass) coding stage target preferences > review preferences cannot select the author model; a different harness breaks otherwise equal ties [102.70ms]
+(pass) coding stage target preferences > declares all nine fields as bounded text, including vendor model IDs and explicit defaults [0.43ms]
+
+ 27 pass
+ 0 fail
+ 196 expect() calls
+Ran 27 tests across 2 files. [5.44s]
