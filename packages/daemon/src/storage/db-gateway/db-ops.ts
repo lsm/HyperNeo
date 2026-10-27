@@ -1,5 +1,6 @@
 import { turnVectorWrites } from '../turn-vectors.ts';
 import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
+import { taskScheduleDeleteWrites } from '../repositories/task-schedule-delete-write.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
@@ -135,6 +136,7 @@ import { sessionScheduleCreateWrites } from '../repositories/session-schedule-cr
 import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
 import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
+import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
 import { neoPublicationPageWrites } from '../repositories/neo-publication-page-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
@@ -251,7 +253,9 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workflowRunPinWrites,
     workflowDeleteWrites,
     taskSchedulePauseWrites,
+    taskScheduleDeleteWrites,
     codingStageTargetReads,
+    codingLedgerPollReads,
     neoPublicationPageWrites,
   ].map((op) => [op.name, op])
 );
