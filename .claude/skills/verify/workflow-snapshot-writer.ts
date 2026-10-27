@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { SpaceRepository } from '../../../packages/daemon/src/storage/repositories/space-repository.ts';
 import { SpaceWorkflowRepository } from '../../../packages/daemon/src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../packages/daemon/src/storage/repositories/space-workflow-run-repository.ts';
@@ -20,12 +21,17 @@ assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP forbidden'); }) as typeof fetch;
-const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+const config = getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') });
+let app = await createDaemonApp({ config, verbose: false });
 let ws: WebSocket | undefined;
 let blocker: ChildProcess | undefined;
 const metrics: Record<string, number> = {};
 const mainSql: string[] = [], replies: unknown[] = [], jobs: unknown[] = [];
 let measuring = false;
+const startupSql: string[] = [], startup: unknown[] = [];
+let migrationActive = false;
+const migrateSnapshotlessPins = SpaceWorkflowRunRepository.prototype.migrateSnapshotlessPins;
+const prototypePrepare = Database.prototype.prepare;
 const raw = app.db.getDatabase(), prepare = raw.prepare.bind(raw);
 raw.prepare = ((sql: string) => { if (measuring && /space_workflow_definition_versions|UPDATE space_workflow_runs SET definition_version/.test(sql)) mainSql.push(sql); return prepare(sql); }) as typeof raw.prepare;
 try {
@@ -94,8 +100,32 @@ try {
   assert(metrics.healthMs < 250, 'Independent health must remain responsive while the writer waits');
   assert(maxLagMs < 1000, 'The writer lock must not block the main loop');
   assert.deepEqual(mainSql, [], 'Snapshot job and contended write must execute no target SQL on main');
-  console.log('ok: daemon job migrates the pin; real workflow RPC serves the frozen hooks; full Unicode payload hash survives');
+  const startupLegacy = runs.createPinnedRun({ spaceId: space.id, workflowId: workflow.id, title: 'Startup legacy pin', rawWorkflow: workflow });
+  assert.notEqual(startupLegacy.definitionVersion, snapshot.versionHash);
+  ws.close(); await app.cleanup();
+  SpaceWorkflowRunRepository.prototype.migrateSnapshotlessPins = async function (...args) {
+    migrationActive = true;
+    try { return await migrateSnapshotlessPins.apply(this, args); }
+    finally { migrationActive = false; }
+  };
+  Database.prototype.prepare = function (sql, ...args) {
+    if (migrationActive && /INSERT(?: OR IGNORE)? INTO space_workflow_definition_versions|UPDATE space_workflow_runs SET definition_version/.test(sql)) startupSql.push(sql);
+    return prototypePrepare.call(this, sql, ...args);
+  } as typeof prototypePrepare;
+  app = await createDaemonApp({ config, verbose: false });
+  await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
+  const recovered = new SpaceWorkflowRunRepository(app.db.getDatabase()).getRun(startupLegacy.id);
+  assert.equal(recovered?.definitionVersion, snapshot.versionHash, 'Startup must finish snapshot migration before serving RPC');
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('Restart RPC connection failed')); });
+  const recoveredHooks = await rpc('spaceWorkflowRun.listHookStates', { runId: startupLegacy.id });
+  assert.deepEqual(recoveredHooks.hooks, hooks, 'Restart must preserve frozen hooks rather than the edited live definition');
+  startup.push({ runId: startupLegacy.id, beforePin: startupLegacy.definitionVersion, afterPin: recovered?.definitionVersion, hooks: recoveredHooks.hooks });
+  assert.deepEqual(startupSql, [], 'Startup snapshot migration writes must leave the daemon main connection');
+  console.log('ok: job and startup snapshot migration use the writer; real workflow RPC serves frozen hooks after restart');
 } finally {
-  measuring = false; blocker?.kill(); ws?.close(); await app.cleanup(); globalThis.fetch = originalFetch;
-  writeFileSync(join(run, 'evidence/workflow-snapshot-writer.json'), JSON.stringify({ mode, mainSql, replies, jobs, metrics }, null, 2));
+  measuring = false; migrationActive = false; blocker?.kill(); ws?.close(); await app.cleanup(); globalThis.fetch = originalFetch;
+  Database.prototype.prepare = prototypePrepare;
+  SpaceWorkflowRunRepository.prototype.migrateSnapshotlessPins = migrateSnapshotlessPins;
+  writeFileSync(join(run, 'evidence/workflow-snapshot-writer.json'), JSON.stringify({ mode, mainSql, replies, jobs, metrics, startupSql, startup }, null, 2));
 }
