@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../../src/lib/error-manager';
 import { MessageHub } from '@hyperneo/shared';
+import { MessageDeliveryTerminalTurnError } from '../../../../src/lib/agent/message-delivery';
 import {
   createDaemonInternalEventBus,
   type InternalEventBus,
@@ -85,6 +86,35 @@ describe('ErrorManager - Error Throttling', () => {
     );
 
     expect(broadcastedErrors.length).toBe(3);
+  });
+
+  it('broadcasts a capped query failure after recoverable errors saturate its throttle bucket', async () => {
+    const sessionId = 'test-session';
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await errorManager.handleError(sessionId, 'Unknown query failure', ErrorCategory.SYSTEM);
+    }
+    expect(broadcastedErrors).toHaveLength(3);
+    const queryFailureEpisode = {
+      id: 'terminal-episode',
+      failures: 3,
+      retryAt: 0,
+      error: 'Unknown query failure',
+      failed: true,
+    };
+    const details = await errorManager.handleError(
+      sessionId,
+      new MessageDeliveryTerminalTurnError('Query failure cap reached'),
+      ErrorCategory.SYSTEM,
+      undefined,
+      undefined,
+      { queryFailureEpisode }
+    );
+    expect(details.recoverable).toBe(false);
+    expect(broadcastedErrors).toHaveLength(4);
+    expect(broadcastedErrors[3]).toMatchObject({
+      sessionId,
+      details: { recoverable: false, metadata: { queryFailureEpisode } },
+    });
   });
 
   it('should continue throttling beyond 3 errors', async () => {

@@ -28,8 +28,8 @@ selection; this does not introduce a new bounded summary or pagination contract.
 
 Retain hashes, complete-response comparison results, latency, loop lag, RSS, WAL
 size and combined worker round-trip/reply encoding measurements. This does not
-separate SQL, queue and cloning costs. Startup migration is settled before target
-SQL is measured; its remaining main reads are outside this slice. Close owned
+separate SQL, queue and cloning costs. The shared `waitForSdkBodyCopy` helper settles copying after fixture seeding and
+before expected bodies/hashes or target SQL are measured; its remaining main reads are outside this slice. Close owned
 resources and save JSON before removing temporary daemon data. Deployment/UI
 smoke stays pending with Neo. The 10,000-message selection boundary is unit-tested;
 large exports and oversized transport latency are not established by this fixture.

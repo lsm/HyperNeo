@@ -8,7 +8,7 @@ outcome mode with a fresh RUN:
 RUN=$(mktemp -d /private/tmp/hn-focused-outcome-XXXXXX)
 mkdir -p "$RUN/home" "$RUN/bin"
 env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
-  NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn \
+  NODE_ENV=test ${VERIFY_MOCK_PORT:+VERIFY_MOCK_PORT=$VERIFY_MOCK_PORT} HYPERNEO_USE_DEV_PROXY=1 HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn \
   NODE_PATH=<directory containing playwright> VERIFY_NODE=<node executable> \
   VERIFY_BROWSER=<headless Chromium executable> \
   bun .claude/skills/verify/focused-ask-session.ts "$RUN" outcome

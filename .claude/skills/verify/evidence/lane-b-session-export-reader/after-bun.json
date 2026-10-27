@@ -1,17 +1,17 @@
 {
   "expectedMessageCount": 5,
-  "originalBodyHashBefore": "18356674a8d8dcb1eca438df180530fca76e790253ebaaf64f7bb62307a018a7",
+  "originalBodyHashBefore": "17f90c99d879e901dada8e3838e18bbe1b14ed821804731dbc7c5f9086be8d06",
   "writerBefore": {
     "outside": 0,
     "inside": 1
   },
-  "coldMs": 3.6757920000000013,
-  "concurrentWarmMs": 2.758542000000034,
+  "coldMs": 3.3703330000000733,
+  "concurrentWarmMs": 2.7719580000000406,
   "fullMarkdownMatched": true,
-  "markdownHash": "045032bb78cae4c30d4420f43c46907102bbb1963680c6e0db327c94e15caf1e",
+  "markdownHash": "948f0af5f51bc055cc31b4290faaf413df9ceaa65f9610916781f75ff997d4e4",
   "missingConversation": "MessageHubResponseError: Session not found",
   "missingSession": "MessageHubResponseError: Session not found",
-  "healthMs": 0.2143750000000182,
+  "healthMs": 0.21737499999994725,
   "writerAfter": {
     "outside": 0,
     "inside": 1
@@ -20,97 +20,97 @@
   "workerFailure": "MessageHubResponseError: synthetic session-export reader failure",
   "readerRecovered": true,
   "actorCacheStayedEmpty": true,
-  "maxLoopLagMs": 1.2611249999999927,
+  "maxLoopLagMs": 1.260499999999979,
   "rpcLatencyUnder250ms": true,
-  "originalBodyHashAfter": "18356674a8d8dcb1eca438df180530fca76e790253ebaaf64f7bb62307a018a7",
-  "rssBytes": 197084264,
+  "originalBodyHashAfter": "17f90c99d879e901dada8e3838e18bbe1b14ed821804731dbc7c5f9086be8d06",
+  "rssBytes": 193184872,
   "walBytes": 2204232,
   "mainSqlAttempts": 0,
   "workerTimings": [
     {
-      "roundTripMs": 2.5231659999999465,
+      "roundTripMs": 2.27154100000007,
       "replyBytes": 52241,
-      "encodeMs": 0.06579199999998764
+      "encodeMs": 0.05591699999990851
     },
     {
-      "roundTripMs": 0.34933300000000145,
+      "roundTripMs": 0.3414589999999862,
       "replyBytes": 52241,
-      "encodeMs": 0.05000000000006821
+      "encodeMs": 0.044125000000008185
     },
     {
-      "roundTripMs": 0.5835419999999658,
+      "roundTripMs": 0.6050419999999122,
       "replyBytes": 52241,
-      "encodeMs": 0.03412500000001728
+      "encodeMs": 0.03541700000005221
     },
     {
-      "roundTripMs": 0.8015420000000404,
+      "roundTripMs": 0.7356249999999136,
       "replyBytes": 52241,
-      "encodeMs": 0.031207999999992353
+      "encodeMs": 0.03325000000006639
     },
     {
-      "roundTripMs": 1.0058339999999362,
+      "roundTripMs": 0.9389169999999467,
       "replyBytes": 52241,
-      "encodeMs": 0.030208000000016
+      "encodeMs": 0.03208300000005693
     },
     {
-      "roundTripMs": 1.1142079999999623,
+      "roundTripMs": 1.1847500000000082,
       "replyBytes": 52241,
-      "encodeMs": 0.03433400000005804
+      "encodeMs": 0.04437500000005912
     },
     {
-      "roundTripMs": 1.4347920000000158,
+      "roundTripMs": 1.3131669999999076,
       "replyBytes": 52241,
-      "encodeMs": 0.030750000000011823
+      "encodeMs": 0.031000000000062755
     },
     {
-      "roundTripMs": 1.5470000000000255,
+      "roundTripMs": 1.6095420000000331,
       "replyBytes": 52241,
-      "encodeMs": 0.031375000000025466
+      "encodeMs": 0.03200000000003911
     },
     {
-      "roundTripMs": 1.6479170000000067,
+      "roundTripMs": 1.7198329999999942,
       "replyBytes": 52241,
-      "encodeMs": 0.030000000000086402
+      "encodeMs": 0.032166999999958534
     },
     {
-      "roundTripMs": 1.749416999999994,
+      "roundTripMs": 1.8338750000000346,
       "replyBytes": 52241,
-      "encodeMs": 0.030666999999994005
+      "encodeMs": 0.033916999999973996
     },
     {
-      "roundTripMs": 2.2031670000000076,
+      "roundTripMs": 1.95799999999997,
       "replyBytes": 52241,
-      "encodeMs": 0.03495799999996052
+      "encodeMs": 0.03641600000003109
     },
     {
-      "roundTripMs": 0.13791700000001583,
+      "roundTripMs": 0.1610000000000582,
       "replyBytes": 1079,
-      "encodeMs": 0.0018330000000332802
+      "encodeMs": 0.0011669999998957792
     },
     {
-      "roundTripMs": 0.10033400000008896,
+      "roundTripMs": 0.13795900000002348,
       "replyBytes": 1283,
-      "encodeMs": 0.002250000000003638
+      "encodeMs": 0.0014159999999492356
     },
     {
-      "roundTripMs": 0.23225000000002183,
+      "roundTripMs": 0.31416699999999764,
       "replyBytes": 52241,
-      "encodeMs": 0.036582999999950516
+      "encodeMs": 0.04266599999994014
     },
     {
-      "roundTripMs": 0.35083399999996345,
+      "roundTripMs": 0.24958400000002712,
       "replyBytes": 52241,
-      "encodeMs": 0.044875000000047294
+      "encodeMs": 0.0388749999999618
     },
     {
-      "roundTripMs": 0.31045799999992596,
+      "roundTripMs": 0.3109999999999218,
       "replyBytes": 52454,
-      "encodeMs": 0.04574999999999818
+      "encodeMs": 0.04362500000002001
     },
     {
-      "roundTripMs": 0.9605410000000347,
+      "roundTripMs": 0.801166999999964,
       "replyBytes": 52454,
-      "encodeMs": 0.05195899999989706
+      "encodeMs": 0.053875000000061846
     }
   ]
 }

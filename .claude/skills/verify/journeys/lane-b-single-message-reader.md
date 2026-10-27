@@ -7,6 +7,7 @@ No provider turn, model mock, real credential or external HTTP is needed.
 The helper waits for the real startup SDK body-copy completion marker before
 acquiring its competing writer and measuring reader SQL. This keeps asynchronous
 startup migration outside the reader-only assertions without bypassing migration.
+It uses SKILL.md's shared `waitForSdkBodyCopy` setup alongside the transcript proofs.
 Pass `--defer-body-copy` through proof-run.sh to hold startup copying until after
 fixture seeding. That controlled schedule previously reproduced the Deno CI race
 with one main-SQL attempt; it must now pass with zero attempts and

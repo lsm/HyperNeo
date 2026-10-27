@@ -1,0 +1,10 @@
+{
+  "runtime": "bun",
+  "mode": "before",
+  "exitCode": 0,
+  "baselineFilesFrom": "0431e1a7fa42462daedb047060ae9620049ca8cb",
+  "head": "fbe97e07412bc7af289289cbc3a306c8734e165f",
+  "temporaryDaemonDataRemoved": true,
+  "freeGiBBefore": 210.5054168701172,
+  "freeMemoryPercentBefore": 56
+}

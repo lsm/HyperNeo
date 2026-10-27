@@ -574,6 +574,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({
+      readTurnEnds: (sessionId, since) =>
+        context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
       prepareExecution,
       projects: () => context.deps.db.workspaceHistory.projects(),
       db,
@@ -599,6 +601,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       homeDir: homedir(),
     }),
     createSpaceAdapter({
+      readTurnEnds: (sessionId, since) =>
+        context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
       db,
       machine,
       searchChats: ownChats,

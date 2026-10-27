@@ -1,0 +1,80 @@
+{
+  "mode": "before",
+  "verified": true,
+  "consumer": "Real persisted job -> production coding-pack sweep -> unowned wake pipeline",
+  "limitation": "Synthetic scheduled job and repository read; notification receiver records keys after checking commit. No actual Neo model, external notification, GitHub or GUI.",
+  "rejected": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "retry": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "reopened": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "confirmed": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "rows": [
+    {
+      "key": "neo-pr-unowned:synthetic/unowned#1",
+      "listed_at": 1793084320768
+    },
+    {
+      "key": "neo-pr-unowned:synthetic/unowned#2",
+      "listed_at": 1793084320768
+    }
+  ],
+  "state": {
+    "id": 1,
+    "activated_at": 1793084320583,
+    "pending_key": null,
+    "pending_text": null,
+    "pending_rows": "[{\"repo\":\"synthetic/unowned\",\"number\":1,\"title\":\"Synthetic PR 1\"},{\"repo\":\"synthetic/unowned\",\"number\":2,\"title\":\"Synthetic PR 2\"}]"
+  },
+  "attempts": [
+    {
+      "key": "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896",
+      "text": "New pull requests observed without a known worker owner:\nsynthetic/unowned#1 \"Synthetic PR 1\" [neo-pr-unowned:synthetic/unowned#1]\nsynthetic/unowned#2 \"Synthetic PR 2\" [neo-pr-unowned:synthetic/unowned#2]\nCheck the current ledger before assigning an owner."
+    },
+    {
+      "key": "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896",
+      "text": "New pull requests observed without a known worker owner:\nsynthetic/unowned#1 \"Synthetic PR 1\" [neo-pr-unowned:synthetic/unowned#1]\nsynthetic/unowned#2 \"Synthetic PR 2\" [neo-pr-unowned:synthetic/unowned#2]\nCheck the current ledger before assigning an owner."
+    },
+    {
+      "key": "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896",
+      "text": "New pull requests observed without a known worker owner:\nsynthetic/unowned#1 \"Synthetic PR 1\" [neo-pr-unowned:synthetic/unowned#1]\nsynthetic/unowned#2 \"Synthetic PR 2\" [neo-pr-unowned:synthetic/unowned#2]\nCheck the current ledger before assigning an owner."
+    }
+  ],
+  "acceptedKeys": [
+    "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896"
+  ],
+  "mainSql": [
+    "SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1",
+    "SELECT l.repo, l.number, l.title FROM pack_coding_pr_ledger l\n           JOIN pack_coding_pr_unowned_state s ON s.id = 1\n          WHERE l.owner IS NULL AND l.closed_at IS NULL AND l.state NOT IN ('draft', 'merged', 'closed')\n            AND l.author_is_bot = 0 AND l.created_at > s.activated_at AND l.read_at = ?\n            AND NOT EXISTS (SELECT 1 FROM pack_coding_pr_unowned n\n              WHERE n.key = 'neo-pr-unowned:' || l.repo || '#' || l.number)\n          ORDER BY l.repo, l.number",
+    "INSERT INTO pack_coding_pr_unowned (key, listed_at) VALUES (?, ?)",
+    "UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1",
+    "SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1",
+    "UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1",
+    "SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1",
+    "UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1",
+    "UPDATE pack_coding_pr_unowned_state SET pending_key = NULL, pending_text = NULL WHERE id = 1 AND pending_key = ?",
+    "SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1",
+    "SELECT l.repo, l.number, l.title FROM pack_coding_pr_ledger l\n           JOIN pack_coding_pr_unowned_state s ON s.id = 1\n          WHERE l.owner IS NULL AND l.closed_at IS NULL AND l.state NOT IN ('draft', 'merged', 'closed')\n            AND l.author_is_bot = 0 AND l.created_at > s.activated_at AND l.read_at = ?\n            AND NOT EXISTS (SELECT 1 FROM pack_coding_pr_unowned n\n              WHERE n.key = 'neo-pr-unowned:' || l.repo || '#' || l.number)\n          ORDER BY l.repo, l.number",
+    "SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1",
+    "SELECT l.repo, l.number, l.title FROM pack_coding_pr_ledger l\n           JOIN pack_coding_pr_unowned_state s ON s.id = 1\n          WHERE l.owner IS NULL AND l.closed_at IS NULL AND l.state NOT IN ('draft', 'merged', 'closed')\n            AND l.author_is_bot = 0 AND l.created_at > s.activated_at AND l.read_at = ?\n            AND NOT EXISTS (SELECT 1 FROM pack_coding_pr_unowned n\n              WHERE n.key = 'neo-pr-unowned:' || l.repo || '#' || l.number)\n          ORDER BY l.repo, l.number"
+  ],
+  "commands": []
+}

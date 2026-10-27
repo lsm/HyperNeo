@@ -29,5 +29,16 @@
     "migration-in-progress SQL relocation",
     "10000-message real-RPC and oversized transport latency"
   ],
-  "initialRepositoryCheckFailure": "Direct gateway run was included in the lexical run counter (613 against 612); the standard repository command API retains the existing 612 baseline."
+  "initialRepositoryCheckFailure": "Direct gateway run was included in the lexical run counter (613 against 612); the standard repository command API retains the existing 612 baseline.",
+  "baseSync": {
+    "mergedDev": "280d11546d4384b5fa3d4f87f82777344ae934bb",
+    "previousPrHead": "a16e7ba1d3d1ed6d9c3b3f5d6db290252275d988",
+    "conflict": "Append-only operation registrations; retain both entries",
+    "productionChangedLines": 42,
+    "focusedTestsPassed": 66,
+    "repositoryCheck": "passed",
+    "bunDenoMainSql": 0,
+    "proofSetup": "Use shared body-copy completion wait before expected bodies and hashes",
+    "mergeHold": "Queued after 0.50.0; no PR merge authorized"
+  }
 }

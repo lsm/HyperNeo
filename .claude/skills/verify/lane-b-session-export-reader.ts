@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Session } from '@hyperneo/shared';
+import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -99,6 +100,7 @@ try {
   ]) await app.db.saveSDKMessage('export-history', message as SDKMessage);
   await app.db.saveSDKMessage('other-history', { type: 'assistant', uuid: 'export-other', message: { role: 'assistant', content: [{ type: 'text', text: 'other session' }] } } as SDKMessage);
   const raw = app.db.getDatabase();
+  await waitForSdkBodyCopy(raw);
   const expected = { session: app.db.getSession('export-history'), messages: app.db.getSDKMessages('export-history', 10000).messages };
   assert(expected.session);
   const wireExpected = JSON.parse(JSON.stringify(expected)) as typeof expected;
@@ -107,12 +109,6 @@ try {
   assert(!serialized.includes('export-enqueued') && !serialized.includes('export-hidden'));
   evidence.expectedMessageCount = expected.messages.length;
   evidence.originalBodyHashBefore = createHash('sha256').update(serialized).digest('hex');
-  const copyDone = raw.prepare('SELECT 1 FROM migration_markers WHERE key IN (?,?)');
-  const deadline = performance.now() + 30_000;
-  while (!copyDone.get('sdk_message_bodies_copy_v1:complete', 'sdk_message_bodies_copy_v1:reversed')) {
-    assert(performance.now() < deadline, 'SDK body copy did not settle');
-    await new Promise((done) => setTimeout(done, 10));
-  }
   assert.equal(app.db.getDataMigrationStatus().state, 'complete');
   const hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
