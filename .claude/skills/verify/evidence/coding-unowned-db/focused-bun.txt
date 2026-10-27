@@ -1,0 +1,29 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-unowned-writer.test.ts:
+(pass) unowned PR wake commits its reservation on the writer with guarded main [4.43ms]
+(pass) unowned PR wake commits its reservation on the writer with read-only main [1.82ms]
+
+tests/unit/1-core/operations/neo-coding-pr-unowned.test.ts:
+(pass) coding pack newly unowned PR notifications > one reconcile wakes Neo once with all new human PRs across repos, never the old backlog [143.25ms]
+(pass) coding pack newly unowned PR notifications > a known owner is not announced, and each PR is listed once through restart, head change and pruning [144.51ms]
+(pass) coding pack newly unowned PR notifications > a partial read does not turn stale unowned rows into a new notification [125.87ms]
+(pass) coding pack newly unowned PR notifications > drafts become eligible later, with no repeat on later state changes [118.30ms]
+(pass) coding pack newly unowned PR notifications > failed handoff survives restart with the same batch identity; new arrivals wait for the next wake [116.87ms]
+(pass) coding pack unowned PR persistence > the activation cutoff is strict and does not reset when schema is reapplied [111.22ms]
+(pass) coding pack unowned PR persistence > a pending notice and once-only keys survive closing and reopening the database [9.65ms]
+(pass) coding pack unowned PR persistence > upgrading the prior ledger preserves its rows and excludes unknown historical metadata [0.78ms]
+
+tests/unit/1-core/operations/coding-watched-repos.test.ts:
+(pass) Coding watched repositories > a fresh instance ignores machine sessions and project repos until explicitly added [129.09ms]
+(pass) Coding watched repositories > upgrade leaves an unset watch list empty despite project and PR history [182.63ms]
+(pass) Coding watched repositories > upgrade preserves every saved watch list and its attribution [149.32ms]
+(pass) Coding watched repositories > invalid repository names and non-global lists are refused without changing the watch list [152.08ms]
+(pass) Coding watched repositories > unwatching retains history but stops stale terminal, unowned and idle-owner notices [122.47ms]
+(pass) Coding watched repositories > a watched alias follows its canonical repo without admitting unrelated repos [120.62ms]
+(pass) Coding watched repositories > a pending mixed batch keeps only still-watched repositories [117.86ms]
+
+ 17 pass
+ 0 fail
+ 99 expect() calls
+Ran 17 tests across 3 files. [1.85s]
