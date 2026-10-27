@@ -1,3 +1,4 @@
+import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
 import {
   voiceRecordingReads,
   voiceRecordingWrites,
@@ -147,6 +148,7 @@ import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    toolRecoveryWrites,
     voiceRecordingReads,
     voiceRecordingWrites,
     turnVectorWrites,

@@ -1,3 +1,5 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { isRecord } from '../../lib/record.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
@@ -47,6 +49,15 @@ export interface ToolContinuationOwner {
 
 export class ToolContinuationRecoveryRepository {
   constructor(private readonly db: BunDatabase) {}
+
+  write<K extends (typeof toolRecoveryWrites.methods)[number]>(
+    method: K,
+    ...args: Parameters<ToolContinuationRecoveryRepository[K]>
+  ): Promise<ReturnType<ToolContinuationRecoveryRepository[K]>> {
+    return gatewayFor(this.db).call(toolRecoveryWrites, method, ...(args as never)) as Promise<
+      ReturnType<ToolContinuationRecoveryRepository[K]>
+    >;
+  }
 
   ensureSchema(): void {
     this.db.exec(`
@@ -467,3 +478,10 @@ function isRecoverableToolUseStatus(status: ToolContinuationStatus): boolean {
 function canMarkWaitingRebind(status: ToolContinuationStatus): boolean {
   return isRecoverableToolUseStatus(status) || status === 'expired';
 }
+
+export const toolRecoveryWrites = defineRepositoryOp(
+  'tool-recovery.write',
+  'write',
+  ToolContinuationRecoveryRepository,
+  ['recordToolUse', 'markConsumed', 'markExpired', 'markInboxReboundForExecution'] as const
+);
