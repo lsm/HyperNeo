@@ -42,7 +42,12 @@ function world() {
   const base = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(base);
   const workers = new Map<string, { lastActivityAt: number; replies: boolean; status?: string }>();
-  const knobs = { stopRefused: false, tellRefused: false };
+  const knobs = {
+    stopRefused: false,
+    tellRefused: false,
+    sendRefused: false,
+    onSend: null as null | (() => void),
+  };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   let started = 0;
@@ -64,6 +69,7 @@ function world() {
       }
       if (name === 'work.send') {
         const worker = workers.get(id);
+        knobs.onSend?.();
         if (knobs.sendRefused)
           return completed({
             ok: false,
@@ -330,5 +336,17 @@ describe('a doing todo never sits idle without someone on it', () => {
     await w.at(40);
     expect(w.named('work.send')).toHaveLength(1);
     expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+  });
+
+  test('a todo finished while its reminder bounced is not reopened as stalled', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null);
+    w.knobs.sendRefused = true;
+    w.knobs.onSend = () => {
+      w.store.updateTodo(w.todo(todo.id), { state: 'done', evidence: 'Merged.' }, Date.now());
+    };
+    await w.at(20);
+    expect(w.todo(todo.id).state).toBe('done');
+    expect(w.told.filter((note) => note.includes('stalled'))).toEqual([]);
   });
 });
