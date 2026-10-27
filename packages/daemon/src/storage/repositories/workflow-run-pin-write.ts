@@ -18,6 +18,14 @@ class WorkflowRunPinWriter {
   ) {}
 
   pin(pin: WorkflowRunPin): boolean {
+    return this.persist(pin, true);
+  }
+
+  migrateSnapshot(pin: WorkflowRunPin): boolean {
+    return this.persist(pin, false);
+  }
+
+  private persist(pin: WorkflowRunPin, onlyUnpinned: boolean): boolean {
     new SpaceWorkflowDefinitionVersionRepository(this.db).appendVersion({
       workflowId: pin.workflowId,
       spaceId: pin.spaceId,
@@ -29,7 +37,7 @@ class WorkflowRunPinWriter {
     const result = this.db
       .prepare(
         `UPDATE space_workflow_runs SET definition_version = ?
-           WHERE id = ? AND definition_version IS NULL`
+           WHERE id = ?${onlyUnpinned ? ' AND definition_version IS NULL' : ''}`
       )
       .run(pin.versionHash, pin.runId);
     this.changes?.notifyChange('space_workflow_definition_versions', { spaceId: pin.spaceId });
@@ -43,5 +51,5 @@ export const workflowRunPinWrites = defineRepositoryOp(
   'workflow.run.pin.write',
   'write',
   WorkflowRunPinWriter,
-  ['pin'] as const
+  ['pin', 'migrateSnapshot'] as const
 );

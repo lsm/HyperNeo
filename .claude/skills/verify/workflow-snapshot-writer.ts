@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -21,6 +22,8 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('External HTTP forbidden'); }) as typeof fetch;
 const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 let ws: WebSocket | undefined;
+let blocker: ChildProcess | undefined;
+const metrics: Record<string, number> = {};
 const mainSql: string[] = [], replies: unknown[] = [], jobs: unknown[] = [];
 let measuring = false;
 const raw = app.db.getDatabase(), prepare = raw.prepare.bind(raw);
@@ -60,15 +63,39 @@ try {
   assert.equal(createHash('sha256').update(version.payload).digest('hex'), snapshot.versionHash);
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
-  const response = await new Promise<Record<string, unknown>>((done, fail) => {
+  const rpc = (method: string, data: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('Hook RPC timed out')), 15000);
     ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); replies.push(reply); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'spaceWorkflowRun.listHookStates', data: { runId: legacy.id }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method, data, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  const response = await rpc('spaceWorkflowRun.listHookStates', { runId: legacy.id });
   assert.deepEqual(response.hooks, hooks, 'RPC must use the migrated frozen definition, not the edited live workflow');
-  assert.deepEqual(mainSql, [], 'Snapshot job must execute no target SQL on main');
+  blocker = spawn('bun', ['-e', `import { Database } from 'bun:sqlite'; const db = new Database(process.argv[1]); db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE'); console.log('locked'); setTimeout(() => { db.exec('COMMIT'); db.close(); }, 1200);`, join(run, 'data/daemon.db')], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const released = new Promise<void>((done, fail) => { blocker!.once('error', fail); blocker!.once('exit', code => code === 0 ? done() : fail(new Error(`Lock fixture exited ${code}`))); });
+  let lockOutput = '';
+  await new Promise<void>((done, fail) => { blocker!.stdout!.on('data', chunk => { lockOutput += String(chunk); if (lockOutput.includes('locked')) done(); }); blocker!.once('error', fail); blocker!.once('exit', () => { if (!lockOutput.includes('locked')) fail(new Error('Lock fixture never acquired its lock')); }); });
+  let lastTick = performance.now(), maxLagMs = 0;
+  const interval = setInterval(() => { const now = performance.now(); maxLagMs = Math.max(maxLagMs, now - lastTick - 10); lastTick = now; }, 10);
+  measuring = true;
+  const writeStarted = performance.now();
+  const waiting = app.db.gateway.call(workflowRunPinWrites, 'migrateSnapshot', { runId: legacy.id, workflowId: workflow.id, spaceId: space.id, ...snapshot });
+  try {
+    const healthStarted = performance.now();
+    await rpc('system.health', {});
+    metrics.healthMs = performance.now() - healthStarted;
+    assert.equal(await waiting, true);
+    metrics.affectedWriteMs = performance.now() - writeStarted;
+    await released;
+  } finally { clearInterval(interval); measuring = false; }
+  metrics.maxLagMs = maxLagMs;
+  metrics.payloadBytes = Buffer.byteLength(snapshot.payload);
+  metrics.rssBytes = process.memoryUsage().rss;
+  assert(metrics.affectedWriteMs >= 1000, 'The synthetic writer lock must actually delay the snapshot write');
+  assert(metrics.healthMs < 250, 'Independent health must remain responsive while the writer waits');
+  assert(maxLagMs < 1000, 'The writer lock must not block the main loop');
+  assert.deepEqual(mainSql, [], 'Snapshot job and contended write must execute no target SQL on main');
   console.log('ok: daemon job migrates the pin; real workflow RPC serves the frozen hooks; full Unicode payload hash survives');
 } finally {
-  measuring = false; ws?.close(); await app.cleanup(); globalThis.fetch = originalFetch;
-  writeFileSync(join(run, 'evidence/workflow-snapshot-writer.json'), JSON.stringify({ mode, mainSql, replies, jobs }, null, 2));
+  measuring = false; blocker?.kill(); ws?.close(); await app.cleanup(); globalThis.fetch = originalFetch;
+  writeFileSync(join(run, 'evidence/workflow-snapshot-writer.json'), JSON.stringify({ mode, mainSql, replies, jobs, metrics }, null, 2));
 }
