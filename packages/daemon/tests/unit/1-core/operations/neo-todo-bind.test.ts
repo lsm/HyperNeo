@@ -147,4 +147,23 @@ describe('bind an already running worker without dispatch', () => {
       db.close();
     }
   });
+
+  test('a held todo cannot be bound to a worker', async () => {
+    const { db, store, calls, invoke } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Synthetic work',
+        request: 'Track work',
+        todos: [{ check: pendingTodoCheck, title: 'Held step', doneWhen: 'Result verified' }],
+      });
+      const todo = opened.todos[0];
+      await invoke('neo.todo.edit', { todoId: todo.id, hold: 'The human said wait.' });
+      const bound = await invoke('neo.todo.bind', { todoId: todo.id, ref });
+      expect(bound.ok).toBe(false);
+      expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
+      expect(calls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 });

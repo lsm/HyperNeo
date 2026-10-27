@@ -1,14 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
   planTaskDependencies,
-  requireDependencyTarget,
-  requireDistinctDependencies,
-  requireExistingDependencies,
-  requireAcyclicDependencies,
   requireLiveDependencies,
   planNewTaskDependencies,
   dependencyRejectionMessage,
 } from '../../../../src/lib/tasks/dependency-plan';
+import {
+  requireDependencyTarget,
+  requireDistinctDependencies,
+  requireExistingDependencies,
+  requireAcyclicDependencies,
+} from '../../../../src/lib/work-queue/dependency-plan.ts';
 
 const graph = [
   { id: 'a', dependsOn: ['b'] },

@@ -128,6 +128,7 @@ import {
   codingSmokeReads,
   codingSmokeWrites,
 } from '../../lib/neo/packs/coding/smoke-admission-db.ts';
+import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -235,5 +236,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingMergeReceiptWrites,
     codingSmokeReads,
     codingSmokeWrites,
+    sessionScheduleCreateWrites,
   ].map((op) => [op.name, op])
 );

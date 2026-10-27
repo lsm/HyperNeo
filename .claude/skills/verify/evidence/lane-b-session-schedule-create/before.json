@@ -1,0 +1,5 @@
+{
+  "coldError": "MessageHubResponseError: session schedule creation SQL reached main",
+  "mainSqlAttempts": 1,
+  "timings": []
+}

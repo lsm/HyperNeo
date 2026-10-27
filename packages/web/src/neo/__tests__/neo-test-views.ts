@@ -5,6 +5,7 @@ export function testTodo(id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodo
     id,
     askId: 'ask',
     position: 0,
+    priority: 'normal',
     title: `Todo ${id}`,
     doneWhen: 'Merged',
     check: null,
