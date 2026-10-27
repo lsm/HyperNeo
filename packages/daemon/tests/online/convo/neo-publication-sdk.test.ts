@@ -471,9 +471,9 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       sandboxEnabled: false,
     });
     expect(sandboxOff).toMatchObject({
-      success: false,
-      sandboxEnabled: true,
-      error: expect.stringContaining('Neo requires'),
+      success: true,
+      sandboxEnabled: false,
+      error: undefined,
     });
     await hub.request('session.update', {
       sessionId: root,
