@@ -14,7 +14,10 @@ export const CodingActor = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('human'), id: z.string().trim().min(1) }),
 ]);
 export const CodingStageFact = z.object({
-  url: z.string().refine((url) => !!parsePrUrl(url)),
+  url: z
+    .string()
+    .refine((url) => !!parsePrUrl(url))
+    .meta({ examples: ['https://github.com/example/repo/pull/1'] }),
   head: z.string().trim().min(1),
   stage: z.enum(['review', 'qa']),
   actor: CodingActor,
