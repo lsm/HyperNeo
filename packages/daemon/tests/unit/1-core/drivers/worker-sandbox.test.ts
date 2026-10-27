@@ -1,6 +1,14 @@
 import { afterEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, type Stats } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  type Stats,
+} from 'node:fs';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,6 +103,21 @@ test('runtime preparation tolerates shared work locations with ordinary modes', 
   const env = (await prepareWorkerSandbox(root)) as Record<string, string>;
   expect(env.HYPERNEO_WORKTREES).toBe(join(data, 'worktrees'));
   expect(env.TMPDIR.startsWith(join(data, 'work', 'scratch'))).toBe(true);
+});
+
+test('repairs existing owned scratch and cache modes without losing their contents', async () => {
+  fixture('darwin', false);
+  const paths = workerSandboxPaths(root);
+  for (const path of [paths.TMPDIR, paths.XDG_CACHE_HOME]) {
+    mkdirSync(path, { recursive: true, mode: 0o755 });
+    chmodSync(path, 0o755);
+    await writeFile(join(path, 'retained'), 'worker bytes');
+  }
+  await prepareWorkerSandbox(root);
+  for (const path of [paths.TMPDIR, paths.XDG_CACHE_HOME]) {
+    expect(statSync(path).mode & 0o777).toBe(0o700);
+    expect(await readFile(join(path, 'retained'), 'utf8')).toBe('worker bytes');
+  }
 });
 
 test('Windows workers accept synthesized NTFS modes under the data root', async () => {

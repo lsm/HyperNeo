@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -143,4 +151,19 @@ test('reinstall uses the current protected roots for policy and marker', async (
   );
   expect(persisted.roots).toEqual([source]);
   expect(await readClaudeWorkerSandbox(root)).toEqual(settings());
+});
+
+test('disabled persisted sandbox does not prepare or recreate its runtime', async () => {
+  const source = join(fixture, 'source');
+  const settingsPath = join(root, '.claude/settings.local.json');
+  await installClaudeNativeWrites(root, [source]);
+  const persisted = settings();
+  persisted.sandbox.enabled = false;
+  writeFileSync(settingsPath, JSON.stringify(persisted));
+  rmSync(persisted.env.TMPDIR, { recursive: true, force: true });
+  const before = readFileSync(settingsPath, 'utf8');
+  const resumed = await readClaudeWorkerSandbox(root);
+  expect(resumed?.sandbox.enabled).toBe(false);
+  expect(existsSync(persisted.env.TMPDIR)).toBe(false);
+  expect(readFileSync(settingsPath, 'utf8')).toBe(before);
 });
