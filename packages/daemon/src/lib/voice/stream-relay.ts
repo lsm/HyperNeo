@@ -56,9 +56,10 @@ function derivedStreamUrl(batchEndpoint: string): string | undefined {
   try {
     const url = new URL(batchEndpoint);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
-    const base = url.pathname.endsWith(BATCH_TRANSCRIPTIONS_PATH)
-      ? url.pathname.slice(0, -BATCH_TRANSCRIPTIONS_PATH.length)
-      : url.pathname.replace(/\/+$/, '');
+    const pathname = url.pathname.replace(/\/+$/, '');
+    const base = pathname.endsWith(BATCH_TRANSCRIPTIONS_PATH)
+      ? pathname.slice(0, -BATCH_TRANSCRIPTIONS_PATH.length)
+      : pathname;
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.pathname = `${base}/listen`;
     url.search = '';

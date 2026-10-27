@@ -290,11 +290,19 @@ async function acquireTranscriptionCredentials(
       tlsCaPem = liveVoice.tlsCaPem?.trim() || undefined;
       model = liveVoice.model?.trim() || model;
     }
+    const keyEndpoint = (() => {
+      try {
+        const raw = new URL(liveVoice?.endpoint ?? '');
+        return raw.protocol === 'http:' || raw.protocol === 'https:' ? raw : endpoint;
+      } catch {
+        return endpoint;
+      }
+    })();
     return withTimeout(
       resolveApiKey(
         liveVoice?.apiKey,
         liveVoice?.apiKeyEndpoint,
-        endpoint,
+        keyEndpoint,
         ctx.deps.credentialManager
       ),
       CREDENTIAL_LOOKUP_TIMEOUT_MS,

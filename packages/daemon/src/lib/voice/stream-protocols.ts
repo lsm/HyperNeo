@@ -3,9 +3,10 @@ import type { VoiceStreamProtocol } from '@hyperneo/shared';
 export const BATCH_TRANSCRIPTIONS_PATH = '/audio/transcriptions';
 
 export function batchTranscriptionUrl(endpoint: URL): URL {
-  if (endpoint.pathname.endsWith(BATCH_TRANSCRIPTIONS_PATH)) return endpoint;
+  const pathname = endpoint.pathname.replace(/\/+$/, '');
+  if (pathname.endsWith(BATCH_TRANSCRIPTIONS_PATH)) return endpoint;
   const derived = new URL(endpoint);
-  derived.pathname = `${endpoint.pathname.replace(/\/+$/, '')}${BATCH_TRANSCRIPTIONS_PATH}`;
+  derived.pathname = `${pathname}${BATCH_TRANSCRIPTIONS_PATH}`;
   return derived;
 }
 

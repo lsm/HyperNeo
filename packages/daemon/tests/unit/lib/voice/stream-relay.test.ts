@@ -7,7 +7,11 @@ import {
 import { vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
-import { batchTranscriptionUrl, deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
+import {
+  batchTranscriptionUrl,
+  deepgram,
+  joinFinals,
+} from '../../../../src/lib/voice/stream-protocols';
 import {
   pcm16Wav,
   VoiceStream,
@@ -71,9 +75,14 @@ describe('voice stream settings', () => {
 
   test('voiceStreamRoute derives listen from a trailing-slash transcriptions URL', () => {
     expect(
-      voiceStreamRoute({ ...voice, streamEndpoint: undefined, endpoint: 'https://h/v1/audio/transcriptions/' })
-        ?.url.toString()
-    ).toBe('wss://h/v1/listen');
+      voiceStreamRoute({
+        ...voice,
+        streamEndpoint: undefined,
+        endpoint: 'https://h/v1/audio/transcriptions/',
+      })?.url.toString()
+    ).toBe(
+      'wss://h/v1/listen?encoding=linear16&sample_rate=16000&channels=1&interim_results=true&endpointing=700'
+    );
   });
 
   test('voiceStreamRoute needs a ws or wss endpoint and a supported protocol', () => {
