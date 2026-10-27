@@ -1214,6 +1214,9 @@ export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueue
   'fail',
   'markDead',
   'snapshotPayload',
+  'requeue',
+  'requeueParked',
+  'requeueWaiting',
 ]);
 
 export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [

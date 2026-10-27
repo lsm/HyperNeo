@@ -505,6 +505,9 @@ env -i HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$DELIVERY_PARKING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-delivery-parking.ts" "$DELIVERY_PARKING_RUN"
 
+WORKFLOW_DELETE_WRITER_RUN="$WORK_DIR/workflow-delete-writer"
+mkdir -p "$WORKFLOW_DELETE_WRITER_RUN/home"
+env -i HOME="$WORKFLOW_DELETE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_DELETE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-delete-writer.ts" verify "$WORKFLOW_DELETE_WRITER_RUN"
 RATE_LIMIT_CANCEL_RUN="$WORK_DIR/rate-limit-cancel"
 mkdir -p "$RATE_LIMIT_CANCEL_RUN/home"
 env -i HOME="$RATE_LIMIT_CANCEL_RUN/home" PATH="$PATH" NODE_ENV=test \
@@ -719,4 +722,13 @@ env -i HOME="$HUMAN_CONFIRMED_RUN/home" PATH="$PATH" TMPDIR="$HUMAN_CONFIRMED_RU
 env -i HOME="$WORK_DIR/message-count-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/message-count-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-message-count-reader.ts" "$WORK_DIR/message-count-reader"
 env -i HOME="$WORK_DIR/session-export-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-export-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-export-reader.ts" "$WORK_DIR/session-export-reader"
 env -i HOME="$WORK_DIR/session-schedule-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-schedule-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-schedule-create.ts" "$WORK_DIR/session-schedule-create"
+WORKFLOW_EXISTING_RUN_PIN_RUN="$WORK_DIR/workflow-existing-run-pin"
+mkdir -p "$WORKFLOW_EXISTING_RUN_PIN_RUN/home"
+env -i HOME="$WORKFLOW_EXISTING_RUN_PIN_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_EXISTING_RUN_PIN_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-existing-run-pin.ts" verify "$WORKFLOW_EXISTING_RUN_PIN_RUN"
+WORKFLOW_SNAPSHOT_WRITER_RUN="$WORK_DIR/workflow-snapshot-writer"
+mkdir -p "$WORKFLOW_SNAPSHOT_WRITER_RUN/home"
+env -i HOME="$WORKFLOW_SNAPSHOT_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_SNAPSHOT_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-snapshot-writer.ts" verify "$WORKFLOW_SNAPSHOT_WRITER_RUN"
+JOB_REQUEUE_WRITER_RUN="$WORK_DIR/job-requeue-writer"
+mkdir -p "$JOB_REQUEUE_WRITER_RUN/home"
+env -i HOME="$JOB_REQUEUE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$JOB_REQUEUE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/job-requeue-writer.ts" verify "$JOB_REQUEUE_WRITER_RUN"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
